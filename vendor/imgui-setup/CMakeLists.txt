@@ -1,7 +1,5 @@
+# imgui was already populated via FetchContent_MakeAvailable() in vendor/CMakeLists.txt.
 FetchContent_GetProperties(imgui)
-if (NOT imgui_POPULATED)
-  FetchContent_Populate(imgui)
-endif ()
 
 add_library(imgui
   ${imgui_SOURCE_DIR}/imgui.cpp ${imgui_SOURCE_DIR}/imgui.h

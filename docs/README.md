@@ -58,7 +58,7 @@ git gc --prune=now
 
 ### CMake
 
-The project uses [CMake](https://cmake.org) version >=3.22.
+The project uses [CMake](https://cmake.org) version >=3.22 (developed and tested against 4.4.0).
 
 ### Ninja or Xcode
 

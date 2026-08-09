@@ -1,5 +1,7 @@
 #include "Core/DPIHandler.hpp"
 
+#include <SDL3/SDL_video.h>
+
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Window.hpp"
 

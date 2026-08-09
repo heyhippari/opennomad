@@ -1,13 +1,16 @@
 #include "Window.hpp"
 
-#include <SDL3/SDL.h>
+#include <SDL3/SDL_events.h>
+#include <SDL3/SDL_video.h>
 #include <backends/imgui_impl_opengl3.h>
 #include <backends/imgui_impl_sdl3.h>
 #include <glad/glad.h>
+#include <imgui.h>
 
 #include "Core/DPIHandler.hpp"
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Log.hpp"
+#include "Core/Resources.hpp"
 
 namespace App {
 
@@ -20,6 +23,8 @@ Window::Window(const Settings& settings)
   SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
   SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
 
+  // SDL_CreateWindow cannot be used in a member initializer (needs m_settings first).
+  // NOLINTNEXTLINE(cppcoreguidelines-prefer-member-initializer)
   m_window = SDL_CreateWindow(settings.title.c_str(),
       m_settings.width,
       m_settings.height,
@@ -33,6 +38,7 @@ Window::Window(const Settings& settings)
   }
 
   SDL_SetWindowPosition(m_window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast) Required by the glad loader API.
   gladLoadGLLoader(reinterpret_cast<GLADloadproc>(SDL_GL_GetProcAddress));
   SDL_GL_MakeCurrent(m_window, m_gl_context);
   SDL_GL_SetSwapInterval(1);  // Enable vsync
@@ -69,7 +75,7 @@ Window::Window(const Settings& settings)
 Window::~Window() {
   APP_PROFILE_FUNCTION();
 
-  SDL_GL_DeleteContext(m_gl_context);
+  SDL_GL_DestroyContext(m_gl_context);
   SDL_DestroyWindow(m_window);
 
   ImGui_ImplOpenGL3_Shutdown();
@@ -172,11 +178,14 @@ void Window::on_event(const SDL_WindowEvent& event) {
 
   switch (event.type) {
     case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
-      return on_close();
+      on_close();
+      return;
     case SDL_EVENT_WINDOW_MINIMIZED:
-      return on_minimize();
+      on_minimize();
+      return;
     case SDL_EVENT_WINDOW_SHOWN:
-      return on_shown();
+      on_shown();
+      return;
     default:
       // Do nothing otherwise
       return;

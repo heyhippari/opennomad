@@ -1,15 +1,15 @@
-cmake_minimum_required(VERSION 3.22)
+cmake_minimum_required(VERSION 3.22...4.4.0)
 
 include(cmake/UniversalAppleBuild.cmake)
 
 project(
-  BasicGuiProjectSetupOpenGL
-  DESCRIPTION "Base gui project setup with SDL3 and OpenGL."
-  VERSION 1.0.0
+  OpenNomad
+  DESCRIPTION "An open-source reimplementation of the Omikron: The Nomad Soul game engine."
+  VERSION 0.0.1
   LANGUAGES CXX)
 
-set(PROJECT_COMPANY_NAME "My Company")
-set(PROJECT_COMPANY_NAMESPACE "com.mycompany")  # Reverse domain name notation
+set(PROJECT_COMPANY_NAME "OpenNomad Project")
+set(PROJECT_COMPANY_NAMESPACE "com.opennomad")
 
 include(cmake/StandardProjectSettings.cmake)
 include(GNUInstallDirs)

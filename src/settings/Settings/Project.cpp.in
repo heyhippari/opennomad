@@ -4,7 +4,9 @@
 
 namespace App {
 
+// NOLINTNEXTLINE(bugprone-throwing-static-initialization)
 const std::string COMPANY_NAMESPACE{"@PROJECT_COMPANY_NAMESPACE@"};
+// NOLINTNEXTLINE(bugprone-throwing-static-initialization)
 const std::string APP_NAME{"@CMAKE_PROJECT_NAME@"};
 
 }  // namespace App

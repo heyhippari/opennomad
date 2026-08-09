@@ -1,6 +1,6 @@
 #include "Core/Resources.hpp"
 
-#include <SDL3/SDL.h>
+#include <SDL3/SDL_filesystem.h>
 
 #include <filesystem>
 #include <string>
@@ -10,6 +10,7 @@
 
 namespace App {
 
+// NOLINTNEXTLINE(bugprone-throwing-static-initialization)
 static const std::string BASE_PATH{SDL_GetBasePath()};
 
 std::filesystem::path Resources::resource_path(const std::filesystem::path& file_path) {

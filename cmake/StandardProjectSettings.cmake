@@ -18,6 +18,11 @@ endif ()
 # Generate compile_commands.json to make it easier to work with clang based tools
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# The project does not use C++20 modules. Disable CMake's module dependency
+# scanning, which otherwise injects GCC "-fmodules-ts -fdeps-format=p1689r5"
+# flags that clang-tidy (via __run_co_compile) cannot parse.
+set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
+
 option(DEACTIVATE_LOGGING "Disable logging" OFF)
 if (DEACTIVATE_LOGGING)
   add_compile_definitions(APP_DEACTIVATE_LOGGING)

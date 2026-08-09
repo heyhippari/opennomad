@@ -1,6 +1,6 @@
 #pragma once
 
-#include <SDL3/SDL.h>
+#include <SDL3/SDL_filesystem.h>
 
 #include <filesystem>
 #include <string_view>
