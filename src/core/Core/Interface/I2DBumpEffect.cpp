@@ -68,6 +68,30 @@ std::array<std::array<std::uint8_t, 4>, 64> build_palette() {
 
 }  // namespace
 
+std::uint8_t I2DBumpEffect::row_warp_offset(const double phase_a,
+    const double phase_b,
+    const double logical_y) {
+  // i = 479 - y; a = phase_a - 0.0043*i; b = phase_b + 0.0067*i;
+  // offset = trunc(32.0*cos(b) + 64.0*cos(a)) & 0xFF.
+  const double i{479.0 - logical_y};
+  const double a{phase_a - 0.0043 * i};
+  const double b{phase_b + 0.0067 * i};
+  const int value{trunc_toward_zero(32.0 * std::cos(b) + 64.0 * std::cos(a))};
+  return static_cast<std::uint8_t>(value & 0xFF);
+}
+
+std::uint8_t I2DBumpEffect::column_warp_offset(const double phase_c,
+    const double phase_d,
+    const double logical_x) {
+  // i = 639 - x; c = phase_c + 0.0057*i; d = phase_d - 0.0099*i;
+  // offset = trunc(48.0*(cos(c)+cos(d))) & 0xFF.
+  const double i{639.0 - logical_x};
+  const double c{phase_c + 0.0057 * i};
+  const double d{phase_d - 0.0099 * i};
+  const int value{trunc_toward_zero(48.0 * (std::cos(c) + std::cos(d)))};
+  return static_cast<std::uint8_t>(value & 0xFF);
+}
+
 const std::array<std::array<std::uint8_t, 4>, 64>& I2DBumpEffect::palette() {
   static const std::array<std::array<std::uint8_t, 4>, 64> k_palette{build_palette()};
   return k_palette;
@@ -93,30 +117,72 @@ std::expected<I2DBumpEffect, std::string> I2DBumpEffect::create(Omikron::Indexed
   I2DBumpEffect effect;
   effect.m_height = std::move(source.indices);
   effect.m_palette = palette();
-  effect.m_lit.assign(
-      static_cast<std::size_t>(K_HEIGHT_SIZE) * static_cast<std::size_t>(K_HEIGHT_SIZE), 0U);
+  effect.m_lit.assign(K_HEIGHT_CELLS, 0U);
   effect.m_frame.assign(static_cast<std::size_t>(K_FRAME_WIDTH) *
                             static_cast<std::size_t>(K_FRAME_HEIGHT) * 4U,
       0U);
+
+  // The height field never changes, so the signed 8-bit X/Y gradients used by
+  // the lighting pass are precomputed once here. They preserve Runtime's
+  // wrapped-neighbour semantics: right_x = (x + 1) & 0xFF, below_y =
+  // (y + 1) & 0xFF.
+  for (int y{0}; y < K_HEIGHT_SIZE; ++y) {
+    const int below_y{(y + 1) & 0xFF};
+    for (int x{0}; x < K_HEIGHT_SIZE; ++x) {
+      const int right_x{(x + 1) & 0xFF};
+      const std::size_t index{static_cast<std::size_t>(y * K_HEIGHT_SIZE + x)};
+      effect.m_gradient_x.at(index) = signed_byte(
+          static_cast<int>(effect.m_height.at(index)) -
+          static_cast<int>(effect.m_height.at(
+              static_cast<std::size_t>(y * K_HEIGHT_SIZE + right_x))));
+      effect.m_gradient_y.at(index) = signed_byte(
+          static_cast<int>(effect.m_height.at(index)) -
+          static_cast<int>(effect.m_height.at(
+              static_cast<std::size_t>(below_y * K_HEIGHT_SIZE + x))));
+    }
+  }
   return effect;
 }
 
 void I2DBumpEffect::advance_one_tick() {
   APP_PROFILE_FUNCTION();
 
-  // --- Moving light ---
-  // Runtime: light_x = _ftol(cos(light_angle) * 64.0) + 128; the same for
-  // light_y with sin. light_angle then advances by 0.0785 (FSUB against
-  // -0.0785 in the assembly, so the effective sign is +).
-  m_light_x = trunc_toward_zero(std::cos(m_light_angle) * 64.0) + 128;
-  m_light_y = trunc_toward_zero(std::sin(m_light_angle) * 64.0) + 128;
-  m_light_angle += 0.0785;
+  advance_ticks(1);
+  regenerate_lighting();
+  regenerate_frame();
+}
 
-  // --- Warp-frame phases ---
-  m_phase_a += 0.009925;
-  m_phase_b -= 0.013915;
-  m_phase_c -= 0.007685;
-  m_phase_d += 0.015635;
+void I2DBumpEffect::advance_ticks(const std::uint32_t ticks) {
+  APP_PROFILE_FUNCTION();
+
+  // Advance only the logical state. Each update performs the moving-light
+  // derivation (two trig calls) and the four phase increments, but does NOT
+  // rebuild the warp tables, light the height field or warp a final image.
+  // A slow host frame that has to catch up several 30 Hz ticks therefore
+  // costs a handful of floating-point operations per missed tick rather than
+  // several complete (and invisible) effect frames.
+  for (std::uint32_t tick{0}; tick < ticks; ++tick) {
+    // --- Moving light ---
+    // Runtime: light_x = _ftol(cos(light_angle) * 64.0) + 128; the same for
+    // light_y with sin. light_angle then advances by 0.0785 (FSUB against
+    // -0.0785 in the assembly, so the effective sign is +). The light
+    // position is derived from the angle BEFORE the increment, exactly as
+    // the recovered frame does.
+    m_light_x = trunc_toward_zero(std::cos(m_light_angle) * 64.0) + 128;
+    m_light_y = trunc_toward_zero(std::sin(m_light_angle) * 64.0) + 128;
+    m_light_angle += 0.0785;
+
+    // --- Warp-frame phases ---
+    m_phase_a += 0.009925;
+    m_phase_b -= 0.013915;
+    m_phase_c -= 0.007685;
+    m_phase_d += 0.015635;
+  }
+  m_tick_index += ticks;
+}
+
+void I2DBumpEffect::regenerate_lighting() {
+  APP_PROFILE_FUNCTION();
 
   // --- Build the 480-entry row warp table ---
   double a{m_phase_a};
@@ -141,28 +207,33 @@ void I2DBumpEffect::advance_one_tick() {
   // --- Light the 256x256 height field ---
   // Runtime intensity:
   //   clamp((((dx * (x - light_x)) + (dy * (y - light_y))) >> 5) + 32, 0, 63)
-  // with signed 8-bit gradients and wrapped neighbour coordinates.
+  // with the precomputed signed 8-bit gradients. The inner loop uses raw
+  // contiguous pointers (the dimensions are validated once at construction),
+  // deliberately avoiding repeated checked indexing on this hot path.
+  // NOLINTBEGIN(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+  const std::int8_t* grad_x{m_gradient_x.data()};
+  const std::int8_t* grad_y{m_gradient_y.data()};
+  std::uint8_t* lit{m_lit.data()};
+  const int light_x{m_light_x};
+  const int light_y{m_light_y};
   for (int y{0}; y < K_HEIGHT_SIZE; ++y) {
+    const int y_minus_light_y{y - light_y};
+    const std::size_t row_base{static_cast<std::size_t>(y) * K_HEIGHT_SIZE};
     for (int x{0}; x < K_HEIGHT_SIZE; ++x) {
-      const int right_x{(x + 1) & 0xFF};
-      const int below_y{(y + 1) & 0xFF};
-
-      const std::int8_t dx{signed_byte(
-          static_cast<int>(m_height.at(static_cast<std::size_t>(y * K_HEIGHT_SIZE + x))) -
-          static_cast<int>(m_height.at(static_cast<std::size_t>(y * K_HEIGHT_SIZE + right_x))))};
-      const std::int8_t dy{signed_byte(
-          static_cast<int>(m_height.at(static_cast<std::size_t>(y * K_HEIGHT_SIZE + x))) -
-          static_cast<int>(m_height.at(static_cast<std::size_t>(below_y * K_HEIGHT_SIZE + x))))};
-
+      const std::size_t index{row_base + static_cast<std::size_t>(x)};
       int intensity{arithmetic_shift_right_5(
-                        static_cast<int>(dx) * (x - m_light_x) +
-                        static_cast<int>(dy) * (y - m_light_y)) +
+                        static_cast<int>(grad_x[index]) * (x - light_x) +
+                        static_cast<int>(grad_y[index]) * y_minus_light_y) +
                     32};
       intensity = std::clamp(intensity, 0, 63);
-      m_lit.at(static_cast<std::size_t>(y * K_HEIGHT_SIZE + x)) =
-          static_cast<std::uint8_t>(intensity);
+      lit[index] = static_cast<std::uint8_t>(intensity);
     }
   }
+  // NOLINTEND(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+}
+
+void I2DBumpEffect::regenerate_frame() {
+  APP_PROFILE_FUNCTION();
 
   // --- Warp the lit map into the final 640x480 frame ---
   // Runtime generates both tables in increasing order but consumes them in

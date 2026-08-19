@@ -20,6 +20,15 @@ struct SpriteCounters {
   std::size_t draw_calls{0};
 };
 
+/// Per-frame I2D interface pipeline counters, pushed by the interface renderer.
+struct I2DCounters {
+  std::size_t draw_calls{0};
+  std::size_t quads{0};
+  std::size_t glyphs{0};
+  std::uint32_t background_ticks{0};
+  std::size_t background_bytes_uploaded{0};
+};
+
 /// Singleton collecting per-frame performance metrics and system information.
 ///
 /// Thread-compatible (all methods are called from the main thread).
@@ -100,6 +109,12 @@ class Metrics {
   void set_sprite_counters(const SpriteCounters& counters);
   [[nodiscard]] const SpriteCounters& sprite_counters() const;
 
+  // --- I2D pipeline ---
+
+  /// Latest I2D interface counters (pushed once per rendered frame).
+  void set_i2d_counters(const I2DCounters& counters);
+  [[nodiscard]] const I2DCounters& i2d_counters() const;
+
  private:
   Metrics() = default;
   ~Metrics() = default;
@@ -124,6 +139,9 @@ class Metrics {
 
   // --- Sprite pipeline ---
   SpriteCounters m_sprite_counters;
+
+  // --- I2D pipeline ---
+  I2DCounters m_i2d_counters;
 
   bool m_system_info_queried{false};
 };

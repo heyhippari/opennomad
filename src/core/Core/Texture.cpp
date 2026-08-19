@@ -43,7 +43,8 @@ Texture2D& Texture2D::operator=(Texture2D&& other) noexcept {
 std::expected<Texture2D, std::string> Texture2D::create(const int width,
                                                         const int height,
                                                         const std::span<const std::uint8_t> rgba8,
-                                                        const bool srgb) {
+                                                        const bool srgb,
+                                                        const TextureFilter filter) {
   APP_PROFILE_FUNCTION();
 
   if (width <= 0 || height <= 0) {
@@ -72,10 +73,12 @@ std::expected<Texture2D, std::string> Texture2D::create(const int width,
                GL_UNSIGNED_BYTE,
                rgba8.data());
 
+  const GLint min_filter{filter == TextureFilter::k_linear ? GL_LINEAR : GL_NEAREST};
   // Nearest filtering + repeat wrapping matches the texture behaviour of
-  // late-90s hardware and keeps the checker pattern crisp.
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  // late-90s hardware and keeps the checker pattern crisp. Linear filtering
+  // is used for scalable content (font atlases).
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, min_filter);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, min_filter);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
 

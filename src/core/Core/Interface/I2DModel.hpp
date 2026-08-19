@@ -121,9 +121,45 @@ struct I2DTextElement {
 
 using I2DElementData = std::variant<I2DBitmapElement, I2DTextElement>;
 
+/// How an element (or the animated background) relates to the physical
+/// viewport under the modern presentation transform. Recovered Runtime
+/// coordinates always remain the authoritative reference space; this policy
+/// only describes how OpenNomad presents them on modern displays.
+enum class I2DScalePolicy : std::uint8_t {
+  /// Ordinary imagery: keep the recovered 640x480 reference rectangle,
+  /// height-fitted to the screen and centred horizontally (the generic
+  /// default — it falls out of the full-viewport projection automatically).
+  k_reference_canvas,
+  /// Procedural/full-screen backgrounds: fill the entire physical viewport
+  /// and evaluate at native resolution.
+  k_full_viewport,
+};
+
+/// Presentation adjustments attached to an element by its interface-specific
+/// initializer. Kept strictly separate from recovered Runtime data
+/// (I2DRect / runtime_flags / runtime_blit_mode) so both the authored values
+/// and the modernization choices remain inspectable.
+struct I2DPresentationHints {
+  I2DScalePolicy scale_policy{I2DScalePolicy::k_reference_canvas};
+
+  /// Anchor the element to the horizontal centre of the viewport at the top
+  /// (used for the main-menu logo). Default is the reference-canvas layout.
+  bool anchor_top_center{false};
+
+  /// Extra vertical breathing space above a top-anchored element, in
+  /// reference units (OpenNomad modernization adjustment, not a Runtime
+  /// value).
+  float top_margin_reference{0.0F};
+
+  /// Clamp a top-anchored element's own scale so it stays fully visible on
+  /// displays narrower than 4:3. No effect on ordinary landscape displays.
+  bool clamp_width_to_viewport{false};
+};
+
 /// One element of a group.
 struct I2DElement {
   I2DElementData data;
+  I2DPresentationHints presentation;
 };
 
 /// A group of elements sharing one recovered raw flag value (Runtime groups

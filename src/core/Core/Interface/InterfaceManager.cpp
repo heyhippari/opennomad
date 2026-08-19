@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "Core/Debug/Instrumentor.hpp"
+#include "Core/Debug/Metrics.hpp"
 #include "Core/GameDataLoader.hpp"
 #include "Core/Input/InputAction.hpp"
 #include "Core/Input/InputManager.hpp"
@@ -330,9 +331,11 @@ void InterfaceManager::render(const int pixel_width, const int pixel_height) {
   if (m_renderer == nullptr) {
     return;
   }
+  Debug::I2DCounters counters;
   for (const auto& instance : m_instances) {
-    m_renderer->render(*instance, m_fonts, pixel_width, pixel_height);
+    m_renderer->render(*instance, m_fonts, pixel_width, pixel_height, counters);
   }
+  Debug::Metrics::get().set_i2d_counters(counters);
 }
 
 // NOLINTNEXTLINE(readability-convert-member-functions-to-static) — descriptor API parity
@@ -493,12 +496,20 @@ void initialize_start_menu(InterfaceManager& manager, InterfaceInstance& instanc
   // Source/destination: 0,0,640,150. Raw flags: 0x40000100. Blit mode 0x03:
   // bit 0 = DDBLT_KEYSRC (source key), bit 1 = DDBLT_KEYDEST (destination
   // key, value not yet recovered).
+  //
+  // The recovered rectangle is preserved verbatim; the top-centre anchor and
+  // small top margin are OpenNomad modernization adjustments supplied as
+  // presentation hints, not mutations of the Runtime-authored coordinates.
   I2DGroup bitmap_group;
-  bitmap_group.elements.push_back(I2DElement{I2DBitmapElement{
-      .source = k_start_menu_bitmap_rect,
-      .destination = k_start_menu_bitmap_rect,
-      .runtime_flags = k_start_menu_bitmap_flags,
-      .runtime_blit_mode = k_start_menu_bitmap_blit_mode}});
+  bitmap_group.elements.push_back(I2DElement{.data = I2DBitmapElement{
+          .source = k_start_menu_bitmap_rect,
+          .destination = k_start_menu_bitmap_rect,
+          .runtime_flags = k_start_menu_bitmap_flags,
+          .runtime_blit_mode = k_start_menu_bitmap_blit_mode},
+      .presentation = I2DPresentationHints{.scale_policy = I2DScalePolicy::k_reference_canvas,
+          .anchor_top_center = true,
+          .top_margin_reference = k_start_menu_logo_top_margin,
+          .clamp_width_to_viewport = true}});
   root->groups.push_back(std::move(bitmap_group));
 
   // Runtime text group raw flags: 0x80000010. The 640 px wide rectangles and
@@ -512,13 +523,18 @@ void initialize_start_menu(InterfaceManager& manager, InterfaceInstance& instanc
   text_group.runtime_flags = k_start_menu_text_group_flags;
   for (std::size_t index{0}; index < k_start_menu_root_entries.size(); ++index) {
     const RecoveredTextEntry& entry{k_start_menu_root_entries.at(index)};
-    text_group.elements.push_back(I2DElement{I2DTextElement{.string_index = entry.string_index,
-        .font_key = entry.font_key,
-        .bounds = I2DRect{.x = entry.x, .y = entry.y, .width = entry.width, .height = entry.height},
-        .red = 255,
-        .green = 255,
-        .blue = 255,
-        .target_state = child_states.at(index)}});
+    text_group.elements.push_back(I2DElement{
+        .data = I2DTextElement{.string_index = entry.string_index,
+            .font_key = entry.font_key,
+            .bounds = I2DRect{.x = entry.x,
+                .y = entry.y,
+                .width = entry.width,
+                .height = entry.height},
+            .red = 255,
+            .green = 255,
+            .blue = 255,
+            .target_state = child_states.at(index)},
+        .presentation = I2DPresentationHints{}});
   }
   root->groups.push_back(std::move(text_group));
 

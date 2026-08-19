@@ -182,6 +182,82 @@ TEST_SUITE("Core::Interface::I2DBumpEffect") {
     const auto effect{App::Interface::I2DBumpEffect::create(std::move(wrong))};
     CHECK_FALSE(effect.has_value());
   }
+
+  TEST_CASE("Precomputed gradients match the recovered neighbour-difference math") {
+    auto effect{App::Interface::I2DBumpEffect::create(corner_height_map(200))};
+    REQUIRE(effect.has_value());
+
+    // The naive reference recomputes the signed 8-bit wrapped-neighbour
+    // difference on the fly; the precomputed arrays must match it exactly.
+    for (int y{0}; y < 256; ++y) {
+      for (int x{0}; x < 256; ++x) {
+        const int here{static_cast<int>(x == 0 && y == 0 ? 200 : 0)};
+        const int right{static_cast<int>((x == 255 && y == 0) ? 200 : 0)};
+        const int below{static_cast<int>((x == 0 && y == 255) ? 200 : 0)};
+
+        CHECK_EQ(effect->gradient_x(static_cast<std::size_t>(x), static_cast<std::size_t>(y)),
+            App::Interface::I2DBumpEffect::signed_byte(here - right));
+        CHECK_EQ(effect->gradient_y(static_cast<std::size_t>(x), static_cast<std::size_t>(y)),
+            App::Interface::I2DBumpEffect::signed_byte(here - below));
+      }
+    }
+  }
+
+  TEST_CASE("Catch-up advance matches iterated advance for several tick counts") {
+    for (const std::uint32_t ticks : {1U, 2U, 30U, 300U}) {
+      auto batched{App::Interface::I2DBumpEffect::create(flat_height_map(7))};
+      auto iterated{App::Interface::I2DBumpEffect::create(flat_height_map(7))};
+      REQUIRE(batched.has_value());
+      REQUIRE(iterated.has_value());
+
+      batched->advance_ticks(ticks);
+      batched->regenerate_lighting();
+      for (std::uint32_t tick{0}; tick < ticks; ++tick) {
+        iterated->advance_ticks(1);
+        iterated->regenerate_lighting();
+      }
+
+      CHECK_EQ(batched->tick_index(), iterated->tick_index());
+      CHECK_EQ(batched->light_x(), iterated->light_x());
+      CHECK_EQ(batched->light_y(), iterated->light_y());
+      CHECK(batched->phase_a() == doctest::Approx(iterated->phase_a()).epsilon(1e-9));
+      CHECK(batched->phase_b() == doctest::Approx(iterated->phase_b()).epsilon(1e-9));
+      CHECK(batched->phase_c() == doctest::Approx(iterated->phase_c()).epsilon(1e-9));
+      CHECK(batched->phase_d() == doctest::Approx(iterated->phase_d()).epsilon(1e-9));
+
+      for (std::size_t index : {std::size_t{0}, std::size_t{1}, std::size_t{479}}) {
+        CHECK_EQ(batched->row_warp(index), iterated->row_warp(index));
+      }
+      for (std::size_t index : {std::size_t{0}, std::size_t{1}, std::size_t{639}}) {
+        CHECK_EQ(batched->column_warp(index), iterated->column_warp(index));
+      }
+
+      // The lit field must be identical, not just the state.
+      const auto batched_lit{batched->lit_field()};
+      const auto iterated_lit{iterated->lit_field()};
+      REQUIRE_EQ(batched_lit.size(), iterated_lit.size());
+      for (std::size_t i{0}; i < batched_lit.size(); ++i) {
+        CHECK_EQ(batched_lit[i], iterated_lit[i]);
+      }
+    }
+  }
+
+  TEST_CASE("Warp-offset extension matches the recovered tables at integer coords") {
+    auto effect{App::Interface::I2DBumpEffect::create(flat_height_map(0))};
+    REQUIRE(effect.has_value());
+    effect->advance_one_tick();
+
+    for (int y : {0, 1, 239, 479}) {
+      const auto offset{App::Interface::I2DBumpEffect::row_warp_offset(
+          effect->phase_a(), effect->phase_b(), static_cast<double>(y))};
+      CHECK_EQ(offset, effect->row_warp(static_cast<std::size_t>(479 - y)));
+    }
+    for (int x : {0, 1, 319, 639}) {
+      const auto offset{App::Interface::I2DBumpEffect::column_warp_offset(
+          effect->phase_c(), effect->phase_d(), static_cast<double>(x))};
+      CHECK_EQ(offset, effect->column_warp(static_cast<std::size_t>(639 - x)));
+    }
+  }
 }
 
 // NOLINTEND(misc-use-anonymous-namespace,

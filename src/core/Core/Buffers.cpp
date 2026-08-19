@@ -65,7 +65,8 @@ void VertexBuffer::update(const std::size_t offset_bytes, const std::span<const 
 }
 
 IndexBuffer::IndexBuffer(const std::span<const std::uint32_t> indices, const GLenum usage)
-    : m_count(static_cast<std::uint32_t>(indices.size())) {
+    : m_count(static_cast<std::uint32_t>(indices.size())),
+      m_capacity(indices.size()) {
   APP_PROFILE_FUNCTION();
 
   glGenBuffers(1, &m_id);  // NOLINT(cppcoreguidelines-prefer-member-initializer)
@@ -90,6 +91,25 @@ void IndexBuffer::bind() const {
 
 void IndexBuffer::unbind() {
   glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+}
+
+void IndexBuffer::upload(const std::span<const std::uint32_t> indices) {
+  APP_PROFILE_FUNCTION();
+
+  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_id);
+  if (indices.size() > m_capacity) {
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+                 static_cast<GLsizeiptr>(indices.size_bytes()),
+                 indices.data(),
+                 GL_DYNAMIC_DRAW);
+    m_capacity = indices.size();
+  } else {
+    glBufferSubData(GL_ELEMENT_ARRAY_BUFFER,
+                    0,
+                    static_cast<GLsizeiptr>(indices.size_bytes()),
+                    indices.data());
+  }
+  m_count = static_cast<std::uint32_t>(indices.size());
 }
 
 std::uint32_t IndexBuffer::count() const { return m_count; }

@@ -5,6 +5,8 @@
 
 #include <fmt/format.h>
 
+#include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -28,10 +30,6 @@ namespace {
 /// Path to the temporary fallback TTF (see FontManager docs). Lives only in
 /// this backend; no interface or renderer code references it.
 constexpr std::string_view K_TTF_FALLBACK_PATH{"FONTS/OMIKRON.TTF"};
-
-/// Pixel size the fallback font is rasterized at (and the glyph metrics are
-/// expressed in). Sized to fit the recovered 40 px menu text bands.
-constexpr float K_FALLBACK_FONT_SIZE{30.0F};
 
 /// Flips the atlas rows so the texture matches Texture2D's bottom-up upload
 /// convention (row 0 = bottom). The atlas is produced top-down by ImGui.
@@ -59,7 +57,8 @@ FontResource::FontResource(FontResource&& other) noexcept
       m_font(other.m_font),
       m_baked(other.m_baked),
       m_texture(std::move(other.m_texture)),
-      m_size_pixels(other.m_size_pixels) {
+      m_size_pixels(other.m_size_pixels),
+      m_reference_scale(other.m_reference_scale) {
   other.m_font = nullptr;
   other.m_baked = nullptr;
 }
@@ -71,6 +70,7 @@ FontResource& FontResource::operator=(FontResource&& other) noexcept {
     m_baked = other.m_baked;
     m_texture = std::move(other.m_texture);
     m_size_pixels = other.m_size_pixels;
+    m_reference_scale = other.m_reference_scale;
     other.m_font = nullptr;
     other.m_baked = nullptr;
   }
@@ -80,7 +80,7 @@ FontResource& FontResource::operator=(FontResource&& other) noexcept {
 FontResource::~FontResource() = default;
 
 std::expected<FontResource, std::string> FontResource::load_ttf_fallback(
-    const std::filesystem::path& ttf_path, const float size_pixels) {
+    const std::filesystem::path& ttf_path, const float size_pixels, const float logical_size) {
   APP_PROFILE_FUNCTION();
 
   auto atlas{std::make_unique<ImFontAtlas>()};
@@ -108,8 +108,13 @@ std::expected<FontResource, std::string> FontResource::load_ttf_fallback(
   }
 
   const std::vector<std::uint8_t> flipped{flip_rows(pixels, width, height)};
-  auto texture{Texture2D::create(
-      width, height, std::span<const std::uint8_t>{flipped}, /*srgb=*/false)};
+  // Font atlases are scalable content: linear filtering avoids harsh
+  // stair-stepping when the glyphs are sampled at a size other than 1:1.
+  auto texture{Texture2D::create(width,
+      height,
+      std::span<const std::uint8_t>{flipped},
+      /*srgb=*/false,
+      TextureFilter::k_linear)};
   if (!texture) {
     return std::expected<FontResource, std::string>{
         std::unexpect, fmt::format("FontManager: {}", texture.error())};
@@ -122,6 +127,7 @@ std::expected<FontResource, std::string> FontResource::load_ttf_fallback(
   resource.m_baked = baked;
   resource.m_texture.emplace(std::move(texture).value());
   resource.m_size_pixels = size_pixels;
+  resource.m_reference_scale = size_pixels / logical_size;
   return resource;
 }
 
@@ -135,15 +141,18 @@ std::optional<FontResource::Glyph> FontResource::glyph_for(const char32_t codepo
   }
   // ImGui V0/V1 are expressed in a top-down atlas; the atlas was flipped to
   // bottom-up at upload, so the final V coordinates are their complement.
+  // Corner offsets and advance are normalized from physical atlas pixels to
+  // reference units so layout stays resolution-independent.
+  const float scale{m_reference_scale};
   return Glyph{.u_left = glyph->U0,
       .u_right = glyph->U1,
       .v_top = 1.0F - glyph->V0,
       .v_bottom = 1.0F - glyph->V1,
-      .x0 = glyph->X0,
-      .y0 = glyph->Y0,
-      .x1 = glyph->X1,
-      .y1 = glyph->Y1,
-      .advance_x = glyph->AdvanceX};
+      .x0 = glyph->X0 / scale,
+      .y0 = glyph->Y0 / scale,
+      .x1 = glyph->X1 / scale,
+      .y1 = glyph->Y1 / scale,
+      .advance_x = glyph->AdvanceX / scale};
 }
 
 namespace {
@@ -199,7 +208,19 @@ float FontResource::measure(const std::string_view text) const {
       width += glyph->AdvanceX;
     }
   }
-  return width;
+  return width / m_reference_scale;
+}
+
+float FontResource::line_height() const {
+  return m_size_pixels / m_reference_scale;
+}
+
+std::size_t FontManager::raster_bucket(const float reference_scale) {
+  // Nearest 2 px, minimum 2 px, so resizing a window does not rebuild an
+  // atlas dozens of times per second.
+  const float desired{k_logical_font_size * reference_scale};
+  const int bucket{static_cast<int>(std::lround(desired / 2.0F)) * 2};
+  return static_cast<std::size_t>(std::max(2, bucket));
 }
 
 std::expected<void, std::string> FontManager::load_font(const char key) {
@@ -225,17 +246,59 @@ std::expected<void, std::string> FontManager::load_font(const char key) {
       std::filesystem::path{std::string{K_TTF_FALLBACK_PATH}})};
   const std::filesystem::path ttf_resolved{Resources::resolve_case_insensitive(ttf_request)};
 
-  auto font{FontResource::load_ttf_fallback(ttf_resolved, K_FALLBACK_FONT_SIZE)};
+  auto font{FontResource::load_ttf_fallback(ttf_resolved, k_logical_font_size, k_logical_font_size)};
   if (!font) {
     return std::expected<void, std::string>{std::unexpect, font.error()};
   }
-  m_fonts.emplace(key, std::move(font).value());
+  m_fonts[key].emplace(raster_bucket(1.0F), std::move(font).value());
   return {};
+}
+
+const FontResource* FontManager::ensure_font(const char key, const float reference_scale) {
+  APP_PROFILE_FUNCTION();
+
+  const std::size_t bucket{raster_bucket(reference_scale)};
+
+  auto key_found{m_fonts.find(key)};
+  if (key_found != m_fonts.end()) {
+    const auto bucket_found{key_found->second.find(bucket)};
+    if (bucket_found != key_found->second.end()) {
+      return &bucket_found->second;
+    }
+  }
+
+  const std::string_view logical{font_logical_name(key)};
+  if (logical.empty()) {
+    return nullptr;
+  }
+
+  if (key_found == m_fonts.end()) {
+    App::Log::debug("[I2D] font key '{}' -> {}", key, logical);
+    App::Log::warn(
+        "[I2D] {}.FNT renderer unavailable; using temporary OMIKRON.TTF fallback", logical);
+  }
+
+  const std::filesystem::path ttf_request{Resources::game_data_path(
+      std::filesystem::path{std::string{K_TTF_FALLBACK_PATH}})};
+  const std::filesystem::path ttf_resolved{Resources::resolve_case_insensitive(ttf_request)};
+
+  auto font{FontResource::load_ttf_fallback(
+      ttf_resolved, static_cast<float>(bucket), k_logical_font_size)};
+  if (!font) {
+    App::Log::warn("[I2D] font key '{}' at {} px: {}", key, bucket, font.error());
+    return nullptr;
+  }
+  const auto inserted{m_fonts[key].emplace(bucket, std::move(font).value())};
+  return &inserted.first->second;
 }
 
 const FontResource* FontManager::font_for_key(const char key) const {
   const auto found{m_fonts.find(key)};
-  return found == m_fonts.end() ? nullptr : &found->second;
+  if (found == m_fonts.end()) {
+    return nullptr;
+  }
+  const auto default_bucket{found->second.find(raster_bucket(1.0F))};
+  return default_bucket == found->second.end() ? nullptr : &default_bucket->second;
 }
 
 std::string_view FontManager::font_logical_name(const char key) {

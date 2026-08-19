@@ -45,4 +45,10 @@ inline constexpr std::uint8_t k_start_menu_bitmap_blit_mode{0x03};
 /// Recovered source/destination rectangle of the gfxint top artwork.
 inline constexpr I2DRect k_start_menu_bitmap_rect{0, 0, 640, 150};
 
+/// OpenNomad modernization adjustment: extra vertical breathing space above
+/// the main-menu logo, in reference units. Applied on top of the recovered
+/// Runtime rectangle (which stays y = 0); the on-screen margin scales with
+/// the presentation transform (margin_on_screen = value * screen_height/480).
+inline constexpr float k_start_menu_logo_top_margin{8.0F};
+
 }  // namespace App::Interface

@@ -51,12 +51,19 @@ class IndexBuffer {
   void bind() const;
   static void unbind();
 
+  /// Replaces the buffer contents. Grows the storage with GL_DYNAMIC_DRAW
+  /// when the data exceeds the current capacity; otherwise overwrites the
+  /// prefix in place via glBufferSubData. Updates the index count.
+  void upload(std::span<const std::uint32_t> indices);
+
   /// Number of 32-bit indices held by the buffer.
   [[nodiscard]] std::uint32_t count() const;
 
  private:
   GLuint m_id{0};
   std::uint32_t m_count{0};
+  /// Current storage capacity in indices.
+  std::size_t m_capacity{0};
 };
 
 }  // namespace App

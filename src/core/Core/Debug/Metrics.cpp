@@ -156,4 +156,10 @@ void Metrics::set_sprite_counters(const SpriteCounters& counters) {
 
 const SpriteCounters& Metrics::sprite_counters() const { return m_sprite_counters; }
 
+void Metrics::set_i2d_counters(const I2DCounters& counters) {
+  m_i2d_counters = counters;
+}
+
+const I2DCounters& Metrics::i2d_counters() const { return m_i2d_counters; }
+
 }  // namespace App::Debug

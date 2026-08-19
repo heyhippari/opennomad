@@ -363,6 +363,16 @@ void DebugUI::show_performance(float /*delta_time*/) {
       static_cast<unsigned long>(sprites.batches),
       static_cast<unsigned long>(sprites.draw_calls));
 
+  // --- I2D interface pipeline ---
+  const auto& i2d = metrics.i2d_counters();
+  ImGui::Text("I2D: %lu draws | %lu quads | %lu glyphs",
+      static_cast<unsigned long>(i2d.draw_calls),
+      static_cast<unsigned long>(i2d.quads),
+      static_cast<unsigned long>(i2d.glyphs));
+  ImGui::Text("I2D bg: %lu ticks | %lu bytes uploaded",
+      static_cast<unsigned long>(i2d.background_ticks),
+      static_cast<unsigned long>(i2d.background_bytes_uploaded));
+
   ImGui::End();
 }
 

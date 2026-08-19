@@ -11,6 +11,11 @@
 
 namespace App {
 
+/// Texture sampling filter policy. The default for pixel-data uploads remains
+/// nearest filtering (late-90s hardware behaviour); scalable content such as
+/// font atlases opts into linear filtering explicitly.
+enum class TextureFilter : std::uint8_t { k_nearest, k_linear };
+
 /// RAII 2D texture with a fixed 8-bit RGBA upload format.
 class Texture2D {
  public:
@@ -18,8 +23,11 @@ class Texture2D {
   ///
   /// When srgb is true the storage uses GL_SRGB8_ALPHA8 so sampling decodes
   /// sRGB-encoded values into linear space (matching GL_FRAMEBUFFER_SRGB).
-  static std::expected<Texture2D, std::string> create(
-      int width, int height, std::span<const std::uint8_t> rgba8, bool srgb = true);
+  static std::expected<Texture2D, std::string> create(int width,
+      int height,
+      std::span<const std::uint8_t> rgba8,
+      bool srgb = true,
+      TextureFilter filter = TextureFilter::k_nearest);
 
   /// Allocates an uninitialised texture (render-target storage) with linear
   /// filtering and clamp-to-edge wrapping.
