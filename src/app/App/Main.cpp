@@ -17,7 +17,7 @@ int main() {
       APP_PROFILE_SCOPE("Test scope");
       auto app{App::Application::create("App")};
       if (!app) {
-        App::Log::error(LogCategory::Core, "Failed to start: {}", app.error());
+        App::Log::error(App::LogCategory::Core, "Failed to start: {}", app.error());
         exit_code = EXIT_FAILURE;
       } else {
         app->run();
@@ -27,7 +27,7 @@ int main() {
     APP_PROFILE_END_SESSION();
     return exit_code;
   } catch (std::exception& e) {
-    App::Log::error(LogCategory::Core, "Main process terminated with: {}", e.what());
+    App::Log::error(App::LogCategory::Core, "Main process terminated with: {}", e.what());
   }
 
   return EXIT_FAILURE;

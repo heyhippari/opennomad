@@ -18,6 +18,18 @@ endif ()
 # Generate compile_commands.json to make it easier to work with clang based tools
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# Ninja stores compiler- and linker-discovered dependencies in .ninja_deps.
+# Linker-generated depfiles have caused false dependency edges with current
+# Ninja/linker combinations, including cycles between test executables and
+# the libraries they consume. OpenNomad does not need linker-discovered
+# dependencies: CMake already knows the target-level link graph.
+#
+# Keep normal compiler depfiles enabled so C/C++ header dependency tracking
+# is unaffected; disable only the optional linker-generated dependency files.
+if (CMAKE_GENERATOR MATCHES "^Ninja")
+  set(CMAKE_LINK_DEPENDS_USE_LINKER FALSE)
+endif ()
+
 # Compile as strict C++23. CMAKE_CXX_EXTENSIONS OFF forces CMake to emit
 # -std=c++23 into compile_commands.json: the compiler default (gnu++23)
 # would otherwise satisfy the request without a flag, and clang-tidy would

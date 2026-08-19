@@ -93,12 +93,14 @@ struct I2DTopCenterPlacement {
     const int pixel_width,
     const int pixel_height,
     const float element_scale = 1.0F) {
+  const float reference_width{static_cast<float>(destination.width)};
+  const float reference_height{static_cast<float>(destination.height)};
+  
   const float presentation_scale{std::max(0.0F, element_scale)};
+
   float width{reference_width * presentation_scale};
   float height{reference_height * presentation_scale};
 
-  float width{reference_width};
-  float height{reference_height};
   if (clamp_width_to_viewport) {
     const float height_scale{
         pixel_height > 0 ? static_cast<float>(pixel_height) / k_reference_height : 1.0F};

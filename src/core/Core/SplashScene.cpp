@@ -32,8 +32,8 @@ namespace App {
 namespace {
 /// Smooth 0..1 interpolation with zero slope at either end.
 float smoothstep01(const float value) {
-  const float x{std::clamp(value, 0.0F, 1.0F)};
-  return x * x * (3.0F - (2.0F * x));
+  const float clamped_value{std::clamp(value, 0.0F, 1.0F)};
+  return clamped_value * clamped_value * (3.0F - (2.0F * clamped_value));
 }
 
 /// Reads a whole file into memory using SDL.

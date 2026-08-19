@@ -22,11 +22,12 @@
 namespace {
 
 /// Human-oriented display name of a startup video slot.
-constexpr std::string_view startup_video_display_name(const Startup::StartupVideoSlot slot) {
+constexpr std::string_view startup_video_display_name(
+    const App::Startup::StartupVideoSlot slot) {
   switch (slot) {
-    case Startup::StartupVideoSlot::k_publisher: return "Eidos";
-    case Startup::StartupVideoSlot::k_developer: return "Quantic Dream";
-    case Startup::StartupVideoSlot::k_intro:     return "game intro";
+    case App::Startup::StartupVideoSlot::k_publisher: return "Eidos";
+    case App::Startup::StartupVideoSlot::k_developer: return "Quantic Dream";
+    case App::Startup::StartupVideoSlot::k_intro:     return "game intro";
   }
   return "unknown";
 }

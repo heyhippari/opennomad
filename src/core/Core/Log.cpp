@@ -6,7 +6,11 @@
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
 
+#include <cstddef>
 #include <memory>
+#include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 #include "Core/Debug/LogSink.hpp"
@@ -17,11 +21,11 @@ namespace App {
 namespace {
 
 /// Console pattern: millisecond timestamps, severity and category.
-constexpr std::string_view k_console_pattern{"%^[%H:%M:%S.%e] [%-5l] [%-10n] %v%$"};
+constexpr std::string_view K_CONSOLE_PATTERN{"%^[%H:%M:%S.%e] [%-5l] [%-10n] %v%$"};
 /// File pattern additionally carries the date, useful for bug reports.
-constexpr std::string_view k_file_pattern{"[%Y-%m-%d %H:%M:%S.%e] [%-5l] [%-10n] %v"};
+constexpr std::string_view K_FILE_PATTERN{"[%Y-%m-%d %H:%M:%S.%e] [%-5l] [%-10n] %v"};
 /// Ring-buffer pattern is flat (no colour escape codes).
-constexpr std::string_view k_ring_pattern{"[%H:%M:%S.%e] [%-5l] [%-10n] %v"};
+constexpr std::string_view K_RING_PATTERN{"[%H:%M:%S.%e] [%-5l] [%-10n] %v"};
 
 /// Default per-sink verbosity for the current build.
 constexpr spdlog::level::level_enum console_level_for_build() {
@@ -29,7 +33,7 @@ constexpr spdlog::level::level_enum console_level_for_build() {
 }
 
 constexpr spdlog::level::level_enum file_level_for_build() {
-#if defined(DEBUG)
+#ifdef DEBUG
   return spdlog::level::debug;
 #else
   return spdlog::level::info;
@@ -43,9 +47,9 @@ Log::Log() {
   m_file_sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>("app.log", true);
   m_debug_sink = std::make_shared<DebugSink>();
 
-  m_console_sink->set_pattern(std::string{k_console_pattern});
-  m_file_sink->set_pattern(std::string{k_file_pattern});
-  m_debug_sink->set_pattern(std::string{k_ring_pattern});
+  m_console_sink->set_pattern(std::string{K_CONSOLE_PATTERN});
+  m_file_sink->set_pattern(std::string{K_FILE_PATTERN});
+  m_debug_sink->set_pattern(std::string{K_RING_PATTERN});
 
   m_console_sink->set_level(console_level_for_build());
   m_file_sink->set_level(file_level_for_build());
