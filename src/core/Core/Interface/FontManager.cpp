@@ -136,16 +136,21 @@ std::optional<FontResource::Glyph> FontResource::glyph_for(const char32_t codepo
   if (m_baked == nullptr || codepoint > 0xFFFFU) {
     return std::nullopt;
   }
+
   const ImFontGlyph* glyph{m_baked->FindGlyph(static_cast<ImWchar>(codepoint))};
-  if (glyph == nullptr || !glyph->Visible) {
+  if (glyph == nullptr) {
     return std::nullopt;
   }
+
   // ImGui V0/V1 are expressed in a top-down atlas; the atlas was flipped to
   // bottom-up at upload, so the final V coordinates are their complement.
   // Corner offsets and advance are normalized from physical atlas pixels to
-  // reference units so layout stays resolution-independent.
+  // reference units so layout stays resolution-independent. Invisible glyphs
+  // (notably spaces) deliberately retain these metrics: although they emit no
+  // quad, AdvanceX is part of the text layout.
   const float scale{m_reference_scale};
-  return Glyph{.u_left = glyph->U0,
+  return Glyph{.visible = glyph->Visible != 0U,
+      .u_left = glyph->U0,
       .u_right = glyph->U1,
       .v_top = 1.0F - glyph->V0,
       .v_bottom = 1.0F - glyph->V1,

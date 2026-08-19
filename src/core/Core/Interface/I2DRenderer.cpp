@@ -357,28 +357,39 @@ void I2DRenderer::render(const InterfaceInstance& instance,
         const char* cursor{label.data()};
         const char* end{label.data() + label.size()};
         while (cursor < end) {
-          const auto glyph{font->glyph_for(decode_utf8(cursor, end))};
+          const unsigned int codepoint{decode_utf8(cursor, end)};
+          const auto glyph{font->glyph_for(codepoint)};
+
           if (!glyph.has_value()) {
             continue;
           }
-          const float x0{cursor_x + glyph->x0};
-          const float y0{origin_y + glyph->y0};
-          const float x1{cursor_x + glyph->x1};
-          const float y1{origin_y + glyph->y1};
-          push_quad(font->texture(),
-              x0,
-              y0,
-              x1,
-              y1,
-              glyph->u_left,
-              glyph->v_top,
-              glyph->u_right,
-              glyph->v_bottom,
-              tint,
-              I2DBlitOptions{});
+
+          // Whitespace and other invisible glyphs still carry layout advance.
+          // measure() includes the same AdvanceX values when centring the
+          // complete label, so the drawing path must consume them as well.
+          if (glyph->visible) {
+            const float x0{cursor_x + glyph->x0};
+            const float y0{origin_y + glyph->y0};
+            const float x1{cursor_x + glyph->x1};
+            const float y1{origin_y + glyph->y1};
+
+            push_quad(font->texture(),
+                x0,
+                y0,
+                x1,
+                y1,
+                glyph->u_left,
+                glyph->v_top,
+                glyph->u_right,
+                glyph->v_bottom,
+                tint,
+                I2DBlitOptions{});
+
+            counters.glyphs += 1;
+            counters.quads += 1;
+          }
+
           cursor_x += glyph->advance_x;
-          counters.glyphs += 1;
-          counters.quads += 1;
         }
       }
     }

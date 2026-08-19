@@ -28,19 +28,27 @@ namespace App::Interface {
 /// normalized back to reference units.
 class FontResource {
  public:
-  /// One glyph, ready for a textured quad. UVs are in the same bottom-up
-  /// texture convention as every other I2D texture (v_top >= v_bottom).
-  /// Corner offsets and advance are in reference units (y grows down).
+  /// Metrics for one glyph. Visible glyphs can be emitted as textured quads;
+  /// invisible glyphs such as spaces still carry layout-significant advance.
+  /// UVs are in the same bottom-up texture convention as every other I2D
+  /// texture (v_top >= v_bottom). Corner offsets and advance are in reference
+  /// units (y grows down).
   struct Glyph {
+    /// False for whitespace and other glyphs which have layout metrics but no
+    /// pixels to draw. Their advance_x must still be applied by the renderer.
+    bool visible{false};
+
     float u_left{0.0F};
     float u_right{0.0F};
     float v_top{0.0F};
     float v_bottom{0.0F};
+
     /// Glyph corners, offsets from the cursor in reference units (y grows down).
     float x0{0.0F};
     float y0{0.0F};
     float x1{0.0F};
     float y1{0.0F};
+
     float advance_x{0.0F};
   };
 
@@ -58,8 +66,10 @@ class FontResource {
   FontResource(const FontResource&) = delete;
   FontResource& operator=(const FontResource&) = delete;
 
-  /// The glyph for a codepoint, or nullopt when it is unavailable. A missing
-  /// glyph should be skipped by the renderer. Metrics are in reference units.
+  /// The glyph for a codepoint, or nullopt when it is unavailable. Invisible
+  /// glyphs such as spaces are returned because their advance contributes to
+  /// text layout even though no textured quad is emitted. Metrics are in
+  /// reference units.
   [[nodiscard]] std::optional<Glyph> glyph_for(char32_t codepoint) const;
 
   /// Total advance width of `text` in reference units (no wrapping, no
