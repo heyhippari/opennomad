@@ -2903,6 +2903,91 @@ has:
 
 They are structurally distinct.
 
+## 25.5 Startup example: opcode `0x67` (music)
+
+Handler:
+
+```text
+FUN_00404FB0
+```
+
+The startup bytes immediately before the interface-29 instruction:
+
+```text
+67 6D 00 01 00 01 00
+```
+
+mean:
+
+```text
+opcode    = 0x67
+operand 0 = 0x006D = 109   (numeric ADP track ID)
+operand 1 = 0x0001 = 1     (looping flag)
+operand 2 = 0x0001 = 1     (unresolved mode/state flag)
+```
+
+The opcode reads three signed 16-bit operands and plays:
+
+```text
+TRACKS/<operand0>.ADP
+```
+
+Confirmed semantics:
+
+| Operand | Type | Meaning |
+|---:|---|---|
+| 0 | s16 | numeric ADP track ID (resolved to `TRACKS/%d.ADP`) |
+| 1 | s16 | looping flag (nonzero = loop) |
+| 2 | s16 | unresolved mode/state path — preserved verbatim, not yet named |
+
+Runtime does not restart a track when the requested numeric ID equals the
+current track. It also skips the request when music playback is suppressed,
+and has an unresolved branch on a zero third operand.
+
+The instruction after interface 29 eventually requests track 87, proving that
+interface 29 suspends the AREA script: if opcode `0x46` returned immediately,
+track 87 would replace track 109 almost instantly and the menu music would
+never remain playing.
+
+### QD ADP container
+
+```text
+offset  size  meaning
+0x00    3     compressed payload size, little-endian 24-bit
+0x03    1     stereo flag (0 = mono, 1 = stereo)
+0x04    12    must be zero
+0x10    ...   compressed QD IMA data
+```
+
+Stream properties:
+
+```text
+sample rate = 22050 Hz
+channels    = stereoFlag ? 2 : 1
+frames      = payloadSize * 2 / channels
+```
+
+There are no loop points or embedded loop flags; looping comes from the opcode
+operand. OpenNomad implements this as `Core/Omikron/QdAdp.{hpp,cpp}`.
+
+### QD IMA codec
+
+Per-channel state is a 32-bit predictor and a step index, both starting at
+zero. Each nibble uses the standard 89-entry IMA step table and 16-entry index
+table, but the conventional IMA `step / 8` baseline term is **not** added:
+
+```cpp
+magnitude = nibble & 0x07
+delta = magnitude-dependent sum of step * 4 / step * 2 / step
+delta >>= 2
+if (nibble & 0x08) delta = -delta
+predictor = clamp16(predictor + delta)
+step_index = clamp(step_index + index_table[nibble], 0, 88)
+```
+
+Mono decodes high nibble first (sample 0) then low nibble (sample 1). Stereo
+decodes each byte as one frame: high nibble → channel 0, low nibble → channel 1.
+
 ---
 
 # 26. Probable relationship between the two scripting layers

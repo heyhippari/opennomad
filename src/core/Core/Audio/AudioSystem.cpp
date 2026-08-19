@@ -7,7 +7,9 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <expected>
+#include <filesystem>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -19,16 +21,20 @@
 
 #include <SDL3/SDL_audio.h>
 #include <SDL3/SDL_error.h>
+#include <SDL3/SDL_iostream.h>
 #include <SDL3/SDL_properties.h>
 #include <SDL3/SDL_stdinc.h>
 #include <SDL3_mixer/SDL_mixer.h>
 
 #include "Core/Audio/AudioTypes.hpp"
 #include "Core/Audio/LegacySpatializer.hpp"
+#include "Core/Audio/MusicPlayer.hpp"
 #include "Core/Audio/SoundResourceCache.hpp"
 #include "Core/Audio/VoicePool.hpp"
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Log.hpp"
+#include "Core/Omikron/QdAdp.hpp"
+#include "Core/Resources.hpp"
 
 namespace App::Audio {
 
@@ -48,6 +54,30 @@ namespace {
     case AudioEventSeverity::k_error: return "error";
     default:                          return "info";
   }
+}
+
+/// Reads a whole game-data file through the case-insensitive resolver.
+[[nodiscard]] std::expected<std::vector<std::byte>, std::string> read_game_file(
+    const std::string& relative_path) {
+  const std::filesystem::path root_relative{Resources::game_data_path(relative_path)};
+  const std::filesystem::path resolved{Resources::resolve_case_insensitive(root_relative)};
+
+  std::size_t size{0};
+  void* raw{SDL_LoadFile(resolved.string().c_str(), &size)};
+  if (raw == nullptr) {
+    return std::expected<std::vector<std::byte>, std::string>{std::unexpect,
+        fmt::format("cannot read '{}' (resolved '{}'): {}",
+            relative_path,
+            resolved.string(),
+            SDL_GetError())};
+  }
+
+  std::vector<std::byte> bytes(size);
+  if (size > 0) {
+    std::memcpy(bytes.data(), raw, size);
+  }
+  SDL_free(raw);
+  return bytes;
 }
 
 }  // namespace
@@ -594,6 +624,102 @@ float AudioSystem::music_gain() const { return m_music_gain; }
 MusicPlayer& AudioSystem::music() { return m_music; }
 const MusicPlayer& AudioSystem::music() const { return m_music; }
 
+std::expected<void, std::string> AudioSystem::play_music_track(
+    const MusicTrackRequest& request) {
+  APP_PROFILE_FUNCTION();
+
+  // Runtime does not restart the current track when the numeric ID matches.
+  if (m_current_track_id.has_value() && m_current_track_id.value() == request.track_id &&
+      m_music.is_playing()) {
+    App::Log::info("[Music] track {} already playing (no restart)", request.track_id);
+    return {};
+  }
+
+  if (!available()) {
+    m_music_load_error = "audio subsystem unavailable";
+    App::Log::error("[Music] track {} rejected: {}", request.track_id, m_music_load_error);
+    return std::expected<void, std::string>{std::unexpect, m_music_load_error};
+  }
+
+  const std::string relative_path{fmt::format("TRACKS/{}.ADP", request.track_id)};
+  App::Log::info("[Music] opening {}", relative_path);
+
+  auto file{read_game_file(relative_path)};
+  if (!file) {
+    m_music_load_error = file.error();
+    App::Log::error("[Music] {}", file.error());
+    return std::expected<void, std::string>{std::unexpect, file.error()};
+  }
+
+  auto decoder{Omikron::QdAdpDecoder::create(std::span<const std::byte>{file.value()})};
+  if (!decoder) {
+    m_music_load_error = decoder.error();
+    App::Log::error("[Music] {}", decoder.error());
+    return std::expected<void, std::string>{std::unexpect, decoder.error()};
+  }
+
+  App::Log::info("[ADP] payload={} channels={} rate={} frames={}",
+      file.value().size() - 0x10U,
+      decoder->channels(),
+      decoder->sample_rate(),
+      decoder->total_frames());
+
+  // First vertical slice: decode the complete track to interleaved S16 PCM
+  // and hand it to the mixer (incremental streaming is a later milestone).
+  const std::size_t sample_count{
+      static_cast<std::size_t>(decoder->total_frames() * static_cast<std::uint64_t>(decoder->channels()))};
+  std::vector<std::int16_t> pcm;
+  pcm.resize(sample_count);
+  const std::size_t decoded{decoder->decode_frames(std::span<std::int16_t>{pcm})};
+  if (decoded != decoder->total_frames()) {
+    m_music_load_error = fmt::format("decoded {} of {} frames", decoded, decoder->total_frames());
+    App::Log::error("[Music] {}", m_music_load_error);
+    return std::expected<void, std::string>{std::unexpect, m_music_load_error};
+  }
+
+  SDL_AudioSpec spec{};
+  spec.format = SDL_AUDIO_S16LE;
+  spec.channels = decoder->channels();
+  spec.freq = decoder->sample_rate();
+
+  RawPcmMusicSource source{
+      .display_name = relative_path, .spec = spec, .samples = std::move(pcm)};
+  const MusicPlayOptions options{.loop = request.loop};
+
+  if (m_current_track_id.has_value() && m_music.is_playing()) {
+    App::Log::info("[Music] replacing track {} with track {}",
+        m_current_track_id.value(),
+        request.track_id);
+  }
+  if (!m_music.play_raw_pcm(std::move(source), options)) {
+    m_music_load_error = fmt::format("failed to start track {} playback", request.track_id);
+    App::Log::error("[Music] {}", m_music_load_error);
+    return std::expected<void, std::string>{std::unexpect, m_music_load_error};
+  }
+
+  m_current_track_id = request.track_id;
+  m_music_loop = request.loop;
+  m_music_mode_flag = request.mode_flag;
+  m_resolved_music_path = relative_path;
+  m_music_load_error.clear();
+  App::Log::info("[Music] playing track {} ({})",
+      request.track_id,
+      request.loop ? "loop" : "once");
+  return {};
+}
+
+void AudioSystem::stop_music(const std::int64_t fade_out_ms) {
+  m_music.stop(fade_out_ms);
+  m_current_track_id.reset();
+  m_music_loop = false;
+  m_music_mode_flag = 0;
+  m_resolved_music_path.clear();
+}
+
+std::optional<std::int16_t> AudioSystem::current_music_track() const {
+  return m_current_track_id;
+}
+
 void AudioSystem::append_event(const AudioEventSeverity severity, std::string message) {
   m_events.push_back(AudioEvent{.severity = severity, .message = std::move(message)});
   if (m_events.size() > k_event_capacity) {
@@ -695,7 +821,11 @@ void AudioSystem::rebuild_snapshot() {
     snapshot.resources = m_cache->debug_info();
   }
   snapshot.music = m_music.debug_info();
-  snapshot.music.status_note = "original Omikron music script/format support not yet implemented";
+  snapshot.music.track_id = m_current_track_id;
+  snapshot.music.resolved_path = m_resolved_music_path;
+  snapshot.music.loop_flag = m_music_loop;
+  snapshot.music.mode_flag = m_music_mode_flag;
+  snapshot.music.load_error = m_music_load_error;
   snapshot.events = m_events;
   m_snapshot = std::move(snapshot);
 }

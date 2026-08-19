@@ -49,6 +49,7 @@
 #include "Core/Startup/StartupMediaPolicy.hpp"
 #include "Core/Startup/StartupPhase.hpp"
 #include "Core/Startup/StartupTraceRecorder.hpp"
+#include "Core/TransitionScene.hpp"
 #include "Core/Video/StartupVideoSequence.hpp"
 #include "Core/Video/VideoPlayer.hpp"
 #include "Core/Video/VideoScene.hpp"
@@ -197,6 +198,7 @@ std::expected<Application, std::string> Application::create(const std::string& t
   if (audio) {
     app.m_audio = std::move(audio).value();
     app.m_scenario_manager->set_audio_system(app.m_audio.get());
+    app.m_scenario_engine->set_audio_system(app.m_audio.get());
   }
   app.m_interface_manager = std::make_unique<Interface::InterfaceManager>();
   // The skip action must be registered before the videos: the playback loop
@@ -532,6 +534,23 @@ void Application::run_engine_frame() {
     m_scene->resize(m_window->get_pixel_width(), m_window->get_pixel_height());
   }
 
+  // Deferred interface completions are drained after the scene/interface
+  // update so a completion queued by the New Game child-state action is
+  // never delivered while the selected element is still being iterated.
+  drain_interface_completions();
+
+  // Continue the scenario scheduler on the normal frame path. The initial
+  // mode-1 execution already happened during startup; this keeps a waiting
+  // or resumed AREA script progressing without re-entering a scenario mode.
+  update_scenario();
+
+  // Update the audio subsystem once per executed frame using real seconds
+  // (never Omikron 30 Hz delta units). SDL3_mixer mixes asynchronously, but
+  // the main-thread update drains events and rebuilds diagnostics.
+  if (m_audio != nullptr) {
+    m_audio->update(delta_seconds);
+  }
+
   m_window->begin_frame(delta_seconds);
 
   if (m_scene != nullptr) {
@@ -610,16 +629,51 @@ void Application::wire_menu_activation() {
   // interface system opens it. Only after a successful open is the native
   // menu installed as the visible scene (MainMenuScene is a thin adapter).
   m_scenario_engine->dispatcher().set_interface_open_sink(
-      [this](const std::uint16_t interface_id) -> std::expected<void, std::string> {
-        if (auto result{m_interface_manager->open(interface_id)}; !result) {
+      [this](const InterfaceOpenRequest& request)
+          -> std::expected<InterfaceHandle, std::string> {
+        auto result{m_interface_manager->open(request)};
+        if (!result) {
           return result;
         }
-        if (interface_id == InterfaceDispatcher::k_main_menu_interface) {
+        if (request.interface_id == InterfaceDispatcher::k_main_menu_interface) {
           m_scene = MainMenuScene::create(*m_interface_manager);
           m_window->debug_ui().set_scene(m_scene.get());
         }
-        return {};
+        return result;
       });
+}
+
+void Application::drain_interface_completions() {
+  APP_PROFILE_FUNCTION();
+
+  if (m_interface_manager == nullptr) {
+    return;
+  }
+  while (std::optional<InterfaceCompletion> completion{m_interface_manager->take_completion()}) {
+    if (m_scenario_engine != nullptr) {
+      m_scenario_engine->notify_interface_completion(completion.value());
+    }
+    if (m_interface_manager->is_open()) {
+      m_interface_manager->close();
+    }
+    // Interface 29 completed: MainMenuScene must no longer reference the
+    // closed instance. Install a clearly documented transitional scene; the
+    // Kay'l introduction is a later milestone and GRID world context 0 stays
+    // resident in ScenarioManager.
+    m_scene = TransitionScene::create();
+    m_window->debug_ui().set_scene(m_scene.get());
+  }
+}
+
+void Application::update_scenario() {
+  APP_PROFILE_FUNCTION();
+
+  if (m_scenario_engine == nullptr) {
+    return;
+  }
+  if (auto result{m_scenario_engine->update()}; !result) {
+    App::Log::error("Scenario update failed: {}", result.error());
+  }
 }
 
 bool Application::advance_startup_past_splash() {

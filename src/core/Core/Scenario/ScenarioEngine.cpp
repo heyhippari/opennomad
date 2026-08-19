@@ -8,6 +8,7 @@
 #include <utility>
 
 #include "Core/Debug/Instrumentor.hpp"
+#include "Core/Interface/InterfaceDispatcher.hpp"
 #include "Core/Scenario/ScenarioManager.hpp"
 #include "Core/Startup/StartupTraceRecorder.hpp"
 
@@ -72,6 +73,25 @@ std::expected<void, std::string> ScenarioEngine::select_permanent_mode_script() 
   APP_PROFILE_FUNCTION();
 
   return select_permanent_mode_script_impl("ModeScript.Aventure.Selected");
+}
+
+void ScenarioEngine::set_audio_system(Audio::AudioSystem* audio) {
+  m_startup.set_audio_system(audio);
+}
+
+std::expected<void, std::string> ScenarioEngine::update() {
+  APP_PROFILE_FUNCTION();
+
+  if (!m_startup.initialized()) {
+    return {};
+  }
+  return m_startup.tick();
+}
+
+void ScenarioEngine::notify_interface_completion(const InterfaceCompletion& completion) {
+  APP_PROFILE_FUNCTION();
+
+  m_startup.dispatcher().notify_completion(completion);
 }
 
 std::expected<void, std::string> ScenarioEngine::select_permanent_mode_script_impl(

@@ -26,6 +26,7 @@
 #include "Core/Interface/I2DModel.hpp"
 #include "Core/Interface/I2DRenderer.hpp"
 #include "Core/Interface/InterfaceDescriptor.hpp"
+#include "Core/Interface/InterfaceDispatcher.hpp"
 #include "Core/Interface/StartMenuLayout.hpp"
 #include "Core/Log.hpp"
 #include "Core/Omikron/BmpImage.hpp"
@@ -115,12 +116,14 @@ InterfaceManager::~InterfaceManager() {
   close();
 }
 
-std::expected<void, std::string> InterfaceManager::open(const std::uint16_t interface_id) {
+std::expected<InterfaceHandle, std::string> InterfaceManager::open(
+    const InterfaceOpenRequest& request) {
   APP_PROFILE_FUNCTION();
 
+  const std::uint16_t interface_id{request.interface_id};
   const InterfaceDescriptor* descriptor{descriptor_for_id(interface_id)};
   if (descriptor == nullptr) {
-    return std::expected<void, std::string>{std::unexpect,
+    return std::expected<InterfaceHandle, std::string>{std::unexpect,
         fmt::format("interface {} is unsupported", interface_id)};
   }
 
@@ -132,31 +135,32 @@ std::expected<void, std::string> InterfaceManager::open(const std::uint16_t inte
     m_renderer = std::make_unique<I2DRenderer>();
     if (auto result{m_renderer->initialize()}; !result) {
       m_renderer.reset();
-      return std::expected<void, std::string>{std::unexpect,
+      return std::expected<InterfaceHandle, std::string>{std::unexpect,
           fmt::format("[I2D] renderer: {}", result.error())};
     }
   }
 
   InterfaceInstance instance;
   instance.descriptor = descriptor;
+  instance.open_request = request;
 
   // Descriptor bitmap resource (I2D/bitmaps/<name>).
   if (!descriptor->bitmap_name.empty()) {
     const std::string path{bitmap_path(descriptor->bitmap_name)};
     auto file{read_file(path)};
     if (!file) {
-      return std::expected<void, std::string>{
+      return std::expected<InterfaceHandle, std::string>{
           std::unexpect, fmt::format("[I2D] bitmap: {}", file.error())};
     }
     auto bmp{Omikron::BmpImageDecoder::load(std::span<const std::byte>{file.value()})};
     if (!bmp) {
-      return std::expected<void, std::string>{
+      return std::expected<InterfaceHandle, std::string>{
           std::unexpect, fmt::format("[I2D] bitmap: {}", bmp.error())};
     }
     auto texture{Texture2D::create(
         bmp->width, bmp->height, std::span<const std::uint8_t>{bmp->rgba8}, /*srgb=*/true)};
     if (!texture) {
-      return std::expected<void, std::string>{
+      return std::expected<InterfaceHandle, std::string>{
           std::unexpect, fmt::format("[I2D] bitmap: {}", texture.error())};
     }
     instance.bitmap.emplace(std::move(texture).value());
@@ -168,12 +172,12 @@ std::expected<void, std::string> InterfaceManager::open(const std::uint16_t inte
     const std::string path{string_table_path(descriptor->string_table_name)};
     auto file{read_file(path)};
     if (!file) {
-      return std::expected<void, std::string>{
+      return std::expected<InterfaceHandle, std::string>{
           std::unexpect, fmt::format("[I2D] strings: {}", file.error())};
     }
     auto table{Omikron::IamStringTable::load(std::span<const std::byte>{file.value()})};
     if (!table) {
-      return std::expected<void, std::string>{
+      return std::expected<InterfaceHandle, std::string>{
           std::unexpect, fmt::format("[I2D] strings: {}", table.error())};
     }
     const std::size_t entry_count{table->size()};
@@ -193,10 +197,17 @@ std::expected<void, std::string> InterfaceManager::open(const std::uint16_t inte
     const std::string error{"interface initializer did not establish a root state"};
     App::Log::error("[I2D] {}", error);
     m_instance.reset();
-    return std::expected<void, std::string>{std::unexpect, error};
+    return std::expected<InterfaceHandle, std::string>{std::unexpect, error};
   }
 
-  return {};
+  ++m_generation;
+  m_instance->handle = InterfaceHandle{.interface_id = interface_id, .generation = m_generation};
+  const InterfaceHandle handle{m_instance->handle};
+  App::Log::info("[Interface] opened handle id={} gen={} \"{}\"",
+      handle.interface_id,
+      handle.generation,
+      descriptor->name);
+  return handle;
 }
 
 void InterfaceManager::close() {
@@ -212,7 +223,28 @@ void InterfaceManager::close() {
   App::Log::info("[I2D] closing interface {} \"{}\"",
       descriptor != nullptr ? descriptor->id : -1,
       descriptor != nullptr ? descriptor->name : "?");
+  App::Log::info("[Interface] closed handle id={} gen={}",
+      m_instance->handle.interface_id,
+      m_instance->handle.generation);
   m_instance.reset();
+}
+
+void InterfaceManager::request_completion(const std::int16_t result) {
+  if (!m_instance.has_value()) {
+    return;
+  }
+  m_pending_completion =
+      InterfaceCompletion{.handle = m_instance->handle, .result = result};
+  App::Log::info("[Interface] completion requested handle id={} gen={} result={}",
+      m_instance->handle.interface_id,
+      m_instance->handle.generation,
+      result);
+}
+
+std::optional<InterfaceCompletion> InterfaceManager::take_completion() {
+  std::optional<InterfaceCompletion> result{m_pending_completion};
+  m_pending_completion.reset();
+  return result;
 }
 
 void InterfaceManager::update(const float delta_time, const Input::InputManager& input) {
@@ -291,12 +323,22 @@ void InterfaceManager::confirm() {
     return;
   }
   I2DTextElement* selected{selectable.at(m_instance->selected_element)};
-  // The child states exist and are linked, but their rendering/navigation
-  // behaviour is the next milestone; activating would blank the screen, so
-  // the target state is reported without switching the visible root menu.
-  App::Log::info("[I2D] activate: string[{}] \"{}\" -> child state (not yet rendered)",
+  I2DState* target{selected->target_state};
+  if (target == nullptr) {
+    return;  // Not selectable (should not happen for a selectable element).
+  }
+  App::Log::info("[I2D] activate: string[{}] \"{}\" -> child state",
       selected->string_index,
       m_instance->strings.at(selected->string_index));
+  if (target->on_enter) {
+    // A state-specific enter action (e.g. queueing an interface completion)
+    // owns the transition; the generic path must not also switch states.
+    target->on_enter(*this, *m_instance, *target);
+    return;
+  }
+  // Generic child-state transition (no enter action).
+  m_instance->current_state = target;
+  m_instance->selected_element = 0U;
 }
 
 void InterfaceManager::cancel() {
@@ -354,6 +396,14 @@ void initialize_start_menu(InterfaceManager& manager, InterfaceInstance& instanc
   load_game->parent = root;
   options->parent = root;
   quit->parent = root;
+
+  // New Game completes interface 29. The result value is provisional and
+  // clearly documented; the important behavior is that the waiting AREA
+  // script resumes (which starts track 87 through opcode 0x67). Track 87 is
+  // never started directly here.
+  new_game->on_enter = [](InterfaceManager& manager_ref, InterfaceInstance&, I2DState&) {
+    manager_ref.request_completion(/*provisional result*/ 0);
+  };
 
   // Animated background: IMAGES/CLOUD.BMP. Missing source degrades to no
   // background (the canvas stays clear) rather than an invented asset.

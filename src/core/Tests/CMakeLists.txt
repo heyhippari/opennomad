@@ -32,6 +32,10 @@ add_executable(Texture3DTTest Texture3DT.spec.cpp $<TARGET_OBJECTS:TestRunner>)
 add_test(NAME Texture3DTTest COMMAND Texture3DTTest)
 target_link_libraries(Texture3DTTest PRIVATE doctest::doctest Core)
 
+add_executable(QdAdpTest QdAdp.spec.cpp $<TARGET_OBJECTS:TestRunner>)
+add_test(NAME QdAdpTest COMMAND QdAdpTest)
+target_link_libraries(QdAdpTest PRIVATE doctest::doctest Core)
+
 add_executable(SCXTest SCX.spec.cpp $<TARGET_OBJECTS:TestRunner>)
 add_test(NAME SCXTest COMMAND SCXTest)
 target_link_libraries(SCXTest PRIVATE doctest::doctest Core)
@@ -146,4 +150,9 @@ if(OPENNOMAD_GAME_DATA_TESTS)
       GameDataSpriteIntegration.spec.cpp $<TARGET_OBJECTS:TestRunner>)
   add_test(NAME GameDataSpriteIntegrationTest COMMAND GameDataSpriteIntegrationTest)
   target_link_libraries(GameDataSpriteIntegrationTest PRIVATE doctest::doctest Core)
+
+  add_executable(QdAdpIntegrationTest
+      QdAdpIntegration.spec.cpp $<TARGET_OBJECTS:TestRunner>)
+  add_test(NAME QdAdpIntegrationTest COMMAND QdAdpIntegrationTest)
+  target_link_libraries(QdAdpIntegrationTest PRIVATE doctest::doctest Core)
 endif()

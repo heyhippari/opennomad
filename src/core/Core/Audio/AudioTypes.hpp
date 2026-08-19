@@ -179,6 +179,16 @@ struct ResourceDebugInfo {
   std::string load_error;
 };
 
+/// Typed request produced by the AREA bytecode music opcode (0x67).
+/// `track_id` selects TRACKS/<id>.ADP, `loop` controls infinite looping, and
+/// `mode_flag` preserves Runtime operand 2 whose exact semantics remain
+/// unresolved (do not assign it a speculative name such as fade or volume).
+struct MusicTrackRequest {
+  std::int16_t track_id{0};
+  bool loop{false};
+  std::int16_t mode_flag{0};
+};
+
 /// Read-only music state snapshot.
 struct MusicDebugInfo {
   std::string source_name;
@@ -190,6 +200,16 @@ struct MusicDebugInfo {
   std::int64_t duration_ms{-1};
   float gain{1.0F};
   std::string status_note;
+
+  // Omikron music-controller state (filled by AudioSystem, not the player).
+  std::optional<std::int16_t> track_id;
+  std::string resolved_path;
+  bool loop_flag{false};
+  std::int16_t mode_flag{0};
+  int channels{0};
+  int sample_rate{0};
+  std::uint64_t total_frames{0};
+  std::string load_error;
 };
 
 /// Stable, main-thread snapshot consumed by the ImGui inspector.

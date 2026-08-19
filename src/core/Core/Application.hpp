@@ -116,6 +116,12 @@ class Application {
   /// main-menu screen is constructed and installed by the area script's
   /// interface-29 open (opcode 0x46), not by application startup directly.
   void wire_menu_activation();
+  /// Drains deferred interface completions after the scene update: notifies
+  /// the scenario engine, closes the interface and swaps out MainMenuScene
+  /// (outside element iteration so the selected element is never invalidated).
+  void drain_interface_completions();
+  /// Continues the scenario scheduler on the normal frame path after startup.
+  void update_scenario();
 
   static constexpr float kFixedTimestep{1.0F / 60.0F};
   /// Minimum interval between relative-mode re-enable attempts while

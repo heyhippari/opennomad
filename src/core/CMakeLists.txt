@@ -40,6 +40,7 @@ add_library(${NAME} STATIC
   Core/Omikron/BinaryReader.hpp
   Core/Omikron/Model3DO.hpp Core/Omikron/Model3DO.cpp
   Core/Omikron/Texture3DT.hpp Core/Omikron/Texture3DT.cpp
+  Core/Omikron/QdAdp.hpp Core/Omikron/QdAdp.cpp
   Core/Omikron/BmpImage.hpp Core/Omikron/BmpImage.cpp
   Core/Omikron/SCX.hpp Core/Omikron/SCX.cpp
   Core/Omikron/IamArchive.hpp Core/Omikron/IamArchive.cpp
@@ -69,6 +70,7 @@ add_library(${NAME} STATIC
   Core/Script/AreaScriptOpcode.hpp
   Core/Script/AreaScriptRuntime.hpp Core/Script/AreaScriptRuntime.cpp
   Core/MainMenuScene.hpp Core/MainMenuScene.cpp
+  Core/TransitionScene.hpp Core/TransitionScene.cpp
   Core/DPIHandler.cpp Core/DPIHandler.hpp
   Core/FrameTiming.hpp
   Core/Resources.hpp

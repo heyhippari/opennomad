@@ -1846,6 +1846,47 @@ it stores the current script context at:
 
 This independently corroborates that interface 29 is a specially significant interface in this startup path.
 
+### Confirmed suspension/resumption semantics
+
+**Confirmed — Runtime + retail data.**
+
+Opcode `0x46`:
+
+- advances its instruction pointer past the instruction;
+- opens the interface through the generic interface path;
+- sets wait state 6;
+- suspends the AREA script context until the interface completes;
+- resumes at the instruction immediately after opcode `0x46` when the
+  interface is completed (e.g. New Game for interface 29).
+
+This is proven by the AREA 118 startup ordering:
+
+```text
+opcode 0x67 (109, 1, 1)   -> play TRACKS/109.ADP (loop)
+...
+opcode 0x46 (29, -1, 19)  -> open interface 29, suspend script
+opcode 0x67 (87, 1, 1)    -> replace track 109 with TRACKS/87.ADP
+```
+
+If opcode `0x46` returned immediately, track 87 would replace track 109 almost
+instantly and the menu music would not remain playing. 109.ADP is the
+main-menu music; 87.ADP is the looping Kay'l portal/tunnel introduction music
+requested once New Game completes interface 29. The resumed AREA script owns
+both music requests — the New Game callback only completes the interface.
+
+### AREA music opcode `0x67`
+
+Handler `FUN_00404FB0`. Three signed 16-bit operands:
+
+```text
+operand 0: numeric ADP track ID -> TRACKS/%d.ADP
+operand 1: looping flag
+operand 2: unresolved mode/state flag (preserved, not named)
+```
+
+See `script-opcodes.md` §25.5 and `Core/Omikron/QdAdp.{hpp,cpp}` for the ADP
+container and QD IMA codec details.
+
 ## Interface resolution/open chain
 
 The handler resolves interface metadata through:

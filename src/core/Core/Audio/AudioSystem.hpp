@@ -109,6 +109,20 @@ class AudioSystem {
   [[nodiscard]] MusicPlayer& music();
   [[nodiscard]] const MusicPlayer& music() const;
 
+  /// Plays (or replaces) the numbered Omikron music track described by
+  /// `request`: resolves TRACKS/<track_id>.ADP through the case-insensitive
+  /// resource resolver, decodes the ADP to PCM and starts it on the existing
+  /// music track. Never restarts a track whose numeric ID equals the current
+  /// one. Failure is non-fatal: a useful error is logged and recorded.
+  [[nodiscard]] std::expected<void, std::string> play_music_track(
+      const MusicTrackRequest& request);
+
+  /// Stops music, fading out over `fade_out_ms`. Clears the current-track id.
+  void stop_music(std::int64_t fade_out_ms = 0);
+
+  /// The numeric ID of the currently requested music track, or nullopt.
+  [[nodiscard]] std::optional<std::int16_t> current_music_track() const;
+
   // --- Inspection ---
 
   /// Stable main-thread snapshot for the ImGui inspector.
@@ -176,6 +190,13 @@ class AudioSystem {
   float m_master_gain{1.0F};
   float m_sfx_gain{1.0F};
   float m_music_gain{1.0F};
+
+  /// Omikron music-controller state (numeric track lookup, not the player).
+  std::optional<std::int16_t> m_current_track_id;
+  bool m_music_loop{false};
+  std::int16_t m_music_mode_flag{0};
+  std::string m_resolved_music_path;
+  std::string m_music_load_error;
 
   std::string m_mixer_version;
   std::string m_device_name;

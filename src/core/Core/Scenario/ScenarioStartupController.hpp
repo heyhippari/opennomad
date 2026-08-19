@@ -19,6 +19,10 @@ namespace App::Startup {
 class StartupTraceRecorder;
 }
 
+namespace App::Audio {
+class AudioSystem;
+}
+
 namespace App {
 
 class ScenarioManager;
@@ -55,6 +59,10 @@ class ScenarioStartupController {
   /// events are recorded here; coarse mode-level events live in ScenarioEngine.
   void set_trace_recorder(Startup::StartupTraceRecorder* trace);
 
+  /// Wires the application audio system so the AREA music opcode (0x67) can
+  /// request numbered tracks. May be null (music is non-fatal).
+  void set_audio_system(Audio::AudioSystem* audio);
+
   /// Selects aventure.SCX into the permanent gameplay-mode slot. Does not
   /// load any IAM data.
   [[nodiscard]] std::expected<void, std::string> select_permanent_mode_script(
@@ -74,6 +82,17 @@ class ScenarioStartupController {
 
   /// Executes one area-script interpreter tick (mode 1).
   [[nodiscard]] std::expected<void, std::string> tick();
+
+  /// True once the new session has been initialized (area script exists).
+  [[nodiscard]] bool initialized() const {
+    return m_initialized;
+  }
+
+  /// Delivers an interface completion to the waiting area script. Resumes the
+  /// script when the completion matches the stored interface handle; logs and
+  /// ignores stale/mismatched completions.
+  [[nodiscard]] std::expected<void, std::string> complete_interface(
+      const InterfaceCompletion& completion);
 
   /// The UI dispatch owning the native main-menu transition.
   [[nodiscard]] InterfaceDispatcher& dispatcher() {
@@ -148,8 +167,14 @@ class ScenarioStartupController {
   std::string m_last_error;
   bool m_initialized{false};
   bool m_ticked{false};
+  /// True once event 1 has been recorded as started (avoids per-frame spam).
+  bool m_event_started{false};
+  /// True once the transition into interface waiting has been recorded.
+  bool m_waiting_recorded{false};
   /// Optional startup trace recorder (fine-grained events).
   Startup::StartupTraceRecorder* m_trace{nullptr};
+  /// Application audio system (may be null; music is non-fatal).
+  Audio::AudioSystem* m_audio{nullptr};
   /// UI dispatch; owns the native main-menu transition state.
   InterfaceDispatcher m_dispatcher;
 };

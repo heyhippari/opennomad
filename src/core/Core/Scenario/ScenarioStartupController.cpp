@@ -19,6 +19,8 @@
 #include <vector>
 
 #include "Core/Debug/Instrumentor.hpp"
+#include "Core/Audio/AudioSystem.hpp"
+#include "Core/Audio/AudioTypes.hpp"
 #include "Core/Interface/InterfaceDispatcher.hpp"
 #include "Core/Log.hpp"
 #include "Core/Omikron/IamArea.hpp"
@@ -63,7 +65,6 @@ bool is_provisional_trace_opcode(const std::uint32_t opcode) {
     case 0x68:
     case 0x5C:
     case 0x83:
-    case 0x67:
     case 0x76:
       return true;
     default:
@@ -131,6 +132,8 @@ void ScenarioStartupController::reset_session() {
   m_last_error.clear();
   m_initialized = false;
   m_ticked = false;
+  m_event_started = false;
+  m_waiting_recorded = false;
 }
 
 std::expected<void, std::string> ScenarioStartupController::initialize_new_session(
@@ -262,20 +265,57 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
   // first interpreter tick runs in tick().
   m_area_script.emplace(area_record_view.script_bytes());
   Script::AreaScriptRuntime& area_script{*m_area_script};
-  area_script.set_interface_sink([this](const std::uint16_t interface_id,
-                                    const std::int16_t operand_b,
-                                    const std::int16_t operand_c) {
-    const InterfaceOpenRequest request{
-        .interface_id = interface_id, .operand_b = operand_b, .operand_c = operand_c};
-    record("Interface.OpenRequested",
-        fmt::format("id={} arg2={} arg3={}", interface_id, operand_b, operand_c));
-    const std::expected<void, std::string> result{m_dispatcher.open(request)};
-    if (!result) {
-      App::Log::warn("interface {} dispatch failed: {}", interface_id, result.error());
-    } else if (interface_id == InterfaceDispatcher::k_main_menu_interface) {
-      record("MainMenu.Active");
+
+  area_script.set_music_sink([this](const Audio::MusicTrackRequest& request) {
+    record("Music.TrackRequested",
+        fmt::format("track={} loop={} mode={}",
+            request.track_id,
+            request.loop,
+            request.mode_flag));
+    App::Log::info("[AreaScript] opcode 0x67 PlayMusic track={} loop={} mode={}",
+        request.track_id,
+        request.loop,
+        request.mode_flag);
+    if (m_audio == nullptr) {
+      App::Log::warn("[Music] track {} requested but no audio system is available",
+          request.track_id);
+      return;
+    }
+    if (auto result{m_audio->play_music_track(request)}; !result) {
+      App::Log::warn("[Music] track {} play failed: {}", request.track_id, result.error());
+      record("Music.TrackFailed", result.error());
     }
   });
+
+  area_script.set_interface_sink(
+      [this](const InterfaceOpenRequest& request) -> std::expected<InterfaceHandle, std::string> {
+        record("Interface.OpenRequested",
+            fmt::format("id={} arg2={} arg3={}",
+                request.interface_id,
+                request.operand_b,
+                request.operand_c));
+        App::Log::info("[AreaScript] opcode 0x46 OpenInterface id={} arg1={} arg2={}",
+            request.interface_id,
+            request.operand_b,
+            request.operand_c);
+        auto result{m_dispatcher.open(request)};
+        if (!result) {
+          App::Log::warn("interface {} dispatch failed: {}", request.interface_id, result.error());
+          return result;
+        }
+        if (request.interface_id == InterfaceDispatcher::k_main_menu_interface) {
+          record("MainMenu.Active");
+        }
+        return result;
+      });
+
+  m_dispatcher.set_interface_completion_sink(
+      [this](const InterfaceCompletion& completion) {
+        if (auto result{complete_interface(completion)}; !result) {
+          App::Log::warn("interface completion ignored: {}", result.error());
+        }
+      });
+
   area_script.set_instruction_sink(
       [this](const std::uint32_t opcode, const std::vector<std::int32_t>& operands) {
         if (opcode == 0x0D) {
@@ -328,22 +368,45 @@ std::expected<void, std::string> ScenarioStartupController::tick() {
 
   Script::AreaScriptRuntime& area_script{*m_area_script};
   m_ticked = true;
-  record("AreaScript.EventStarted", "event=1");
+
+  // Event 1 is recorded as started exactly once; a resumed script continues
+  // from its existing instruction pointer on later frames without re-recording.
+  if (!m_event_started) {
+    record("AreaScript.EventStarted", "event=1");
+    m_event_started = true;
+  }
+
   const Script::AreaScriptState state{area_script.run()};
-  App::Log::info("area script state after first tick: {}", static_cast<int>(state));
 
   if (state == Script::AreaScriptState::k_failed) {
     m_last_error = area_script.pause_info().reason_text;
     return std::expected<void, std::string>{std::unexpect, m_last_error};
   }
-  if (state == Script::AreaScriptState::k_waiting) {
+  // A waiting script is a harmless no-op across frames; record the transition
+  // into waiting only once so per-frame ticks stay quiet.
+  if (state == Script::AreaScriptState::k_waiting && !m_waiting_recorded) {
     record("AreaContext.Waiting", fmt::format("state={}", area_script.wait_state()));
+    m_waiting_recorded = true;
   }
   return {};
 }
 
+std::expected<void, std::string> ScenarioStartupController::complete_interface(
+    const InterfaceCompletion& completion) {
+  APP_PROFILE_FUNCTION();
+
+  if (!m_area_script.has_value()) {
+    return std::expected<void, std::string>{std::unexpect, "area script context not initialized"};
+  }
+  return m_area_script->complete_interface_wait(completion);
+}
+
 void ScenarioStartupController::set_trace_recorder(Startup::StartupTraceRecorder* trace) {
   m_trace = trace;
+}
+
+void ScenarioStartupController::set_audio_system(Audio::AudioSystem* audio) {
+  m_audio = audio;
 }
 
 void ScenarioStartupController::record(std::string name, std::string detail) {

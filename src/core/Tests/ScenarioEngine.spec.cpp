@@ -58,7 +58,8 @@ void write_bytes(const std::filesystem::path& path, const std::vector<std::byte>
       reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size()));
 }
 
-/// The confirmed area-118 startup prefix bytes.
+/// The confirmed area-118 startup prefix bytes, extended with the music 87
+/// instruction that follows interface 29 (the milestone's resume target).
 std::vector<std::byte> make_prefix() {
   Buffer bytes;
   bytes.u8(0x0D).u16(175);
@@ -71,6 +72,7 @@ std::vector<std::byte> make_prefix() {
   bytes.u8(0x67).u16(109).u16(1).u16(1);
   bytes.u8(0x76).u32(0).u16(0).u16(0);
   bytes.u8(0x46).u16(29).u16(0xFFFF).u16(19);
+  bytes.u8(0x67).u16(87).u16(1).u16(1);
   return bytes.data();
 }
 
@@ -197,7 +199,10 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
     App::ScenarioManager manager;
     App::ScenarioEngine engine{manager, recorder};
     engine.dispatcher().set_interface_open_sink(
-        [](std::uint16_t /*id*/) { return std::expected<void, std::string>{}; });
+        [](const App::InterfaceOpenRequest& request)
+            -> std::expected<App::InterfaceHandle, std::string> {
+          return App::InterfaceHandle{.interface_id = request.interface_id, .generation = 1};
+        });
 
     REQUIRE(engine.select_permanent_mode_script().has_value());
     REQUIRE(engine.enter_mode(App::ScenarioMode::k_teardown, 0).has_value());
@@ -309,7 +314,10 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
     App::ScenarioManager manager;
     App::ScenarioEngine engine{manager, recorder};
     engine.dispatcher().set_interface_open_sink(
-        [](std::uint16_t /*id*/) { return std::expected<void, std::string>{}; });
+        [](const App::InterfaceOpenRequest& request)
+            -> std::expected<App::InterfaceHandle, std::string> {
+          return App::InterfaceHandle{.interface_id = request.interface_id, .generation = 1};
+        });
 
     REQUIRE(engine.select_permanent_mode_script().has_value());
     REQUIRE(engine.enter_mode(App::ScenarioMode::k_teardown, 0).has_value());
@@ -324,6 +332,58 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
     REQUIRE(grid_3do.has_value());
     REQUIRE(grid_scx.has_value());
     CHECK_LT(grid_3do.value(), grid_scx.value());
+  }
+
+  TEST_CASE("music 109 plays, interface 29 suspends the script, completion resumes 87") {
+    const TempDirectory temp;
+    write_boot_fixtures(temp);
+    const ScopedGameDataRoot root{temp.root()};
+
+    App::Startup::StartupTraceRecorder recorder;
+    App::ScenarioManager manager;
+    App::ScenarioEngine engine{manager, recorder};
+    engine.dispatcher().set_interface_open_sink(
+        [](const App::InterfaceOpenRequest& request)
+            -> std::expected<App::InterfaceHandle, std::string> {
+          return App::InterfaceHandle{.interface_id = request.interface_id, .generation = 1};
+        });
+
+    REQUIRE(engine.select_permanent_mode_script().has_value());
+    REQUIRE(engine.enter_mode(App::ScenarioMode::k_teardown, 0).has_value());
+    REQUIRE(engine.enter_mode(App::ScenarioMode::k_new_session, 0).has_value());
+    REQUIRE(engine.enter_mode(App::ScenarioMode::k_tick, 0).has_value());
+
+    REQUIRE(engine.area_script() != nullptr);
+    CHECK(engine.area_script()->state() == AreaScriptState::k_waiting);
+    CHECK(engine.dispatcher().main_menu_active());
+
+    // Track 109 was requested before the interface opened; no 87 yet.
+    REQUIRE(seq_of(recorder, "Music.TrackRequested", "track=109").has_value());
+    REQUIRE(seq_of(recorder, "Interface.OpenRequested", "id=29").has_value());
+    CHECK_FALSE(seq_of(recorder, "Music.TrackRequested", "track=87").has_value());
+
+    // Later per-frame updates while waiting keep the script suspended and do
+    // not request 87.
+    REQUIRE(engine.update().has_value());
+    REQUIRE(engine.update().has_value());
+    CHECK(engine.area_script()->state() == AreaScriptState::k_waiting);
+    CHECK_FALSE(seq_of(recorder, "Music.TrackRequested", "track=87").has_value());
+
+    // New Game completes interface 29 with the active handle.
+    const std::optional<App::InterfaceHandle> handle{engine.dispatcher().active_handle()};
+    REQUIRE(handle.has_value());
+    engine.notify_interface_completion(App::InterfaceCompletion{.handle = *handle, .result = 0});
+    CHECK_FALSE(engine.dispatcher().main_menu_active());
+
+    // The next per-frame update resumes the script and requests 87.
+    REQUIRE(engine.update().has_value());
+    CHECK(seq_of(recorder, "Music.TrackRequested", "track=87").has_value());
+
+    // GRID world context 0 stays resident and active throughout.
+    CHECK_EQ(manager.world_contexts()[0].scene_id, 0U);
+    CHECK_EQ(manager.world_contexts()[0].residency, WorldSceneResidencyState::LoadedActive);
+    CHECK_EQ(manager.world_contexts()[0].scenario_path, "SCPTDATA/GRID.SCX");
+    CHECK(manager.gameplay_mode_scx() != nullptr);
   }
 }
 

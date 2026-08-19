@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <variant>
 #include <vector>
 
@@ -18,6 +19,15 @@ struct I2DRect {
 
 struct I2DState;
 class I2DBumpBackground;
+class InterfaceManager;
+struct InterfaceInstance;
+
+/// Generic enter action for a child state. Invoked by the generic confirm()
+/// path when the selected element's target state has one. The callback must
+/// perform the state-specific enter behavior (e.g. queue an interface
+/// completion) without inspecting the label text or string-table index.
+using I2DStateEnterCallback =
+    std::function<void(InterfaceManager&, InterfaceInstance&, I2DState&)>;
 
 /// The two generic element kinds implemented by this milestone. More element
 /// kinds (animations, hotspots, ...) are expected from later RE work.
@@ -77,10 +87,14 @@ struct I2DGroup {
 ///
 /// background is a non-owning pointer into the owning InterfaceInstance's
 /// background object (nullptr for states without one).
+///
+/// on_enter is an optional generic enter action invoked by the generic
+/// confirm() path; states without one simply become the current state.
 struct I2DState {
   I2DState* parent{nullptr};
   std::vector<I2DGroup> groups;
   I2DBumpBackground* background{nullptr};
+  I2DStateEnterCallback on_enter;
 };
 
 /// Collects the selectable text elements of `state` in iteration order

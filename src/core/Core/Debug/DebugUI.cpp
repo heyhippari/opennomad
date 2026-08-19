@@ -1738,11 +1738,15 @@ void DebugUI::show_area_script() {
     case Script::AreaScriptState::k_failed:            state_name = "Failed"; break;
   }
 
-  ImGui::Text("State: %s  active: %s  wait: %u  state value: %d",
+  ImGui::Text("State: %s  active: %s  wait: %u",
       state_name,
       script->active() ? "yes" : "no",
-      static_cast<unsigned int>(script->wait_state()),
-      script->state_value());
+      static_cast<unsigned int>(script->wait_state()));
+  if (script->wait_info().interface.has_value()) {
+    ImGui::Text("Wait interface: id=%u gen=%u",
+        static_cast<unsigned int>(script->wait_info().interface->interface_id),
+        script->wait_info().interface->generation);
+  }
   ImGui::Text("Instruction pointer: %zu  executed: %zu",
       script->instruction_pointer(),
       script->executed_instruction_count());

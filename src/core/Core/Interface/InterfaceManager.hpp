@@ -11,6 +11,7 @@
 #include "Core/Interface/FontManager.hpp"
 #include "Core/Interface/I2DModel.hpp"
 #include "Core/Interface/InterfaceDescriptor.hpp"
+#include "Core/Interface/InterfaceDispatcher.hpp"
 #include "Core/Omikron/IamStringTable.hpp"
 #include "Core/Texture.hpp"
 
@@ -29,6 +30,11 @@ class I2DRenderer;
 ///   descriptor -> resources (bitmap, string table) -> I2D state graph.
 struct InterfaceInstance {
   const InterfaceDescriptor* descriptor{nullptr};
+  /// Identity of this instance (interface id + generation), assigned by the
+  /// generic opener and used to validate deferred completions.
+  InterfaceHandle handle;
+  /// The full open request that produced this instance (operands preserved).
+  InterfaceOpenRequest open_request;
   Omikron::IamStringTable strings;
   /// The interface-level bitmap loaded from I2D/bitmaps/<bitmap_name>; null
   /// for interfaces without one.
@@ -62,14 +68,30 @@ class InterfaceManager {
 
   /// Generic Interface_Open equivalent: locate descriptor -> create instance
   /// -> load bitmap -> load string table -> descriptor-specific init ->
-  /// establish root/current state. Requires a current GL context.
-  [[nodiscard]] std::expected<void, std::string> open(std::uint16_t interface_id);
+  /// establish root/current state. Requires a current GL context. Returns the
+  /// opened instance handle.
+  [[nodiscard]] std::expected<InterfaceHandle, std::string> open(
+      const InterfaceOpenRequest& request);
 
   /// Generic close: descriptor destroy callback, then RAII resource release.
   void close();
 
   [[nodiscard]] bool is_open() const {
     return m_instance.has_value();
+  }
+
+  /// Queues a deferred completion request for the active instance (a New Game
+  /// child-state action). The completion is drained later by the application
+  /// so the active instance is not invalidated during element iteration.
+  void request_completion(std::int16_t result);
+
+  /// Returns and clears the deferred completion, if one was requested.
+  [[nodiscard]] std::optional<InterfaceCompletion> take_completion();
+
+  /// The handle of the active instance, or nullopt when closed.
+  [[nodiscard]] std::optional<InterfaceHandle> active_handle() const {
+    return m_instance.has_value() ? std::optional<InterfaceHandle>{m_instance->handle}
+                                  : std::nullopt;
   }
 
   /// Per-frame update: advances the background animation and handles menu
@@ -106,6 +128,11 @@ class InterfaceManager {
   std::unique_ptr<I2DRenderer> m_renderer;
   FontManager m_fonts;
   std::optional<InterfaceInstance> m_instance;
+  /// Generation counter for the next opened instance (used in handles).
+  std::uint32_t m_generation{0};
+  /// Deferred completion request for the active instance, drained by the
+  /// application outside element iteration.
+  std::optional<InterfaceCompletion> m_pending_completion;
 };
 
 /// Looks up a descriptor in the static interface registry.

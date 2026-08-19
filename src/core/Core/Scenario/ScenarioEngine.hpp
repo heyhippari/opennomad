@@ -11,6 +11,10 @@
 #include "Core/Scenario/ScenarioStartupController.hpp"
 #include "Core/Startup/StartupTraceRecorder.hpp"
 
+namespace App::Audio {
+class AudioSystem;
+}
+
 namespace App {
 
 /// The recovered scenario-engine modes (Runtime's ScenarioEngine(mode,
@@ -43,6 +47,20 @@ class ScenarioEngine {
 
   /// Selects aventure.SCX into the permanent mode slot (pre-splash phase).
   [[nodiscard]] std::expected<void, std::string> select_permanent_mode_script();
+
+  /// Wires the application audio system through to the startup controller's
+  /// music sink (opcode 0x67).
+  void set_audio_system(Audio::AudioSystem* audio);
+
+  /// Per-frame scenario scheduler update: continues the active AREA script
+  /// across frames without re-entering a scenario mode or re-recording the
+  /// mode begin/complete trace events. No-op until a new session is
+  /// initialized.
+  [[nodiscard]] std::expected<void, std::string> update();
+
+  /// Delivers a deferred interface completion to the dispatcher (updating the
+  /// main-menu lifecycle) and resumes the waiting AREA script.
+  void notify_interface_completion(const InterfaceCompletion& completion);
 
   [[nodiscard]] InterfaceDispatcher& dispatcher() {
     return m_startup.dispatcher();

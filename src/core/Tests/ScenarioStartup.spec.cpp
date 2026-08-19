@@ -216,7 +216,10 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK_FALSE(controller.dispatcher().main_menu_active());
 
     controller.dispatcher().set_interface_open_sink(
-        [](std::uint16_t /*id*/) { return std::expected<void, std::string>{}; });
+        [](const App::InterfaceOpenRequest& request)
+            -> std::expected<App::InterfaceHandle, std::string> {
+          return App::InterfaceHandle{.interface_id = request.interface_id, .generation = 1};
+        });
 
     REQUIRE(controller.tick().has_value());
     CHECK(controller.ticked());

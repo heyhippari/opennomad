@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstring>
 #include <deque>
+#include <expected>
 #include <optional>
 #include <span>
 #include <string>
@@ -14,6 +15,8 @@
 #include <vector>
 
 #include "Core/Debug/Instrumentor.hpp"
+#include "Core/Audio/AudioTypes.hpp"
+#include "Core/Interface/InterfaceDispatcher.hpp"
 #include "Core/Log.hpp"
 #include "Core/Script/AreaScriptOpcode.hpp"
 #include "Core/Script/ScriptOpcode.hpp"
@@ -29,7 +32,7 @@ constexpr std::uint32_t K_OP_CHARACTER_SELECTION_RESET{0x4F};
 constexpr std::uint32_t K_OP_ACTIVATE_SUBSYSTEM{0x68};
 constexpr std::uint32_t K_OP_OBJECT_ACTIVATE{0x5C};
 constexpr std::uint32_t K_OP_SUBSYSTEM_OPERATION{0x83};
-constexpr std::uint32_t K_OP_SET_STATE_VALUE{0x67};
+constexpr std::uint32_t K_OP_PLAY_MUSIC{0x67};
 constexpr std::uint32_t K_OP_PRESENTATION_EFFECT{0x76};
 constexpr std::uint32_t K_OP_OPEN_INTERFACE{0x46};
 
@@ -102,11 +105,12 @@ constexpr std::array<AreaOpcodeInfo, 10> K_AREA_OPCODE_TABLE{
         .notes = "unresolved subsystem operation",
         .operands = K_OPERANDS_83.data(),
         .operand_count = K_OPERANDS_83.size()},
-    AreaOpcodeInfo{.opcode = K_OP_SET_STATE_VALUE,
-        .name = "SetStateValue",
+    AreaOpcodeInfo{.opcode = K_OP_PLAY_MUSIC,
+        .name = "PlayMusic",
         .support = OpcodeSupport::k_supported,
         .provisional = false,
-        .notes = "sets the global/state value to <operand 0>",
+        .notes = "plays TRACKS/<operand 0>.ADP; operand 1 controls looping; "
+                 "operand 2 is preserved with unresolved semantics",
         .operands = K_OPERANDS_67.data(),
         .operand_count = K_OPERANDS_67.size()},
     AreaOpcodeInfo{.opcode = K_OP_PRESENTATION_EFFECT,
@@ -180,8 +184,34 @@ void AreaScriptRuntime::set_interface_sink(InterfaceSink sink) {
   m_interface_sink = std::move(sink);
 }
 
+void AreaScriptRuntime::set_music_sink(MusicSink sink) {
+  m_music_sink = std::move(sink);
+}
+
 void AreaScriptRuntime::set_instruction_sink(InstructionSink sink) {
   m_instruction_sink = std::move(sink);
+}
+
+std::expected<void, std::string> AreaScriptRuntime::complete_interface_wait(
+    const App::InterfaceCompletion& completion) {
+  if (m_state != AreaScriptState::k_waiting) {
+    return std::expected<void, std::string>{std::unexpect, "area script is not waiting"};
+  }
+  if (m_wait.kind != AreaWaitKind::k_interface) {
+    return std::expected<void, std::string>{
+        std::unexpect, "area script is not waiting on an interface"};
+  }
+  if (!m_wait.interface.has_value() || m_wait.interface.value() != completion.handle) {
+    return std::expected<void, std::string>{
+        std::unexpect, "interface completion handle does not match the waiting interface"};
+  }
+
+  m_completion_result = completion.result;
+  m_wait = AreaWaitState{};
+  m_wait_state = 0;
+  m_state = AreaScriptState::k_running;
+  App::Log::info("area script interface wait completed; resuming at offset {:#x}", m_ip);
+  return {};
 }
 
 std::optional<std::int32_t> AreaScriptRuntime::variable(const std::uint16_t id) const {
@@ -313,18 +343,48 @@ void AreaScriptRuntime::execute_instruction() {
           static_cast<std::uint16_t>(operands.at(0)),
           operands.at(1));
       break;
-    case K_OP_SET_STATE_VALUE:
-      m_state_value = operands.at(0);
-      entry.effect = fmt::format("state value = {}", operands.at(0));
+    case K_OP_PLAY_MUSIC: {
+      const Audio::MusicTrackRequest request{
+          .track_id = static_cast<std::int16_t>(operands.at(0)),
+          .loop = operands.at(1) != 0,
+          .mode_flag = static_cast<std::int16_t>(operands.at(2)),
+      };
+      if (m_music_sink) {
+        m_music_sink(request);
+      }
+      entry.effect = fmt::format("play music track {} (loop={}, mode={})",
+          request.track_id,
+          request.loop,
+          request.mode_flag);
       break;
+    }
     case K_OP_OPEN_INTERFACE: {
       const std::uint16_t interface_id{static_cast<std::uint16_t>(operands.at(0))};
       const std::int16_t operand_b{static_cast<std::int16_t>(operands.at(1))};
       const std::int16_t operand_c{static_cast<std::int16_t>(operands.at(2))};
+      const App::InterfaceOpenRequest request{
+          .interface_id = interface_id, .operand_b = operand_b, .operand_c = operand_c};
       m_wait_state = K_OPEN_INTERFACE_WAIT_STATE;
+      std::optional<App::InterfaceHandle> handle;
       if (m_interface_sink) {
-        m_interface_sink(interface_id, operand_b, operand_c);
+        auto result{m_interface_sink(request)};
+        if (!result) {
+          m_pause_info = AreaPauseInfo{};
+          m_pause_info.offset = instruction_offset;
+          m_pause_info.opcode = opcode;
+          m_pause_info.opcode_name = info->name;
+          m_pause_info.reason_text =
+              fmt::format("interface {} open failed: {}", interface_id, result.error());
+          m_pause_info.nearby_bytes = nearby_bytes_hex(instruction_offset);
+          m_state = AreaScriptState::k_failed;
+          App::Log::error("AreaScript.Failed: {}", m_pause_info.reason_text);
+          return;
+        }
+        handle = result.value();
       }
+      m_wait = AreaWaitState{.kind = AreaWaitKind::k_interface,
+          .runtime_state = K_OPEN_INTERFACE_WAIT_STATE,
+          .interface = handle};
       entry.effect =
           fmt::format("open interface {} (operands {}, {})", interface_id, operand_b, operand_c);
       break;
