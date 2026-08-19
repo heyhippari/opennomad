@@ -1,0 +1,484 @@
+#include <doctest/doctest.h>
+
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <string>
+#include <string_view>
+#include <vector>
+
+#include "Core/Omikron/Model3DO.hpp"
+#include "OmikronTestBuffer.hpp"
+
+// NOLINTBEGIN(misc-use-anonymous-namespace, cppcoreguidelines-avoid-do-while, cert-err33-c)
+
+namespace {
+
+constexpr std::size_t K_HEADER_SIZE{372};
+constexpr std::size_t K_MATERIAL_SIZE{80};
+constexpr std::size_t K_VERTEX_SIZE{32};
+constexpr std::size_t K_TRIANGLE_SIZE{28};
+constexpr std::size_t K_MESH_SIZE{140};
+constexpr std::size_t K_LIGHT_SIZE{304};
+
+/// Builds a header whose sections immediately follow it in the order
+/// materials, vertices, triangles, rectangles, meshes, lights.
+Buffer make_header(const std::uint32_t material_count,
+                   const std::uint32_t mesh_count,
+                   const std::uint32_t vertex_count,
+                   const std::uint32_t triangle_count,
+                   const std::uint32_t rectangle_count,
+                   const std::uint32_t lights_unknown1 = 0,
+                   const std::uint32_t lights_unknown2 = 0,
+                   const std::uint32_t frame_count = 0,
+                   const std::uint32_t texture_count = 0,
+                   const std::uint32_t object_count = 0) {
+  const std::size_t materials_offset{K_HEADER_SIZE};
+  const std::size_t vertices_offset{
+      materials_offset + (static_cast<std::size_t>(material_count) * K_MATERIAL_SIZE)};
+  const std::size_t triangles_offset{
+      vertices_offset + (static_cast<std::size_t>(vertex_count) * K_VERTEX_SIZE)};
+  const std::size_t rectangles_offset{
+      triangles_offset + (static_cast<std::size_t>(triangle_count) * K_TRIANGLE_SIZE)};
+  const std::size_t meshes_offset{
+      rectangles_offset + (static_cast<std::size_t>(rectangle_count) * 32U)};
+  const std::size_t lights_offset{
+      meshes_offset + (static_cast<std::size_t>(mesh_count) * K_MESH_SIZE)};
+
+  Buffer buffer;
+  // Real files start with the OD3X signature and version 4.
+  buffer.chars("OD3X", 4)
+      .u32(4).u32(0)
+      .u32(static_cast<std::uint32_t>(materials_offset))
+      .u32(static_cast<std::uint32_t>(vertices_offset))
+      .u32(static_cast<std::uint32_t>(triangles_offset))
+      .u32(static_cast<std::uint32_t>(rectangles_offset))
+      .u32(static_cast<std::uint32_t>(meshes_offset))
+      .u32(0).u32(0).u32(static_cast<std::uint32_t>(lights_offset))  // doors, cameras, lights.
+      .zeros(28).u32(frame_count)
+      .zeros(132).u32(texture_count)
+      .zeros(12)
+      .u32(object_count).u32(0)
+      .u32(triangle_count).u32(rectangle_count).u32(vertex_count)
+      .u64(0)
+      .u32(material_count).u32(0).u32(0)
+      .u32(0).u32(mesh_count).u32(0)
+      .u32(lights_unknown1 + lights_unknown2)  // light_count.
+      .u32(lights_unknown1).u32(lights_unknown2)
+      .zeros(84);
+  return buffer;
+}
+
+/// Appends a minimal mesh descriptor (one float position on X).
+void append_mesh(Buffer& buffer,
+                 const std::uint32_t flags,
+                 const std::uint32_t mesh_id,
+                 const std::int32_t parent_id,
+                 const std::uint32_t vertex_count,
+                 const std::uint32_t triangle_count,
+                 const std::uint32_t rectangle_count,
+                 const float position_x) {
+  buffer.u32(flags).u32(0).u32(mesh_id).u32(0)
+      .chars("MESH", 20)
+      .f32(position_x).f32(0.0F).f32(0.0F)
+      .i32(parent_id).i32(-1).i32(-1)
+      .u32(0).u32(vertex_count).u32(triangle_count).u32(rectangle_count)
+      .f32(0.0F).f32(0.0F).f32(0.0F).f32(0.0F)
+      .f32(1.0F).f32(1.0F).f32(1.0F)
+      .f32(2.0F).f32(2.0F).f32(2.0F)
+      .f32(0.0F).f32(0.0F).f32(0.0F)
+      .f32(0.0F).f32(0.0F).f32(0.0F);
+}
+
+/// Appends one 304-byte light record. Position and target are given in file
+/// space (x, z, y); the remaining four point slots are zero.
+void append_light(Buffer& buffer,
+                  const std::uint32_t flags,
+                  const std::string_view name,
+                  const float attenuation_end,
+                  const float attenuation_start,
+                  const float intensity,
+                  const std::array<std::uint8_t, 4> color_bgra,
+                  const std::array<float, 3> position,
+                  const std::array<float, 3> target) {
+  buffer.u32(flags).chars(name, 20)
+      .f32(attenuation_end).f32(attenuation_start).f32(intensity)
+      .f32(0.0F).f32(0.0F)
+      .u8(color_bgra.at(0)).u8(color_bgra.at(1)).u8(color_bgra.at(2)).u8(color_bgra.at(3));
+  buffer.f32(position.at(0)).f32(position.at(1)).f32(position.at(2)).zeros(20);
+  buffer.f32(target.at(0)).f32(target.at(1)).f32(target.at(2)).zeros(20);
+  for (std::size_t slot{0}; slot < 4U; ++slot) {
+    buffer.f32(0.0F).f32(0.0F).f32(0.0F).zeros(20);
+  }
+  buffer.zeros(64);
+}
+
+}  // namespace
+
+TEST_SUITE("Core::Omikron::Model3DO") {
+  TEST_CASE("Parses a header-only file") {
+    const Buffer file{make_header(0, 0, 0, 0, 0)};
+
+    const auto model{App::Omikron::Model3DO::load(file.data())};
+    REQUIRE(model.has_value());
+
+    CHECK_EQ(std::string_view{model->header.signature.data(), model->header.signature.size()},
+             "OD3X");
+    CHECK_EQ(model->header.version_major, 4U);
+    CHECK_EQ(model->header.version_minor, 0U);
+    CHECK_EQ(model->header.material_count, 0U);
+    CHECK_EQ(model->header.mesh_count, 0U);
+    CHECK(model->materials.empty());
+    CHECK(model->meshes.empty());
+    CHECK(model->vertices.empty());
+    CHECK(model->lights.empty());
+  }
+
+  TEST_CASE("Preserves frame, texture and object counts") {
+    const Buffer file{make_header(0, 0, 0, 0, 0, 0, 0, 5, 7, 3)};
+
+    const auto model{App::Omikron::Model3DO::load(file.data())};
+    REQUIRE(model.has_value());
+
+    CHECK_EQ(model->header.frame_count, 5U);
+    CHECK_EQ(model->header.texture_count, 7U);
+    CHECK_EQ(model->header.object_count, 3U);
+  }
+
+  TEST_CASE("Parses materials, vertices and mesh descriptors") {
+    Buffer file{make_header(1, 1, 1, 1, 0)};
+
+    // Material.
+    file.chars("SKIN", 20).chars("skin.bmp", 20).chars("skin.tga", 20)
+        .u32(99).u16(0xFFFF).u16(0xFFFF).u16(0xFFFF).u16(0xFFFF)
+        .u16(8).u8(3).u8(5).u16(64).u16(64);
+    // Vertex: position (10, 20, 30), normal (0, 1, 0), colour BGRA.
+    file.f32(10.0F).f32(20.0F).f32(30.0F)
+        .f32(0.0F).f32(1.0F).f32(0.0F)
+        .u32(42)
+        .u8(0x11).u8(0x22).u8(0x33).u8(0x44);
+    // Triangle.
+    file.u16(0).u16(0).u16(0)
+        .u8(1).u8(2).u8(3).u8(4).u8(5).u8(6)
+        .i32(0).i32(0).i32(0).i32(0);
+    // Mesh descriptor.
+    append_mesh(file, 0, 7, -1, 1, 1, 0, 0.0F);
+
+    const auto model{App::Omikron::Model3DO::load(file.data())};
+    REQUIRE(model.has_value());
+
+    REQUIRE_EQ(model->materials.size(), std::size_t{1});
+    CHECK_EQ(model->materials.at(0).name, "SKIN");
+    CHECK_EQ(model->materials.at(0).texture_name, "skin.bmp");
+    CHECK_EQ(model->materials.at(0).palette_name, "skin.tga");
+    CHECK_EQ(model->materials.at(0).data_size, 99U);
+    CHECK_EQ(model->materials.at(0).texture_page_index, 0xFFFFU);
+    CHECK_EQ(model->materials.at(0).texture_slot_index, 0xFFFFU);
+    CHECK_EQ(model->materials.at(0).palette_page_index, 0xFFFFU);
+    CHECK_EQ(model->materials.at(0).palette_slot_index, 0xFFFFU);
+    CHECK_EQ(model->materials.at(0).bits_per_pixel, 8U);
+    CHECK_EQ(model->materials.at(0).atlas_u_offset, 3U);
+    CHECK_EQ(model->materials.at(0).atlas_v_offset, 5U);
+    CHECK_EQ(model->materials.at(0).width, 64U);
+    CHECK_EQ(model->materials.at(0).height, 64U);
+
+    REQUIRE_EQ(model->meshes.size(), std::size_t{1});
+    CHECK_EQ(model->meshes.at(0).mesh_id, 7U);
+    CHECK_EQ(model->meshes.at(0).vertex_base, std::size_t{0});
+    CHECK_EQ(model->meshes.at(0).triangle_byte_offset, std::size_t{0});
+
+    REQUIRE_EQ(model->vertices.size(), std::size_t{1});
+    // File order (x, z, y) -> renderer (x, -z, -y), scaled by 1/40.
+    CHECK_EQ(model->vertices.at(0).position.x, doctest::Approx(0.25F));
+    CHECK_EQ(model->vertices.at(0).position.y, doctest::Approx(-0.5F));
+    CHECK_EQ(model->vertices.at(0).position.z, doctest::Approx(-0.75F));
+    CHECK_EQ(model->vertices.at(0).normal.x, doctest::Approx(0.0F));
+    CHECK_EQ(model->vertices.at(0).normal.y, doctest::Approx(-1.0F));
+    CHECK_EQ(model->vertices.at(0).normal.z, doctest::Approx(0.0F));
+    CHECK_EQ(model->vertices.at(0).unknown_t1, 42U);
+    CHECK_EQ(model->vertices.at(0).color_bgra, std::array<std::uint8_t, 4>{0x11, 0x22, 0x33, 0x44});
+
+    REQUIRE_EQ(model->polygons.at(0).triangles.size(), std::size_t{1});
+    const auto& triangle{model->polygons.at(0).triangles.at(0)};
+    CHECK_EQ(triangle.material_id, 0);
+    CHECK_EQ(triangle.vertices.at(0).index, 0U);
+    CHECK_FALSE(triangle.vertices.at(0).parented);
+  }
+
+  TEST_CASE("Triangle references decode the parented flag and index mask") {
+    Buffer file{make_header(0, 1, 0, 1, 0)};
+
+    file.u16(0x8005).u16(7).u16(0x8FFF)
+        .u8(0).u8(0).u8(0).u8(0).u8(0).u8(0)
+        .i32(-1).i32(0).i32(0).i32(0);
+    append_mesh(file, 0, 1, -1, 0, 1, 0, 0.0F);
+
+    const auto model{App::Omikron::Model3DO::load(file.data())};
+    REQUIRE(model.has_value());
+
+    const auto& triangle{model->polygons.at(0).triangles.at(0)};
+    CHECK_EQ(triangle.vertices.at(0).index, 5U);
+    CHECK(triangle.vertices.at(0).parented);
+    CHECK_EQ(triangle.vertices.at(1).index, 7U);
+    CHECK_FALSE(triangle.vertices.at(1).parented);
+    CHECK_EQ(triangle.vertices.at(2).index, 0x03FFU);
+    CHECK(triangle.vertices.at(2).parented);
+    CHECK_EQ(triangle.material_id, -1);
+  }
+
+  TEST_CASE("Skin parents skip joint-only meshes") {
+    Buffer file{make_header(0, 3, 0, 0, 0)};
+
+    append_mesh(file, 0, 10, -1, 0, 0, 0, 0.0F);                                  // Root.
+    append_mesh(file, 1, 11, 10, 0, 0, 0, 0.0F);  // Joint-only (flag bit 0).
+    append_mesh(file, 0, 12, 11, 0, 0, 0, 0.0F);                                  // Child.
+
+    const auto model{App::Omikron::Model3DO::load(file.data())};
+    REQUIRE(model.has_value());
+
+    CHECK_EQ(model->hierarchy_parent_index, std::vector<std::int32_t>{-1, 0, 1});
+    CHECK_EQ(model->skin_parent_index, std::vector<std::int32_t>{-1, 0, 0});
+  }
+
+  TEST_CASE("Static geometry applies mesh positions and resolves parented corners") {
+    Buffer file{make_header(1, 2, 2, 1, 0)};
+
+    // Material 64x64.
+    file.chars("SKIN", 20).chars("", 20).chars("", 20).u32(0).u64(0).u32(0).u16(64).u16(64);
+    // Vertex 0 (own block of mesh 0) and vertex 1 (own block of mesh 1).
+    file.f32(0.0F).f32(0.0F).f32(0.0F).f32(0.0F).f32(0.0F).f32(1.0F).u32(0).u8(0).u8(0).u8(0).u8(255);
+    file.f32(40.0F).f32(0.0F).f32(0.0F).f32(0.0F).f32(0.0F).f32(1.0F).u32(0).u8(0).u8(0).u8(0).u8(255);
+    // Triangle: corner 0 parented, corners 1-2 own.
+    file.u16(0x8000).u16(0).u16(0)
+        .u8(32).u8(64).u8(0).u8(0).u8(16).u8(32)
+        .i32(0).i32(0).i32(0).i32(0);
+    append_mesh(file, 0, 10, -1, 1, 0, 0, 0.0F);   // Position (0, 0, 0).
+    append_mesh(file, 0, 11, 10, 1, 1, 0, 40.0F);  // Position (1, 0, 0).
+
+    const auto model{App::Omikron::Model3DO::load(file.data())};
+    REQUIRE(model.has_value());
+
+    const auto groups{App::Omikron::Model3DO::build_static_geometry(model.value())};
+    REQUIRE(groups.has_value());
+    REQUIRE_EQ(groups->size(), std::size_t{1});
+
+    const auto& group{groups->at(0)};
+    CHECK_EQ(group.material_id, 0);
+    REQUIRE_EQ(group.vertices.size(), std::size_t{3});
+    CHECK_EQ(group.indices, std::vector<std::uint32_t>{0U, 1U, 2U});
+
+    // Block-local positions plus the owning mesh position, no model centring.
+    CHECK_EQ(group.vertices.at(0).position.at(0), doctest::Approx(0.0F));
+    CHECK_EQ(group.vertices.at(0).position.at(1), doctest::Approx(0.0F));
+    CHECK_EQ(group.vertices.at(1).position.at(0), doctest::Approx(2.0F));
+    CHECK_EQ(group.vertices.at(2).position.at(0), doctest::Approx(2.0F));
+
+    // UVs are pixel coordinates divided by the texture size.
+    CHECK_EQ(group.vertices.at(0).uv.at(0), doctest::Approx(0.5F));
+    CHECK_EQ(group.vertices.at(0).uv.at(1), doctest::Approx(1.0F));
+    CHECK_EQ(group.vertices.at(2).uv.at(0), doctest::Approx(0.25F));
+    CHECK_EQ(group.vertices.at(2).uv.at(1), doctest::Approx(0.5F));
+  }
+
+  TEST_CASE("Rectangles are split into two triangles") {
+    Buffer file{make_header(1, 1, 4, 0, 1)};
+
+    file.chars("SKIN", 20).chars("", 20).chars("", 20).u32(0).u64(0).u32(0).u16(64).u16(32);
+    // Four vertices in a unit quad (file order is x, z, y).
+    file.f32(0.0F).f32(0.0F).f32(0.0F).f32(0.0F).f32(0.0F).f32(1.0F).u32(0).u8(0).u8(0).u8(0).u8(255);
+    file.f32(40.0F).f32(0.0F).f32(0.0F).f32(0.0F).f32(0.0F).f32(1.0F).u32(0).u8(0).u8(0).u8(0).u8(255);
+    file.f32(40.0F).f32(0.0F).f32(40.0F).f32(0.0F).f32(0.0F).f32(1.0F).u32(0).u8(0).u8(0).u8(0).u8(255);
+    file.f32(0.0F).f32(0.0F).f32(40.0F).f32(0.0F).f32(0.0F).f32(1.0F).u32(0).u8(0).u8(0).u8(0).u8(255);
+    // Rectangle (0, 1, 2, 3) with UV bytes 0..7.
+    file.u16(0).u16(1).u16(2).u16(3)
+        .u8(0).u8(1).u8(2).u8(3).u8(4).u8(5).u8(6).u8(7)
+        .i32(0).i32(0).i32(0).i32(0);
+    append_mesh(file, 0, 1, -1, 4, 0, 1, 0.0F);
+
+    const auto model{App::Omikron::Model3DO::load(file.data())};
+    REQUIRE(model.has_value());
+
+    const auto groups{App::Omikron::Model3DO::build_static_geometry(model.value())};
+    REQUIRE(groups.has_value());
+    REQUIRE_EQ(groups->size(), std::size_t{1});
+
+    const auto& group{groups->at(0)};
+    REQUIRE_EQ(group.vertices.size(), std::size_t{6});
+    CHECK_EQ(group.indices, std::vector<std::uint32_t>{0U, 1U, 2U, 3U, 4U, 5U});
+    // First triangle reuses corners 0, 1, 2; the second uses 0, 2, 3.
+    CHECK_EQ(group.vertices.at(0).position.at(0), doctest::Approx(0.0F));
+    CHECK_EQ(group.vertices.at(2).position.at(0), doctest::Approx(1.0F));
+    CHECK_EQ(group.vertices.at(3).position.at(0), doctest::Approx(0.0F));
+    CHECK_EQ(group.vertices.at(4).position.at(2), doctest::Approx(-1.0F));
+    CHECK_EQ(group.vertices.at(5).position.at(2), doctest::Approx(-1.0F));
+    // The last corner carries UV bytes 6, 7 of the rectangle.
+    CHECK_EQ(group.vertices.at(5).uv.at(0), doctest::Approx(6.0F / 64.0F));
+    CHECK_EQ(group.vertices.at(5).uv.at(1), doctest::Approx(7.0F / 32.0F));
+  }
+
+  TEST_CASE("Invalid material ids are clamped to zero") {
+    Buffer file{make_header(1, 1, 1, 1, 0)};
+
+    file.chars("SKIN", 20).chars("", 20).chars("", 20).u32(0).u64(0).u32(0).u16(32).u16(32);
+    file.f32(0.0F).f32(0.0F).f32(0.0F).f32(0.0F).f32(0.0F).f32(1.0F).u32(0).u8(0).u8(0).u8(0).u8(255);
+    file.u16(0).u16(0).u16(0).u8(0).u8(0).u8(0).u8(0).u8(0).u8(0).i32(-1).i32(0).i32(0).i32(0);
+    append_mesh(file, 0, 1, -1, 1, 1, 0, 0.0F);
+
+    const auto model{App::Omikron::Model3DO::load(file.data())};
+    REQUIRE(model.has_value());
+
+    const auto groups{App::Omikron::Model3DO::build_static_geometry(model.value())};
+    REQUIRE(groups.has_value());
+    REQUIRE_EQ(groups->size(), std::size_t{1});
+    CHECK_EQ(groups->at(0).material_id, 0);
+  }
+
+  TEST_CASE("Rejects truncated files") {
+    Buffer file{make_header(1, 1, 1, 1, 0)};
+    // Material and vertex are missing: parsing must fail cleanly.
+    file.chars("SKIN", 20);
+
+    const auto model{App::Omikron::Model3DO::load(file.data())};
+    CHECK_FALSE(model.has_value());
+  }
+
+  TEST_CASE("Static geometry requires visible geometry") {
+    Buffer file{make_header(0, 1, 0, 0, 0)};
+    append_mesh(file, 0, 1, -1, 0, 0, 0, 0.0F);
+
+    const auto model{App::Omikron::Model3DO::load(file.data())};
+    REQUIRE(model.has_value());
+
+    const auto groups{App::Omikron::Model3DO::build_static_geometry(model.value())};
+    CHECK_FALSE(groups.has_value());
+  }
+
+  TEST_CASE("Skybox flag survives static geometry") {
+    Buffer file{make_header(1, 1, 1, 1, 0)};
+
+    file.chars("SKY", 20).chars("", 20).chars("", 20).u32(0).u64(0).u32(0).u16(32).u16(32);
+    file.f32(0.0F).f32(0.0F).f32(0.0F).f32(0.0F).f32(0.0F).f32(1.0F).u32(0).u8(0).u8(0).u8(0).u8(255);
+    file.u16(0).u16(0).u16(0).u8(0).u8(0).u8(0).u8(0).u8(0).u8(0).i32(0).i32(0).i32(0).i32(0);
+    append_mesh(file, 1U << 24, 1, -1, 1, 1, 0, 0.0F);
+
+    const auto model{App::Omikron::Model3DO::load(file.data())};
+    REQUIRE(model.has_value());
+
+    const auto groups{App::Omikron::Model3DO::build_static_geometry(model.value())};
+    REQUIRE(groups.has_value());
+    REQUIRE_EQ(groups->size(), std::size_t{1});
+
+    const auto& group{groups->at(0)};
+    CHECK(App::Omikron::has_flag(group.flags, App::Omikron::MeshFlags::k_skybox));
+    // The flag does not change the blend mode: skybox meshes stay opaque.
+    CHECK_EQ(App::Omikron::blend_mode(group.flags), App::Omikron::BlendMode::k_opaque);
+  }
+
+  TEST_CASE("Parses explicit light records") {
+    Buffer file{make_header(0, 0, 0, 0, 0, 0, 1)};
+
+    // Position (40, 80, 0) and target (40, 80, 40) in file space convert to
+    // (1, -2, 0) and (1, -2, -1) in world space.
+    append_light(file, 0x00040002U, "CEILING", 120.0F, 30.0F, 2.5F,
+        std::array<std::uint8_t, 4>{0x11, 0x22, 0x33, 0x44},
+        std::array<float, 3>{40.0F, 80.0F, 0.0F},
+        std::array<float, 3>{40.0F, 80.0F, 40.0F});
+
+    const auto model{App::Omikron::Model3DO::load(file.data())};
+    REQUIRE(model.has_value());
+    REQUIRE_EQ(model->lights.size(), std::size_t{1});
+
+    const App::Omikron::Light& light{model->lights.at(0)};
+    CHECK_EQ(light.flags, 0x00040002U);
+    CHECK_EQ(light.name, "CEILING");
+    CHECK_EQ(light.attenuation_end, doctest::Approx(120.0F * 0.025F));
+    CHECK_EQ(light.attenuation_start, doctest::Approx(30.0F * 0.025F));
+    CHECK_EQ(light.intensity, doctest::Approx(2.5F));
+    CHECK_EQ(light.unknown4, doctest::Approx(0.0F));
+    CHECK_EQ(light.unknown5, doctest::Approx(0.0F));
+    CHECK_EQ(light.color_bgra, (std::array<std::uint8_t, 4>{0x11, 0x22, 0x33, 0x44}));
+
+    CHECK_EQ(light.points.at(0).x, doctest::Approx(1.0F));
+    CHECK_EQ(light.points.at(0).y, doctest::Approx(-2.0F));
+    CHECK_EQ(light.points.at(0).z, doctest::Approx(0.0F));
+    CHECK_EQ(light.points.at(1).x, doctest::Approx(1.0F));
+    CHECK_EQ(light.points.at(1).y, doctest::Approx(-2.0F));
+    CHECK_EQ(light.points.at(1).z, doctest::Approx(-1.0F));
+
+    const App::Omikron::Vec3 direction{light.direction()};
+    CHECK_EQ(direction.x, doctest::Approx(0.0F));
+    CHECK_EQ(direction.y, doctest::Approx(0.0F));
+    CHECK_EQ(direction.z, doctest::Approx(-1.0F));
+
+    const std::array<float, 4> color{light.color_rgba()};
+    CHECK_EQ(color.at(0), doctest::Approx(0x33 / 255.0F));
+    CHECK_EQ(color.at(1), doctest::Approx(0x22 / 255.0F));
+    CHECK_EQ(color.at(2), doctest::Approx(0x11 / 255.0F));
+    CHECK_EQ(color.at(3), doctest::Approx(0x44 / 255.0F));
+  }
+
+  TEST_CASE("Degenerate light targets become point lights") {
+    App::Omikron::Light light;
+    light.points.at(0) = App::Omikron::Vec3{.x = 1.0F, .y = 2.0F, .z = 3.0F};
+    light.points.at(1) = light.points.at(0);
+
+    const App::Omikron::Vec3 direction{light.direction()};
+    CHECK_EQ(direction.x, doctest::Approx(0.0F));
+    CHECK_EQ(direction.y, doctest::Approx(0.0F));
+    CHECK_EQ(direction.z, doctest::Approx(0.0F));
+  }
+
+  TEST_CASE("Mesh-light counts have no record section") {
+    const Buffer file{make_header(0, 0, 0, 0, 0, 3, 0)};
+
+    const auto model{App::Omikron::Model3DO::load(file.data())};
+    REQUIRE(model.has_value());
+    CHECK(model->lights.empty());
+    CHECK_EQ(model->header.lights_unknown1, 3U);
+    CHECK_EQ(model->header.lights_unknown2, 0U);
+  }
+
+  TEST_CASE("Rejects truncated light records") {
+    Buffer file{make_header(0, 0, 0, 0, 0, 0, 1)};
+    // Only part of a light record is present.
+    file.u32(0).chars("L", 20);
+
+    const auto model{App::Omikron::Model3DO::load(file.data())};
+    REQUIRE_FALSE(model.has_value());
+    CHECK(model.error().find("lights") != std::string::npos);
+  }
+
+  TEST_CASE("Rejects implausible light counts") {
+    const Buffer file{make_header(0, 0, 0, 0, 0, 0, 0xFFFF'FFFFU)};
+
+    const auto model{App::Omikron::Model3DO::load(file.data())};
+    REQUIRE_FALSE(model.has_value());
+    CHECK(model.error().find("implausible light count") != std::string::npos);
+  }
+
+  TEST_CASE("Mesh flags map to blend modes") {
+    using App::Omikron::BlendMode;
+
+    CHECK_EQ(App::Omikron::blend_mode(0U), BlendMode::k_opaque);
+    CHECK_EQ(App::Omikron::blend_mode(1U << 2), BlendMode::k_opaque);  // Vertex-lit alone.
+    CHECK_EQ(App::Omikron::blend_mode(1U << 11), BlendMode::k_alpha_test);
+    CHECK_EQ(App::Omikron::blend_mode(1U << 12), BlendMode::k_alpha_blend);
+    CHECK_EQ(App::Omikron::blend_mode((1U << 12) | (1U << 13)), BlendMode::k_additive);
+    CHECK_EQ(App::Omikron::blend_mode((1U << 12) | (1U << 14)), BlendMode::k_subtractive);
+    // Subtractive wins when both modifiers are set.
+    CHECK_EQ(App::Omikron::blend_mode((1U << 12) | (1U << 13) | (1U << 14)),
+             BlendMode::k_subtractive);
+    // The modifiers are inert without alpha blending, as in the reference importer.
+    CHECK_EQ(App::Omikron::blend_mode(1U << 13), BlendMode::k_opaque);
+    CHECK_EQ(App::Omikron::blend_mode(1U << 14), BlendMode::k_opaque);
+    // Blending takes priority over alpha testing when both are set.
+    CHECK_EQ(App::Omikron::blend_mode((1U << 11) | (1U << 12)), BlendMode::k_alpha_blend);
+    // Unrelated flags do not change the outcome.
+    CHECK_EQ(App::Omikron::blend_mode((1U << 12) | (1U << 20) | (1U << 26) | (1U << 27)),
+             BlendMode::k_alpha_blend);
+    // The skybox flag drives a render pass, not a blend mode.
+    CHECK_EQ(App::Omikron::blend_mode(1U << 24), BlendMode::k_opaque);
+  }
+}
+
+// NOLINTEND(misc-use-anonymous-namespace, cppcoreguidelines-avoid-do-while, cert-err33-c)

@@ -7,6 +7,13 @@ Where to find what inside the project, from folder structure to configuration.
 All relevant source code is located in `src/`. The example setup is having one library, here called _"Core"_
 under `src/core/`, and the application called _"App"_ under `src/app/`.
 
+Core subsystems live under `src/core/Core/`: Omikron game-data parsers in `Core/Omikron/`, debug tooling in
+`Core/Debug/`, and the action-based input system (actions, control schemes, `InputManager`) in `Core/Input/`.
+`Camera` and its `CameraController` (free-fly, input-driven) sit at the top of `Core/`.
+The Runtime-style sprite system lives in `Core/Sprite/`: `SpriteInstance`/`SpritePool` (stable-handle
+instance pool), `SpriteFrame` (frame-descriptor resolution), `SpriteResource` (decoded embedded effects),
+`SpriteRenderMode` (mode → GL state table) and `SpriteRenderer` (CPU billboard queue + GPU drawing).
+
 ## Tests
 
 The test setup is done under `src/tests/`. Test implementations are under the respective source code unit, e.g. App
@@ -32,9 +39,10 @@ Manifest files contain operating system dependent configuration. They all are lo
 
 ## Dependencies
 
-Generally dependencies are located in `vendor/`. The `vendor/CMakeLists.txt` uses
-CMake's [FetchContent](https://cmake.org/cmake/help/latest/module/FetchContent.html) to load dependencies on configure
-time. Every dependency also has an associated folder containing a `CMakeLists.txt` for configuration.
+Dependencies are managed by [vcpkg](https://vcpkg.io) in manifest mode. The manifest `vcpkg.json` in the repository
+root lists every dependency with pinned versions and features; the CMake presets route through the vcpkg toolchain,
+which installs the manifest into `build/<config>/vcpkg_installed` on first configure. See
+[Dependencies](Dependencies.md) for details.
 
 ## Configurations
 

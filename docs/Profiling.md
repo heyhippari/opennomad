@@ -39,11 +39,11 @@ the beginning of the function.
 
 ```c++
 // src/core/Core/Application.cpp
-Application::Application(const std::string& title) {
+std::expected<Application, std::string> Application::create(const std::string& title) {
   APP_PROFILE_FUNCTION();
 
   // More code ...
-  m_window = std::make_unique<Window>(Window::Settings{title});
+  auto window{Window::create(Window::Settings{.title = title})};
 }
 ```
 
@@ -55,7 +55,7 @@ If a custom scope needs to be profiled `APP_PROFILE_SCOPE` can be used. It takes
 
 ```c++
 // Example function
-int Application::run() {
+void Application::run() {
   // ...
 
   while (something) {

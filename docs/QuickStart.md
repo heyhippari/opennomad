@@ -19,16 +19,20 @@ Usually available build modes are `Debug`, `Release`, and `RelWithDebInfo`.
 To run a **debug** build:
 
 ```shell
-cmake -GNinja -DCMAKE_BUILD_TYPE=Debug -B build/debug
+cmake --preset debug
 cmake --build build/debug
 ```
 
 To run a **release** build:
 
 ```shell
-cmake -GNinja -DCMAKE_BUILD_TYPE=Release -B build/release
+cmake --preset release
 cmake --build build/release
 ```
+
+The presets use the vcpkg toolchain, so the first configure downloads and builds all
+dependencies (a one-time cost, cached afterwards). `VCPKG_ROOT` must be set — see
+[Requirements](README.md#vcpkg).
 
 On macOS Xcode should be used as generator via `-GXCode`. For example creating a release build with XCode.
 

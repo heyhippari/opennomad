@@ -2,8 +2,8 @@
 
 ## Setup
 
-The repo uses [Doctest](https://github.com/doctest/doctest) for testing. The dependency to Doctest is defined
-in `vendor/CMakeLists.txt` and configured in `vendor/doctest/CMakeLists.txt`.
+The repo uses [Doctest](https://github.com/doctest/doctest) for testing. The dependency is declared
+in `vcpkg.json` and imported via `find_package(doctest CONFIG REQUIRED)` in the root `CMakeLists.txt`.
 
 The setup of the test runner is done in `src/tests/` through `src/tests/TestRunner.cpp`.
 
@@ -93,6 +93,25 @@ Total Test time (real) =   0.07 sec
 
 This can also be done through an IDE like CLion, usually providing an _"All Tests"_ target configuration that will work
 out of the box.
+
+## Game-data integration tests
+
+Tests that read original game data (`src/core/Tests/SCXIntegration.spec.cpp`) are only
+registered when the `OPENNOMAD_GAME_DATA_TESTS` CMake option is enabled:
+
+```shell
+cmake --preset debug -DOPENNOMAD_GAME_DATA_TESTS=ON
+cmake --build build/debug
+```
+
+At runtime they locate the game data through the `OPENNOMAD_GAME_DATA_ROOT` environment
+variable, which must point at the directory containing `SCPTDATA` (for example the folder next
+to the built `App` executable). Without it the cases pass trivially with a warning, so the
+default `ctest` run needs no original data.
+
+```shell
+OPENNOMAD_GAME_DATA_ROOT=build/debug/src/app ctest --test-dir build/debug -R SCXIntegrationTest
+```
 
 ***
 

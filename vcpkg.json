@@ -1,0 +1,52 @@
+{
+  "name": "opennomad",
+  "version": "0.0.1",
+  "dependencies": [
+    "doctest",
+    "fmt",
+    {
+      "name": "glad",
+      "features": ["extensions", "gl-api-41", "loader"]
+    },
+    "glm",
+    {
+      "name": "imgui",
+      "features": [
+        "docking-experimental",
+        "opengl3-binding",
+        "sdl3-binding",
+        "freetype"
+      ]
+    },
+    {
+      "name": "sdl3",
+      "features": ["alsa", "ibus", "libdecor", "vulkan", "wayland", "x11"]
+    },
+    {
+      "name": "sdl3-image",
+      "features": ["png"]
+    },
+    {
+      "name": "sdl3-mixer"
+    },
+    {
+      "name": "ffmpeg",
+      "default-features": false,
+      "features": ["avcodec", "avformat", "swresample", "swscale"]
+    },
+    {
+      "name": "spdlog",
+      "features": ["fmt"]
+    }
+  ],
+  "overrides": [
+    { "name": "doctest", "version": "2.5.3" },
+    { "name": "fmt", "version": "12.2.0#1" },
+    { "name": "glad", "version": "0.1.36" },
+    { "name": "imgui", "version": "1.92.8#1" },
+    { "name": "sdl3", "version": "3.4.14" },
+    { "name": "sdl3-image", "version": "3.4.4#1" },
+    { "name": "spdlog", "version": "1.17.0#1" }
+  ],
+  "builtin-baseline": "ea1a7396b05637a53bf23c078647ecc0edee4b80"
+}

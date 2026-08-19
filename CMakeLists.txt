@@ -21,6 +21,16 @@ set_project_warnings(project_warnings)
 
 enable_testing()
 
+# Dependencies are provided by vcpkg (see vcpkg.json). The presets point CMake at the
+# vcpkg toolchain, which installs the manifest on first configure.
+find_package(doctest CONFIG REQUIRED)
+find_package(fmt CONFIG REQUIRED)
+find_package(glad CONFIG REQUIRED)
+find_package(imgui CONFIG REQUIRED)
+find_package(SDL3 CONFIG REQUIRED)
+find_package(SDL3_image CONFIG REQUIRED)
+find_package(SDL3_mixer CONFIG REQUIRED)
+find_package(spdlog CONFIG REQUIRED)
+
 add_subdirectory(packaging)
-add_subdirectory(vendor)
 add_subdirectory(src)

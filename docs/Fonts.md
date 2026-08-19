@@ -6,10 +6,10 @@ font [Manrope](https://manropefont.com).
 ## Add new font
 
 After adding a new font to the `src/assets/fonts` folder, the fonts needs to be added to ImGUI. This is done
-in `src/core/Core/Application.cpp`, the `run` method.
+in `src/core/Core/Window.cpp`, in the `Window` constructor.
 
 ```c++
-ExitStatus App::Application::run() {
+void App::Application::run() {
   // other code ...
 
   // Get DPI scaling for high DPI display handling.

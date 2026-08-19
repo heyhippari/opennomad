@@ -15,7 +15,7 @@ Window::Settings DPIHandler::get_dpi_aware_window_size(const Window::Settings& s
   const int width{static_cast<int>(static_cast<float>(settings.width) * scale)};
   const int height{static_cast<int>(static_cast<float>(settings.height) * scale)};
 
-  return {settings.title, width, height};
+  return {.title = settings.title, .width = width, .height = height};
 }
 
 }  // namespace App

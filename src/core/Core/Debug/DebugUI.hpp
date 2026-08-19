@@ -1,0 +1,143 @@
+#pragma once
+
+#include <SDL3/SDL_video.h>
+
+#include <cstddef>
+#include <cstdint>
+#include <optional>
+
+#include "Core/Debug/DebugContext.hpp"
+#include "Core/ModelScene.hpp"
+#include "Core/Scene.hpp"
+
+namespace App {
+class ScenarioManager;
+class ScenarioRuntime;
+}
+
+namespace App::Debug {
+
+/// Manages all ImGui debug/performance-monitoring windows.
+///
+/// Instantiated by Window; update() is called each frame between
+/// ImGui::NewFrame() and ImGui::Render().
+///
+/// All windows are compiled out when APP_DEBUG_UI is not defined.
+class DebugUI {
+ public:
+  explicit DebugUI(SDL_Window* window = nullptr);
+  ~DebugUI() = default;
+
+  DebugUI(const DebugUI&) = delete;
+  DebugUI(DebugUI&&) = delete;
+  DebugUI& operator=(DebugUI other) = delete;
+  DebugUI& operator=(DebugUI&& other) = delete;
+
+  /// Set or update the SDL window reference.
+  void set_window(SDL_Window* window) { m_window = window; }
+
+  /// Wires the active scene so sprite tools can inspect and drive it. The
+  /// pointer is non-owning; clear it before the scene is destroyed.
+  void set_scene(Scene* scene) { m_context.scene = scene; }
+
+  /// Wires the scenario manager so the Scenarios view can inspect the
+  /// gameplay-mode slot and both world contexts. Non-owning.
+  void set_scenario_manager(ScenarioManager* manager) { m_context.scenario_manager = manager; }
+
+  /// Replaces the full debug-context wiring in one call. Non-owning pointers;
+  /// Application owns every subsystem and clears them before teardown.
+  void set_context(DebugContext context) { m_context = context; }
+
+  /// Render all active debug windows. Call each frame.
+  /// @param delta_time  Frame delta in seconds.
+  void update(float delta_time);
+
+  // --- Toggles ---
+
+  void toggle_performance();
+  void toggle_system_info();
+  void toggle_profiler();
+  void toggle_log();
+  void toggle_opengl_state();
+  void toggle_sprite_inspector();
+  void toggle_overlays();
+  void toggle_script_debugger();
+  void toggle_audio_inspector();
+  void toggle_scenarios();
+  void toggle_area_script();
+  void toggle_startup();
+  void toggle_interface();
+  void toggle_startup_trace();
+
+ private:
+  // --- Window renderers ---
+  void show_menu_bar();
+  void show_performance(float delta_time);
+  void show_system_info();
+  void show_profiler();
+  void show_log();
+  void show_opengl_state();
+  void show_overlays();
+  void show_sprite_inspector(float delta_time);
+  void show_sprite_resources_tab(ScenarioRuntime& runtime, ModelScene* scene);
+  void show_sprite_instances_tab(ScenarioRuntime& runtime, ModelScene* scene, float delta_time);
+  void show_sprite_frames_tab(ScenarioRuntime& runtime);
+  static void show_sprite_queue_tab(ModelScene& scene);
+  void show_script_debugger();
+  void show_audio_inspector();
+  void show_scenarios();
+  void show_area_script();
+  void show_startup();
+  void show_interface();
+  void show_startup_trace();
+  static void show_script_command(Script::ScriptInstance& instance,
+                                  Script::RuntimeScriptCommand& command,
+                                  std::size_t command_index,
+                                  bool is_root);
+
+  SDL_Window* m_window{nullptr};
+  /// Non-owning wiring to every subsystem the debug windows inspect.
+  DebugContext m_context{};
+
+  // Visibility toggles
+  bool m_show_performance{false};  // FPS window hidden by default; F3 re-opens it.
+  bool m_show_system_info{false};
+  bool m_show_profiler{false};
+  bool m_show_log{false};
+  bool m_show_opengl_state{false};
+  bool m_show_overlays{false};
+  bool m_show_sprite_inspector{false};
+  bool m_show_script_debugger{false};
+  bool m_show_audio_inspector{false};
+  bool m_show_scenarios{false};
+  bool m_show_area_script{false};
+  bool m_show_startup{false};
+  bool m_show_interface{false};
+  bool m_show_startup_trace{false};
+
+  // Log window state
+  bool m_log_auto_scroll{true};
+
+  // Internal frame counter for periodic queries
+  std::uint64_t m_frame_count{0};
+
+  // --- Sprite inspector state ---
+  std::size_t m_sprite_selected_resource{0};
+  Sprite::SpriteHandle m_sprite_selected_handle;
+  bool m_sprite_play_frames{false};
+  float m_sprite_play_rate{8.0F};
+  float m_sprite_play_accumulator{0.0F};
+
+  // --- Script debugger state ---
+  std::size_t m_script_selected_instance{0};
+  std::optional<std::size_t> m_script_selected_source;
+  float m_script_fixed_delta{1.0F};
+
+  // --- Scenarios view state ---
+  std::uint32_t m_scenarios_selected_scene_id{0};
+
+  // --- Startup trace view state ---
+  char m_startup_trace_filter[64]{};
+};
+
+}  // namespace App::Debug

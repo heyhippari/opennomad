@@ -1,8 +1,23 @@
 # Dependencies
 
-Dependencies are located in `vendor/`. The `vendor/CMakeLists.txt` uses
-CMake's [FetchContent](https://cmake.org/cmake/help/latest/module/FetchContent.html) to load dependencies on configure
-time. Some dependencies also have an associated folder containing a `CMakeLists.txt` for configuration or setup purpose.
+Dependencies are managed with [vcpkg](https://vcpkg.io) in manifest mode. The manifest
+[vcpkg.json](../vcpkg.json) at the repository root lists every dependency, its version
+(via `overrides` + `builtin-baseline`), and the features to build. The CMake presets
+point at the vcpkg toolchain, so the first configure of a build tree automatically
+installs everything into `build/<config>/vcpkg_installed`.
+
+## Prerequisites
+
+1. Install the `vcpkg` package (Arch: `sudo pacman -S vcpkg`).
+2. Clone the registry once (the package only ships the binary):
+
+```bash
+git clone https://github.com/microsoft/vcpkg.git ~/.local/share/vcpkg
+```
+
+`/etc/profile.d/vcpkg.sh` already exports `VCPKG_ROOT=~/.local/share/vcpkg` for login
+shells. The CMake presets read `$env{VCPKG_ROOT}`, so restart your shell/editor after
+the first install so the variable is set.
 
 ## Already included
 
@@ -10,109 +25,46 @@ The following set of dependencies are already included:
 
 - [Doctest](https://github.com/doctest/doctest) - Testing framework
 - [fmtlib](https://fmt.dev/latest/index.html) - Formatting library
-- [Dear ImGUI](https://github.com/ocornut/imgui) - Immediate mode GUI library
+- [glad](https://glad.dav1d.de) - OpenGL loader (4.1 core profile, see below)
+- [Dear ImGui](https://github.com/ocornut/imgui) - Immediate mode GUI library (docking branch, SDL3 + OpenGL3 backends)
 - [SDL3](https://www.libsdl.org) - Media layer library for rendering and input abstraction
+- [SDL3_image](https://github.com/libsdl-org/SDL_image) - Image loading for SDL3
 - [spdlog](https://github.com/gabime/spdlog) - Logging library
 
-## Add new dependency with CMake support
+## Triplets
 
-If a package to be included already supports CMake the process of adding it is rather straight forward. It needs a new
-entry in `vendor/CMakeLists.txt` to fetch the actual contents. Via `FetchContent_Declare` a name, repo URL and tag,
-branch, or commit name is given.
+Linux builds use the custom overlay triplet
+[triplets/x64-linux-dynamic-glcore.cmake](../triplets/x64-linux-dynamic-glcore.cmake).
+It is the community `x64-linux-dynamic` triplet (shared libraries, so SDL3 can be
+bundled by the packaging scripts) plus `GLAD_PROFILE=core`, because the stock glad
+port generates the compatibility profile while `Window.cpp` requests a 4.1 core
+context. The presets pass it via `VCPKG_TARGET_TRIPLET` and `VCPKG_OVERLAY_TRIPLETS`.
 
-```cmake
-# vendor/CMakeLists.txt
+## Port overlays
 
-# Example inclusion of spdlog
-FetchContent_Declare(
-  spdlog
-  GIT_REPOSITORY "https://github.com/gabime/spdlog.git"
-  GIT_TAG v1.11.0
-)
-```
+The upstream vcpkg `sdl3` port hardcodes `SDL_WAYLAND_LIBDECOR=OFF`, which leaves SDL3
+relying on server-side decorations (`xdg-decoration`) on Wayland. Compositors without
+SSD support — GNOME and Weston — then show windowed windows with no decorations at all.
+[`overlay-ports/sdl3`](../overlay-ports/sdl3) mirrors the upstream port and adds an
+opt-in `libdecor` feature (`SDL_WAYLAND_LIBDECOR=ON`); it is enabled in the root
+[`vcpkg.json`](../vcpkg.json) and registered via
+[`vcpkg-configuration.json`](../vcpkg-configuration.json). Like SDL's wayland/xkbcommon
+handling, libdecor itself comes from the system (Arch: `libdecor`, Debian/Ubuntu:
+`libdecor-0-dev`), found via pkg-config at configure time.
 
-Further down the same file is a section for dependency settings. Again using spdlog as an example:
+## Add or update a dependency
 
-```cmake
-# vendor/CMakeLists.txt
+1. Add the port (and any features) to the `dependencies` list in `vcpkg.json`, and pin
+   it in `overrides`.
+2. Reconfigure the build tree (`cmake --preset debug`). vcpkg installs only what
+   changed.
+3. Add the `find_package(<port> CONFIG REQUIRED)` call to the root `CMakeLists.txt`.
+4. Link the imported target, e.g. `target_link_libraries(Core PUBLIC imgui::imgui)`.
+   Run `vcpkg search <port>` or check the port's `usage` file under
+   `$VCPKG_ROOT/ports/<port>/` for the exact target names.
 
-# Settings
-
-# Any package build settings here
-set(SPDLOG_FMT_EXTERNAL "ON")
-
-# Populate
-
-FetchContent_MakeAvailable(
-  # Other dependencies ...
-  spdlog)
-```
-
-At the end the call to `FetchContent_MakeAvailable` gets the new dependency added as well.
-
-## New dependency without CMake support
-
-Adding a package that does not support CMake is also not a problem. The difference is that the new library needs to be
-setup separately. Taking Dear ImGui as an example, that does not support CMake, this is how the setup is
-done:
-
-```cmake
-# vendor/imgui-setup/CMakeLists.txt
-
-# Populate scope with library variables to get access to source and build directories.
-FetchContent_GetProperties(imgui)
-if (NOT imgui_POPULATED)
-  FetchContent_Populate(imgui)
-endif ()
-
-# Add Dear ImGUI as library with needed source files.
-add_library(imgui
-  ${imgui_SOURCE_DIR}/imgui.cpp ${imgui_SOURCE_DIR}/imgui.h
-  ${imgui_SOURCE_DIR}/imconfig.h ${imgui_SOURCE_DIR}/imgui_demo.cpp
-  ${imgui_SOURCE_DIR}/imgui_draw.cpp ${imgui_SOURCE_DIR}/imgui_internal.h
-  ${imgui_SOURCE_DIR}/imgui_tables.cpp ${imgui_SOURCE_DIR}/imgui_widgets.cpp
-  ${imgui_SOURCE_DIR}/imstb_rectpack.h ${imgui_SOURCE_DIR}/imstb_textedit.h
-  ${imgui_SOURCE_DIR}/imstb_truetype.h
-  ${imgui_SOURCE_DIR}/backends/imgui_impl_sdl3.h ${imgui_SOURCE_DIR}/backends/imgui_impl_sdl3.cpp
-  ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.h ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp)
-
-# Set include directory based in populated variable `imgui_SOURCE_DIR`.
-target_include_directories(imgui PUBLIC ${imgui_SOURCE_DIR})
-
-# Define compile options.
-target_compile_features(imgui PRIVATE cxx_std_20)
-
-# Link external library SDL3, part of the dependencies as well.
-target_link_libraries(imgui PUBLIC SDL3::SDL3)
-```
-
-After setting up the library it needs to be made available in the vendor `CMakeLists.txt`:
-
-```cmake
-# vendor/CMakeLists.txt
-
-# Settings
-
-# Adding the setup directory
-add_subdirectory(imgui-setup)
-
-# Populate
-
-FetchContent_MakeAvailable(
-  # Other dependencies ...
-  imgui)
-```
-
-## Link dependency
-
-After adding a new dependency, to actually use it, it needs to be added to a target via `target_link_libraries`. For
-example adding ImGUI to Core:
-
-```cmake
-# other CMake ...
-
-target_link_libraries(Core PUBLIC imgui)
-```
+To move the whole dependency set to newer versions, update the `builtin-baseline` in
+`vcpkg.json` to a newer vcpkg registry commit and adjust the `overrides` accordingly.
 
 ***
 

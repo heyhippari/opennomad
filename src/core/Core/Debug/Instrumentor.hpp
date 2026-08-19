@@ -1,13 +1,21 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
+#include <atomic>
 #include <chrono>
+#include <cstddef>
 #include <fstream>
-#include <iomanip>
-#include <sstream>
+#include <mutex>
+#include <ranges>
+#include <source_location>
+#include <span>
 #include <string>
 #include <thread>
 #include <utility>
+#include <vector>
+
+#include <fmt/format.h>
 
 #include "Core/Log.hpp"
 
@@ -35,14 +43,14 @@ class Instrumentor {
   Instrumentor& operator=(Instrumentor&& other) = delete;
 
   void begin_session(const std::string& name, const std::string& filepath = "results.json") {
-    const std::lock_guard lock(m_mutex);
+    const std::scoped_lock lock(m_mutex);
 
     if (m_current_session != nullptr) {
       // If there is already a current session, then close it before beginning new one.
       // Subsequent profiling output meant for the original session will end up in the
       // newly opened session instead.  That's better than having badly formatted
       // profiling output.
-      APP_ERROR("Instrumentor::begin_session('{0}') when session '{1}' already open.",
+      App::Log::error("Instrumentor::begin_session('{0}') when session '{1}' already open.",
           name,
           m_current_session->name);
       internal_end_session();
@@ -53,37 +61,37 @@ class Instrumentor {
       m_current_session = std::make_unique<InstrumentationSession>(name);
       write_header();
     } else {
-      APP_ERROR("Instrumentor could not open results file '{0}'.", filepath);
+      App::Log::error("Instrumentor could not open results file '{0}'.", filepath);
     }
   }
 
   void end_session() {
-    const std::lock_guard lock(m_mutex);
+    const std::scoped_lock lock(m_mutex);
     internal_end_session();
   }
 
   void write_profile(const ProfileResult& result) {
-    std::stringstream json;
-
     std::string name{result.name};
-    std::replace(name.begin(), name.end(), '"', '\'');
+    std::ranges::replace(name, '"', '\'');
 
-    json << std::setprecision(3) << std::fixed;
-    json << ",{";
-    json << R"("cat":"function",)";
-    json << "\"dur\":" << (result.elapsed_time.count()) << ',';
-    json << R"("name":")" << name << "\",";
-    json << R"("ph":"X",)";
-    json << "\"pid\":0,";
-    json << R"("tid":")" << result.thread_id << "\",";
-    json << "\"ts\":" << result.start.count();
-    json << "}";
+    // fmt beats a stringstream here — write_profile runs once per profile
+    // sample, so it is on the hot path.
+    const std::string json{fmt::format(
+        R"(,{{"cat":"function","dur":{},"name":"{}","ph":"X","pid":0,"tid":"{}","ts":{:.3f}}})",
+        result.elapsed_time.count(),
+        name,
+        fmt::streamed(result.thread_id),
+        result.start.count())};
 
-    const std::lock_guard lock(m_mutex);
+    const std::scoped_lock lock(m_mutex);
     if (m_current_session != nullptr) {
-      m_output_stream << json.str();
+      m_output_stream << json;
       m_output_stream.flush();
     }
+
+    // Also store in the ring buffer for real-time in-app display.
+    const std::size_t idx = m_recent_write_index.fetch_add(1, std::memory_order_relaxed) % kMaxRecentProfiles;
+    m_recent_profiles[idx] = result;
   }
 
   static Instrumentor& get() {
@@ -91,7 +99,22 @@ class Instrumentor {
     return instance;
   }
 
+  /// Return a snapshot of recent profile results (for in-app profiler display).
+  /// Entries may be from different frames; aggregate by name for a summary.
+  [[nodiscard]] std::vector<ProfileResult> get_recent_profiles() const {
+    const std::size_t count = std::min(
+        m_recent_write_index.load(std::memory_order_acquire), kMaxRecentProfiles);
+    const std::span<const ProfileResult> recent{m_recent_profiles.data(), count};
+    return std::ranges::to<std::vector<ProfileResult>>(recent);
+  }
+
+  /// Clear the recent-profiles ring buffer (call once per frame after aggregating).
+  void clear_recent_profiles() {
+    m_recent_write_index.store(0, std::memory_order_release);
+  }
+
  private:
+  static constexpr std::size_t kMaxRecentProfiles{512};
   Instrumentor() : m_current_session(nullptr) {}
 
   ~Instrumentor() {
@@ -120,6 +143,10 @@ class Instrumentor {
   std::mutex m_mutex;
   std::unique_ptr<InstrumentationSession> m_current_session;
   std::ofstream m_output_stream;
+
+  // Ring buffer for real-time in-app profiling display.
+  std::array<ProfileResult, kMaxRecentProfiles> m_recent_profiles{};
+  std::atomic<std::size_t> m_recent_write_index{0};
 };
 
 class InstrumentationTimer {
@@ -159,34 +186,17 @@ class InstrumentationTimer {
   const std::chrono::time_point<std::chrono::steady_clock> m_start_time_point;
 };
 
+/// Name of the calling function, resolved via std::source_location. Used by
+/// APP_PROFILE_FUNCTION(); the default argument is evaluated at the call site,
+/// so it reports the profiled function rather than this helper.
+inline const char* current_function_name(
+    const std::source_location location = std::source_location::current()) {
+  return location.function_name();
+}
+
 }  // namespace App::Debug
 
 #if APP_PROFILE
-// Resolve which function signature macro will be used. Note that this only
-// is resolved when the (pre)compiler starts, so the syntax highlighting
-// could mark the wrong one in your editor!
-#if defined(__GNUC__) || (defined(__MWERKS__) && (__MWERKS__ >= 0x3000)) || \
-    (defined(__ICC) && (__ICC >= 600)) || defined(__ghs__)
-// There is an implicit decay of an array into a pointer.
-// NOLINTNEXTLINE
-#define APP_FUNC_SIG __PRETTY_FUNCTION__
-#elif defined(__DMC__) && (__DMC__ >= 0x810)
-#define APP_FUNC_SIG __PRETTY_FUNCTION__
-#elif defined(__FUNCSIG__)
-#define APP_FUNC_SIG __FUNCSIG__
-#elif (defined(__INTEL_COMPILER) && (__INTEL_COMPILER >= 600)) || \
-    (defined(__IBMCPP__) && (__IBMCPP__ >= 500))
-#define APP_FUNC_SIG __FUNCTION__
-#elif defined(__BORLANDC__) && (__BORLANDC__ >= 0x550)
-#define APP_FUNC_SIG __FUNC__
-#elif defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 199901)
-#define APP_FUNC_SIG __func__
-#elif defined(__cplusplus) && (__cplusplus >= 201103)
-#define APP_FUNC_SIG __func__
-#else
-#define APP_FUNC_SIG "APP_FUNC_SIG unknown!"
-#endif
-
 #define JOIN_AGAIN(x, y) x##y
 #define JOIN(x, y) JOIN_AGAIN(x, y)
 #define APP_PROFILE_BEGIN_SESSION(name) ::App::Debug::Instrumentor::get().begin_session(name)
@@ -197,7 +207,7 @@ class InstrumentationTimer {
   const ::App::Debug::InstrumentationTimer JOIN(timer, __LINE__) { \
     name                                                           \
   }
-#define APP_PROFILE_FUNCTION() APP_PROFILE_SCOPE(APP_FUNC_SIG)
+#define APP_PROFILE_FUNCTION() APP_PROFILE_SCOPE(::App::Debug::current_function_name())
 #else
 #define APP_PROFILE_BEGIN_SESSION(name)
 #define APP_PROFILE_BEGIN_SESSION_WITH_FILE(name, file_path)

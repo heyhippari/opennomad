@@ -19,6 +19,7 @@ This is the user guide for the template and how to adapt it to your own needs.
 - [Application Icons](ApplicationIcons.md)
 - [Fonts](Fonts.md)
 - [High DPI support](HighDPISupport.md)
+- [Rendering](Rendering.md)
 
 ***
 
@@ -59,6 +60,18 @@ git gc --prune=now
 ### CMake
 
 The project uses [CMake](https://cmake.org) version >=3.22 (developed and tested against 4.4.0).
+
+### vcpkg
+
+Dependencies are managed by [vcpkg](https://vcpkg.io) in manifest mode. Install the `vcpkg` package and clone the
+registry once:
+
+```shell
+git clone https://github.com/microsoft/vcpkg.git ~/.local/share/vcpkg
+```
+
+The `VCPKG_ROOT` environment variable must point at that clone (on Arch, `/etc/profile.d/vcpkg.sh` already exports it
+for login shells). See [Dependencies](Dependencies.md) for details.
 
 ### Ninja or Xcode
 

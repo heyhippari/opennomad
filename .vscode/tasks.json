@@ -1,0 +1,159 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "CMake: Configure Debug",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--preset", "debug"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}",
+                "env": {
+                    "VCPKG_ROOT": "${env:HOME}/.local/share/vcpkg"
+                }
+            },
+            "problemMatcher": [],
+            "group": "build",
+            "detail": "Configure the project for a debug build via the vcpkg preset (QuickStart §Build). Equivalent to: cmake --preset debug"
+        },
+        {
+            "label": "CMake: Configure Release",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--preset", "release"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}",
+                "env": {
+                    "VCPKG_ROOT": "${env:HOME}/.local/share/vcpkg"
+                }
+            },
+            "problemMatcher": [],
+            "group": "build",
+            "detail": "Configure the project for a release build via the vcpkg preset (QuickStart §Build). Equivalent to: cmake --preset release"
+        },
+        {
+            "label": "CMake: Build Debug",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--build", "build/debug"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": [
+                "$gcc"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "dependsOn": [
+                "CMake: Configure Debug"
+            ],
+            "detail": "Build the project in debug mode (QuickStart §Build). Equivalent to: cmake --build build/debug"
+        },
+        {
+            "label": "CMake: Build Release",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--build", "build/release"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": [
+                "$gcc"
+            ],
+            "group": "build",
+            "dependsOn": [
+                "CMake: Configure Release"
+            ],
+            "detail": "Build the project in release mode (QuickStart §Build). Equivalent to: cmake --build build/release"
+        },
+        {
+            "label": "CMake: Test (Debug)",
+            "type": "shell",
+            "command": "ctest",
+            "args": [
+                "--test-dir", "build/debug"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": [],
+            "group": "test",
+            "dependsOn": [
+                "CMake: Build Debug"
+            ],
+            "detail": "Run all tests using CTest on the debug build (QuickStart §Tests). Equivalent to: ctest --test-dir build/debug"
+        },
+        {
+            "label": "CMake: Test (Release)",
+            "type": "shell",
+            "command": "ctest",
+            "args": [
+                "--test-dir", "build/release"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": [],
+            "group": "test",
+            "dependsOn": [
+                "CMake: Build Release"
+            ],
+            "detail": "Run all tests using CTest on the release build. Equivalent to: ctest --test-dir build/release"
+        },
+        {
+            "label": "CMake: Clean Debug",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--build", "build/debug",
+                "--target", "clean"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": [],
+            "detail": "Clean the debug build directory. Equivalent to: cmake --build build/debug --target clean"
+        },
+        {
+            "label": "CMake: Clean Release",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--build", "build/release",
+                "--target", "clean"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": [],
+            "detail": "Clean the release build directory. Equivalent to: cmake --build build/release --target clean"
+        },
+        {
+            "label": "CPack: Package Release",
+            "type": "shell",
+            "command": "cpack",
+            "args": [
+                "--config", "build/release/CPackConfig.cmake"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": [],
+            "group": "build",
+            "dependsOn": [
+                "CMake: Build Release"
+            ],
+            "detail": "Create a distribution package using CPack (QuickStart §Distribution). Equivalent to: cpack --config build/release/CPackConfig.cmake"
+        }
+    ]
+}
