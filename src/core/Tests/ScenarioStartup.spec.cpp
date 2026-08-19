@@ -215,8 +215,8 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK(controller.area_script()->state() == AreaScriptState::k_ready);
     CHECK_FALSE(controller.dispatcher().main_menu_active());
 
-    controller.dispatcher().set_menu_activation_sink(
-        [] { return std::expected<void, std::string>{}; });
+    controller.dispatcher().set_interface_open_sink(
+        [](std::uint16_t /*id*/) { return std::expected<void, std::string>{}; });
 
     REQUIRE(controller.tick().has_value());
     CHECK(controller.ticked());

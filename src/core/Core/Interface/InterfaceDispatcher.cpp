@@ -1,7 +1,5 @@
 #include "Core/Interface/InterfaceDispatcher.hpp"
 
-#include <fmt/format.h>
-
 #include <expected>
 #include <string>
 #include <utility>
@@ -11,8 +9,8 @@
 
 namespace App {
 
-void InterfaceDispatcher::set_menu_activation_sink(MenuActivationSink sink) {
-  m_menu_activation_sink = std::move(sink);
+void InterfaceDispatcher::set_interface_open_sink(InterfaceOpenSink sink) {
+  m_interface_open_sink = std::move(sink);
 }
 
 std::expected<void, std::string> InterfaceDispatcher::open(const InterfaceOpenRequest& request) {
@@ -24,21 +22,19 @@ std::expected<void, std::string> InterfaceDispatcher::open(const InterfaceOpenRe
       request.operand_b,
       request.operand_c);
 
-  if (request.interface_id == k_main_menu_interface) {
-    if (!m_menu_activation_sink) {
-      return std::expected<void, std::string>{
-          std::unexpect, "interface 29 requested but no menu activation sink is wired"};
-    }
-    if (auto result{m_menu_activation_sink()}; !result) {
-      return result;
-    }
-    m_main_menu_active = true;
-    App::Log::info("main menu active");
-    return {};
+  if (!m_interface_open_sink) {
+    return std::expected<void, std::string>{
+        std::unexpect, "no interface open sink is wired"};
+  }
+  if (auto result{m_interface_open_sink(request.interface_id)}; !result) {
+    return result;
   }
 
-  return std::expected<void, std::string>{
-      std::unexpect, fmt::format("interface {} is unsupported", request.interface_id)};
+  if (request.interface_id == k_main_menu_interface) {
+    m_main_menu_active = true;
+    App::Log::info("main menu active");
+  }
+  return {};
 }
 
 void InterfaceDispatcher::open_preliminary_29() {

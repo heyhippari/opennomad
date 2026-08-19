@@ -28,24 +28,26 @@ TEST_SUITE("Core::Interface::InterfaceDispatcher") {
     CHECK_FALSE(dispatcher.main_menu_active());
   }
 
-  TEST_CASE("a successful sink activates the main menu") {
+  TEST_CASE("a successful sink activates the main menu and receives the id") {
     InterfaceDispatcher dispatcher;
-    bool invoked{false};
-    dispatcher.set_menu_activation_sink([&invoked]() -> std::expected<void, std::string> {
-      invoked = true;
-      return {};
-    });
+    std::uint16_t received_id{0};
+    dispatcher.set_interface_open_sink(
+        [&received_id](const std::uint16_t id) -> std::expected<void, std::string> {
+          received_id = id;
+          return {};
+        });
 
     const auto result{dispatcher.open(k_menu_request)};
     REQUIRE(result.has_value());
-    CHECK(invoked);
+    CHECK_EQ(received_id, InterfaceDispatcher::k_main_menu_interface);
     CHECK(dispatcher.main_menu_active());
     CHECK_EQ(dispatcher.last_request().interface_id, InterfaceDispatcher::k_main_menu_interface);
   }
 
   TEST_CASE("a failing sink reports its error and never activates the menu") {
     InterfaceDispatcher dispatcher;
-    dispatcher.set_menu_activation_sink([]() -> std::expected<void, std::string> {
+    dispatcher.set_interface_open_sink([](const std::uint16_t /*id*/)
+                                           -> std::expected<void, std::string> {
       return std::expected<void, std::string>{std::unexpect, "menu construction failed"};
     });
 
@@ -55,17 +57,18 @@ TEST_SUITE("Core::Interface::InterfaceDispatcher") {
     CHECK_FALSE(dispatcher.main_menu_active());
   }
 
-  TEST_CASE("an unknown interface is unsupported and does not invoke the sink") {
+  TEST_CASE("a non-menu interface delegates to the sink without activating the menu") {
     InterfaceDispatcher dispatcher;
-    bool invoked{false};
-    dispatcher.set_menu_activation_sink([&invoked]() -> std::expected<void, std::string> {
-      invoked = true;
-      return {};
-    });
+    std::uint16_t received_id{0};
+    dispatcher.set_interface_open_sink(
+        [&received_id](const std::uint16_t id) -> std::expected<void, std::string> {
+          received_id = id;
+          return {};
+        });
 
     const auto result{dispatcher.open(InterfaceOpenRequest{.interface_id = 7})};
-    REQUIRE_FALSE(result.has_value());
-    CHECK_FALSE(invoked);
+    REQUIRE(result.has_value());
+    CHECK_EQ(received_id, 7U);
     CHECK_FALSE(dispatcher.main_menu_active());
   }
 

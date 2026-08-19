@@ -19,6 +19,7 @@
 #include <ranges>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include <fmt/format.h>
@@ -28,6 +29,8 @@
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Debug/Metrics.hpp"
 #include "Core/Interface/InterfaceDispatcher.hpp"
+#include "Core/Interface/InterfaceManager.hpp"
+#include "Core/Interface/I2DModel.hpp"
 #include "Core/Log.hpp"
 #include "Core/ModelScene.hpp"
 #include "Core/Omikron/IamArea.hpp"
@@ -1873,6 +1876,72 @@ void DebugUI::show_interface() {
       static_cast<unsigned int>(request.interface_id),
       request.operand_b,
       request.operand_c);
+
+  const Interface::InterfaceManager* manager{m_context.interface_manager};
+  if (manager == nullptr) {
+    ImGui::End();
+    return;
+  }
+
+  ImGui::SeparatorText("I2D Inspector");
+  const Interface::InterfaceInstance* instance{manager->instance()};
+  if (instance == nullptr || instance->descriptor == nullptr) {
+    ImGui::TextUnformatted("No active interface.");
+    ImGui::End();
+    return;
+  }
+
+  ImGui::Text("id %d  \"%s\"",
+      instance->descriptor->id,
+      fmt::format("{}", instance->descriptor->name).c_str());
+  ImGui::Text("bitmap: %s", fmt::format("{}", instance->descriptor->bitmap_name).c_str());
+  ImGui::Text("string table: %s (%zu entries)",
+      fmt::format("{}", instance->descriptor->string_table_name).c_str(),
+      instance->strings.size());
+  ImGui::Text("selected element: %zu", instance->selected_element);
+
+  const Interface::I2DState* state{instance->current_state};
+  const char* state_name{"none"};
+  if (state != nullptr) {
+    state_name = state == instance->root_state ? "root" : "child";
+  }
+  ImGui::Text("state: %s", state_name);
+
+  if (state != nullptr) {
+    std::size_t selectable_ordinal{0};
+    for (const Interface::I2DGroup& group : state->groups) {
+      ImGui::Text("group flags 0x%08X", group.runtime_flags);
+      for (const Interface::I2DElement& element : group.elements) {
+        if (const auto* bitmap{std::get_if<Interface::I2DBitmapElement>(&element.data)}) {
+          ImGui::Text("  bitmap src(%d,%d,%d,%d) dst(%d,%d,%d,%d) flags 0x%08X",
+              bitmap->source.x,
+              bitmap->source.y,
+              bitmap->source.width,
+              bitmap->source.height,
+              bitmap->destination.x,
+              bitmap->destination.y,
+              bitmap->destination.width,
+              bitmap->destination.height,
+              bitmap->runtime_flags);
+        } else if (const auto* text{std::get_if<Interface::I2DTextElement>(&element.data)}) {
+          const bool selected{text->selectable() && selectable_ordinal == instance->selected_element};
+          if (text->selectable()) {
+            ++selectable_ordinal;
+          }
+          ImGui::Text("  text[%u] \"%s\" key '%c' rect(%d,%d,%d,%d) flags 0x%08X%s",
+              text->string_index,
+              fmt::format("{}", instance->strings.at(text->string_index)).c_str(),
+              text->font_key,
+              text->bounds.x,
+              text->bounds.y,
+              text->bounds.width,
+              text->bounds.height,
+              text->runtime_flags,
+              selected ? "  <selected>" : "");
+        }
+      }
+    }
+  }
 
   ImGui::End();
 }

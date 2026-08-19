@@ -1,41 +1,41 @@
 #pragma once
 
-#include <expected>
 #include <memory>
-#include <string>
 
 #include "Core/Input/InputManager.hpp"
-#include "Core/Mesh.hpp"
 #include "Core/Scene.hpp"
-#include "Core/Shader.hpp"
-#include "Core/Texture.hpp"
+
+namespace App::Interface {
+class InterfaceManager;
+}
 
 namespace App {
 
-/// Native OpenNomad main-menu screen. This is a minimal, self-contained
-/// menu state reached through the IAM/START startup path: it draws a static
-/// backdrop; the full interactive menu is a later milestone.
+/// Adapter/host scene for the generic interface system. Interface 29 is the
+/// active interface; this scene delegates update and render to the
+/// InterfaceManager and owns no menu composition data (labels, positions,
+/// fonts, artwork or layout all live in the interface system).
 class MainMenuScene final : public Scene {
  public:
-  /// Builds the fullscreen backdrop quad and its shader/texture resources.
-  static std::expected<std::unique_ptr<MainMenuScene>, std::string> create();
+  static std::unique_ptr<MainMenuScene> create(Interface::InterfaceManager& manager);
 
   ~MainMenuScene() override = default;
 
   MainMenuScene(const MainMenuScene&) = delete;
   MainMenuScene(MainMenuScene&&) = delete;
-  MainMenuScene& operator=(MainMenuScene other) = delete;
-  MainMenuScene& operator=(MainMenuScene&& other) = delete;
+  MainMenuScene& operator=(const MainMenuScene&) = delete;
+  MainMenuScene& operator=(MainMenuScene&&) = delete;
 
   void update(float delta_time, const Input::InputManager& input) override;
   void render() override;
+  void resize(int width, int height) override;
 
  private:
-  explicit MainMenuScene(Texture2D backdrop, Shader shader);
+  explicit MainMenuScene(Interface::InterfaceManager& manager);
 
-  Texture2D m_backdrop;
-  Shader m_shader;
-  Mesh m_quad;
+  Interface::InterfaceManager* m_manager{nullptr};
+  int m_width{640};
+  int m_height{480};
 };
 
 }  // namespace App

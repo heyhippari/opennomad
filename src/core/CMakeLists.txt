@@ -56,6 +56,14 @@ add_library(${NAME} STATIC
   Core/Scenario/ScenarioStartupController.hpp Core/Scenario/ScenarioStartupController.cpp
   Core/Scenario/ScenarioEngine.hpp Core/Scenario/ScenarioEngine.cpp
   Core/Interface/InterfaceDispatcher.hpp Core/Interface/InterfaceDispatcher.cpp
+  Core/Interface/I2DModel.hpp
+  Core/Interface/InterfaceDescriptor.hpp
+  Core/Interface/StartMenuLayout.hpp
+  Core/Interface/FontManager.hpp Core/Interface/FontManager.cpp
+  Core/Interface/I2DBumpBackground.hpp Core/Interface/I2DBumpBackground.cpp
+  Core/Interface/I2DRenderer.hpp Core/Interface/I2DRenderer.cpp
+  Core/Interface/InterfaceManager.hpp Core/Interface/InterfaceManager.cpp
+  Core/Omikron/IamStringTable.hpp Core/Omikron/IamStringTable.cpp
   Core/Script/ScriptOpcode.hpp
   Core/Script/ScriptRuntime.hpp Core/Script/ScriptRuntime.cpp
   Core/Script/AreaScriptOpcode.hpp

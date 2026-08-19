@@ -196,8 +196,8 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
     App::Startup::StartupTraceRecorder recorder;
     App::ScenarioManager manager;
     App::ScenarioEngine engine{manager, recorder};
-    engine.dispatcher().set_menu_activation_sink(
-        [] { return std::expected<void, std::string>{}; });
+    engine.dispatcher().set_interface_open_sink(
+        [](std::uint16_t /*id*/) { return std::expected<void, std::string>{}; });
 
     REQUIRE(engine.select_permanent_mode_script().has_value());
     REQUIRE(engine.enter_mode(App::ScenarioMode::k_teardown, 0).has_value());
@@ -308,8 +308,8 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
     App::Startup::StartupTraceRecorder recorder;
     App::ScenarioManager manager;
     App::ScenarioEngine engine{manager, recorder};
-    engine.dispatcher().set_menu_activation_sink(
-        [] { return std::expected<void, std::string>{}; });
+    engine.dispatcher().set_interface_open_sink(
+        [](std::uint16_t /*id*/) { return std::expected<void, std::string>{}; });
 
     REQUIRE(engine.select_permanent_mode_script().has_value());
     REQUIRE(engine.enter_mode(App::ScenarioMode::k_teardown, 0).has_value());

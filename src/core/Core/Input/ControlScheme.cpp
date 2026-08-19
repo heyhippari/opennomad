@@ -75,6 +75,26 @@ ControlScheme ControlScheme::make_keyboard_mouse_default() {
       .add_binding({.action = Action::k_skip_video,
           .source = InputSource{.type = SourceType::k_key,
               .index = static_cast<std::uint32_t>(SDL_SCANCODE_ESCAPE)},
+          .scale = 1.0F})
+      .add_binding({.action = Action::k_menu_up,
+          .source = InputSource{.type = SourceType::k_key,
+              .index = static_cast<std::uint32_t>(SDL_SCANCODE_UP)},
+          .scale = 1.0F})
+      .add_binding({.action = Action::k_menu_down,
+          .source = InputSource{.type = SourceType::k_key,
+              .index = static_cast<std::uint32_t>(SDL_SCANCODE_DOWN)},
+          .scale = 1.0F})
+      .add_binding({.action = Action::k_menu_confirm,
+          .source = InputSource{.type = SourceType::k_key,
+              .index = static_cast<std::uint32_t>(SDL_SCANCODE_RETURN)},
+          .scale = 1.0F})
+      .add_binding({.action = Action::k_menu_cancel,
+          .source = InputSource{.type = SourceType::k_key,
+              .index = static_cast<std::uint32_t>(SDL_SCANCODE_BACKSPACE)},
+          .scale = 1.0F})
+      .add_binding({.action = Action::k_menu_cancel,
+          .source = InputSource{.type = SourceType::k_key,
+              .index = static_cast<std::uint32_t>(SDL_SCANCODE_ESCAPE)},
           .scale = 1.0F});
   return scheme;
 }

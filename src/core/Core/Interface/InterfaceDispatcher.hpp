@@ -16,14 +16,16 @@ struct InterfaceOpenRequest {
   std::int16_t operand_c{19};
 };
 
-/// Caller-wired action that constructs and installs the native main-menu
-/// screen. Invoked by open() when interface 29 is requested; the dispatcher
-/// marks the menu active only when the sink succeeds.
-using MenuActivationSink = std::function<std::expected<void, std::string>()>;
+/// Caller-wired generic interface opener: constructs the requested interface
+/// through the interface system and reports construction failure. Wired by
+/// the application to the InterfaceManager; the dispatcher itself performs
+/// no interface-specific work.
+using InterfaceOpenSink =
+    std::function<std::expected<void, std::string>(std::uint16_t interface_id)>;
 
-/// Routes interface-open requests to native OpenNomad screens. Interface 29
-/// activates the main menu; every other interface is an explicit, reported
-/// unsupported state rather than a silent no-op.
+/// Routes interface-open requests to the generic interface system. Interface
+/// 29 is the main menu, tracked separately so the startup orchestration can
+/// assert that the area script really opened it.
 ///
 /// Interface 29 has two distinct roles during startup: the preliminary
 /// splash instance (opened while the splash is shown) and the final main
@@ -34,13 +36,13 @@ class InterfaceDispatcher {
   /// Interface ID of the main menu (confirmed from IAM/AREA record 118).
   static constexpr std::uint16_t k_main_menu_interface{29};
 
-  /// Wires the native main-menu construction action. Without a sink, an
-  /// interface-29 request is reported as unsupported.
-  void set_menu_activation_sink(MenuActivationSink sink);
+  /// Wires the generic interface-opening sink. Without a sink, every request
+  /// is reported as unsupported.
+  void set_interface_open_sink(InterfaceOpenSink sink);
 
   /// Dispatches one interface-open request (the final main-menu instance).
-  /// Interface 29 constructs and activates the native screen through the
-  /// wired sink and is marked active only when that construction succeeds.
+  /// Delegates to the wired sink and marks the main menu active when
+  /// interface 29 opened successfully.
   [[nodiscard]] std::expected<void, std::string> open(const InterfaceOpenRequest& request);
 
   /// Opens the preliminary interface 29 instance shown while the splash runs.
@@ -70,7 +72,7 @@ class InterfaceDispatcher {
   bool m_main_menu_active{false};
   bool m_preliminary_29_active{false};
   InterfaceOpenRequest m_last_request;
-  MenuActivationSink m_menu_activation_sink;
+  InterfaceOpenSink m_interface_open_sink;
 };
 
 }  // namespace App

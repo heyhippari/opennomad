@@ -23,6 +23,10 @@
 
 namespace App {
 
+namespace Interface {
+class InterfaceManager;
+}
+
 class Application {
  public:
   /// Initialises SDL, creates the window and audio device, and builds the
@@ -133,6 +137,10 @@ class Application {
   Input::InputManager m_input{};
   // Declared after the window so it is destroyed before the GL context.
   std::unique_ptr<Scene> m_scene{nullptr};
+  /// Generic interface system; owns the active interface (interface 29) and
+  /// its GL resources. Declared after the window so its GL resources are
+  /// released before the context is destroyed.
+  std::unique_ptr<Interface::InterfaceManager> m_interface_manager{nullptr};
   /// Seconds left before switching from the splash to the main menu.
   float m_splash_seconds_left{0.0F};
   /// True once the splash has been replaced by the native main menu.

@@ -80,6 +80,14 @@ add_executable(InterfaceDispatcherTest InterfaceDispatcher.spec.cpp $<TARGET_OBJ
 add_test(NAME InterfaceDispatcherTest COMMAND InterfaceDispatcherTest)
 target_link_libraries(InterfaceDispatcherTest PRIVATE doctest::doctest Core)
 
+add_executable(IamStringTableTest IamStringTable.spec.cpp $<TARGET_OBJECTS:TestRunner>)
+add_test(NAME IamStringTableTest COMMAND IamStringTableTest)
+target_link_libraries(IamStringTableTest PRIVATE doctest::doctest Core)
+
+add_executable(InterfaceDescriptorTest InterfaceDescriptor.spec.cpp $<TARGET_OBJECTS:TestRunner>)
+add_test(NAME InterfaceDescriptorTest COMMAND InterfaceDescriptorTest)
+target_link_libraries(InterfaceDescriptorTest PRIVATE doctest::doctest Core)
+
 add_executable(VideoPhaseTest VideoPhase.spec.cpp $<TARGET_OBJECTS:TestRunner>)
 add_test(NAME VideoPhaseTest COMMAND VideoPhaseTest)
 target_link_libraries(VideoPhaseTest PRIVATE doctest::doctest Core)

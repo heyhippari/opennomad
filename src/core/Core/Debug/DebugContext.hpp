@@ -13,6 +13,10 @@ namespace Startup {
 class StartupCoordinator;
 class StartupTraceRecorder;
 }
+
+namespace Interface {
+class InterfaceManager;
+}
 }  // namespace App
 
 namespace App::Debug {
@@ -24,6 +28,7 @@ struct DebugContext {
   Scene* scene{nullptr};
   ScenarioManager* scenario_manager{nullptr};
   ScenarioEngine* scenario_engine{nullptr};
+  Interface::InterfaceManager* interface_manager{nullptr};
   Audio::AudioSystem* audio_system{nullptr};
   Startup::StartupCoordinator* startup_coordinator{nullptr};
   Startup::StartupTraceRecorder* startup_trace{nullptr};

@@ -36,6 +36,8 @@
 #include "Core/Input/InputAction.hpp"
 #include "Core/Input/RawInputState.hpp"
 #include "Core/Input/TextInputState.hpp"
+#include "Core/Interface/InterfaceDispatcher.hpp"
+#include "Core/Interface/InterfaceManager.hpp"
 #include "Core/Log.hpp"
 #include "Core/MainLoopController.hpp"
 #include "Core/MainMenuScene.hpp"
@@ -96,6 +98,7 @@ Application::Application(Application&& other) noexcept
       m_coordinator(std::move(other.m_coordinator)),
       m_input(std::move(other.m_input)),
       m_scene(std::move(other.m_scene)),
+      m_interface_manager(std::move(other.m_interface_manager)),
       m_splash_seconds_left(other.m_splash_seconds_left),
       m_menu_shown(other.m_menu_shown),
       m_running(other.m_running),
@@ -195,6 +198,7 @@ std::expected<Application, std::string> Application::create(const std::string& t
     app.m_audio = std::move(audio).value();
     app.m_scenario_manager->set_audio_system(app.m_audio.get());
   }
+  app.m_interface_manager = std::make_unique<Interface::InterfaceManager>();
   // The skip action must be registered before the videos: the playback loop
   // asks the input manager whether Escape was pressed this frame.
   app.m_input.add_scheme(Input::ControlScheme::make_keyboard_mouse_default());
@@ -271,6 +275,7 @@ std::expected<Application, std::string> Application::create(const std::string& t
       .scene = app.m_scene.get(),
       .scenario_manager = app.m_scenario_manager.get(),
       .scenario_engine = app.m_scenario_engine.get(),
+      .interface_manager = app.m_interface_manager.get(),
       .audio_system = app.m_audio.get(),
       .startup_coordinator = app.m_coordinator.get(),
       .startup_trace = app.m_trace.get()});
@@ -598,18 +603,21 @@ void Application::dispatch_held_escape() {
 }
 
 void Application::wire_menu_activation() {
-  if (m_scenario_engine == nullptr) {
+  if (m_scenario_engine == nullptr || m_interface_manager == nullptr) {
     return;
   }
-  m_scenario_engine->dispatcher().set_menu_activation_sink(
-      [this]() -> std::expected<void, std::string> {
-        auto menu{MainMenuScene::create()};
-        if (!menu) {
-          return std::expected<void, std::string>{
-              std::unexpect, std::move(menu).error()};
+  // The area script's opcode 0x46 requests interface 29; the generic
+  // interface system opens it. Only after a successful open is the native
+  // menu installed as the visible scene (MainMenuScene is a thin adapter).
+  m_scenario_engine->dispatcher().set_interface_open_sink(
+      [this](const std::uint16_t interface_id) -> std::expected<void, std::string> {
+        if (auto result{m_interface_manager->open(interface_id)}; !result) {
+          return result;
         }
-        m_scene = std::move(menu).value();
-        m_window->debug_ui().set_scene(m_scene.get());
+        if (interface_id == InterfaceDispatcher::k_main_menu_interface) {
+          m_scene = MainMenuScene::create(*m_interface_manager);
+          m_window->debug_ui().set_scene(m_scene.get());
+        }
         return {};
       });
 }
