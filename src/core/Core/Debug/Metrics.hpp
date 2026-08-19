@@ -25,8 +25,21 @@ struct I2DCounters {
   std::size_t draw_calls{0};
   std::size_t quads{0};
   std::size_t glyphs{0};
-  std::uint32_t background_ticks{0};
+  /// Authentic 30 Hz tick boundaries crossed by the last background update.
+  std::uint64_t background_ticks{0};
+  /// Dynamic bytes uploaded CPU -> GPU by the background (always 0 after
+  /// initialization in the GPU renderer).
   std::size_t background_bytes_uploaded{0};
+  /// Index of the background's current endpoint tick.
+  std::uint64_t background_tick{0};
+  /// Fractional progress toward the next endpoint, in [0, 1).
+  float background_alpha{0.0F};
+  /// Warp-endpoint GPU passes run by the last background render.
+  std::size_t background_warp_passes{0};
+  /// Background draws issued by the last background render (normally 1).
+  std::size_t background_draw_calls{0};
+  /// True when the background presents interpolated frames (false = stepped).
+  bool background_interpolated{true};
 };
 
 /// Singleton collecting per-frame performance metrics and system information.

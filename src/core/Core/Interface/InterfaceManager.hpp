@@ -141,6 +141,14 @@ class InterfaceManager {
     return m_fonts;
   }
 
+  /// Sets the animated background's presentation mode (stepped or
+  /// interpolated) for every resident instance. Debug/inspection helper.
+  void set_background_interpolated(bool interpolated);
+
+  /// Reads the background presentation mode from the first resident instance
+  /// (interpolated when none). Debug/inspection helper.
+  [[nodiscard]] bool background_interpolated() const;
+
   // --- Generic navigation (focused interface) ---
   void select_previous();
   void select_next();

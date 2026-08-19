@@ -12,6 +12,7 @@
 #include <utility>
 
 #include "Core/Debug/Instrumentor.hpp"
+#include "Core/Interface/I2DBumpEndpoint.hpp"
 #include "Core/Omikron/IndexedBmp8.hpp"
 
 // This file transcribes the recovered Runtime math (I2D_Bump.c) as literally
@@ -161,32 +162,19 @@ void I2DBumpEffect::advance_ticks(const std::uint32_t ticks) {
   // A slow host frame that has to catch up several 30 Hz ticks therefore
   // costs a handful of floating-point operations per missed tick rather than
   // several complete (and invisible) effect frames.
-  for (std::uint32_t tick{0}; tick < ticks; ++tick) {
-    // --- Moving light ---
-    // Runtime: light_x = _ftol(cos(light_angle) * 64.0) + 128; the same for
-    // light_y with sin. light_angle then advances by 0.0785 (FSUB against
-    // -0.0785 in the assembly, so the effective sign is +). The light
-    // position is derived from the angle BEFORE the increment, exactly as
-    // the recovered frame does.
-    m_light_x = trunc_toward_zero(std::cos(m_light_angle) * 64.0) + 128;
-    m_light_y = trunc_toward_zero(std::sin(m_light_angle) * 64.0) + 128;
-    m_light_angle += 0.0785;
-
-    // --- Warp-frame phases ---
-    m_phase_a += 0.009925;
-    m_phase_b -= 0.013915;
-    m_phase_c -= 0.007685;
-    m_phase_d += 0.015635;
-  }
-  m_tick_index += ticks;
+  //
+  // The scalar math is shared with the production GPU renderer via
+  // advance_endpoint() so both paths stay bit-identical (Runtime derives the
+  // light position from the current angle, then advances the angle).
+  advance_endpoint(m_endpoint, ticks);
 }
 
 void I2DBumpEffect::regenerate_lighting() {
   APP_PROFILE_FUNCTION();
 
   // --- Build the 480-entry row warp table ---
-  double a{m_phase_a};
-  double b{m_phase_b};
+  double a{m_endpoint.phase_a};
+  double b{m_endpoint.phase_b};
   for (int i{0}; i < K_ROW_WARP_SIZE; ++i) {
     const int value{trunc_toward_zero(32.0 * std::cos(b) + 64.0 * std::cos(a))};
     m_row_warp.at(static_cast<std::size_t>(i)) = static_cast<std::uint8_t>(value & 0xFF);
@@ -195,8 +183,8 @@ void I2DBumpEffect::regenerate_lighting() {
   }
 
   // --- Build the 640-entry column warp table ---
-  double c{m_phase_c};
-  double d{m_phase_d};
+  double c{m_endpoint.phase_c};
+  double d{m_endpoint.phase_d};
   for (int i{0}; i < K_COLUMN_WARP_SIZE; ++i) {
     const int value{trunc_toward_zero(48.0 * (std::cos(c) + std::cos(d)))};
     m_column_warp.at(static_cast<std::size_t>(i)) = static_cast<std::uint8_t>(value & 0xFF);
@@ -214,8 +202,8 @@ void I2DBumpEffect::regenerate_lighting() {
   const std::int8_t* grad_x{m_gradient_x.data()};
   const std::int8_t* grad_y{m_gradient_y.data()};
   std::uint8_t* lit{m_lit.data()};
-  const int light_x{m_light_x};
-  const int light_y{m_light_y};
+  const int light_x{m_endpoint.light_x};
+  const int light_y{m_endpoint.light_y};
   for (int y{0}; y < K_HEIGHT_SIZE; ++y) {
     const int y_minus_light_y{y - light_y};
     const std::size_t row_base{static_cast<std::size_t>(y) * K_HEIGHT_SIZE};

@@ -108,6 +108,10 @@ add_executable(I2DBumpEffectTest I2DBumpEffect.spec.cpp $<TARGET_OBJECTS:TestRun
 add_test(NAME I2DBumpEffectTest COMMAND I2DBumpEffectTest)
 target_link_libraries(I2DBumpEffectTest PRIVATE doctest::doctest Core)
 
+add_executable(I2DBumpTimelineTest I2DBumpTimeline.spec.cpp $<TARGET_OBJECTS:TestRunner>)
+add_test(NAME I2DBumpTimelineTest COMMAND I2DBumpTimelineTest)
+target_link_libraries(I2DBumpTimelineTest PRIVATE doctest::doctest Core)
+
 add_executable(I2DPresentationTest I2DPresentation.spec.cpp $<TARGET_OBJECTS:TestRunner>)
 add_test(NAME I2DPresentationTest COMMAND I2DPresentationTest)
 target_link_libraries(I2DPresentationTest PRIVATE doctest::doctest Core)

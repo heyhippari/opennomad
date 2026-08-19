@@ -250,8 +250,16 @@ void I2DRenderer::render(const InterfaceInstance& instance,
   // 1. Animated background, when the current state has one. It owns its own
   // shader and draws over the full viewport.
   if (instance.current_state->background != nullptr) {
-    instance.current_state->background->render(transform);
+    I2DBumpBackground& background{*instance.current_state->background};
+    background.render(transform);
     counters.draw_calls += 1;
+    counters.background_ticks = background.last_ticks();
+    counters.background_bytes_uploaded = background.last_upload_bytes();
+    counters.background_tick = background.current_tick();
+    counters.background_alpha = background.alpha();
+    counters.background_warp_passes = background.last_warp_passes();
+    counters.background_draw_calls = background.last_draw_calls();
+    counters.background_interpolated = background.interpolated();
   }
 
   // 2. Interface bitmap artwork + text, batched by texture/blit state.

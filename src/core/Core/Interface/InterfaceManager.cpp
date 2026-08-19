@@ -338,6 +338,23 @@ void InterfaceManager::render(const int pixel_width, const int pixel_height) {
   Debug::Metrics::get().set_i2d_counters(counters);
 }
 
+void InterfaceManager::set_background_interpolated(const bool interpolated) {
+  for (const auto& instance : m_instances) {
+    if (instance->background != nullptr) {
+      instance->background->set_interpolated(interpolated);
+    }
+  }
+}
+
+bool InterfaceManager::background_interpolated() const {
+  for (const auto& instance : m_instances) {
+    if (instance->background != nullptr) {
+      return instance->background->interpolated();
+    }
+  }
+  return true;
+}
+
 // NOLINTNEXTLINE(readability-convert-member-functions-to-static) — descriptor API parity
 I2DState* InterfaceManager::create_state(InterfaceInstance& instance) {
   auto state{std::make_unique<I2DState>()};

@@ -258,6 +258,29 @@ TEST_SUITE("Core::Interface::I2DBumpEffect") {
       CHECK_EQ(offset, effect->column_warp(static_cast<std::size_t>(639 - x)));
     }
   }
+
+  TEST_CASE("Warp axis assignment: X receives the row offset, Y the column offset") {
+    // Runtime consumes the two lookup tables in reverse and assigns the row
+    // (Y-dependent) offset to source X and the column (X-dependent) offset to
+    // source Y. This pins that assignment so the GPU renderer cannot swap the
+    // axes back (the hybrid shader originally had them reversed).
+    auto effect{App::Interface::I2DBumpEffect::create(flat_height_map(0))};
+    REQUIRE(effect.has_value());
+    effect->advance_one_tick();
+
+    for (const auto [output_x, output_y] :
+        {std::pair{0, 0}, std::pair{100, 200}, std::pair{639, 479}, std::pair{321, 123}}) {
+      const auto [source_x, source_y]{effect->warp_source_coordinates(output_x, output_y)};
+      CHECK_EQ(source_x,
+          (output_x + static_cast<int>(effect->row_warp(
+                          static_cast<std::size_t>(479 - output_y)))) &
+              0xFF);
+      CHECK_EQ(source_y,
+          (output_y + static_cast<int>(effect->column_warp(
+                          static_cast<std::size_t>(639 - output_x)))) &
+              0xFF);
+    }
+  }
 }
 
 // NOLINTEND(misc-use-anonymous-namespace,

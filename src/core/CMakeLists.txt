@@ -31,7 +31,7 @@ add_library(${NAME} STATIC
   Core/VertexArray.hpp Core/VertexArray.cpp
   Core/Mesh.hpp Core/Mesh.cpp
   Core/Texture.hpp Core/Texture.cpp
-  Core/TextureR8.hpp Core/TextureR8.cpp
+  Core/IntegerTexture.hpp Core/IntegerTexture.cpp
   Core/Scene.hpp
   Core/ModelViewerScene.hpp Core/ModelViewerScene.cpp
   Core/WorldScene.hpp Core/WorldScene.cpp
@@ -62,6 +62,8 @@ add_library(${NAME} STATIC
   Core/Interface/InterfaceDispatcher.hpp Core/Interface/InterfaceDispatcher.cpp
   Core/Interface/I2DModel.hpp
   Core/Interface/I2DPresentation.hpp
+  Core/Interface/I2DBumpEndpoint.hpp
+  Core/Interface/I2DBumpTimeline.hpp
   Core/Interface/InterfaceDescriptor.hpp
   Core/Interface/StartMenuLayout.hpp
   Core/Interface/FontManager.hpp Core/Interface/FontManager.cpp

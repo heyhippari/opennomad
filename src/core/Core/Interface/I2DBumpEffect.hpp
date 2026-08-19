@@ -9,6 +9,7 @@
 #include <utility>
 #include <vector>
 
+#include "Core/Interface/I2DBumpEndpoint.hpp"
 #include "Core/Omikron/IndexedBmp8.hpp"
 
 namespace App::Interface {
@@ -64,7 +65,7 @@ class I2DBumpEffect {
 
   /// Number of original effect updates applied so far (0 at construction).
   [[nodiscard]] std::uint64_t tick_index() const {
-    return m_tick_index;
+    return m_endpoint.tick;
   }
 
   /// Rebuilds the animated warp tables and the 256x256 lit intensity field
@@ -108,13 +109,13 @@ class I2DBumpEffect {
 
   // --- Observability accessors (recovered-math tests, no GL required) ---
 
-  [[nodiscard]] int light_x() const { return m_light_x; }
-  [[nodiscard]] int light_y() const { return m_light_y; }
+  [[nodiscard]] int light_x() const { return m_endpoint.light_x; }
+  [[nodiscard]] int light_y() const { return m_endpoint.light_y; }
 
-  [[nodiscard]] double phase_a() const { return m_phase_a; }
-  [[nodiscard]] double phase_b() const { return m_phase_b; }
-  [[nodiscard]] double phase_c() const { return m_phase_c; }
-  [[nodiscard]] double phase_d() const { return m_phase_d; }
+  [[nodiscard]] double phase_a() const { return m_endpoint.phase_a; }
+  [[nodiscard]] double phase_b() const { return m_endpoint.phase_b; }
+  [[nodiscard]] double phase_c() const { return m_endpoint.phase_c; }
+  [[nodiscard]] double phase_d() const { return m_endpoint.phase_d; }
 
   [[nodiscard]] std::uint8_t row_warp(const std::size_t index) const {
     return m_row_warp.at(index);
@@ -195,20 +196,13 @@ class I2DBumpEffect {
   /// 640x480 RGBA8 output (row 0 = top).
   std::vector<std::uint8_t> m_frame;
 
-  /// Number of original effect updates applied so far. The derived light
-  /// position/phases are linear functions of this index, but the iterative
-  /// accumulation in advance_ticks() is kept so the floating-point state is
-  /// bit-identical to the recovered Runtime frame sequence.
-  std::uint64_t m_tick_index{0};
-
-  double m_light_angle{10.0};
-  int m_light_x{128};
-  int m_light_y{128};
-
-  double m_phase_a{0.0};
-  double m_phase_b{1.0};
-  double m_phase_c{2.0};
-  double m_phase_d{0.5};
+  /// The recovered scalar state (tick, phases, light position, light angle).
+  /// The derived light position/phases are linear functions of the tick, but
+  /// the iterative accumulation is kept so the floating-point state is
+  /// bit-identical to the recovered Runtime frame sequence. This is the same
+  /// value type the production GPU renderer carries for its N / N+1 endpoints,
+  /// so both paths share one verified advance implementation.
+  I2DBumpEndpointState m_endpoint;
 
   /// Runtime also maintains a second double, initially 2.0 and decremented by
   /// 0.0815 inside the same routine, but the current trace shows no other

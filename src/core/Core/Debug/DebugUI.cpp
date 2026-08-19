@@ -369,9 +369,15 @@ void DebugUI::show_performance(float /*delta_time*/) {
       static_cast<unsigned long>(i2d.draw_calls),
       static_cast<unsigned long>(i2d.quads),
       static_cast<unsigned long>(i2d.glyphs));
-  ImGui::Text("I2D bg: %lu ticks | %lu bytes uploaded",
+  ImGui::Text("I2D bg: tick %lu | alpha %.3f | %s | ticks %lu | bytes %lu",
+      static_cast<unsigned long>(i2d.background_tick),
+      static_cast<double>(i2d.background_alpha),
+      i2d.background_interpolated ? "interp" : "stepped",
       static_cast<unsigned long>(i2d.background_ticks),
       static_cast<unsigned long>(i2d.background_bytes_uploaded));
+  ImGui::Text("I2D bg: %lu warp passes | %lu draws",
+      static_cast<unsigned long>(i2d.background_warp_passes),
+      static_cast<unsigned long>(i2d.background_draw_calls));
 
   ImGui::End();
 }
@@ -1898,6 +1904,15 @@ void DebugUI::show_interface() {
   }
 
   ImGui::SeparatorText("I2D Inspector");
+  {
+    // Stepped = authentic 30 Hz updates only; interpolated (default) inserts
+    // smooth presentation frames between endpoints.
+    Interface::InterfaceManager* mutable_manager{m_context.interface_manager};
+    bool interpolated{mutable_manager->background_interpolated()};
+    if (ImGui::Checkbox("Interpolate background", &interpolated)) {
+      mutable_manager->set_background_interpolated(interpolated);
+    }
+  }
   const Interface::InterfaceInstance* instance{manager->focused_instance()};
   if (instance == nullptr || instance->descriptor == nullptr) {
     ImGui::TextUnformatted("No active interface.");
