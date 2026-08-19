@@ -32,6 +32,12 @@ This is EXTREMELY early. I basically started by loading some hardcoded 3DO/3DT f
 I am starting with the engine's initialization, because most of the game seems to be script-based. As of the commit this revision of the README is a part of, we should be close to reaching the main menu.
 A lot of things beyond that are already reverse engineered (As tends to happen when reversing software, you pull on a thread that might or might not be related to what you're trying to find), but not implemented yet, as much context is still missing.
 
+Currently, we can reach the main menu (as well as fix the black background on the game's logo, and improve the layout for larger resolutions of today!), with the intro videos, the splash screen (slightly "improved" with a fade in/out) and music working.
+
+![Screenshot of the modernized main menu](.github/screenshots/title_screen.png)
+
+Next steps: handle the `Quit` menu entry, improve the presentation of the menu a bit more with a very quick fade in/fade out, then start working on the game's introduction.
+
 ## How to run
 
 There's not much to run at the moment, but if you're really motivated, follow the instructions in [docs/QuickStart.md](the quick start documentation).
