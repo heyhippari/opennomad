@@ -14,3 +14,10 @@ profile.json
 
 # User defined CMake preset file.
 CMakeUserPresets.json
+
+# VSCode launch settings
+.vscode/launch.json
+
+# Github agentic tools
+.github/prompts/
+.github/skills/
