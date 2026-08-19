@@ -1,7 +1,9 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <variant>
 #include <vector>
 
@@ -42,7 +44,56 @@ struct I2DBitmapElement {
   I2DRect source;
   I2DRect destination;
   std::uint32_t runtime_flags{0};
+
+  /// Separate recovered Runtime blit-mode field (0x03 for the main-menu
+  /// artwork), kept distinct from runtime_flags.
+  ///
+  /// bit 0 (0x01): DDBLT_KEYSRC  — confirmed source colour key (the source
+  ///               surface key is pixel value 0).
+  /// bit 1 (0x02): DDBLT_KEYDEST — confirmed destination colour key (the
+  ///               destination DESTBLT key has not yet been recovered).
+  std::uint8_t runtime_blit_mode{0};
 };
+
+/// Per-draw source colour-key options for the generic I2D bitmap path.
+///
+/// Ordinary alpha blending and DirectDraw source colour-keying are distinct
+/// concepts; the I2D data model preserves that the recovered operation was a
+/// source colour key rather than pretending the bitmap contained alpha.
+struct I2DBlitOptions {
+  /// When set, source pixels whose recovered 16-bit RGB555 value matches the
+  /// key are discarded (see resolve_bitmap_blit_options). nullopt = ordinary
+  /// opaque draw.
+  std::optional<std::array<float, 3>> source_colour_key{std::nullopt};
+};
+
+/// True when the recovered Runtime blit mode requests a source colour key
+/// (DDBLT_KEYSRC). Runtime's low-level blit path (~0x004810D0) maps bit 0.
+[[nodiscard]] inline bool uses_source_color_key(const std::uint8_t mode) {
+  return (mode & 0x01U) != 0U;
+}
+
+/// True when the recovered Runtime blit mode requests a destination colour
+/// key (DDBLT_KEYDEST). Runtime's low-level blit path (~0x004810D0) maps
+/// bit 1. The destination surface's DDCKEY_DESTBLT value has not yet been
+/// located, so no destination-key value is modelled here.
+[[nodiscard]] inline bool uses_destination_color_key(const std::uint8_t mode) {
+  return (mode & 0x02U) != 0U;
+}
+
+/// Resolves a recovered Runtime blit mode to draw options.
+///
+/// Bit 0 enables a source colour key (DDBLT_KEYSRC). Runtime establishes the
+/// key as pixel value 0 in a 16-bit RGB555 surface, which corresponds to
+/// black: the near-black bitmap background (e.g. palette RGB 4,4,4) truncates
+/// to 0 and keys out. Bit 1 (DDBLT_KEYDEST) is recognised but deferred: the
+/// destination key value is still unknown.
+inline I2DBlitOptions resolve_bitmap_blit_options(const I2DBitmapElement& element) {
+  if (uses_source_color_key(element.runtime_blit_mode)) {
+    return I2DBlitOptions{.source_colour_key = std::array<float, 3>{0.0F, 0.0F, 0.0F}};
+  }
+  return I2DBlitOptions{};
+}
 
 /// Generic text element. References a string-table index rather than owning
 /// its label, and resolves its font through a font key (see FontManager).

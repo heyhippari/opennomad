@@ -35,6 +35,13 @@ inline constexpr std::uint32_t k_start_menu_text_group_flags{0x80000010};
 /// Recovered raw flag for the gfxint top-artwork bitmap element (0x40000100).
 inline constexpr std::uint32_t k_start_menu_bitmap_flags{0x40000100};
 
+/// Recovered blit mode for the gfxint top-artwork bitmap element (0x03).
+///
+/// bit 0 (0x01): DDBLT_KEYSRC  — confirmed source colour key.
+/// bit 1 (0x02): DDBLT_KEYDEST — confirmed destination colour key (the
+///               destination DESTBLT key has not yet been recovered).
+inline constexpr std::uint8_t k_start_menu_bitmap_blit_mode{0x03};
+
 /// Recovered source/destination rectangle of the gfxint top artwork.
 inline constexpr I2DRect k_start_menu_bitmap_rect{0, 0, 640, 150};
 

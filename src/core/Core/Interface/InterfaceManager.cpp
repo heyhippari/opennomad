@@ -420,12 +420,15 @@ void initialize_start_menu(InterfaceManager& manager, InterfaceInstance& instanc
   }
 
   // Runtime bitmap element approximately 0x004CF1A8.
-  // Source/destination: 0,0,640,150. Raw flags: 0x40000100.
+  // Source/destination: 0,0,640,150. Raw flags: 0x40000100. Blit mode 0x03:
+  // bit 0 = DDBLT_KEYSRC (source key), bit 1 = DDBLT_KEYDEST (destination
+  // key, value not yet recovered).
   I2DGroup bitmap_group;
   bitmap_group.elements.push_back(I2DElement{I2DBitmapElement{
       .source = k_start_menu_bitmap_rect,
       .destination = k_start_menu_bitmap_rect,
-      .runtime_flags = k_start_menu_bitmap_flags}});
+      .runtime_flags = k_start_menu_bitmap_flags,
+      .runtime_blit_mode = k_start_menu_bitmap_blit_mode}});
   root->groups.push_back(std::move(bitmap_group));
 
   // Runtime text group raw flags: 0x80000010. The 640 px wide rectangles and

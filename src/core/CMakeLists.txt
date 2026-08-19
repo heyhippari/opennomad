@@ -42,6 +42,7 @@ add_library(${NAME} STATIC
   Core/Omikron/Texture3DT.hpp Core/Omikron/Texture3DT.cpp
   Core/Omikron/QdAdp.hpp Core/Omikron/QdAdp.cpp
   Core/Omikron/BmpImage.hpp Core/Omikron/BmpImage.cpp
+  Core/Omikron/IndexedBmp8.hpp Core/Omikron/IndexedBmp8.cpp
   Core/Omikron/SCX.hpp Core/Omikron/SCX.cpp
   Core/Omikron/IamArchive.hpp Core/Omikron/IamArchive.cpp
   Core/Omikron/IamStart.hpp Core/Omikron/IamStart.cpp
@@ -62,6 +63,7 @@ add_library(${NAME} STATIC
   Core/Interface/StartMenuLayout.hpp
   Core/Interface/FontManager.hpp Core/Interface/FontManager.cpp
   Core/Interface/I2DBumpBackground.hpp Core/Interface/I2DBumpBackground.cpp
+  Core/Interface/I2DBumpEffect.hpp Core/Interface/I2DBumpEffect.cpp
   Core/Interface/I2DRenderer.hpp Core/Interface/I2DRenderer.cpp
   Core/Interface/InterfaceManager.hpp Core/Interface/InterfaceManager.cpp
   Core/Omikron/IamStringTable.hpp Core/Omikron/IamStringTable.cpp

@@ -8,6 +8,8 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
+#include <fmt/format.h>
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -17,6 +19,7 @@
 #include <memory>
 #include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -38,6 +41,69 @@ namespace {
 
 constexpr float K_CANVAS_WIDTH{640.0F};
 constexpr float K_CANVAS_HEIGHT{480.0F};
+
+// clang-format off
+/// I2D vertex shader: same inputs as the default textured shader.
+constexpr std::string_view K_I2D_VERTEX_SOURCE = R"glsl(
+#version 410 core
+
+layout(location = 0) in vec3 a_position;
+layout(location = 2) in vec2 a_uv;
+
+uniform mat4 u_mvp;
+
+out vec2 v_uv;
+
+void main() {
+    v_uv = a_uv;
+    gl_Position = u_mvp * vec4(a_position, 1.0);
+}
+)glsl";
+
+/// I2D fragment shader: textured + tinted, with an optional per-draw source
+/// colour key. Runtime bitmaps perform DirectDraw source-keyed blits, which
+/// match the source pixel value exactly in a 16-bit RGB555 surface; the key
+/// "pixel value 0" therefore also matches near-black palette entries (e.g.
+/// the (4,4,4) bitmap background) whose 5-bit channels all truncate to zero.
+constexpr std::string_view K_I2D_FRAGMENT_SOURCE = R"glsl(
+#version 410 core
+
+in vec2 v_uv;
+
+uniform sampler2D u_texture0;
+uniform vec4 u_tint;
+
+uniform int u_source_colour_key_enabled;
+uniform vec3 u_source_colour_key;
+
+out vec4 frag_colour;
+
+vec3 srgb_from_linear(vec3 colour) {
+    vec3 low = colour * 12.92;
+    vec3 high = 1.055 * pow(colour, vec3(1.0 / 2.4)) - 0.055;
+    return mix(high, low, lessThanEqual(colour, vec3(0.0031308)));
+}
+
+void main() {
+    vec4 texel = texture(u_texture0, v_uv);
+
+    if (u_source_colour_key_enabled != 0) {
+        // Recovered DirectDraw semantics: exact comparison of the 5-bit
+        // (RGB555) pixel value against the key. Quantising the sRGB source
+        // bytes to 5 bits makes the near-black background (4,4,4 -> 0) key
+        // out without any chroma-key threshold.
+        vec3 srgb = srgb_from_linear(texel.rgb);
+        ivec3 key = ivec3(u_source_colour_key * 255.0 + 0.5) >> 3;
+        ivec3 pixel = ivec3(srgb * 255.0 + 0.5) >> 3;
+        if (all(equal(pixel, key))) {
+            discard;
+        }
+    }
+
+    frag_colour = texel * u_tint;
+}
+)glsl";
+// clang-format on
 
 /// Converts an sRGB byte component (0..255) to linear light. The text tint
 /// uniform feeds a linear pipeline with a sRGB framebuffer, so recovered
@@ -93,7 +159,12 @@ unsigned int decode_utf8(const char*& cursor, const char* end) {
 std::expected<void, std::string> I2DRenderer::initialize() {
   APP_PROFILE_FUNCTION();
 
-  m_shader = std::make_unique<Shader>(Shader::create_default());
+  auto shader{Shader::create(K_I2D_VERTEX_SOURCE, K_I2D_FRAGMENT_SOURCE)};
+  if (!shader) {
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format("I2D renderer shader: {}", shader.error())};
+  }
+  m_shader = std::make_unique<Shader>(std::move(shader).value());
 
   // Four zero vertices; the dynamic buffer is re-uploaded per quad.
   const std::vector<Vertex> initial(4);
@@ -162,16 +233,20 @@ void I2DRenderer::render(const InterfaceInstance& instance,
   // 1. Animated background, when the current state has one.
   if (instance.current_state->background != nullptr) {
     const Texture2D& background{instance.current_state->background->texture()};
+    // The bump background texture is stored top-down (row 0 = top), unlike
+    // the other I2D textures which are stored bottom-up; its quad therefore
+    // consumes v=0 at the top of the canvas.
     draw_quad(background,
         0.0F,
         0.0F,
         K_CANVAS_WIDTH,
         K_CANVAS_HEIGHT,
         0.0F,
-        1.0F,
-        1.0F,
         0.0F,
-        std::array<float, 4>{1.0F, 1.0F, 1.0F, 1.0F});
+        1.0F,
+        1.0F,
+        std::array<float, 4>{1.0F, 1.0F, 1.0F, 1.0F},
+        I2DBlitOptions{});
   }
 
   // Selection ordinal over the current state's selectable text elements.
@@ -211,7 +286,8 @@ void I2DRenderer::render(const InterfaceInstance& instance,
             v_top,
             u1,
             v_bottom,
-            std::array<float, 4>{1.0F, 1.0F, 1.0F, 1.0F});
+            std::array<float, 4>{1.0F, 1.0F, 1.0F, 1.0F},
+            resolve_bitmap_blit_options(*bitmap));
       } else if (const auto* text{std::get_if<I2DTextElement>(&element.data)}) {
         const bool selected{text->selectable() && selectable_ordinal == instance.selected_element};
         if (text->selectable()) {
@@ -263,7 +339,8 @@ void I2DRenderer::render(const InterfaceInstance& instance,
               glyph->v_top,
               glyph->u_right,
               glyph->v_bottom,
-              tint);
+              tint,
+              I2DBlitOptions{});
           cursor_x += glyph->advance_x;
         }
       }
@@ -316,7 +393,8 @@ void I2DRenderer::draw_quad(const Texture2D& texture,
     const float v0,
     const float u1,
     const float v1,
-    const std::array<float, 4> tint) {
+    const std::array<float, 4> tint,
+    const I2DBlitOptions& blit_options) {
   std::vector<Vertex> vertices{
       Vertex{.position = {x0, y0, 0.0F}, .uv = {u0, v0}},
       Vertex{.position = {x1, y0, 0.0F}, .uv = {u1, v0}},
@@ -328,6 +406,17 @@ void I2DRenderer::draw_quad(const Texture2D& texture,
   m_vertex_array->bind();
   m_index_buffer->bind();
   m_shader->set_uniform_vec4("u_tint", std::span<const GLfloat, 4>{tint});
+
+  // Every draw explicitly sets the source-colour-key state so a keyed draw
+  // never leaks into the next non-keyed draw.
+  if (blit_options.source_colour_key.has_value()) {
+    m_shader->set_uniform_int("u_source_colour_key_enabled", 1);
+    m_shader->set_uniform_vec3("u_source_colour_key",
+        std::span<const GLfloat, 3>{blit_options.source_colour_key->data(), 3});
+  } else {
+    m_shader->set_uniform_int("u_source_colour_key_enabled", 0);
+  }
+
   texture.bind(0);
   glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, nullptr);
   Texture2D::unbind();

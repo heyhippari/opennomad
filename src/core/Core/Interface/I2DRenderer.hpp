@@ -9,6 +9,7 @@
 #include <glad/glad.h>
 
 #include "Core/Buffers.hpp"
+#include "Core/Interface/I2DModel.hpp"
 #include "Core/Shader.hpp"
 #include "Core/Texture.hpp"
 #include "Core/VertexArray.hpp"
@@ -65,7 +66,8 @@ class I2DRenderer {
       float v0,
       float u1,
       float v1,
-      std::array<float, 4> tint);
+      std::array<float, 4> tint,
+      const I2DBlitOptions& blit_options);
 
   std::unique_ptr<Shader> m_shader;
   std::unique_ptr<VertexArray> m_vertex_array;

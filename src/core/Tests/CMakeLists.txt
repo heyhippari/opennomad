@@ -100,6 +100,18 @@ add_executable(BmpImageTest BmpImage.spec.cpp $<TARGET_OBJECTS:TestRunner>)
 add_test(NAME BmpImageTest COMMAND BmpImageTest)
 target_link_libraries(BmpImageTest PRIVATE doctest::doctest Core)
 
+add_executable(IndexedBmp8Test IndexedBmp8.spec.cpp $<TARGET_OBJECTS:TestRunner>)
+add_test(NAME IndexedBmp8Test COMMAND IndexedBmp8Test)
+target_link_libraries(IndexedBmp8Test PRIVATE doctest::doctest Core)
+
+add_executable(I2DBumpEffectTest I2DBumpEffect.spec.cpp $<TARGET_OBJECTS:TestRunner>)
+add_test(NAME I2DBumpEffectTest COMMAND I2DBumpEffectTest)
+target_link_libraries(I2DBumpEffectTest PRIVATE doctest::doctest Core)
+
+add_executable(I2DBlitModeTest I2DBlitMode.spec.cpp $<TARGET_OBJECTS:TestRunner>)
+add_test(NAME I2DBlitModeTest COMMAND I2DBlitModeTest)
+target_link_libraries(I2DBlitModeTest PRIVATE doctest::doctest Core)
+
 add_executable(SplashSceneTest SplashScene.spec.cpp $<TARGET_OBJECTS:TestRunner>)
 add_test(NAME SplashSceneTest COMMAND SplashSceneTest)
 target_link_libraries(SplashSceneTest PRIVATE doctest::doctest Core)
