@@ -87,6 +87,21 @@ TEST_SUITE("Core::Interface::I2DTopCenterPlacement") {
     CHECK(placement.y1 == doctest::Approx(158.0F));
   }
 
+  TEST_CASE("Presentation scale shrinks the logo around its horizontal centre") {
+    const I2DRect destination{.x = 0, .y = 0, .width = 640, .height = 150};
+    const auto placement{
+        compute_top_center_placement(
+            destination, 12.0F, true, 1920, 1080, 0.84F)};
+
+    CHECK((placement.x0 + placement.x1) / 2.0F ==
+          doctest::Approx(320.0F));
+    CHECK(placement.x1 - placement.x0 ==
+          doctest::Approx(537.6F));
+    CHECK(placement.y0 == doctest::Approx(12.0F));
+    CHECK(placement.y1 - placement.y0 ==
+          doctest::Approx(126.0F));
+  }
+
   TEST_CASE("Margin is a constant fraction of screen height") {
     const I2DRect destination{.x = 0, .y = 0, .width = 640, .height = 150};
     const float top_margin{8.0F};

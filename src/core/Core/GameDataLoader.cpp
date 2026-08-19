@@ -16,6 +16,7 @@
 
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Log.hpp"
+#include "Core/LogCategory.hpp"
 #include "Core/Resources.hpp"
 
 namespace App {
@@ -27,7 +28,8 @@ std::expected<LoadedGameFile, std::string> load_game_file(
   const std::filesystem::path root_relative{Resources::game_data_path(relative)};
   const std::filesystem::path resolved{Resources::resolve_case_insensitive(root_relative)};
 
-  App::Log::debug("Game-data file resolution: requested='{}' resolved='{}'",
+  App::Log::trace(LogCategory::Resource,
+      "Game-data file resolution: requested='{}' resolved='{}'",
       relative.string(),
       resolved.string());
 

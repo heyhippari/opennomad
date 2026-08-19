@@ -21,6 +21,7 @@
 
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Log.hpp"
+#include "Core/LogCategory.hpp"
 #include "Core/Resources.hpp"
 
 namespace App::Interface {
@@ -238,9 +239,10 @@ std::expected<void, std::string> FontManager::load_font(const char key) {
 
   // The original resource is FONTS/<logical>.FNT. Its format is not decoded
   // yet; until it is, fall back to the TTF inside the backend only.
-  App::Log::debug("[I2D] font key '{}' -> {}", key, logical);
-  App::Log::warn(
-      "[I2D] {}.FNT renderer unavailable; using temporary OMIKRON.TTF fallback", logical);
+  App::Log::debug(LogCategory::I2D, "font key '{}' -> {}", key, logical);
+  App::Log::debug(LogCategory::I2D,
+      "{}.FNT renderer unavailable; using temporary OMIKRON.TTF fallback",
+      logical);
 
   const std::filesystem::path ttf_request{Resources::game_data_path(
       std::filesystem::path{std::string{K_TTF_FALLBACK_PATH}})};
@@ -273,9 +275,10 @@ const FontResource* FontManager::ensure_font(const char key, const float referen
   }
 
   if (key_found == m_fonts.end()) {
-    App::Log::debug("[I2D] font key '{}' -> {}", key, logical);
-    App::Log::warn(
-        "[I2D] {}.FNT renderer unavailable; using temporary OMIKRON.TTF fallback", logical);
+    App::Log::debug(LogCategory::I2D, "font key '{}' -> {}", key, logical);
+    App::Log::debug(LogCategory::I2D,
+        "{}.FNT renderer unavailable; using temporary OMIKRON.TTF fallback",
+        logical);
   }
 
   const std::filesystem::path ttf_request{Resources::game_data_path(
@@ -285,7 +288,7 @@ const FontResource* FontManager::ensure_font(const char key, const float referen
   auto font{FontResource::load_ttf_fallback(
       ttf_resolved, static_cast<float>(bucket), k_logical_font_size)};
   if (!font) {
-    App::Log::warn("[I2D] font key '{}' at {} px: {}", key, bucket, font.error());
+    App::Log::warn(LogCategory::I2D, "font key '{}' at {} px: {}", key, bucket, font.error());
     return nullptr;
   }
   const auto inserted{m_fonts[key].emplace(bucket, std::move(font).value())};

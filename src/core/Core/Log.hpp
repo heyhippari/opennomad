@@ -3,11 +3,13 @@
 #include <spdlog/fmt/ostr.h>
 #include <spdlog/spdlog.h>
 
+#include <array>
 #include <memory>
 #include <utility>
 #include <version>
 
 #include "Core/Debug/LogSink.hpp"
+#include "Core/LogCategory.hpp"
 
 #ifdef __cpp_lib_stacktrace
 #include <stacktrace>
@@ -21,11 +23,7 @@ class Log {
   Log(const Log&&) = delete;
   Log& operator=(const Log&) = delete;
   Log& operator=(const Log&&) = delete;
-  ~Log() = default;
-
-  static std::shared_ptr<spdlog::logger>& logger() {
-    return get().m_logger;
-  }
+  ~Log();
 
   /// The ring-buffer sink used for the in-app log viewer.
   using DebugSink = Debug::RingBufferSink<512>;
@@ -35,62 +33,78 @@ class Log {
     return get().m_debug_sink;
   }
 
+  // --- Per-sink runtime verbosity control ----------------------------------
+
+  static void set_console_level(spdlog::level::level_enum level);
+  static void set_file_level(spdlog::level::level_enum level);
+  static void set_debug_sink_level(spdlog::level::level_enum level);
+
+  [[nodiscard]] static spdlog::level::level_enum console_level();
+  [[nodiscard]] static spdlog::level::level_enum file_level();
+  [[nodiscard]] static spdlog::level::level_enum debug_sink_level();
+
   // --- Logging functions ----------------------------------------------------
 
   /// Trace level. Compiled out in release builds and when logging is disabled.
   template <typename... Args>
-  static void trace([[maybe_unused]] fmt::format_string<Args...> format,
+  static void trace(const LogCategory category,
+                    [[maybe_unused]] fmt::format_string<Args...> format,
                     [[maybe_unused]] Args&&... args) {
     if constexpr (k_logging_enabled && k_debug_logging_enabled) {
-      logger()->trace(format, std::forward<Args>(args)...);
+      category_logger(category).trace(format, std::forward<Args>(args)...);
     }
   }
 
   /// Debug level. Compiled out in release builds and when logging is disabled.
   template <typename... Args>
-  static void debug([[maybe_unused]] fmt::format_string<Args...> format,
+  static void debug(const LogCategory category,
+                    [[maybe_unused]] fmt::format_string<Args...> format,
                     [[maybe_unused]] Args&&... args) {
     if constexpr (k_logging_enabled && k_debug_logging_enabled) {
-      logger()->debug(format, std::forward<Args>(args)...);
+      category_logger(category).debug(format, std::forward<Args>(args)...);
     }
   }
 
   /// Info level.
   template <typename... Args>
-  static void info([[maybe_unused]] fmt::format_string<Args...> format,
+  static void info(const LogCategory category,
+                   [[maybe_unused]] fmt::format_string<Args...> format,
                    [[maybe_unused]] Args&&... args) {
     if constexpr (k_logging_enabled) {
-      logger()->info(format, std::forward<Args>(args)...);
+      category_logger(category).info(format, std::forward<Args>(args)...);
     }
   }
 
   /// Warn level.
   template <typename... Args>
-  static void warn([[maybe_unused]] fmt::format_string<Args...> format,
+  static void warn(const LogCategory category,
+                   [[maybe_unused]] fmt::format_string<Args...> format,
                    [[maybe_unused]] Args&&... args) {
     if constexpr (k_logging_enabled) {
-      logger()->warn(format, std::forward<Args>(args)...);
+      category_logger(category).warn(format, std::forward<Args>(args)...);
     }
   }
 
   /// Error level.
   template <typename... Args>
-  static void error([[maybe_unused]] fmt::format_string<Args...> format,
+  static void error(const LogCategory category,
+                    [[maybe_unused]] fmt::format_string<Args...> format,
                     [[maybe_unused]] Args&&... args) {
     if constexpr (k_logging_enabled) {
-      logger()->error(format, std::forward<Args>(args)...);
+      category_logger(category).error(format, std::forward<Args>(args)...);
     }
   }
 
   /// Fatal level (mapped to spdlog's highest level, critical). Also records
   /// the current stack trace when available.
   template <typename... Args>
-  static void fatal([[maybe_unused]] fmt::format_string<Args...> format,
+  static void fatal(const LogCategory category,
+                    [[maybe_unused]] fmt::format_string<Args...> format,
                     [[maybe_unused]] Args&&... args) {
     if constexpr (k_logging_enabled) {
-      logger()->critical(format, std::forward<Args>(args)...);
+      category_logger(category).critical(format, std::forward<Args>(args)...);
 #ifdef __cpp_lib_stacktrace
-      logger()->critical("Stack trace:\n{}", std::stacktrace::current());
+      category_logger(category).critical("Stack trace:\n{}", std::stacktrace::current());
 #endif
     }
   }
@@ -106,6 +120,12 @@ class Log {
     return instance;
   }
 
+  /// The spdlog logger for one category (a lightweight logger sharing the
+  /// common sinks, named after the category so `%n` carries it).
+  static spdlog::logger& category_logger(const LogCategory category) {
+    return *get().m_category_loggers.at(static_cast<std::size_t>(category));
+  }
+
   // Compile-time switches mirroring the old APP_* macro gating.
 #if defined(APP_DEACTIVATE_LOGGING)
   static constexpr bool k_logging_enabled{false};
@@ -119,8 +139,10 @@ class Log {
   static constexpr bool k_debug_logging_enabled{false};
 #endif
 
-  std::shared_ptr<spdlog::logger> m_logger;
+  std::shared_ptr<spdlog::sinks::sink> m_console_sink;
+  std::shared_ptr<spdlog::sinks::sink> m_file_sink;
   std::shared_ptr<DebugSink> m_debug_sink;
+  std::array<std::shared_ptr<spdlog::logger>, k_log_category_count> m_category_loggers{};
 };
 
 }  // namespace App

@@ -3,9 +3,10 @@ set(NAME "Core")
 include(${PROJECT_SOURCE_DIR}/cmake/StaticAnalyzers.cmake)
 
 add_library(${NAME} STATIC
-  Core/Log.cpp Core/Log.hpp Core/Debug/Instrumentor.hpp
+  Core/Log.cpp Core/Log.hpp Core/LogCategory.hpp Core/Debug/Instrumentor.hpp
   Core/Debug/Metrics.hpp Core/Debug/Metrics.cpp
   Core/Debug/LogSink.hpp
+  Core/Debug/LogFilter.hpp
   Core/Debug/DebugUI.hpp Core/Debug/DebugUI.cpp
   Core/Application.cpp Core/Application.hpp
   Core/Window.cpp Core/Window.hpp

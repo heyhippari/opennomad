@@ -18,6 +18,7 @@
 #include "Core/Audio/AudioTypes.hpp"
 #include "Core/Interface/InterfaceDispatcher.hpp"
 #include "Core/Log.hpp"
+#include "Core/LogCategory.hpp"
 #include "Core/Script/AreaScriptOpcode.hpp"
 #include "Core/Script/ScriptOpcode.hpp"
 
@@ -210,7 +211,10 @@ std::expected<void, std::string> AreaScriptRuntime::complete_interface_wait(
   m_wait = AreaWaitState{};
   m_wait_state = 0;
   m_state = AreaScriptState::k_running;
-  App::Log::info("area script interface wait completed; resuming at offset {:#x}", m_ip);
+  App::Log::debug(LogCategory::Script,
+      "area script resumed after interface {} at +{:#x}",
+      completion.handle.interface_id,
+      m_ip);
   return {};
 }
 
@@ -268,10 +272,10 @@ void AreaScriptRuntime::execute_instruction() {
     m_pause_info.reason_text = fmt::format("unhandled area opcode {:#04x}", opcode);
     m_pause_info.nearby_bytes = nearby_bytes_hex(instruction_offset);
     m_state = AreaScriptState::k_paused_unsupported;
-    App::Log::warn("AreaScript.Pause: {} at offset {:#x} opcode {:#04x} bytes [{}]",
-        m_pause_info.reason_text,
-        instruction_offset,
+    App::Log::warn(LogCategory::Script,
+        "area script paused — unsupported opcode={:#04x} offset=+{:#x} bytes=[{}]",
         opcode,
+        instruction_offset,
         m_pause_info.nearby_bytes);
     return;
   }
@@ -304,7 +308,10 @@ void AreaScriptRuntime::execute_instruction() {
           fmt::format("{}: truncated operands at offset {:#x}", info->name, cursor);
       m_pause_info.nearby_bytes = nearby_bytes_hex(instruction_offset);
       m_state = AreaScriptState::k_failed;
-      App::Log::warn("AreaScript.Failed: {} opcode {:#04x}", m_pause_info.reason_text, opcode);
+      App::Log::warn(LogCategory::Script,
+          "area script failed — {} opcode={:#04x}",
+          m_pause_info.reason_text,
+          opcode);
       return;
     }
 
@@ -377,7 +384,7 @@ void AreaScriptRuntime::execute_instruction() {
               fmt::format("interface {} open failed: {}", interface_id, result.error());
           m_pause_info.nearby_bytes = nearby_bytes_hex(instruction_offset);
           m_state = AreaScriptState::k_failed;
-          App::Log::error("AreaScript.Failed: {}", m_pause_info.reason_text);
+          App::Log::error(LogCategory::Script, "area script failed — {}", m_pause_info.reason_text);
           return;
         }
         handle = result.value();
@@ -393,7 +400,8 @@ void AreaScriptRuntime::execute_instruction() {
       // Provisional compatibility action: decode and record the observed
       // state effect without pretending the subsystem is fully implemented.
       entry.effect = fmt::format("provisional compatibility: {}", info->notes);
-      App::Log::debug("AreaScript: {} {:#04x} at offset {:#x}: provisional (no state effect)",
+      App::Log::debug(LogCategory::Script,
+          "{} {:#04x} at +{:#x}: provisional (no state effect)",
           info->name,
           opcode,
           instruction_offset);
@@ -408,7 +416,7 @@ void AreaScriptRuntime::execute_instruction() {
 
   if (opcode == K_OP_OPEN_INTERFACE) {
     m_state = AreaScriptState::k_waiting;
-    App::Log::info("area script waiting (wait state {})", m_wait_state);
+    App::Log::debug(LogCategory::Script, "area script waiting on interface (wait state {})", m_wait_state);
   }
 }
 

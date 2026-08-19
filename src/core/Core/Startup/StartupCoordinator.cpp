@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "Core/Log.hpp"
+#include "Core/LogCategory.hpp"
 #include "Core/Startup/StartupPhase.hpp"
 #include "Core/Startup/StartupTraceRecorder.hpp"
 
@@ -19,7 +20,7 @@ namespace {
 /// Builds a coordinator failure, logging it so the application can drive the
 /// fixed sequence without checking every begin/complete result.
 std::expected<void, std::string> failure(std::string message) {
-  App::Log::error("StartupCoordinator: {}", message);
+  App::Log::error(LogCategory::Startup, "StartupCoordinator: {}", message);
   return std::expected<void, std::string>{std::unexpect, std::move(message)};
 }
 

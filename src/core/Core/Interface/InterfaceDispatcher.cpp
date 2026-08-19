@@ -6,6 +6,7 @@
 
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Log.hpp"
+#include "Core/LogCategory.hpp"
 
 namespace App {
 
@@ -22,7 +23,8 @@ std::expected<InterfaceHandle, std::string> InterfaceDispatcher::open(
   APP_PROFILE_FUNCTION();
 
   m_last_request = request;
-  App::Log::info("interface {} requested (operands {}, {})",
+  App::Log::debug(LogCategory::Interface,
+      "interface {} requested — args=({},{})",
       request.interface_id,
       request.operand_b,
       request.operand_c);

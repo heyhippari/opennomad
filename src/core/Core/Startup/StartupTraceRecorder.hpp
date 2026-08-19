@@ -21,8 +21,9 @@ struct StartupTraceEvent {
 /// subsequences by comparing sequence values.
 class StartupTraceRecorder {
  public:
-  /// Appends one event (sequence = next free number) and mirrors it to the
-  /// application log as "NNN Name[ Detail]".
+  /// Appends one event (sequence = next free number). This only stores the
+  /// trace event; it does not print into the ordinary application log — the
+  /// dedicated Startup Trace inspector is the primary way to read it.
   void record(std::string name, std::string detail = {});
 
   [[nodiscard]] const std::vector<StartupTraceEvent>& events() const {

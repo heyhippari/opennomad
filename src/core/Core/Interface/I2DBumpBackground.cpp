@@ -29,6 +29,7 @@
 #include "Core/Interface/I2DPresentation.hpp"
 #include "Core/IntegerTexture.hpp"
 #include "Core/Log.hpp"
+#include "Core/LogCategory.hpp"
 #include "Core/Omikron/IndexedBmp8.hpp"
 #include "Core/Resources.hpp"
 #include "Core/Shader.hpp"
@@ -441,7 +442,8 @@ std::expected<std::unique_ptr<I2DBumpBackground>, std::string> I2DBumpBackground
   advance_endpoint(background->m_next);
   background->m_timeline.current_tick = 1;
 
-  App::Log::info("[I2D] background: IMAGES/CLOUD.BMP ({}x{}) — GPU bump renderer (30 Hz timeline)",
+  App::Log::debug(LogCategory::I2D,
+      "background: IMAGES/CLOUD.BMP ({}x{}) — GPU bump renderer (30 Hz timeline)",
       width,
       height);
 
@@ -658,14 +660,14 @@ std::size_t I2DBumpBackground::debug_compare_gradient() const {
   APP_PROFILE_FUNCTION();
 
   if (!m_gradient) {
-    App::Log::warn("[I2D] debug gradient compare: gradient texture not built");
+    App::Log::debug(LogCategory::I2D, "debug gradient compare: gradient texture not built");
     return std::numeric_limits<std::size_t>::max();
   }
 
   Omikron::IndexedBmp8 source{.width = 256, .height = 256, .indices = m_height_indices};
   auto reference{I2DBumpEffect::create(std::move(source))};
   if (!reference) {
-    App::Log::warn("[I2D] debug gradient compare: {}", reference.error());
+    App::Log::debug(LogCategory::I2D, "debug gradient compare: {}", reference.error());
     return std::numeric_limits<std::size_t>::max();
   }
 
@@ -690,7 +692,9 @@ std::size_t I2DBumpBackground::debug_compare_gradient() const {
     }
   }
 
-  App::Log::info("[I2D] debug gradient compare: {} mismatches of 65536 cells", mismatches);
+  App::Log::debug(LogCategory::I2D,
+      "debug gradient compare: {} mismatches of 65536 cells",
+      mismatches);
   return mismatches;
 }
 

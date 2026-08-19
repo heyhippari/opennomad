@@ -7,6 +7,7 @@
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Interface/InterfaceManager.hpp"
 #include "Core/Log.hpp"
+#include "Core/LogCategory.hpp"
 #include "Core/Scenario/ScenarioManager.hpp"
 
 namespace App {
@@ -32,7 +33,8 @@ void WorldScene::update(const float delta_time, const Input::InputManager& input
     if (context != nullptr) {
       if (!m_world_observed || context->scene_id != m_observed_scene_id ||
           context->generation != m_observed_generation) {
-        App::Log::debug("WorldScene: active world context scene={} generation={}",
+        App::Log::debug(LogCategory::Scenario,
+            "WorldScene: active world context scene={} generation={}",
             context->scene_id,
             context->generation);
         m_observed_scene_id = context->scene_id;

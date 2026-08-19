@@ -33,6 +33,7 @@
 #include "Core/Audio/VoicePool.hpp"
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Log.hpp"
+#include "Core/LogCategory.hpp"
 #include "Core/Omikron/QdAdp.hpp"
 #include "Core/Resources.hpp"
 
@@ -143,7 +144,7 @@ std::expected<std::unique_ptr<AudioSystem>, std::string> AudioSystem::create() {
   if (mixer == nullptr) {
     system->m_unavailable = true;
     system->m_state_note = fmt::format("MIX_CreateMixerDevice failed: {}", SDL_GetError());
-    App::Log::warn("Audio: unavailable ({})", system->m_state_note);
+    App::Log::warn(LogCategory::Audio, "unavailable ({})", system->m_state_note);
     system->rebuild_snapshot();
     return system;
   }
@@ -160,7 +161,7 @@ std::expected<std::unique_ptr<AudioSystem>, std::string> AudioSystem::create() {
   }
   const char* device_name{SDL_GetAudioDeviceName(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK)};
   system->m_device_name = device_name != nullptr ? device_name : "default";
-  App::Log::info("Audio: initialized SDL3_mixer {}, device '{}', requested {}, negotiated {}",
+  App::Log::info(LogCategory::Audio, "initialized SDL3_mixer {}, device '{}', requested {}, negotiated {}",
       system->m_mixer_version,
       system->m_device_name,
       system->m_requested_format,
@@ -172,12 +173,12 @@ std::expected<std::unique_ptr<AudioSystem>, std::string> AudioSystem::create() {
     if (track == nullptr) {
       system->m_unavailable = true;
       system->m_state_note = fmt::format("MIX_CreateTrack failed: {}", SDL_GetError());
-      App::Log::warn("Audio: {} (SFX track {})", system->m_state_note, index);
+      App::Log::warn(LogCategory::Audio, "{} (SFX track {})", system->m_state_note, index);
       system->rebuild_snapshot();
       return system;
     }
     if (!MIX_TagTrack(track, "sfx")) {
-      App::Log::warn("Audio: failed to tag SFX track {}: {}", index, SDL_GetError());
+      App::Log::warn(LogCategory::Audio, "failed to tag SFX track {}: {}", index, SDL_GetError());
     }
     system->m_tracks.at(index) = track;
     system->m_contexts.at(index).system = system.get();
@@ -285,7 +286,7 @@ std::optional<VoiceHandle> AudioSystem::play_sound(const SoundPlayRequest& reque
   if (!allocated) {
     append_event(AudioEventSeverity::k_warn,
         fmt::format("play rejected: {} (sound '{}')", allocated.error(), request.sound_name));
-    App::Log::warn("Audio: {}", allocated.error());
+    App::Log::warn(LogCategory::Audio, "{}", allocated.error());
     return std::nullopt;
   }
 
@@ -461,7 +462,7 @@ void AudioSystem::update(const float real_delta_seconds) {
     MIX_SetTrackFrequencyRatio(track, 1.0F);
     MIX_SetTrackPlaybackPosition(track, 0);
     if (!MIX_SetTrackAudio(track, audio)) {
-      App::Log::warn("Audio: MIX_SetTrackAudio failed for slot {}: {}", index, SDL_GetError());
+      App::Log::warn(LogCategory::Audio, "MIX_SetTrackAudio failed for slot {}: {}", index, SDL_GetError());
       m_pool.release(slot_handle);
       continue;
     }
@@ -478,7 +479,7 @@ void AudioSystem::update(const float real_delta_seconds) {
     const bool started{MIX_PlayTrack(track, props)};
     SDL_DestroyProperties(props);
     if (!started) {
-      App::Log::warn("Audio: MIX_PlayTrack failed for slot {}: {}", index, SDL_GetError());
+      App::Log::warn(LogCategory::Audio, "MIX_PlayTrack failed for slot {}: {}", index, SDL_GetError());
       m_pool.release(slot_handle);
       continue;
     }
@@ -631,35 +632,37 @@ std::expected<void, std::string> AudioSystem::play_music_track(
   // Runtime does not restart the current track when the numeric ID matches.
   if (m_current_track_id.has_value() && m_current_track_id.value() == request.track_id &&
       m_music.is_playing()) {
-    App::Log::info("[Music] track {} already playing (no restart)", request.track_id);
+    App::Log::debug(LogCategory::Music, "track {} already playing (no restart)", request.track_id);
     return {};
   }
 
   if (!available()) {
     m_music_load_error = "audio subsystem unavailable";
-    App::Log::error("[Music] track {} rejected: {}", request.track_id, m_music_load_error);
+    App::Log::error(
+        LogCategory::Music, "track {} rejected: {}", request.track_id, m_music_load_error);
     return std::expected<void, std::string>{std::unexpect, m_music_load_error};
   }
 
   const std::string relative_path{fmt::format("TRACKS/{}.ADP", request.track_id)};
-  App::Log::info("[Music] opening {}", relative_path);
+  App::Log::debug(LogCategory::Music, "opening {}", relative_path);
 
   auto file{read_game_file(relative_path)};
   if (!file) {
     m_music_load_error = file.error();
-    App::Log::error("[Music] {}", file.error());
+    App::Log::error(LogCategory::Music, "{}", file.error());
     return std::expected<void, std::string>{std::unexpect, file.error()};
   }
 
   auto decoder{Omikron::QdAdpDecoder::create(std::span<const std::byte>{file.value()})};
   if (!decoder) {
     m_music_load_error = decoder.error();
-    App::Log::error("[Music] {}", decoder.error());
+    App::Log::error(LogCategory::Music, "{}", decoder.error());
     return std::expected<void, std::string>{std::unexpect, decoder.error()};
   }
 
-  App::Log::info("[ADP] payload={} channels={} rate={} frames={}",
-      file.value().size() - 0x10U,
+  App::Log::debug(LogCategory::Audio,
+      "ADP {} — {} ch, {} Hz, {} frames",
+      relative_path,
       decoder->channels(),
       decoder->sample_rate(),
       decoder->total_frames());
@@ -673,7 +676,7 @@ std::expected<void, std::string> AudioSystem::play_music_track(
   const std::size_t decoded{decoder->decode_frames(std::span<std::int16_t>{pcm})};
   if (decoded != decoder->total_frames()) {
     m_music_load_error = fmt::format("decoded {} of {} frames", decoded, decoder->total_frames());
-    App::Log::error("[Music] {}", m_music_load_error);
+    App::Log::error(LogCategory::Music, "{}", m_music_load_error);
     return std::expected<void, std::string>{std::unexpect, m_music_load_error};
   }
 
@@ -686,14 +689,11 @@ std::expected<void, std::string> AudioSystem::play_music_track(
       .display_name = relative_path, .spec = spec, .samples = std::move(pcm)};
   const MusicPlayOptions options{.loop = request.loop};
 
-  if (m_current_track_id.has_value() && m_music.is_playing()) {
-    App::Log::info("[Music] replacing track {} with track {}",
-        m_current_track_id.value(),
-        request.track_id);
-  }
+  const bool replacing{m_current_track_id.has_value() && m_music.is_playing()};
+  const std::optional<std::int16_t> previous_track_id{m_current_track_id};
   if (!m_music.play_raw_pcm(std::move(source), options)) {
     m_music_load_error = fmt::format("failed to start track {} playback", request.track_id);
-    App::Log::error("[Music] {}", m_music_load_error);
+    App::Log::error(LogCategory::Music, "{}", m_music_load_error);
     return std::expected<void, std::string>{std::unexpect, m_music_load_error};
   }
 
@@ -702,9 +702,21 @@ std::expected<void, std::string> AudioSystem::play_music_track(
   m_music_mode_flag = request.mode_flag;
   m_resolved_music_path = relative_path;
   m_music_load_error.clear();
-  App::Log::info("[Music] playing track {} ({})",
-      request.track_id,
-      request.loop ? "loop" : "once");
+  const std::string_view loop_flag{request.loop ? "true" : "false"};
+  if (replacing) {
+    App::Log::info(LogCategory::Music,
+        "track {} -> {} — {}, loop={}",
+        previous_track_id.value(),
+        request.track_id,
+        relative_path,
+        loop_flag);
+  } else {
+    App::Log::info(LogCategory::Music,
+        "playing track {} — {}, loop={}",
+        request.track_id,
+        relative_path,
+        loop_flag);
+  }
   return {};
 }
 

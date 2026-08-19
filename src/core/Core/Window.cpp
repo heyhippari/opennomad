@@ -19,6 +19,7 @@
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Debug/Metrics.hpp"
 #include "Core/Log.hpp"
+#include "Core/LogCategory.hpp"
 #include "Core/Renderer.hpp"
 #include "Core/Resources.hpp"
 
@@ -83,7 +84,7 @@ Window::Window(const Settings& settings)
 
   // NOLINTNEXTLINE
   if (!m_gl_context.create(m_window.get())) {
-    App::Log::error("Could not create SDL OpenGL context.");
+    App::Log::error(LogCategory::Renderer, "Could not create SDL OpenGL context.");
     return;
   }
 
@@ -312,9 +313,10 @@ bool Window::set_relative_mouse_mode(const bool enabled) {
   // SDL rolls the relative-mode flag back when an enable attempt fails, so
   // callers can retry later. Disable failures are unexpected and minor.
   if (enabled) {
-    App::Log::warn("Failed to enable relative mouse mode: {}", SDL_GetError());
+    App::Log::warn(LogCategory::Input, "Failed to enable relative mouse mode: {}", SDL_GetError());
   } else {
-    App::Log::debug("Failed to disable relative mouse mode: {}", SDL_GetError());
+    App::Log::debug(
+        LogCategory::Input, "Failed to disable relative mouse mode: {}", SDL_GetError());
   }
   return false;
 }

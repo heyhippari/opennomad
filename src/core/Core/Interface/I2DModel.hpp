@@ -151,6 +151,11 @@ struct I2DPresentationHints {
   /// value).
   float top_margin_reference{0.0F};
 
+  /// Presentation-only scale applied around the horizontal centre of a
+  /// top-centred element. The recovered destination rectangle remains
+  /// unchanged.
+  float top_center_scale{1.0F};
+
   /// Clamp a top-anchored element's own scale so it stays fully visible on
   /// displays narrower than 4:3. No effect on ordinary landscape displays.
   bool clamp_width_to_viewport{false};

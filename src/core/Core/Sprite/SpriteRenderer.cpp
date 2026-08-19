@@ -23,6 +23,7 @@
 
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Log.hpp"
+#include "Core/LogCategory.hpp"
 
 namespace App::Sprite {
 
@@ -412,7 +413,8 @@ void SpriteRenderer::draw_commands(const SpritePass pass,
       }
     }
     if (texture_id == 0U) {
-      App::Log::warn("Sprite {} references a missing GPU texture (resource {}, material {})",
+      App::Log::warn(LogCategory::Renderer,
+          "Sprite {} references a missing GPU texture (resource {}, material {})",
           command.sprite.index,
           command.resource_index,
           command.material_index);

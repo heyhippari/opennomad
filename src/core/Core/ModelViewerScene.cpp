@@ -42,6 +42,7 @@
 #include "Core/Input/InputAction.hpp"
 #include "Core/Input/InputManager.hpp"
 #include "Core/Log.hpp"
+#include "Core/LogCategory.hpp"
 #include "Core/Omikron/Model3DO.hpp"
 #include "Core/Omikron/SCX.hpp"
 #include "Core/Omikron/Texture3DT.hpp"
@@ -534,8 +535,9 @@ std::expected<ModelViewerScene::DecodedModel, std::string> ModelViewerScene::loa
         fmt::format("Failed to build geometry for '{}': {}", model_path.string(), groups.error())};
   }
   if (groups->empty()) {
-    App::Log::warn(
-        "Model '{}' contains no visible geometry; skipping GPU mesh creation", model_path.string());
+    App::Log::warn(LogCategory::Renderer,
+        "Model '{}' contains no visible geometry; skipping GPU mesh creation",
+        model_path.string());
   }
 
   // The .3DT texture sidecar sits next to the model.
@@ -607,7 +609,8 @@ std::expected<std::unique_ptr<ModelViewerScene>, std::string> ModelViewerScene::
     return std::expected<std::unique_ptr<ModelViewerScene>, std::string>{
         std::unexpect, fmt::format("Failed to parse '{}': {}", scx_path.string(), scx.error())};
   }
-  App::Log::debug("'{}': {} sprites, {} waves, {} embedded models",
+  App::Log::debug(LogCategory::Renderer,
+      "'{}': {} sprites, {} waves, {} embedded models",
       scx_path.string(),
       scx->sprites.size(),
       scx->waves.size(),
@@ -720,7 +723,7 @@ std::expected<std::unique_ptr<ModelViewerScene>, std::string> ModelViewerScene::
     const std::string_view display_name) {
   APP_PROFILE_FUNCTION();
 
-  App::Log::debug("Building render-ready scene for '{}'", display_name);
+  App::Log::debug(LogCategory::Renderer, "Building render-ready scene for '{}'", display_name);
 
   std::size_t vertex_count{0};
   float min_x{std::numeric_limits<float>::max()};
@@ -740,13 +743,20 @@ std::expected<std::unique_ptr<ModelViewerScene>, std::string> ModelViewerScene::
       max_z = std::max(max_z, vertex.position.at(2));
     }
   }
-  App::Log::info("Loaded '{}': {} meshes, {} vertices, {} materials",
+  App::Log::info(LogCategory::Renderer,
+      "Loaded '{}': {} meshes, {} vertices, {} materials",
       display_name,
       model.meshes.size(),
       vertex_count,
       model.materials.size());
-  App::Log::debug(
-      "Model bounds: x [{}, {}], y [{}, {}], z [{}, {}]", min_x, max_x, min_y, max_y, min_z, max_z);
+  App::Log::debug(LogCategory::Renderer,
+      "Model bounds: x [{}, {}], y [{}, {}], z [{}, {}]",
+      min_x,
+      max_x,
+      min_y,
+      max_y,
+      min_z,
+      max_z);
 
   // The geometry stays in world space; the camera frames the model at
   // startup and the player then flies around it freely.
@@ -779,7 +789,8 @@ std::expected<std::unique_ptr<ModelViewerScene>, std::string> ModelViewerScene::
       ++face_count;
     }
   }
-  App::Log::debug("Normal consistency: {} of {} faces have outward normals",
+  App::Log::debug(LogCategory::Renderer,
+      "Normal consistency: {} of {} faces have outward normals",
       face_count - normal_mismatches,
       face_count);
 
@@ -789,7 +800,8 @@ std::expected<std::unique_ptr<ModelViewerScene>, std::string> ModelViewerScene::
   for (std::size_t index{0}; index < images.size(); ++index) {
     const Omikron::Texture3DTImage& image{images.at(index)};
     if (image.width == 0U || image.height == 0U) {
-      App::Log::warn("Texture of material '{}' has zero size; using a white fallback",
+      App::Log::warn(LogCategory::Renderer,
+          "Texture of material '{}' has zero size; using a white fallback",
           model.materials.at(index).name);
       static constexpr std::array<std::uint8_t, 4> k_white_pixel{255, 255, 255, 255};
       auto fallback{Texture2D::create(1, 1, std::span<const std::uint8_t>{k_white_pixel}, true)};
@@ -854,7 +866,8 @@ std::expected<std::unique_ptr<ModelViewerScene>, std::string> ModelViewerScene::
   // directional fallback (u_light_count == 0).
   const std::size_t light_count{std::min(model.lights.size(), K_MAX_LIGHTS)};
   if (model.lights.size() > K_MAX_LIGHTS) {
-    App::Log::warn("Model has {} lights; only the first {} fit the uniform block",
+    App::Log::warn(LogCategory::Renderer,
+        "Model has {} lights; only the first {} fit the uniform block",
         model.lights.size(),
         K_MAX_LIGHTS);
   }
@@ -975,7 +988,8 @@ std::expected<std::unique_ptr<ModelViewerScene>, std::string> ModelViewerScene::
     append_attenuation_sphere(position, light.attenuation_start, sphere_color);
     append_attenuation_sphere(position, light.attenuation_end, sphere_color);
   }
-  App::Log::info("Loaded {} explicit lights ({} mesh lights baked into vertex colours)",
+  App::Log::debug(LogCategory::Renderer,
+      "Loaded {} explicit lights ({} mesh lights baked into vertex colours)",
       light_count,
       model.header.lights_unknown1);
   // NOLINTNEXTLINE(misc-const-correctness) — move-only, must stay mutable for the move below.
@@ -1135,7 +1149,7 @@ ModelViewerScene::ModelViewerScene(const std::vector<Omikron::MaterialGroup>& gr
     }
     m_group_centers.push_back(center);
   }
-  App::Log::debug("Skybox groups: {}", m_skybox_group_indices.size());
+  App::Log::debug(LogCategory::Renderer, "Skybox groups: {}", m_skybox_group_indices.size());
 
   // The camera sits in front of the model's centre and looks at its torso.
   m_camera.set_position(m_model_center.at(0),
@@ -1284,7 +1298,9 @@ void ModelViewerScene::update(const float delta_time, const Input::InputManager&
 
   if (input.is_action_pressed(Input::Action::k_toggle_lights)) {
     m_lights_enabled = !m_lights_enabled;
-    App::Log::debug("Lights {}", m_lights_enabled ? "enabled" : "disabled (ambient only)");
+    App::Log::debug(LogCategory::Renderer,
+        "Lights {}",
+        m_lights_enabled ? "enabled" : "disabled (ambient only)");
   }
 
   // Frame ordering for audio (see the milestone notes): advance transforms

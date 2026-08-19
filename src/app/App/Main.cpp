@@ -6,6 +6,7 @@
 #include "Core/Application.hpp"
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Log.hpp"
+#include "Core/LogCategory.hpp"
 
 int main() {
   try {
@@ -16,7 +17,7 @@ int main() {
       APP_PROFILE_SCOPE("Test scope");
       auto app{App::Application::create("App")};
       if (!app) {
-        App::Log::error("Failed to start: {}", app.error());
+        App::Log::error(LogCategory::Core, "Failed to start: {}", app.error());
         exit_code = EXIT_FAILURE;
       } else {
         app->run();
@@ -26,7 +27,7 @@ int main() {
     APP_PROFILE_END_SESSION();
     return exit_code;
   } catch (std::exception& e) {
-    App::Log::error("Main process terminated with: {}", e.what());
+    App::Log::error(LogCategory::Core, "Main process terminated with: {}", e.what());
   }
 
   return EXIT_FAILURE;

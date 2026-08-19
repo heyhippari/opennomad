@@ -7,6 +7,7 @@
 #include <optional>
 
 #include "Core/Debug/DebugContext.hpp"
+#include "Core/Debug/LogFilter.hpp"
 #include "Core/ModelViewerScene.hpp"
 #include "Core/Scene.hpp"
 
@@ -117,6 +118,12 @@ class DebugUI {
 
   // Log window state
   bool m_log_auto_scroll{true};
+  /// Client-side severity/category/text filtering for the log viewer.
+  Debug::LogFilter m_log_filter{};
+  char m_log_filter_text[128]{};
+  /// Combo indices: severity (trace..error) and category (0 = all).
+  int m_log_min_level_index{2};
+  int m_log_category_index{0};
 
   // Internal frame counter for periodic queries
   std::uint64_t m_frame_count{0};

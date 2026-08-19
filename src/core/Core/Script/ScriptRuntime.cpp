@@ -16,6 +16,7 @@
 #include "Core/Audio/AudioTypes.hpp"
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Log.hpp"
+#include "Core/LogCategory.hpp"
 #include "Core/Omikron/SCX.hpp"
 #include "Core/Script/ScriptOpcode.hpp"
 #include "Core/Sprite/SpriteInstance.hpp"
@@ -343,7 +344,8 @@ std::expected<std::size_t, std::string> ScriptRuntime::create_instance(
   }
 
   const std::size_t instance_id{instance.instance_id};
-  App::Log::info("Script: created instance {} from script {} '{}' ({} roots, {} linked)",
+  App::Log::debug(LogCategory::Script,
+      "created instance {} from script {} '{}' ({} roots, {} linked)",
       instance_id,
       source_script_index,
       instance.script_name,
@@ -397,7 +399,7 @@ void ScriptRuntime::advance(const float script_delta_frames) {
     }
   }
   if (all_completed) {
-    App::Log::info("Script: scenario execution completed after {} ticks", m_tick);
+    App::Log::info(LogCategory::Script, "scenario execution completed after {} ticks", m_tick);
     m_run_state = ScriptRunState::k_completed;
   }
 }
@@ -507,13 +509,14 @@ bool ScriptRuntime::advance_instance(ScriptInstance& instance,
 
   if (group_done) {
     instance.current_group_index += 1;
-    App::Log::debug("Script: instance {} advanced to group {}/{}",
+    App::Log::debug(LogCategory::Script,
+        "instance {} advanced to group {}/{}",
         instance.instance_id,
         instance.current_group_index,
         instance.root_commands.size());
     if (instance.current_group_index >= instance.root_commands.size()) {
       instance.completed = true;
-      App::Log::info("Script: instance {} completed", instance.instance_id);
+      App::Log::debug(LogCategory::Script, "instance {} completed", instance.instance_id);
     }
   }
   return true;
@@ -711,8 +714,8 @@ void ScriptRuntime::pause(ScriptInstance& instance,
       ? ScriptRunState::k_paused_on_unhandled
       : ScriptRunState::k_paused_on_error;
 
-  App::Log::warn(
-      "Script.Pause: {} (scenario '{}', script '{}' instance {}, group {}, chain {}, command {}, "
+  App::Log::warn(LogCategory::Script,
+      "pause: {} (scenario '{}', script '{}' instance {}, group {}, chain {}, command {}, "
       "opcode {:#010x}): {}",
       pause_reason_name(reason),
       info.scenario_name,
@@ -753,7 +756,8 @@ std::expected<Sprite::SpriteHandle, std::string> ScriptRuntime::resolve_sprite(
     return std::expected<Sprite::SpriteHandle, std::string>{std::unexpect, handle.error()};
   }
   instance.sprite_remap.emplace(source_index, handle.value());
-  App::Log::debug("Script: instance {} remapped source sprite {} -> runtime sprite {}:{}",
+  App::Log::debug(LogCategory::Script,
+      "instance {} remapped source sprite {} -> runtime sprite {}:{}",
       instance.instance_id,
       source_index,
       handle->index,
@@ -947,7 +951,7 @@ HandlerResult ScriptRuntime::handle_play_sound(
   // Preserve and log unknown flag bits; never assign invented meanings.
   const std::uint32_t unknown_bits{flags & ~1U};
   if (unknown_bits != 0U) {
-    App::Log::debug("PlaySound: preserving unknown flag bits {:#010x}", unknown_bits);
+    App::Log::debug(LogCategory::Script, "PlaySound: preserving unknown flag bits {:#010x}", unknown_bits);
   }
 
   if (started != 0U) {
@@ -962,12 +966,12 @@ HandlerResult ScriptRuntime::handle_play_sound(
 
   auto sound{m_world->resolve_sound(sound_index)};
   if (!sound) {
-    App::Log::warn("PlaySound: sound index {} unavailable: {}", sound_index, sound.error());
+    App::Log::warn(LogCategory::Script, "PlaySound: sound index {} unavailable: {}", sound_index, sound.error());
     instance.value_pool.at(base + 2U).raw = 1;  // latch even on failure.
     return audio_completion(command);
   }
   if (!sound->resource.valid()) {
-    App::Log::warn("PlaySound: sound index {} resolves to an invalid resource", sound_index);
+    App::Log::warn(LogCategory::Script, "PlaySound: sound index {} resolves to an invalid resource", sound_index);
     instance.value_pool.at(base + 2U).raw = 1;
     return audio_completion(command);
   }
@@ -986,13 +990,13 @@ HandlerResult ScriptRuntime::handle_play_sound(
   } else {
     auto owner{m_world->resolve_audio_owner(object_index)};
     if (!owner) {
-      App::Log::warn("PlaySound: object index {} unavailable: {}", object_index, owner.error());
+      App::Log::warn(LogCategory::Script, "PlaySound: object index {} unavailable: {}", object_index, owner.error());
       instance.value_pool.at(base + 2U).raw = 1;
       return audio_completion(command);
     }
     auto position{m_world->resolve_owner_position(owner.value())};
     if (!position) {
-      App::Log::warn("PlaySound: owner position unavailable: {}", position.error());
+      App::Log::warn(LogCategory::Script, "PlaySound: owner position unavailable: {}", position.error());
       instance.value_pool.at(base + 2U).raw = 1;
       return audio_completion(command);
     }
@@ -1006,9 +1010,9 @@ HandlerResult ScriptRuntime::handle_play_sound(
 
   auto voice{m_world->play_sound(request)};
   if (!voice) {
-    App::Log::warn("PlaySound: queue rejected: {}", voice.error());
+    App::Log::warn(LogCategory::Script, "PlaySound: queue rejected: {}", voice.error());
   } else {
-    App::Log::debug("PlaySound: queued voice {}:{} for sound '{}' ({} {})",
+    App::Log::debug(LogCategory::Script, "PlaySound: queued voice {}:{} for sound '{}' ({} {})",
         voice->index,
         voice->generation,
         sound->name,
@@ -1044,16 +1048,16 @@ HandlerResult ScriptRuntime::handle_play_sync_sound(
   const std::int32_t object_index{instance.value_pool.at(base + 4U).as_signed()};
   const std::uint32_t unknown_bits{flags & ~1U};
   if (unknown_bits != 0U) {
-    App::Log::debug("PlaySyncSound: preserving unknown flag bits {:#010x}", unknown_bits);
+    App::Log::debug(LogCategory::Script, "PlaySyncSound: preserving unknown flag bits {:#010x}", unknown_bits);
   }
 
   auto sound{m_world->resolve_sound(sound_index)};
   if (!sound) {
-    App::Log::warn("PlaySyncSound: sound index {} unavailable: {}", sound_index, sound.error());
+    App::Log::warn(LogCategory::Script, "PlaySyncSound: sound index {} unavailable: {}", sound_index, sound.error());
     return audio_completion(command);
   }
   if (!sound->resource.valid()) {
-    App::Log::warn("PlaySyncSound: sound index {} resolves to an invalid resource", sound_index);
+    App::Log::warn(LogCategory::Script, "PlaySyncSound: sound index {} resolves to an invalid resource", sound_index);
     return audio_completion(command);
   }
 
@@ -1070,12 +1074,12 @@ HandlerResult ScriptRuntime::handle_play_sync_sound(
   } else {
     auto owner{m_world->resolve_audio_owner(object_index)};
     if (!owner) {
-      App::Log::warn("PlaySyncSound: object index {} unavailable: {}", object_index, owner.error());
+      App::Log::warn(LogCategory::Script, "PlaySyncSound: object index {} unavailable: {}", object_index, owner.error());
       return audio_completion(command);
     }
     auto position{m_world->resolve_owner_position(owner.value())};
     if (!position) {
-      App::Log::warn("PlaySyncSound: owner position unavailable: {}", position.error());
+      App::Log::warn(LogCategory::Script, "PlaySyncSound: owner position unavailable: {}", position.error());
       return audio_completion(command);
     }
     request.owner = owner.value();
@@ -1088,7 +1092,7 @@ HandlerResult ScriptRuntime::handle_play_sync_sound(
 
   auto voice{m_world->play_sound(request)};
   if (!voice) {
-    App::Log::warn("PlaySyncSound: queue rejected: {}", voice.error());
+    App::Log::warn(LogCategory::Script, "PlaySyncSound: queue rejected: {}", voice.error());
     // Keep arg[3] = 0 (not started); the command still exhausts below.
   } else {
     // Store voiceIndex + 1 so a real index 0 never collides with "not started".
@@ -1105,12 +1109,12 @@ HandlerResult ScriptRuntime::handle_stop_sound(
 
   auto sound{m_world->resolve_sound(sound_index)};
   if (!sound) {
-    App::Log::debug("StopSound: sound index {} unavailable: {}", sound_index, sound.error());
+    App::Log::debug(LogCategory::Script, "StopSound: sound index {} unavailable: {}", sound_index, sound.error());
     return audio_completion(command);
   }
   auto owner{m_world->resolve_audio_owner(object_index)};
   if (!owner) {
-    App::Log::debug("StopSound: object index {} unavailable: {}", object_index, owner.error());
+    App::Log::debug(LogCategory::Script, "StopSound: object index {} unavailable: {}", object_index, owner.error());
     return audio_completion(command);
   }
 
@@ -1281,7 +1285,7 @@ std::expected<void, std::string> ScriptRuntime::reset_instance(const std::size_t
     instance.step_at_root = true;
     instance.step_linked_index = 0;
     instance.step_chain_position = 0;
-    App::Log::info("Script: reset instance {}", instance_id);
+    App::Log::debug(LogCategory::Script, "reset instance {}", instance_id);
     return {};
   }
   return std::expected<void, std::string>{
@@ -1312,7 +1316,7 @@ void ScriptRuntime::reset_all() {
   }
   m_run_state = ScriptRunState::k_running;
   m_user_paused = false;
-  App::Log::info("Script: reset all instances");
+  App::Log::debug(LogCategory::Script, "reset all instances");
 }
 
 ScriptRunState ScriptRuntime::run_state() const { return m_run_state; }

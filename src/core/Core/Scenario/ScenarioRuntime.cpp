@@ -18,6 +18,7 @@
 #include "Core/Audio/AudioTypes.hpp"
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Log.hpp"
+#include "Core/LogCategory.hpp"
 #include "Core/Omikron/SCX.hpp"
 #include "Core/Omikron/Texture3DT.hpp"
 #include "Core/Script/ScriptRuntime.hpp"
@@ -77,15 +78,16 @@ std::expected<void, std::string> ScenarioRuntime::initialize(
                 created.error())};
       }
     }
-    App::Log::info("Script: activated {} startup script instance(s) from {} parsed scripts",
+    App::Log::debug(LogCategory::Scenario,
+        "activated {} startup script instance(s) from {} parsed scripts",
         active,
         m_scx.scripts.size());
   } else {
     // Boot configuration: all script templates are loaded but inactive.
-    App::Log::info("Script: loaded {} script templates (all inactive)", m_scx.scripts.size());
+    App::Log::debug(LogCategory::Scenario, "loaded {} script templates (all inactive)", m_scx.scripts.size());
   }
 
-  App::Log::debug("Sprite system ready: {} embedded effect resources", count);
+  App::Log::debug(LogCategory::Scenario, "sprite system ready: {} embedded effect resources", count);
   m_initialized = true;
   return {};
 }
@@ -208,7 +210,8 @@ std::expected<void, std::string> ScenarioRuntime::ensure_sprite_resource_loaded(
   m_sprite_resources.at(resource_index) =
       std::make_unique<Sprite::SpriteResource>(std::move(resource).value());
   m_sprite_resource_ptrs.at(resource_index) = m_sprite_resources.at(resource_index).get();
-  App::Log::debug("Decoded sprite resource {} '{}': {} objects, {} textures",
+  App::Log::trace(LogCategory::Renderer,
+      "Decoded sprite resource {} '{}': {} objects, {} textures",
       resource_index,
       m_sprite_resources.at(resource_index)->name,
       m_sprite_resources.at(resource_index)->object_count(),
@@ -235,7 +238,7 @@ std::expected<Sprite::SpriteHandle, std::string> ScenarioRuntime::spawn_sprite(
   if (auto attached{m_sprite_pool.attach(handle.value())}; !attached) {
     // Best-effort rollback; the handle was never exposed to the caller.
     if (auto destroyed{m_sprite_pool.destroy(handle.value())}; !destroyed) {
-      App::Log::warn("Failed to roll back a failed spawn: {}", destroyed.error());
+      App::Log::warn(LogCategory::Scenario, "Failed to roll back a failed spawn: {}", destroyed.error());
     }
     return std::expected<Sprite::SpriteHandle, std::string>{std::unexpect, attached.error()};
   }
@@ -347,8 +350,8 @@ std::expected<std::array<float, 3>, std::string> ScenarioRuntime::resolve_positi
   // script-driven sprites stay visible. Documented in docs/ReverseEngineering.md.
   if (!m_xyz_fallback_logged) {
     m_xyz_fallback_logged = true;
-    App::Log::debug(
-        "Script: XYZ pointer pool not parsed; resolving index {} via the world-anchor fallback",
+    App::Log::debug(LogCategory::Script,
+        "XYZ pointer pool not parsed; resolving index {} via the world-anchor fallback",
         xyz_index);
   }
   return m_world_anchor;
@@ -420,7 +423,7 @@ std::expected<Audio::SoundDescriptor, std::string> ScenarioRuntime::resolve_soun
 
   const Omikron::ScxWaveResource& wave{m_scx.waves.at(sound_table_index)};
   if ((wave.payload_offset + wave.payload_size) > m_scx_bytes.size()) {
-    App::Log::warn("Audio: sound '{}' wave span out of range", record.name);
+    App::Log::warn(LogCategory::Audio, "sound '{}' wave span out of range", record.name);
     return descriptor;
   }
   const std::span<const std::byte> wav_bytes{
@@ -435,7 +438,8 @@ std::expected<Audio::SoundDescriptor, std::string> ScenarioRuntime::resolve_soun
       record.h_id,
       wav_bytes)};
   if (!loaded) {
-    App::Log::warn("Audio: scenario sound {} '{}' failed to load: {}",
+    App::Log::warn(LogCategory::Audio,
+        "scenario sound {} '{}' failed to load: {}",
         sound_table_index,
         record.name,
         loaded.error());

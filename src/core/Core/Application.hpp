@@ -164,14 +164,10 @@ class Application {
   bool m_mouse_captured{false};
   /// Time left before the next relative-mode re-enable retry.
   float m_capture_retry_cooldown{0.0F};
-  /// Time left until the next capture-state diagnostic log (temporary).
-  float m_capture_diag_cooldown{0.0F};
   /// Per-event relative mouse motion accumulated by poll_events since the
   /// last frame; applied to the input snapshot while capture is active.
   float m_pending_mouse_delta_x{0.0F};
   float m_pending_mouse_delta_y{0.0F};
-  /// Motion events accepted since the last frame (temporary diagnostic).
-  std::size_t m_pending_mouse_motion_events{0};
 
   /// Activation and suspension gates for the idle-driven main loop.
   RuntimeActivityState m_activity{};

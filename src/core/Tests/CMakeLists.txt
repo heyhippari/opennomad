@@ -152,6 +152,10 @@ add_executable(VoicePoolTest VoicePool.spec.cpp $<TARGET_OBJECTS:TestRunner>)
 add_test(NAME VoicePoolTest COMMAND VoicePoolTest)
 target_link_libraries(VoicePoolTest PRIVATE doctest::doctest Core)
 
+add_executable(LogCategoryTest LogCategory.spec.cpp $<TARGET_OBJECTS:TestRunner>)
+add_test(NAME LogCategoryTest COMMAND LogCategoryTest)
+target_link_libraries(LogCategoryTest PRIVATE doctest::doctest Core)
+
 # Integration tests read original game data from disk (never committed) and
 # are only registered when explicitly enabled. At runtime the tests locate
 # the game data through the OPENNOMAD_GAME_DATA_ROOT environment variable.

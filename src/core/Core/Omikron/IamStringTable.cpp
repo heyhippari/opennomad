@@ -11,6 +11,7 @@
 
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Log.hpp"
+#include "Core/LogCategory.hpp"
 
 namespace App::Omikron {
 
@@ -49,7 +50,10 @@ std::string_view IamStringTable::at(const std::size_t index) const {
   if (const std::optional<std::string_view> value{try_at(index)}) {
     return *value;
   }
-  App::Log::warn("IamStringTable: index {} out of range ({} entries)", index, m_strings.size());
+  App::Log::warn(LogCategory::Interface,
+      "IamStringTable: index {} out of range ({} entries)",
+      index,
+      m_strings.size());
   return {};
 }
 

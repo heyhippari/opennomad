@@ -18,11 +18,22 @@
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/GameDataLoader.hpp"
 #include "Core/Log.hpp"
+#include "Core/LogCategory.hpp"
 #include "Core/Omikron/Model3DO.hpp"
 #include "Core/Omikron/SCX.hpp"
 #include "Core/Scenario/ScenarioRuntime.hpp"
 
 namespace App {
+
+namespace {
+
+/// "SCPTDATA/GRID.SCX" -> "GRID": the canonical game path without the
+/// archive directory and extension, for readable lifecycle messages.
+std::string scenario_basename(const std::string_view path) {
+  return std::filesystem::path{std::string{path}}.stem().string();
+}
+
+}  // namespace
 
 ScenarioManager::ScenarioManager() = default;
 
@@ -48,10 +59,10 @@ std::expected<void, std::string> ScenarioManager::initialize_boot_scenarios() {
   APP_PROFILE_FUNCTION();
 
   const BootConfiguration config;
-  App::Log::info("Scenario bootstrap begin");
+  App::Log::debug(LogCategory::Scenario, "bootstrap begin");
 
   if (auto result{set_gameplay_mode(config.initial_gameplay_mode)}; !result) {
-    App::Log::error("Bootstrap failed: gameplay mode scenario load: {}", result.error());
+    App::Log::error(LogCategory::Scenario, "Bootstrap failed: gameplay mode scenario load: {}", result.error());
     return std::expected<void, std::string>{std::unexpect, std::move(result).error()};
   }
 
@@ -59,13 +70,13 @@ std::expected<void, std::string> ScenarioManager::initialize_boot_scenarios() {
       config.initial_decor_path,
       config.initial_world_scenario_path)};
   if (!world) {
-    App::Log::error("Bootstrap failed: world scenario load: {}", world.error());
+    App::Log::error(LogCategory::Scenario, "Bootstrap failed: world scenario load: {}", world.error());
     teardown_gameplay_mode_slot();
     return std::expected<void, std::string>{std::unexpect, std::move(world).error()};
   }
 
   if (auto result{activate_world_context(config.initial_world_scene_id)}; !result) {
-    App::Log::error("Bootstrap failed: world activation: {}", result.error());
+    App::Log::error(LogCategory::Scenario, "Bootstrap failed: world activation: {}", result.error());
     if (WorldSceneContext* context{find_world_context(config.initial_world_scene_id)};
         context != nullptr) {
       teardown_world_context(*context);
@@ -76,10 +87,6 @@ std::expected<void, std::string> ScenarioManager::initialize_boot_scenarios() {
     return std::expected<void, std::string>{std::unexpect, std::move(result).error()};
   }
 
-  App::Log::info(
-      "Scenario bootstrap complete: mode={} world_contexts=2 loaded=1 active=1 free=1 "
-      "active_scripts=0 voices=0",
-      gameplay_mode_name(config.initial_gameplay_mode));
   return {};
 }
 
@@ -97,14 +104,16 @@ std::expected<void, std::string> ScenarioManager::set_gameplay_mode(const Gamepl
   }
   const std::string scenario_path{path_view};
 
-  App::Log::info("Scenario load begin: role=gameplay_mode mode={} path={}",
+  App::Log::debug(LogCategory::Scenario,
+      "load begin: role=gameplay_mode mode={} path={}",
       gameplay_mode_name(mode),
       scenario_path);
 
   auto loaded{load_scenario(scenario_path)};
   if (!loaded) {
     m_gameplay_mode_slot.last_error = loaded.error();
-    App::Log::error("Scenario load failed: role=gameplay_mode mode={}: {}",
+    App::Log::error(LogCategory::Scenario,
+        "load failed: role=gameplay_mode mode={}: {}",
         gameplay_mode_name(mode),
         loaded.error());
     return std::expected<void, std::string>{std::unexpect, std::move(loaded).error()};
@@ -116,7 +125,8 @@ std::expected<void, std::string> ScenarioManager::set_gameplay_mode(const Gamepl
   auto runtime{prepare_runtime(scenario_path, loaded.value())};
   if (!runtime) {
     m_gameplay_mode_slot.last_error = runtime.error();
-    App::Log::error("Scenario load failed: role=gameplay_mode mode={}: {}",
+    App::Log::error(LogCategory::Scenario,
+        "load failed: role=gameplay_mode mode={}: {}",
         gameplay_mode_name(mode),
         runtime.error());
     return std::expected<void, std::string>{std::unexpect, std::move(runtime).error()};
@@ -127,18 +137,12 @@ std::expected<void, std::string> ScenarioManager::set_gameplay_mode(const Gamepl
   teardown_gameplay_mode_slot();
   install_gameplay_mode(mode, std::move(loaded).value(), std::move(runtime).value());
 
-  App::Log::info(
-      "Scenario loaded: role=gameplay_mode mode={} generation={} scripts={} active_scripts=0 "
-      "sounds={} sprites={} models={}",
+  App::Log::info(LogCategory::Scenario,
+      "gameplay mode \"{}\" loaded — generation={}",
       gameplay_mode_name(mode),
-      m_gameplay_mode_slot.generation,
-      m_gameplay_mode_slot.scx_data.scripts.size(),
-      m_gameplay_mode_slot.scx_data.sounds.size(),
-      m_gameplay_mode_slot.scx_data.sprites.size(),
-      m_gameplay_mode_slot.scx_data.models.size());
-  App::Log::warn(
-      "Scenario mode replaced: native activation semantics remain unsupported (no scripts "
-      "activated)");
+      m_gameplay_mode_slot.generation);
+  App::Log::debug(LogCategory::Scenario,
+      "native activation semantics remain unsupported (no scripts activated)");
   return {};
 }
 
@@ -159,10 +163,13 @@ std::expected<WorldSceneContext*, std::string> ScenarioManager::load_world_conte
 
   const std::size_t cache_index{static_cast<std::size_t>(target - m_world_contexts.data())};
   const WorldSceneResidencyState previous{target->residency};
-  App::Log::info(
-      "World context allocate: cache_index={} scene_id={} previous={}", cache_index, scene_id,
+  App::Log::debug(LogCategory::Scenario,
+      "world context allocate: cache_index={} scene_id={} previous={}",
+      cache_index,
+      scene_id,
       previous == WorldSceneResidencyState::Free ? "free" : "loaded_inactive");
-  App::Log::info("Scenario load begin: role=world_scene cache_index={} scene_id={} path={}",
+  App::Log::debug(LogCategory::Scenario,
+      "load begin: role=world_scene cache_index={} scene_id={} path={}",
       cache_index,
       scene_id,
       scenario_path);
@@ -179,10 +186,10 @@ std::expected<WorldSceneContext*, std::string> ScenarioManager::load_world_conte
         resolved_decor_path = decor_file->resolved.string();
         decor_model.emplace(std::move(parsed).value());
       } else {
-        App::Log::warn("World decor parse failed (non-fatal): {}", parsed.error());
+        App::Log::warn(LogCategory::Scenario, "World decor parse failed (non-fatal): {}", parsed.error());
       }
     } else {
-      App::Log::warn("World decor unavailable (non-fatal): {}", decor_file.error());
+      App::Log::warn(LogCategory::Scenario, "World decor unavailable (non-fatal): {}", decor_file.error());
     }
   }
 
@@ -191,7 +198,8 @@ std::expected<WorldSceneContext*, std::string> ScenarioManager::load_world_conte
   auto loaded{load_scenario(scenario_path)};
   if (!loaded) {
     target->last_error = loaded.error();
-    App::Log::error("Scenario load failed: role=world_scene cache_index={} scene_id={}: {}",
+    App::Log::error(LogCategory::Scenario,
+        "load failed: role=world_scene cache_index={} scene_id={}: {}",
         cache_index,
         scene_id,
         loaded.error());
@@ -205,7 +213,8 @@ std::expected<WorldSceneContext*, std::string> ScenarioManager::load_world_conte
   auto runtime{prepare_runtime(scenario_path, loaded.value())};
   if (!runtime) {
     target->last_error = runtime.error();
-    App::Log::error("Scenario load failed: role=world_scene cache_index={} scene_id={}: {}",
+    App::Log::error(LogCategory::Scenario,
+        "load failed: role=world_scene cache_index={} scene_id={}: {}",
         cache_index,
         scene_id,
         runtime.error());
@@ -234,12 +243,10 @@ std::expected<WorldSceneContext*, std::string> ScenarioManager::load_world_conte
       std::move(runtime).value(),
       WorldSceneResidencyState::LoadedInactive);
 
-  App::Log::info(
-      "Scenario loaded: role=world_scene cache_index={} scene_id={} residency=loaded_inactive "
-      "generation={} scripts={} active_scripts=0 sounds={} sprites={} models={}",
-      cache_index,
+  App::Log::debug(LogCategory::Scenario,
+      "world context {} \"{}\" loaded — scripts={} sounds={} sprites={} models={}",
       scene_id,
-      target->generation,
+      scenario_basename(scenario_path),
       script_count,
       sound_count,
       sprite_count,
@@ -260,12 +267,13 @@ std::expected<void, std::string> ScenarioManager::activate_world_context(
     return {};  // Already active.
   }
 
-  const std::size_t cache_index{static_cast<std::size_t>(context - m_world_contexts.data())};
   context->residency = WorldSceneResidencyState::LoadedActive;
 
-  App::Log::info("World context activate: cache_index={} scene_id={} residency=loaded_active",
-      cache_index,
-      scene_id);
+  App::Log::info(LogCategory::Scenario,
+      "world context {} \"{}\" active — generation={}",
+      scene_id,
+      scenario_basename(context->scenario_path),
+      context->generation);
   return {};
 }
 
@@ -281,12 +289,13 @@ std::expected<void, std::string> ScenarioManager::deactivate_world_context(
     return {};  // Already inactive.
   }
 
-  const std::size_t cache_index{static_cast<std::size_t>(context - m_world_contexts.data())};
   context->residency = WorldSceneResidencyState::LoadedInactive;
 
-  App::Log::info("World context deactivate: cache_index={} scene_id={} residency=loaded_inactive",
-      cache_index,
-      scene_id);
+  App::Log::info(LogCategory::Scenario,
+      "world context {} \"{}\" deactivated — generation={}",
+      scene_id,
+      scenario_basename(context->scenario_path),
+      context->generation);
   return {};
 }
 
@@ -309,17 +318,16 @@ std::expected<void, std::string> ScenarioManager::unload_world_context(
     return {};  // Already free.
   }
 
-  const std::size_t cache_index{static_cast<std::size_t>(context - m_world_contexts.data())};
-
-  App::Log::info("World context unload begin: cache_index={} scene_id={}", cache_index, scene_id);
+  App::Log::debug(LogCategory::Scenario,
+      "world context {} \"{}\" unloading — generation={}",
+      scene_id,
+      scenario_basename(context->scenario_path),
+      context->generation);
 
   teardown_world_context(*context);
   context->residency = WorldSceneResidencyState::Free;
   ++context->generation;
 
-  App::Log::info("World context unload end: cache_index={} scene_id={} residency=free",
-      cache_index,
-      scene_id);
   return {};
 }
 
@@ -540,7 +548,8 @@ std::expected<ScenarioManager::LoadedScenario, std::string> ScenarioManager::loa
             scx.error())};
   }
 
-  App::Log::debug("Scenario parsed: path='{}' scripts={} sounds={} sprites={} models={}",
+  App::Log::trace(LogCategory::Scenario,
+      "scenario parsed — path='{}' scripts={} sounds={} sprites={} models={}",
       resolved.string(),
       scx->scripts.size(),
       scx->sounds.size(),

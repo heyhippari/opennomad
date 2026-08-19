@@ -20,6 +20,7 @@
 #include "Core/GameDataLoader.hpp"
 #include "Core/Interface/InterfaceDispatcher.hpp"
 #include "Core/Log.hpp"
+#include "Core/LogCategory.hpp"
 #include "Core/Omikron/IamArea.hpp"
 #include "Core/Omikron/IamStart.hpp"
 #include "Core/Scenario/ScenarioManager.hpp"
@@ -89,7 +90,7 @@ std::expected<void, std::string> ScenarioStartupController::select_permanent_mod
   // the startup videos and again after mode 3; it is not part of mode 2.
   if (auto result{manager.set_gameplay_mode(GameplayMode::Adventure)}; !result) {
     m_last_error = fmt::format("gameplay mode scenario load: {}", result.error());
-    App::Log::error("Startup failed: {}", m_last_error);
+    App::Log::error(LogCategory::Startup, "Startup failed: {}", m_last_error);
     return std::expected<void, std::string>{std::unexpect, m_last_error};
   }
   return {};
@@ -127,7 +128,7 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
   auto start_file{read_file(std::string{K_IAM_START_PATH})};
   if (!start_file) {
     m_last_error = start_file.error();
-    App::Log::error("Startup failed: {}", m_last_error);
+    App::Log::error(LogCategory::Startup, "Startup failed: {}", m_last_error);
     return std::expected<void, std::string>{std::unexpect, m_last_error};
   }
   m_start_bytes = std::move(start_file).value();
@@ -135,7 +136,7 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
   auto start{Omikron::IamStart::load(std::span<const std::byte>{m_start_bytes})};
   if (!start) {
     m_last_error = start.error();
-    App::Log::error("Startup failed: {}", m_last_error);
+    App::Log::error(LogCategory::Startup, "Startup failed: {}", m_last_error);
     return std::expected<void, std::string>{std::unexpect, m_last_error};
   }
   m_start.emplace(std::move(start).value());
@@ -145,10 +146,11 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
   record("IAM_START.Loaded");
   record("IAM_START.InitialArea",
       fmt::format("id={} linked={}", m_initial_area_id, m_linked_area_id));
+  App::Log::info(LogCategory::Startup, "starting new session — area={}", m_initial_area_id);
 
   if (m_initial_area_id < 0) {
     m_last_error = fmt::format("initial area ID {} is negative", m_initial_area_id);
-    App::Log::error("Startup failed: {}", m_last_error);
+    App::Log::error(LogCategory::Startup, "Startup failed: {}", m_last_error);
     return std::expected<void, std::string>{std::unexpect, m_last_error};
   }
 
@@ -159,7 +161,7 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
   auto area_file{read_file(std::string{K_IAM_AREA_PATH})};
   if (!area_file) {
     m_last_error = area_file.error();
-    App::Log::error("Startup failed: {}", m_last_error);
+    App::Log::error(LogCategory::Startup, "Startup failed: {}", m_last_error);
     return std::expected<void, std::string>{std::unexpect, m_last_error};
   }
   m_area_archive_bytes = std::move(area_file).value();
@@ -169,14 +171,14 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
   auto record_span{m_area_archive->read_record(area_id)};
   if (!record_span) {
     m_last_error = record_span.error();
-    App::Log::error("Startup failed: {}", m_last_error);
+    App::Log::error(LogCategory::Startup, "Startup failed: {}", m_last_error);
     return std::expected<void, std::string>{std::unexpect, m_last_error};
   }
 
   auto parsed_record{Omikron::IamAreaRecord::load(record_span.value())};
   if (!parsed_record) {
     m_last_error = parsed_record.error();
-    App::Log::error("Startup failed: {}", m_last_error);
+    App::Log::error(LogCategory::Startup, "Startup failed: {}", m_last_error);
     return std::expected<void, std::string>{std::unexpect, m_last_error};
   }
   RuntimeAreaSlot& area_slot{m_area_slots.at(0)};
@@ -210,7 +212,7 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
 
   if (scx_name.empty()) {
     m_last_error = fmt::format("IAM/AREA record {} has no scenario SCX name", area_id);
-    App::Log::error("Startup failed: {}", m_last_error);
+    App::Log::error(LogCategory::Startup, "Startup failed: {}", m_last_error);
     return std::expected<void, std::string>{std::unexpect, m_last_error};
   }
 
@@ -221,12 +223,12 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
   auto world{manager.load_world_context(0, decor_path, m_grid_scx_path)};
   if (!world) {
     m_last_error = fmt::format("world scenario load: {}", world.error());
-    App::Log::error("Startup failed: {}", m_last_error);
+    App::Log::error(LogCategory::Startup, "Startup failed: {}", m_last_error);
     return std::expected<void, std::string>{std::unexpect, m_last_error};
   }
   if (auto result{manager.activate_world_context(0)}; !result) {
     m_last_error = fmt::format("world activation: {}", result.error());
-    App::Log::error("Startup failed: {}", m_last_error);
+    App::Log::error(LogCategory::Startup, "Startup failed: {}", m_last_error);
     return std::expected<void, std::string>{std::unexpect, m_last_error};
   }
 
@@ -240,7 +242,7 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
       record("AreaDependency.GRID_3DO.Loaded", m_grid_3do_path);
     } else {
       m_grid_3do_state = "unavailable";
-      App::Log::warn("GRID.3DO unavailable (non-fatal): {}", m_grid_3do_path);
+      App::Log::warn(LogCategory::Scenario, "GRID.3DO unavailable (non-fatal): {}", m_grid_3do_path);
       record("AreaDependency.GRID_3DO.Failed", m_grid_3do_path);
     }
   }
@@ -257,17 +259,19 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
             request.track_id,
             request.loop,
             request.mode_flag));
-    App::Log::info("[AreaScript] opcode 0x67 PlayMusic track={} loop={} mode={}",
+    App::Log::debug(LogCategory::Script,
+        "AREA opcode 0x67 — music track={} loop={} mode={}",
         request.track_id,
         request.loop,
         request.mode_flag);
     if (m_audio == nullptr) {
-      App::Log::warn("[Music] track {} requested but no audio system is available",
+      App::Log::warn(LogCategory::Music,
+          "track {} requested but no audio system is available",
           request.track_id);
       return;
     }
     if (auto result{m_audio->play_music_track(request)}; !result) {
-      App::Log::warn("[Music] track {} play failed: {}", request.track_id, result.error());
+      App::Log::warn(LogCategory::Music, "track {} play failed: {}", request.track_id, result.error());
       record("Music.TrackFailed", result.error());
     }
   });
@@ -279,13 +283,17 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
                 request.interface_id,
                 request.operand_b,
                 request.operand_c));
-        App::Log::info("[AreaScript] opcode 0x46 OpenInterface id={} arg1={} arg2={}",
+        App::Log::debug(LogCategory::Script,
+            "AREA opcode 0x46 — interface={} args=({},{})",
             request.interface_id,
             request.operand_b,
             request.operand_c);
         auto result{m_dispatcher.open(request)};
         if (!result) {
-          App::Log::warn("interface {} dispatch failed: {}", request.interface_id, result.error());
+          App::Log::warn(LogCategory::Interface,
+              "interface {} dispatch failed: {}",
+              request.interface_id,
+              result.error());
           return result;
         }
         // Startup-specific tracking: interface 29 is the main menu the
@@ -304,11 +312,9 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
         if (m_active_handle.has_value() && completion.handle == m_active_handle.value()) {
           m_main_menu_active = false;
           m_active_handle.reset();
-          App::Log::info("main menu no longer active (interface {} completed)",
-              completion.handle.interface_id);
         }
         if (auto result{complete_interface(completion)}; !result) {
-          App::Log::warn("interface completion ignored: {}", result.error());
+          App::Log::warn(LogCategory::Interface, "interface completion ignored: {}", result.error());
         }
       });
 
@@ -343,7 +349,7 @@ std::expected<void, std::string> ScenarioStartupController::initialize(ScenarioM
   }
   if (auto result{manager.reset_for_new_session()}; !result) {
     m_last_error = result.error();
-    App::Log::error("Startup failed: {}", m_last_error);
+    App::Log::error(LogCategory::Startup, "Startup failed: {}", m_last_error);
     return result;
   }
   reset_session();
@@ -369,6 +375,7 @@ std::expected<void, std::string> ScenarioStartupController::tick() {
   // from its existing instruction pointer on later frames without re-recording.
   if (!m_event_started) {
     record("AreaScript.EventStarted", "event=1");
+    App::Log::info(LogCategory::Script, "AREA {} event 1 started", m_initial_area_id);
     m_event_started = true;
   }
 
@@ -409,7 +416,7 @@ void ScenarioStartupController::open_preliminary_29() {
   APP_PROFILE_FUNCTION();
 
   m_preliminary_29_active = true;
-  App::Log::info("preliminary interface 29 opened (splash)");
+  App::Log::debug(LogCategory::Startup, "preliminary interface 29 opened (splash)");
 }
 
 void ScenarioStartupController::close_preliminary_29() {
@@ -417,7 +424,7 @@ void ScenarioStartupController::close_preliminary_29() {
 
   if (m_preliminary_29_active) {
     m_preliminary_29_active = false;
-    App::Log::info("preliminary interface 29 closed");
+    App::Log::debug(LogCategory::Startup, "preliminary interface 29 closed");
   }
 }
 

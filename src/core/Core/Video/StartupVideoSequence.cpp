@@ -13,6 +13,7 @@
 
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Log.hpp"
+#include "Core/LogCategory.hpp"
 #include "Core/Startup/StartupMediaPolicy.hpp"
 #include "Core/Startup/StartupPhase.hpp"
 #include "Core/Startup/StartupTraceRecorder.hpp"
@@ -20,8 +21,15 @@
 
 namespace {
 
-/// Number of leading frames per video logged at info level during diagnosis.
-constexpr std::size_t K_DIAGNOSTIC_FRAMES{30};
+/// Human-oriented display name of a startup video slot.
+constexpr std::string_view startup_video_display_name(const Startup::StartupVideoSlot slot) {
+  switch (slot) {
+    case Startup::StartupVideoSlot::k_publisher: return "Eidos";
+    case Startup::StartupVideoSlot::k_developer: return "Quantic Dream";
+    case Startup::StartupVideoSlot::k_intro:     return "game intro";
+  }
+  return "unknown";
+}
 
 }  // namespace
 
@@ -38,26 +46,32 @@ Startup::StartupPhaseStatus StartupVideoSequence::play_slot(
   APP_PROFILE_FUNCTION();
 
   const std::string_view base{Startup::startup_video_event_base(slot)};
+  const std::string_view display{startup_video_display_name(slot)};
+
   if (!m_policy.videos_enabled) {
+    App::Log::info(
+        LogCategory::Video, "{} startup video disabled by configuration", display);
     m_recorder.record(fmt::format("{}.SkippedByConfiguration", base));
     return Startup::StartupPhaseStatus::k_skipped_by_configuration;
   }
 
   const std::string& path{m_policy.video_paths.at(static_cast<std::size_t>(slot))};
   if (auto result{m_player.open(path)}; !result) {
-    App::Log::info("Startup video unavailable: {}", result.error());
+    App::Log::info(
+        LogCategory::Video, "{} startup video unavailable — {}", display, result.error());
     m_recorder.record(fmt::format("{}.SkippedUnavailable", base));
     return Startup::StartupPhaseStatus::k_skipped_unavailable;
   }
 
   m_player.start_audio();
+  App::Log::info(LogCategory::Video, "playing {} startup video", display);
 
   VideoDecodeStatus status{VideoDecodeStatus::k_frame};
-  bool stop{false};
+  bool stopped_by_user{false};
   std::uint64_t frame_index{0};
-  while (!stop) {
+  while (!stopped_by_user) {
     if (should_stop()) {
-      stop = true;
+      stopped_by_user = true;
       continue;
     }
 
@@ -68,17 +82,17 @@ Startup::StartupPhaseStatus StartupVideoSequence::play_slot(
     }
 
     // Audio-clock sync: wait until the frame's presentation time arrives.
+    // The per-frame PTS/clock samples are high-volume forensic detail kept
+    // at trace level, which is disabled by default.
     const double delay{frame.pts_seconds - m_player.clock_seconds()};
-    if (frame_index < K_DIAGNOSTIC_FRAMES) {
-      App::Log::info(
-          "Video[{}] frame {}: pts={:.3f}s clock={:.3f}s delay={:.3f}s audio_queued={}",
-          base,
-          frame_index,
-          frame.pts_seconds,
-          m_player.clock_seconds(),
-          delay,
-          m_player.audio_queued_bytes());
-    }
+    App::Log::trace(LogCategory::Video,
+        "{} frame {}: pts={:.3f}s clock={:.3f}s delay={:.3f}s audio_queued={}",
+        base,
+        frame_index,
+        frame.pts_seconds,
+        m_player.clock_seconds(),
+        delay,
+        m_player.audio_queued_bytes());
     ++frame_index;
 
     if (delay > 0.0) {
@@ -89,11 +103,11 @@ Startup::StartupPhaseStatus StartupVideoSequence::play_slot(
       for (std::uint64_t step{0}; step < total_steps; ++step) {
         SDL_Delay(5);
         if (should_stop()) {
-          stop = true;
+          stopped_by_user = true;
           break;
         }
       }
-      if (stop) {
+      if (stopped_by_user) {
         continue;
       }
     }
@@ -104,9 +118,17 @@ Startup::StartupPhaseStatus StartupVideoSequence::play_slot(
   m_player.stop_audio();
 
   if (status == VideoDecodeStatus::k_error) {
+    App::Log::info(
+        LogCategory::Video, "{} startup video unavailable — decode error", display);
     m_recorder.record(fmt::format("{}.SkippedUnavailable", base));
     return Startup::StartupPhaseStatus::k_skipped_unavailable;
   }
+  if (stopped_by_user) {
+    App::Log::info(LogCategory::Video, "{} startup video skipped", display);
+    m_recorder.record(fmt::format("{}.SkippedByUser", base));
+    return Startup::StartupPhaseStatus::k_skipped_by_user;
+  }
+  App::Log::info(LogCategory::Video, "{} startup video complete", display);
   m_recorder.record(fmt::format("{}.Complete", base));
   return Startup::StartupPhaseStatus::k_complete;
 }

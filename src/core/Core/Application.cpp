@@ -38,6 +38,7 @@
 #include "Core/Interface/InterfaceDispatcher.hpp"
 #include "Core/Interface/InterfaceManager.hpp"
 #include "Core/Log.hpp"
+#include "Core/LogCategory.hpp"
 #include "Core/MainLoopController.hpp"
 #include "Core/RuntimeActivityState.hpp"
 #include "Core/Scenario/ScenarioEngine.hpp"
@@ -104,10 +105,8 @@ Application::Application(Application&& other) noexcept
       m_sdl_initialized(std::exchange(other.m_sdl_initialized, false)),
       m_mouse_captured(other.m_mouse_captured),
       m_capture_retry_cooldown(other.m_capture_retry_cooldown),
-      m_capture_diag_cooldown(other.m_capture_diag_cooldown),
       m_pending_mouse_delta_x(other.m_pending_mouse_delta_x),
       m_pending_mouse_delta_y(other.m_pending_mouse_delta_y),
-      m_pending_mouse_motion_events(other.m_pending_mouse_motion_events),
       m_activity(other.m_activity),
       m_held_input(other.m_held_input),
       m_text_input(other.m_text_input),
@@ -121,6 +120,8 @@ std::expected<Application, std::string> Application::create(const std::string& t
   auto trace{std::make_unique<Startup::StartupTraceRecorder>()};
   auto coordinator{std::make_unique<Startup::StartupCoordinator>(*trace)};
 
+  App::Log::info(LogCategory::Core, "OpenNomad starting");
+
   // --- Phase 1: process bootstrap ---
   swallow_expected(coordinator->begin(Startup::StartupPhase::k_process_bootstrap));
   const unsigned int init_flags{SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_AUDIO};
@@ -128,7 +129,7 @@ std::expected<Application, std::string> Application::create(const std::string& t
     return std::expected<Application, std::string>{std::unexpect,
         fmt::format("Can't initialize Omikron: SDL_Init failed: {}", SDL_GetError())};
   }
-  App::Log::debug("SDL video driver: {}", SDL_GetCurrentVideoDriver());
+  App::Log::debug(LogCategory::Core, "SDL video driver: {}", SDL_GetCurrentVideoDriver());
 
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG);
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
@@ -151,6 +152,11 @@ std::expected<Application, std::string> Application::create(const std::string& t
     return std::expected<Application, std::string>{std::unexpect,
         fmt::format("Can't initialize Omikron: {}", std::move(window).error())};
   }
+  App::Log::info(LogCategory::Core,
+      "window created — {}x{}, {}",
+      window.value()->get_width(),
+      window.value()->get_height(),
+      SDL_GetCurrentVideoDriver());
   trace->record("Window.Created");
   swallow_expected(coordinator->complete(
       Startup::StartupPhase::k_create_windows, Startup::StartupPhaseStatus::k_complete));
@@ -161,7 +167,7 @@ std::expected<Application, std::string> Application::create(const std::string& t
   if (audio) {
     trace->record("Audio.Initialized");
   } else {
-    App::Log::warn("Audio disabled: {}", audio.error());
+    App::Log::warn(LogCategory::Audio, "Audio disabled: {}", audio.error());
   }
 
   auto manager{std::make_unique<ScenarioManager>()};
@@ -255,7 +261,7 @@ std::expected<Application, std::string> Application::create(const std::string& t
 
   // --- Phase 8: prepare the splash ---
   swallow_expected(app.m_coordinator->begin(Startup::StartupPhase::k_prepare_splash));
-  auto splash{SplashScene::create()};
+  auto splash{SplashScene::create(kSplashDuration)};
   if (!splash) {
     app.m_scenario_engine.reset();
     app.m_scenario_manager.reset();
@@ -356,6 +362,7 @@ void App::Application::run() {
     m_trace->record("MainLoop.Started");
     m_trace->record("Splash.Omikron.Active");
   }
+  App::Log::info(LogCategory::Startup, "displaying Omikron splash");
 
   while (m_running) {
     APP_PROFILE_SCOPE("MainLoop");
@@ -491,25 +498,6 @@ void Application::run_engine_frame() {
     SDL_WarpMouseInWindow(m_window->get_native_window(),
         static_cast<float>(m_window->get_width()) / 2.0F,
         static_cast<float>(m_window->get_height()) / 2.0F);
-  }
-
-  // TEMPORARY diagnostic: snapshot the capture state once a second so we
-  // can see what SDL reports after an alt-tab focus cycle.
-  m_capture_diag_cooldown -= delta_seconds;
-  if (m_mouse_captured && m_capture_diag_cooldown <= 0.0F) {
-    float cursor_x{0.0F};
-    float cursor_y{0.0F};
-    SDL_GetMouseState(&cursor_x, &cursor_y);
-    App::Log::debug(
-        "Mouse capture diag: focused={}, flag={}, cursor=({}, {}), events={}, deltas=({}, {})",
-        window_focused,
-        m_window->is_relative_mouse_mode(),
-        cursor_x,
-        cursor_y,
-        m_pending_mouse_motion_events,
-        m_pending_mouse_delta_x,
-        m_pending_mouse_delta_y);
-    m_capture_diag_cooldown = 1.0F;
   }
 
   // --- Held-Escape command dispatch (original per-frame held-key test) ---
@@ -668,7 +656,7 @@ void Application::update_scenario(const float delta_seconds) {
     return;
   }
   if (auto result{m_scenario_engine->update(delta_seconds)}; !result) {
-    App::Log::error("Scenario update failed: {}", result.error());
+    App::Log::error(LogCategory::Scenario, "Scenario update failed: {}", result.error());
   }
 }
 
@@ -684,7 +672,7 @@ bool Application::advance_startup_past_splash() {
   if (auto result{m_coordinator->complete(
           Startup::StartupPhase::k_run_splash, Startup::StartupPhaseStatus::k_complete)};
       !result) {
-    App::Log::error("Startup ordering error: {}", result.error());
+    App::Log::error(LogCategory::Startup, "Startup ordering error: {}", result.error());
     m_running = false;
     return false;
   }
@@ -692,12 +680,12 @@ bool Application::advance_startup_past_splash() {
   const auto run_phase = [this](const Startup::StartupPhase phase,
                                const ScenarioMode mode) -> bool {
     if (auto result{m_coordinator->begin(phase)}; !result) {
-      App::Log::error("Startup ordering error: {}", result.error());
+      App::Log::error(LogCategory::Startup, "Startup ordering error: {}", result.error());
       m_running = false;
       return false;
     }
     if (auto result{m_scenario_engine->enter_mode(mode, 0)}; !result) {
-      App::Log::error("Can't initialize Omikron: {}", result.error());
+      App::Log::error(LogCategory::Core, "Can't initialize Omikron: {}", result.error());
       swallow_expected(m_coordinator->complete(
           phase, Startup::StartupPhaseStatus::k_failed, result.error()));
       m_running = false;
@@ -705,7 +693,7 @@ bool Application::advance_startup_past_splash() {
     }
     if (auto result{m_coordinator->complete(phase, Startup::StartupPhaseStatus::k_complete)};
         !result) {
-      App::Log::error("Startup ordering error: {}", result.error());
+      App::Log::error(LogCategory::Startup, "Startup ordering error: {}", result.error());
       m_running = false;
       return false;
     }
@@ -727,7 +715,7 @@ bool Application::advance_startup_past_splash() {
   {
     auto world{WorldScene::create(*m_scenario_manager, *m_interface_manager)};
     if (!world) {
-      App::Log::error("Can't initialize Omikron: {}", std::move(world).error());
+      App::Log::error(LogCategory::Core, "Can't initialize Omikron: {}", std::move(world).error());
       m_running = false;
       return false;
     }
@@ -743,12 +731,12 @@ bool Application::advance_startup_past_splash() {
   // the InterfaceManager owns it and the WorldScene presents it. There is no
   // direct menu creation here and no scene swap.
   if (auto result{m_coordinator->begin(Startup::StartupPhase::k_open_main_menu)}; !result) {
-    App::Log::error("Startup ordering error: {}", result.error());
+    App::Log::error(LogCategory::Startup, "Startup ordering error: {}", result.error());
     m_running = false;
     return false;
   }
   if (!m_scenario_engine->main_menu_active()) {
-    App::Log::error(
+    App::Log::error(LogCategory::Core,
         "Can't initialize Omikron: the area script did not open interface 29 (no main menu)");
     swallow_expected(m_coordinator->complete(
         Startup::StartupPhase::k_open_main_menu, Startup::StartupPhaseStatus::k_failed,
@@ -759,16 +747,17 @@ bool Application::advance_startup_past_splash() {
   if (auto result{m_coordinator->complete(
           Startup::StartupPhase::k_open_main_menu, Startup::StartupPhaseStatus::k_complete)};
       !result) {
-    App::Log::error("Startup ordering error: {}", result.error());
+    App::Log::error(LogCategory::Startup, "Startup ordering error: {}", result.error());
     m_running = false;
     return false;
   }
   if (auto result{m_coordinator->finish()}; !result) {
-    App::Log::error("Startup ordering error: {}", result.error());
+    App::Log::error(LogCategory::Startup, "Startup ordering error: {}", result.error());
     m_running = false;
     return false;
   }
 
+  App::Log::info(LogCategory::Startup, "startup complete");
   m_input.reset();
   return true;
 }
@@ -802,7 +791,6 @@ void Application::poll_events() {
 
   m_pending_mouse_delta_x = 0.0F;
   m_pending_mouse_delta_y = 0.0F;
-  m_pending_mouse_motion_events = 0;
 
   SDL_Event event{};
   while (SDL_PollEvent(&event)) {
@@ -816,7 +804,7 @@ void Application::wait_for_event() {
 
   SDL_Event event{};
   if (!SDL_WaitEvent(&event)) {
-    App::Log::warn("SDL_WaitEvent failed: {}", SDL_GetError());
+    App::Log::warn(LogCategory::Core, "SDL_WaitEvent failed: {}", SDL_GetError());
     // Avoid busy-spinning if the wait facility keeps failing.
     SDL_Delay(100);
     return;
@@ -838,7 +826,6 @@ void Application::process_event(const SDL_Event& event) {
       event.motion.windowID == own_window) {
     m_pending_mouse_delta_x += event.motion.xrel;
     m_pending_mouse_delta_y += event.motion.yrel;
-    ++m_pending_mouse_motion_events;
   }
 
   ImGui_ImplSDL3_ProcessEvent(&event);
@@ -880,7 +867,7 @@ void Application::process_event(const SDL_Event& event) {
         // logged. This runs inside the same poll loop, so no frame is
         // rendered with the cursor freed in between.
         if (m_mouse_captured) {
-          App::Log::debug(
+          App::Log::debug(LogCategory::Input,
               "Mouse capture: focus gained (flag: {})", m_window->is_relative_mouse_mode());
           m_window->set_relative_mouse_mode(false);
           m_window->set_relative_mouse_mode(true);
@@ -896,7 +883,8 @@ void Application::process_event(const SDL_Event& event) {
         m_held_input.clear();
         m_pending_mouse_delta_x = 0.0F;
         m_pending_mouse_delta_y = 0.0F;
-        App::Log::debug("Mouse capture: focus lost (flag: {})", m_window->is_relative_mouse_mode());
+        App::Log::debug(LogCategory::Input,
+            "Mouse capture: focus lost (flag: {})", m_window->is_relative_mouse_mode());
         break;
       case SDL_EVENT_WINDOW_MINIMIZED:
         m_activity.on_render_window_active(false);
@@ -917,7 +905,7 @@ void Application::process_event(const SDL_Event& event) {
         // where the lock request made during focus regain was not honoured
         // (alt-tab recovery on Wayland).
         if (m_mouse_captured) {
-          App::Log::debug(
+          App::Log::debug(LogCategory::Input,
               "Mouse capture: mouse entered (flag: {})", m_window->is_relative_mouse_mode());
           m_window->set_relative_mouse_mode(false);
           m_window->set_relative_mouse_mode(true);

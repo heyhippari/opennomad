@@ -26,6 +26,7 @@
 #include "Core/Interface/InterfaceDispatcher.hpp"
 #include "Core/Interface/StartMenuLayout.hpp"
 #include "Core/Log.hpp"
+#include "Core/LogCategory.hpp"
 #include "Core/Omikron/BmpImage.hpp"
 #include "Core/Omikron/IamStringTable.hpp"
 #include "Core/Texture.hpp"
@@ -105,18 +106,18 @@ std::expected<InterfaceHandle, std::string> InterfaceManager::open(
   const std::uint16_t interface_id{request.interface_id};
   const InterfaceDescriptor* descriptor{descriptor_for_id(interface_id)};
   if (descriptor == nullptr) {
-    return std::expected<InterfaceHandle, std::string>{std::unexpect,
-        fmt::format("interface {} is unsupported", interface_id)};
+    return std::expected<InterfaceHandle, std::string>{
+        std::unexpect, fmt::format("interface {} is unsupported", interface_id)};
   }
 
-  App::Log::info("[I2D] opening interface {} \"{}\"", descriptor->id, descriptor->name);
+  App::Log::debug(LogCategory::I2D, "opening interface {} \"{}\"", descriptor->id, descriptor->name);
 
   if (!m_renderer) {
     m_renderer = std::make_unique<I2DRenderer>();
     if (auto result{m_renderer->initialize()}; !result) {
       m_renderer.reset();
-      return std::expected<InterfaceHandle, std::string>{std::unexpect,
-          fmt::format("[I2D] renderer: {}", result.error())};
+      return std::expected<InterfaceHandle, std::string>{
+          std::unexpect, fmt::format("renderer: {}", result.error())};
     }
   }
 
@@ -132,21 +133,24 @@ std::expected<InterfaceHandle, std::string> InterfaceManager::open(
     auto file{read_file(path)};
     if (!file) {
       return std::expected<InterfaceHandle, std::string>{
-          std::unexpect, fmt::format("[I2D] bitmap: {}", file.error())};
+          std::unexpect, fmt::format("bitmap: {}", file.error())};
     }
     auto bmp{Omikron::BmpImageDecoder::load(std::span<const std::byte>{file.value()})};
     if (!bmp) {
       return std::expected<InterfaceHandle, std::string>{
-          std::unexpect, fmt::format("[I2D] bitmap: {}", bmp.error())};
+          std::unexpect, fmt::format("bitmap: {}", bmp.error())};
     }
-    auto texture{Texture2D::create(
-        bmp->width, bmp->height, std::span<const std::uint8_t>{bmp->rgba8}, /*srgb=*/true)};
+    auto texture{Texture2D::create(bmp->width,
+        bmp->height,
+        std::span<const std::uint8_t>{bmp->rgba8},
+        /*srgb=*/true,
+        TextureFilter::k_linear)};
     if (!texture) {
       return std::expected<InterfaceHandle, std::string>{
-          std::unexpect, fmt::format("[I2D] bitmap: {}", texture.error())};
+          std::unexpect, fmt::format("bitmap: {}", texture.error())};
     }
     instance->bitmap.emplace(std::move(texture).value());
-    App::Log::info("[I2D] bitmap: {} ({}x{})", path, bmp->width, bmp->height);
+    App::Log::debug(LogCategory::I2D, "bitmap: {} ({}x{})", path, bmp->width, bmp->height);
   }
 
   // Descriptor string-table resource (IAM/<name>).
@@ -155,16 +159,16 @@ std::expected<InterfaceHandle, std::string> InterfaceManager::open(
     auto file{read_file(path)};
     if (!file) {
       return std::expected<InterfaceHandle, std::string>{
-          std::unexpect, fmt::format("[I2D] strings: {}", file.error())};
+          std::unexpect, fmt::format("strings: {}", file.error())};
     }
     auto table{Omikron::IamStringTable::load(std::span<const std::byte>{file.value()})};
     if (!table) {
       return std::expected<InterfaceHandle, std::string>{
-          std::unexpect, fmt::format("[I2D] strings: {}", table.error())};
+          std::unexpect, fmt::format("strings: {}", table.error())};
     }
     const std::size_t entry_count{table->size()};
     instance->strings = std::move(table).value();
-    App::Log::info("[I2D] strings: {} ({} entries)", path, entry_count);
+    App::Log::debug(LogCategory::I2D, "strings: {} ({} entries)", path, entry_count);
   }
 
   // Assign the handle before the descriptor init so interface-specific state
@@ -185,18 +189,19 @@ std::expected<InterfaceHandle, std::string> InterfaceManager::open(
 
   if (resident.root_state == nullptr || resident.current_state == nullptr) {
     const std::string error{"interface initializer did not establish a root state"};
-    App::Log::error("[I2D] {}", error);
+    App::Log::error(LogCategory::I2D, "{}", error);
     m_instances.pop_back();
     return std::expected<InterfaceHandle, std::string>{std::unexpect, error};
   }
 
   const InterfaceHandle handle{resident.handle};
   m_focused_interface = handle;
-  App::Log::info("[Interface] opened handle id={} gen={} \"{}\" ({} resident)",
+  App::Log::info(LogCategory::Interface,
+      "opened {} \"{}\" — handle={}:{}",
       handle.interface_id,
-      handle.generation,
       descriptor->name,
-      m_instances.size());
+      handle.interface_id,
+      handle.generation);
   return handle;
 }
 
@@ -237,10 +242,12 @@ void InterfaceManager::destroy_instance(InterfaceInstance& instance) {
   if (descriptor != nullptr && descriptor->destroy != nullptr) {
     descriptor->destroy(*this, instance);
   }
-  App::Log::info("[I2D] closing interface {} \"{}\"",
+  App::Log::trace(LogCategory::I2D,
+      "closing interface {} \"{}\"",
       descriptor != nullptr ? descriptor->id : -1,
       descriptor != nullptr ? descriptor->name : "?");
-  App::Log::info("[Interface] closed handle id={} gen={}",
+  App::Log::trace(LogCategory::Interface,
+      "closed handle {}:{}",
       instance.handle.interface_id,
       instance.handle.generation);
 }
@@ -295,11 +302,15 @@ InterfaceInstance* InterfaceManager::focused_instance_mut() {
 }
 
 void InterfaceManager::request_completion(const InterfaceHandle handle, const std::int16_t result) {
-  if (!contains(handle)) {
+  const InterfaceInstance* instance{find(handle)};
+  if (instance == nullptr) {
     return;
   }
   m_completions.push_back(InterfaceCompletion{.handle = handle, .result = result});
-  App::Log::info("[Interface] completion requested handle id={} gen={} result={}",
+  App::Log::info(LogCategory::Interface,
+      "completed {} \"{}\" — handle={}:{} result={}",
+      handle.interface_id,
+      instance->descriptor->name,
       handle.interface_id,
       handle.generation,
       result);
@@ -381,7 +392,8 @@ void InterfaceManager::select_previous() {
   } else {
     --instance->selected_element;
   }
-  App::Log::info("[I2D] active element: string[{}] \"{}\"",
+  App::Log::debug(LogCategory::I2D,
+      "active element: string[{}] \"{}\"",
       selectable.at(instance->selected_element)->string_index,
       instance->strings.at(selectable.at(instance->selected_element)->string_index));
 }
@@ -396,7 +408,8 @@ void InterfaceManager::select_next() {
     return;
   }
   instance->selected_element = (instance->selected_element + 1U) % selectable.size();
-  App::Log::info("[I2D] active element: string[{}] \"{}\"",
+  App::Log::debug(LogCategory::I2D,
+      "active element: string[{}] \"{}\"",
       selectable.at(instance->selected_element)->string_index,
       instance->strings.at(selectable.at(instance->selected_element)->string_index));
 }
@@ -415,7 +428,8 @@ void InterfaceManager::confirm() {
   if (target == nullptr) {
     return;  // Not selectable (should not happen for a selectable element).
   }
-  App::Log::info("[I2D] activate: string[{}] \"{}\" -> child state",
+  App::Log::debug(LogCategory::I2D,
+      "activate: string[{}] \"{}\" -> child state",
       selected->string_index,
       instance->strings.at(selected->string_index));
   if (target->on_enter) {
@@ -435,12 +449,12 @@ void InterfaceManager::cancel() {
     return;
   }
   if (instance->current_state->parent == nullptr) {
-    App::Log::debug("[I2D] cancel: already at the root state");
+    App::Log::debug(LogCategory::I2D, "cancel: already at the root state");
     return;
   }
   instance->current_state = instance->current_state->parent;
   instance->selected_element = 0U;
-  App::Log::info("[I2D] returned to parent state");
+  App::Log::debug(LogCategory::I2D, "returned to parent state");
 }
 
 void InterfaceManager::handle_navigation(const Input::InputManager& input) {
@@ -468,7 +482,7 @@ namespace {
 //   0x004CE780 -> IAM index 4
 //   0x004CE7C8 -> IAM index 5
 void initialize_start_menu(InterfaceManager& manager, InterfaceInstance& instance) {
-  App::Log::info("[I2D] initializing START MENU root state");
+  App::Log::debug(LogCategory::I2D, "initializing START MENU root state");
 
   I2DState* root{manager.create_state(instance)};
   I2DState* new_game{manager.create_state(instance)};
@@ -477,7 +491,7 @@ void initialize_start_menu(InterfaceManager& manager, InterfaceInstance& instanc
   I2DState* quit{manager.create_state(instance)};
   if (root == nullptr || new_game == nullptr || load_game == nullptr || options == nullptr ||
       quit == nullptr) {
-    App::Log::error("[I2D] failed to allocate the START MENU state graph");
+    App::Log::error(LogCategory::I2D, "failed to allocate the START MENU state graph");
     return;
   }
 
@@ -490,10 +504,10 @@ void initialize_start_menu(InterfaceManager& manager, InterfaceInstance& instanc
   // provisional and clearly documented; the important behavior is that the
   // waiting AREA script resumes (which starts track 87 through opcode 0x67).
   // Track 87 is never started directly here.
-  new_game->on_enter = [](InterfaceManager& manager_ref, InterfaceInstance& instance_ref,
-                          I2DState&) {
-    manager_ref.request_completion(instance_ref.handle, /*provisional result*/ 0);
-  };
+  new_game->on_enter =
+      [](InterfaceManager& manager_ref, InterfaceInstance& instance_ref, I2DState&) {
+        manager_ref.request_completion(instance_ref.handle, /*provisional result*/ 0);
+      };
 
   // Animated background: IMAGES/CLOUD.BMP. Missing source degrades to no
   // background (the canvas stays clear) rather than an invented asset.
@@ -501,12 +515,12 @@ void initialize_start_menu(InterfaceManager& manager, InterfaceInstance& instanc
     root->background = background->get();
     instance.background = std::move(background).value();
   } else {
-    App::Log::warn("[I2D] background unavailable: {}", background.error());
+    App::Log::warn(LogCategory::I2D, "background unavailable: {}", background.error());
   }
 
   // Font key 'I' -> MENUINTR (the FNT renderer falls back to the TTF).
   if (auto result{manager.load_font('I')}; !result) {
-    App::Log::warn("[I2D] font 'I' unavailable: {}", result.error());
+    App::Log::warn(LogCategory::I2D, "font 'I' unavailable: {}", result.error());
   }
 
   // Runtime bitmap element approximately 0x004CF1A8.
@@ -518,15 +532,16 @@ void initialize_start_menu(InterfaceManager& manager, InterfaceInstance& instanc
   // small top margin are OpenNomad modernization adjustments supplied as
   // presentation hints, not mutations of the Runtime-authored coordinates.
   I2DGroup bitmap_group;
-  bitmap_group.elements.push_back(I2DElement{.data = I2DBitmapElement{
-          .source = k_start_menu_bitmap_rect,
-          .destination = k_start_menu_bitmap_rect,
-          .runtime_flags = k_start_menu_bitmap_flags,
-          .runtime_blit_mode = k_start_menu_bitmap_blit_mode},
-      .presentation = I2DPresentationHints{.scale_policy = I2DScalePolicy::k_reference_canvas,
-          .anchor_top_center = true,
-          .top_margin_reference = k_start_menu_logo_top_margin,
-          .clamp_width_to_viewport = true}});
+  bitmap_group.elements.push_back(
+      I2DElement{.data = I2DBitmapElement{.source = k_start_menu_bitmap_rect,
+                     .destination = k_start_menu_bitmap_rect,
+                     .runtime_flags = k_start_menu_bitmap_flags,
+                     .runtime_blit_mode = k_start_menu_bitmap_blit_mode},
+          .presentation = I2DPresentationHints{.scale_policy = I2DScalePolicy::k_reference_canvas,
+              .anchor_top_center = true,
+              .top_margin_reference = k_start_menu_logo_top_margin,
+              .top_center_scale = k_start_menu_logo_scale,
+              .clamp_width_to_viewport = true}});
   root->groups.push_back(std::move(bitmap_group));
 
   // Runtime text group raw flags: 0x80000010. The 640 px wide rectangles and
@@ -540,18 +555,18 @@ void initialize_start_menu(InterfaceManager& manager, InterfaceInstance& instanc
   text_group.runtime_flags = k_start_menu_text_group_flags;
   for (std::size_t index{0}; index < k_start_menu_root_entries.size(); ++index) {
     const RecoveredTextEntry& entry{k_start_menu_root_entries.at(index)};
-    text_group.elements.push_back(I2DElement{
-        .data = I2DTextElement{.string_index = entry.string_index,
-            .font_key = entry.font_key,
-            .bounds = I2DRect{.x = entry.x,
-                .y = entry.y,
-                .width = entry.width,
-                .height = entry.height},
-            .red = 255,
-            .green = 255,
-            .blue = 255,
-            .target_state = child_states.at(index)},
-        .presentation = I2DPresentationHints{}});
+    text_group.elements.push_back(
+        I2DElement{.data = I2DTextElement{.string_index = entry.string_index,
+                       .font_key = entry.font_key,
+                       .bounds = I2DRect{.x = entry.x,
+                           .y = k_start_menu_modern_y.at(index),
+                           .width = entry.width,
+                           .height = k_start_menu_modern_text_height},
+                       .red = 255,
+                       .green = 255,
+                       .blue = 255,
+                       .target_state = child_states.at(index)},
+            .presentation = I2DPresentationHints{}});
   }
   root->groups.push_back(std::move(text_group));
 
@@ -559,15 +574,15 @@ void initialize_start_menu(InterfaceManager& manager, InterfaceInstance& instanc
   instance.current_state = root;
   instance.selected_element = 0U;
 
-  App::Log::info("[I2D] root state: 4 selectable text elements");
-  App::Log::info("[I2D] active element: string[{}] \"{}\"", 0, instance.strings.at(0));
+  App::Log::debug(LogCategory::I2D, "root state: 4 selectable text elements");
+  App::Log::debug(LogCategory::I2D, "active element: string[{}] \"{}\"", 0, instance.strings.at(0));
 }
 
 // Runtime StartMenu destroy callback: 0x00479F30. Resource release is RAII;
 // this callback exists to mirror the descriptor contract and to log teardown.
-void destroy_start_menu([[maybe_unused]] InterfaceManager& manager,
-    [[maybe_unused]] InterfaceInstance& instance) {
-  App::Log::info("[I2D] destroying START MENU state");
+void destroy_start_menu(
+    [[maybe_unused]] InterfaceManager& manager, [[maybe_unused]] InterfaceInstance& instance) {
+  App::Log::debug(LogCategory::I2D, "destroying START MENU state");
 }
 
 }  // namespace

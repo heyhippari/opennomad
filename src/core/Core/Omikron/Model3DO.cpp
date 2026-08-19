@@ -17,6 +17,7 @@
 
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Log.hpp"
+#include "Core/LogCategory.hpp"
 #include "Core/Omikron/BinaryReader.hpp"
 #include "Core/Vertex.hpp"
 
@@ -59,7 +60,8 @@ std::expected<Model3DOData, std::string> Model3DO::load(const std::span<const st
     return std::expected<Model3DOData, std::string>{std::unexpect, reader.error()};
   }
 
-  App::Log::debug("3DO signature '{}', version {}.{}",
+  App::Log::debug(LogCategory::Renderer,
+      "3DO signature '{}', version {}.{}",
       std::string_view{model.header.signature.data(), model.header.signature.size()},
       model.header.version_major,
       model.header.version_minor);
@@ -141,7 +143,8 @@ std::expected<Model3DOData, std::string> Model3DO::load(const std::span<const st
   // has records; the first one (lights_unknown1, "mesh lights") has no
   // record section — that lighting is baked into the vertex colours.
   if (model.header.lights_unknown1 > 0U) {
-    App::Log::debug("3DO header reports {} mesh lights (baked into vertex colours)",
+    App::Log::debug(LogCategory::Renderer,
+        "3DO header reports {} mesh lights (baked into vertex colours)",
         model.header.lights_unknown1);
   }
   if (model.header.lights_unknown2 > K_MAX_LIGHT_COUNT) {
@@ -177,7 +180,8 @@ std::expected<Model3DOData, std::string> Model3DO::load(const std::span<const st
       if (found != id_to_index.end()) {
         parent_index = static_cast<std::int32_t>(found->second);
       } else {
-        App::Log::warn("mesh '{}' (id {}) references unknown parent {}",
+        App::Log::warn(LogCategory::Renderer,
+            "mesh '{}' (id {}) references unknown parent {}",
             mesh.name,
             mesh.mesh_id,
             mesh.parent_id);
@@ -228,7 +232,8 @@ std::expected<std::vector<MaterialGroup>, std::string> Model3DO::build_static_ge
       return material_id;
     }
     if (clamped_materials.insert(material_id).second) {
-      App::Log::warn("3DO face references invalid material {} ({} materials); using material 0",
+      App::Log::warn(LogCategory::Renderer,
+          "3DO face references invalid material {} ({} materials); using material 0",
           material_id,
           model.materials.size());
     }

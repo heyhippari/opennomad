@@ -18,6 +18,7 @@
 #include <fmt/format.h>
 
 #include "Core/Log.hpp"
+#include "Core/LogCategory.hpp"
 
 namespace App::Debug {
 
@@ -50,7 +51,8 @@ class Instrumentor {
       // Subsequent profiling output meant for the original session will end up in the
       // newly opened session instead.  That's better than having badly formatted
       // profiling output.
-      App::Log::error("Instrumentor::begin_session('{0}') when session '{1}' already open.",
+      App::Log::error(LogCategory::Debug,
+          "Instrumentor::begin_session('{0}') when session '{1}' already open.",
           name,
           m_current_session->name);
       internal_end_session();
@@ -61,7 +63,7 @@ class Instrumentor {
       m_current_session = std::make_unique<InstrumentationSession>(name);
       write_header();
     } else {
-      App::Log::error("Instrumentor could not open results file '{0}'.", filepath);
+      App::Log::error(LogCategory::Debug, "Instrumentor could not open results file '{0}'.", filepath);
     }
   }
 

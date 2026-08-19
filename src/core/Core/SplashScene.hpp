@@ -14,13 +14,16 @@
 namespace App {
 
 /// Fullscreen startup splash: shows IMAGES/OMIKRON.BMP centred and scaled to
-/// fit (contain-fit) until the application swaps in the loaded scene. The
-/// application owns the countdown; this scene only draws the image.
+/// fit (contain-fit), fading in from black and back out to black before the
+/// application swaps in the loaded scene. The application remains the owner
+/// of the authoritative splash countdown.
 class SplashScene final : public Scene {
  public:
   /// Loads IMAGES/OMIKRON.BMP relative to the executable, uploads it as a
-  /// texture and builds the fullscreen quad.
-  static std::expected<std::unique_ptr<SplashScene>, std::string> create();
+  /// texture and builds the fullscreen quad. duration_seconds must match the
+  /// application's splash lifetime so the visual fade-out ends at the scene
+  /// transition.
+  static std::expected<std::unique_ptr<SplashScene>, std::string> create(float duration_seconds);
 
   ~SplashScene() override = default;
 
@@ -41,11 +44,20 @@ class SplashScene final : public Scene {
       int image_width, int image_height, int viewport_width, int viewport_height);
 
  private:
-  explicit SplashScene(Texture2D texture, Shader shader);
+  explicit SplashScene(
+      Texture2D texture, Shader shader, float duration_seconds);
+
+  /// Fade duration at either end of the five-second splash.
+  static constexpr float kFadeInDuration{0.75F};
+  static constexpr float kFadeOutDuration{0.75F};
 
   Texture2D m_texture;
   Shader m_shader;
   Mesh m_quad;
+
+  float m_duration_seconds{0.0F};
+  float m_elapsed_seconds{0.0F};
+
   int m_viewport_width{0};
   int m_viewport_height{0};
 };

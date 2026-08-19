@@ -27,11 +27,13 @@
 #include "Core/Audio/AudioSystem.hpp"
 #include "Core/Audio/AudioTypes.hpp"
 #include "Core/Debug/Instrumentor.hpp"
+#include "Core/Debug/LogFilter.hpp"
 #include "Core/Debug/Metrics.hpp"
 #include "Core/Interface/InterfaceDispatcher.hpp"
 #include "Core/Interface/InterfaceManager.hpp"
 #include "Core/Interface/I2DModel.hpp"
 #include "Core/Log.hpp"
+#include "Core/LogCategory.hpp"
 #include "Core/ModelViewerScene.hpp"
 #include "Core/Omikron/IamArea.hpp"
 #include "Core/Omikron/Model3DO.hpp"
@@ -73,6 +75,18 @@ inline ImVec4 level_color(spdlog::level::level_enum lev) {
     default:                      std::unreachable();  // off / n_levels never reach the sink
   }
 }
+
+/// Severity filter options shown in the log viewer combo.
+inline constexpr std::array<spdlog::level::level_enum, 5> K_LOG_LEVEL_FILTER_OPTIONS{
+    spdlog::level::trace,
+    spdlog::level::debug,
+    spdlog::level::info,
+    spdlog::level::warn,
+    spdlog::level::err};
+
+/// Display names matching K_LOG_LEVEL_FILTER_OPTIONS.
+inline constexpr std::array<const char*, 5> K_LOG_LEVEL_FILTER_NAMES{
+    "Trace", "Debug", "Info", "Warning", "Error"};
 
 /// Given the circular buffer history, return values in display order
 /// (oldest first). 'head' points to the next write slot; 'count' is valid entries.
@@ -507,6 +521,44 @@ void DebugUI::show_log() {
   ImGui::SameLine();
   ImGui::Checkbox("Auto-scroll", &m_log_auto_scroll);
 
+  // Severity filter (display-side; the ring buffer captures trace already).
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(90.0F);
+  ImGui::Combo("Min level",
+      &m_log_min_level_index,
+      K_LOG_LEVEL_FILTER_NAMES.data(),
+      static_cast<int>(K_LOG_LEVEL_FILTER_NAMES.size()));
+
+  // Category filter: "All" plus one entry per category.
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(110.0F);
+  std::array<const char*, k_log_category_count + 1> category_names{"All"};
+  for (std::size_t index{0}; index < k_log_category_count; ++index) {
+    category_names.at(index + 1) =
+        log_category_name(k_all_log_categories.at(index)).data();
+  }
+  ImGui::Combo("Category",
+      &m_log_category_index,
+      category_names.data(),
+      static_cast<int>(category_names.size()));
+
+  // Text search (case-insensitive substring).
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(200.0F);
+  ImGui::InputTextWithHint("##logfilter", "search…", m_log_filter_text, sizeof(m_log_filter_text));
+
+  // Materialize the combo selections into the filter.
+  m_log_filter.min_level =
+      K_LOG_LEVEL_FILTER_OPTIONS.at(static_cast<std::size_t>(m_log_min_level_index));
+  if (m_log_category_index <= 0) {
+    m_log_filter.category_mask = 0xFFFF'FFFFU;
+  } else {
+    const std::size_t category_index{static_cast<std::size_t>(m_log_category_index - 1)};
+    m_log_filter.category_mask =
+        1U << static_cast<std::uint32_t>(k_all_log_categories.at(category_index));
+  }
+  m_log_filter.text = m_log_filter_text;
+
   ImGui::Separator();
 
   // Reserve height for the log content area.
@@ -522,6 +574,9 @@ void DebugUI::show_log() {
     while (clipper.Step()) {
       for (int line_idx = clipper.DisplayStart; line_idx < clipper.DisplayEnd; ++line_idx) {
         const auto& entry = entries.at(static_cast<std::size_t>(line_idx));
+        if (!m_log_filter.matches(entry.level, entry.category, entry.line)) {
+          continue;
+        }
         ImGui::TextColored(level_color(entry.level), "%s", entry.line.c_str());
       }
     }
@@ -744,14 +799,15 @@ void DebugUI::show_sprite_resources_tab(ScenarioRuntime& runtime, ModelViewerSce
         handle.has_value()) {
       m_sprite_selected_handle = handle.value();
       if (auto frame{runtime.set_sprite_frame(handle.value(), 0)}; !frame) {
-        App::Log::warn("Sprite frame selection failed: {}", frame.error());
+        App::Log::warn(LogCategory::Debug, "Sprite frame selection failed: {}", frame.error());
       }
-      App::Log::debug("Spawned sprite {}:{} from resource '{}'",
+      App::Log::debug(LogCategory::Debug,
+          "Spawned sprite {}:{} from resource '{}'",
           handle->index,
           handle->generation,
           runtime.sprite_resource_name(m_sprite_selected_resource));
     } else {
-      App::Log::error("Sprite spawn failed: {}", handle.error());
+      App::Log::error(LogCategory::Debug, "Sprite spawn failed: {}", handle.error());
     }
   }
   ImGui::Separator();
@@ -833,19 +889,19 @@ void DebugUI::show_sprite_instances_tab(ScenarioRuntime& runtime,
   // --- Lifecycle ---
   if (!pool.attached(handle) && ImGui::Button("Attach")) {
     if (auto result{runtime.attach_sprite(handle)}; !result) {
-      App::Log::error("Attach failed: {}", result.error());
+      App::Log::error(LogCategory::Debug, "Attach failed: {}", result.error());
     }
   }
   ImGui::SameLine();
   if (pool.attached(handle) && ImGui::Button("Detach")) {
     if (auto result{runtime.detach_sprite(handle)}; !result) {
-      App::Log::error("Detach failed: {}", result.error());
+      App::Log::error(LogCategory::Debug, "Detach failed: {}", result.error());
     }
   }
   ImGui::SameLine();
   if (ImGui::Button("Destroy")) {
     if (auto result{runtime.destroy_sprite(handle)}; !result) {
-      App::Log::error("Destroy failed: {}", result.error());
+      App::Log::error(LogCategory::Debug, "Destroy failed: {}", result.error());
     }
   }
 
@@ -858,7 +914,7 @@ void DebugUI::show_sprite_instances_tab(ScenarioRuntime& runtime,
   ImGui::Text("Frame: %u / %zu", instance->frame_index, frame_count);
   const auto set_frame = [&](const std::uint16_t frame) {
     if (auto result{runtime.set_sprite_frame(handle, frame)}; !result) {
-      App::Log::error("{}", result.error());
+      App::Log::error(LogCategory::Debug, "{}", result.error());
     }
   };
   const auto advance_frame = [&](const int step) {
@@ -1235,10 +1291,11 @@ void DebugUI::show_script_debugger() {
     if (m_script_selected_source.has_value()) {
       if (auto created{scenario_runtime->spawn_script_instance(m_script_selected_source.value())};
           created) {
-        App::Log::warn("Script: manual debug activation of script {} (override)",
+        App::Log::warn(LogCategory::Debug,
+            "manual debug activation of script {} (override)",
             m_script_selected_source.value());
       } else {
-        App::Log::error("Script: manual activation failed: {}", created.error());
+        App::Log::error(LogCategory::Debug, "manual activation failed: {}", created.error());
       }
     }
   }
@@ -1338,7 +1395,7 @@ void DebugUI::show_script_debugger() {
     }
     if (ImGui::Button("Reset this instance")) {
       if (auto result{runtime->reset_instance(selected->instance_id)}; !result) {
-        App::Log::warn("Script: reset failed: {}", result.error());
+        App::Log::warn(LogCategory::Debug, "reset failed: {}", result.error());
       }
     }
 
@@ -1482,14 +1539,14 @@ void DebugUI::show_scenarios() {
       if (context.residency == WorldSceneResidencyState::LoadedInactive) {
         if (ImGui::Button(fmt::format("Activate##{}", index).c_str())) {
           if (auto result{manager->activate_world_context(scene_id)}; !result) {
-            App::Log::error("Scenario debug: activate context {} failed: {}", scene_id, result.error());
+            App::Log::error(LogCategory::Debug, "activate context {} failed: {}", scene_id, result.error());
           }
         }
       }
       if (context.residency == WorldSceneResidencyState::LoadedActive) {
         if (ImGui::Button(fmt::format("Deactivate##{}", index).c_str())) {
           if (auto result{manager->deactivate_world_context(scene_id)}; !result) {
-            App::Log::error("Scenario debug: deactivate context {} failed: {}", scene_id, result.error());
+            App::Log::error(LogCategory::Debug, "deactivate context {} failed: {}", scene_id, result.error());
           }
         }
       }
@@ -1497,9 +1554,9 @@ void DebugUI::show_scenarios() {
         ImGui::SameLine();
         if (ImGui::Button(fmt::format("Unload##{}", index).c_str())) {
           if (context.residency == WorldSceneResidencyState::LoadedActive) {
-            App::Log::warn("Scenario debug: deactivate context {} before unloading", scene_id);
+            App::Log::warn(LogCategory::Debug, "deactivate context {} before unloading", scene_id);
           } else if (auto result{manager->unload_world_context(scene_id)}; !result) {
-            App::Log::error("Scenario debug: unload context {} failed: {}", scene_id, result.error());
+            App::Log::error(LogCategory::Debug, "unload context {} failed: {}", scene_id, result.error());
           }
         }
       }
@@ -1510,19 +1567,19 @@ void DebugUI::show_scenarios() {
   ImGui::TextDisabled("Mode switches replace only the gameplay-mode slot.");
   if (ImGui::Button("Switch to FirstPersonShooting (shoot2.scx)")) {
     if (auto result{manager->set_gameplay_mode(GameplayMode::FirstPersonShooting)}; !result) {
-      App::Log::error("Scenario debug: switch to FirstPersonShooting failed: {}", result.error());
+      App::Log::error(LogCategory::Debug, "switch to FirstPersonShooting failed: {}", result.error());
     }
   }
   ImGui::SameLine();
   if (ImGui::Button("Switch to HandToHandCombat (fight.scx)")) {
     if (auto result{manager->set_gameplay_mode(GameplayMode::HandToHandCombat)}; !result) {
-      App::Log::error("Scenario debug: switch to HandToHandCombat failed: {}", result.error());
+      App::Log::error(LogCategory::Debug, "switch to HandToHandCombat failed: {}", result.error());
     }
   }
   ImGui::SameLine();
   if (ImGui::Button("Switch to Adventure (aventure.scx)")) {
     if (auto result{manager->set_gameplay_mode(GameplayMode::Adventure)}; !result) {
-      App::Log::error("Scenario debug: switch to Adventure failed: {}", result.error());
+      App::Log::error(LogCategory::Debug, "switch to Adventure failed: {}", result.error());
     }
   }
 

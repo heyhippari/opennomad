@@ -7,6 +7,7 @@
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Input/InputManager.hpp"
 #include "Core/Log.hpp"
+#include "Core/LogCategory.hpp"
 
 namespace App {
 
@@ -19,8 +20,9 @@ std::unique_ptr<TransitionScene> TransitionScene::create() {
 void TransitionScene::update(const float /*delta_time*/, const Input::InputManager& /*input*/) {
   if (!m_logged) {
     m_logged = true;
-    App::Log::info("Transition: interface 29 completed; Kay'l introduction not yet "
-                   "implemented (GRID world context 0 remains resident)");
+    App::Log::debug(LogCategory::Scenario,
+        "Transition: interface 29 completed; Kay'l introduction not yet "
+        "implemented (GRID world context 0 remains resident)");
   }
 }
 

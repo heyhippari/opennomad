@@ -16,6 +16,7 @@
 
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Log.hpp"
+#include "Core/LogCategory.hpp"
 #include "Core/Omikron/BinaryReader.hpp"
 
 namespace App::Omikron {
@@ -877,36 +878,40 @@ std::expected<ScxData, std::string> SCX::load(const std::span<const std::byte> d
             data.size() - position)};
   }
 
-  App::Log::debug(
-      "SCX: scripts={}, values={}, DEAD0000={}, animations={}, sounds={}, sprites/models={}, "
-      "scenes={}, DEAD0006={}, DEAD0007={}, descriptor_gaps={}, extra={}",
+  App::Log::debug(LogCategory::SCX,
+      "SCX parsed — scripts={}, values={}, sounds={}, sprites/models={}, animations={}, scenes={}",
       scx.scripts.size(),
       scx.shared_values.size(),
-      scx.section0_records.size(),
-      scx.animations.size(),
       scx.sounds.size(),
       scx.sprites.size(),
-      scx.scenes.size(),
+      scx.animations.size(),
+      scx.scenes.size());
+  App::Log::trace(LogCategory::SCX,
+      "SCX DEAD0000={}, DEAD0006={}, DEAD0007={}, descriptor_gaps={}, extra={}",
+      scx.section0_records.size(),
       scx.section6_records.size(),
       scx.global_table.records.size(),
       scx.descriptor_gaps.size(),
       scx.extra_block.has_value());
 
   for (std::size_t index{0}; index < scx.section0_records.size(); ++index) {
-    App::Log::debug("SCX DEAD0000 {}: '{}' (id {})",
+    App::Log::trace(LogCategory::SCX,
+        "SCX DEAD0000 {}: '{}' (id {})",
         index,
         scx.section0_records.at(index).name,
         scx.section0_records.at(index).resource_id);
   }
   for (std::size_t index{0}; index < scx.animations.size(); ++index) {
-    App::Log::debug("SCX animation {}: '{}' (id {})",
+    App::Log::trace(LogCategory::SCX,
+        "SCX animation {}: '{}' (id {})",
         index,
         scx.animations.at(index).name,
         scx.animations.at(index).animation_id);
   }
   for (std::size_t index{0}; index < scx.sounds.size(); ++index) {
     const ScxSoundRecord& sound{scx.sounds.at(index)};
-    App::Log::debug("SCX sound {}: '{}' (runtime id {:#06x}, hID {:#06x})",
+    App::Log::trace(LogCategory::SCX,
+        "SCX sound {}: '{}' (runtime id {:#06x}, hID {:#06x})",
         index,
         sound.name,
         sound.runtime_sound_id,
@@ -914,14 +919,15 @@ std::expected<ScxData, std::string> SCX::load(const std::span<const std::byte> d
   }
   for (std::size_t index{0}; index < scx.sprites.size(); ++index) {
     const ScxSpriteEntry& sprite{scx.sprites.at(index)};
-    App::Log::debug("SCX sprite/model {}: '{}' (id {})",
+    App::Log::trace(LogCategory::SCX,
+        "SCX sprite/model {}: '{}' (id {})",
         index,
         sprite.name,
         sprite.sprite_id);
   }
   for (std::size_t index{0}; index < scx.scripts.size(); ++index) {
     const ScxScript& script{scx.scripts.at(index)};
-    App::Log::debug(
+    App::Log::trace(LogCategory::SCX,
         "SCX script {}: '{}' (id {}, state {:#x}, flags {:#x}, roots {}, linked {}, related '{}')",
         index,
         script.name,

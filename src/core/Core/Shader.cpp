@@ -13,6 +13,7 @@
 
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Log.hpp"
+#include "Core/LogCategory.hpp"
 
 namespace App {
 
@@ -70,7 +71,7 @@ std::expected<Shader, std::string> Shader::create(const std::string_view vertex_
     glGetProgramiv(program, GL_INFO_LOG_LENGTH, &info_length);
     std::string info_log(static_cast<std::size_t>(info_length), '\0');
     glGetProgramInfoLog(program, info_length, nullptr, info_log.data());
-    App::Log::error("Shader program link error: {}", info_log);
+    App::Log::error(LogCategory::Renderer, "Shader program link error: {}", info_log);
     glDeleteProgram(program);
     return std::expected<Shader, std::string>{std::unexpect, "Shader program failed to link"};
   }
@@ -100,7 +101,7 @@ GLuint Shader::compile_shader(const GLenum type, const std::string_view source) 
     glGetShaderiv(id, GL_INFO_LOG_LENGTH, &info_length);
     std::string info_log(static_cast<std::size_t>(info_length), '\0');
     glGetShaderInfoLog(id, info_length, nullptr, info_log.data());
-    App::Log::error("Shader compile error ({}): {}",
+    App::Log::error(LogCategory::Renderer, "Shader compile error ({}): {}",
                     (type == GL_VERTEX_SHADER ? "vertex" : "fragment"),
                     info_log);
     glDeleteShader(id);
@@ -192,7 +193,7 @@ void Shader::set_uniform_block_binding(const std::string_view name,
     m_block_cache.emplace(key, block_index);
   }
   if (block_index == GL_INVALID_INDEX) {
-    App::Log::warn("Shader has no uniform block '{}'", name);
+    App::Log::warn(LogCategory::Renderer, "Shader has no uniform block '{}'", name);
     return;
   }
   glUniformBlockBinding(m_program_id, block_index, binding_point);

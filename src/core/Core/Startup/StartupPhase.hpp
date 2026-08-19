@@ -31,6 +31,7 @@ enum class StartupPhaseStatus : std::uint8_t {
   k_complete,
   k_skipped_by_configuration,
   k_skipped_unavailable,
+  k_skipped_by_user,
   k_failed,
 };
 
@@ -63,6 +64,7 @@ enum class StartupPhaseStatus : std::uint8_t {
     case StartupPhaseStatus::k_complete:                  return "Complete";
     case StartupPhaseStatus::k_skipped_by_configuration:  return "SkippedByConfiguration";
     case StartupPhaseStatus::k_skipped_unavailable:       return "SkippedUnavailable";
+    case StartupPhaseStatus::k_skipped_by_user:           return "SkippedByUser";
     case StartupPhaseStatus::k_failed:                    return "Failed";
   }
   return "Unknown";

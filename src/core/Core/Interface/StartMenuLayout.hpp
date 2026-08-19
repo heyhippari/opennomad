@@ -49,6 +49,25 @@ inline constexpr I2DRect k_start_menu_bitmap_rect{0, 0, 640, 150};
 /// the main-menu logo, in reference units. Applied on top of the recovered
 /// Runtime rectangle (which stays y = 0); the on-screen margin scales with
 /// the presentation transform (margin_on_screen = value * screen_height/480).
-inline constexpr float k_start_menu_logo_top_margin{8.0F};
+inline constexpr float k_start_menu_logo_top_margin{12.0F};
+
+/// Presentation-only scale applied to the recovered 640x150 logo rectangle.
+/// Keeping this separate from k_start_menu_bitmap_rect preserves the Runtime
+/// geometry for reverse-engineering/reference purposes.
+inline constexpr float k_start_menu_logo_scale{0.84F};
+
+/// OpenNomad's compact presentation of the recovered root-menu entries.
+///
+/// These are intentionally separate from k_start_menu_root_entries: the
+/// latter remains the authoritative Runtime layout, while these values only
+/// control the modern on-screen presentation.
+inline constexpr std::array<int, 4> k_start_menu_modern_y{{
+    168,
+    218,
+    268,
+    318,
+}};
+
+inline constexpr int k_start_menu_modern_text_height{36};
 
 }  // namespace App::Interface

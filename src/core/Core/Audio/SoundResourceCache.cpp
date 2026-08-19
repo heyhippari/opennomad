@@ -19,6 +19,7 @@
 
 #include "Core/Audio/AudioTypes.hpp"
 #include "Core/Log.hpp"
+#include "Core/LogCategory.hpp"
 
 namespace App::Audio {
 
@@ -178,7 +179,8 @@ std::expected<SoundResourceId, std::string> SoundResourceCache::load(
   if (wav_bytes.size() < 12U || read_u32_at(wav_bytes, 0) != K_RIFF_MAGIC) {
     const std::string error{"not a RIFF/WAVE stream (missing RIFF signature)"};
     m_table.mark_failed(resource, error);
-    App::Log::warn("Audio: sound '{}' (scenario '{}', record {}): {}",
+    App::Log::warn(LogCategory::Audio,
+        "sound '{}' (scenario '{}', record {}): {}",
         name,
         scenario_name,
         record_index,
@@ -197,7 +199,8 @@ std::expected<SoundResourceId, std::string> SoundResourceCache::load(
   if (audio == nullptr) {
     const std::string error{fmt::format("MIX_LoadAudio_IO failed: {}", SDL_GetError())};
     m_table.mark_failed(resource, error);
-    App::Log::warn("Audio: sound '{}' (scenario '{}', record {}): {}",
+    App::Log::warn(LogCategory::Audio,
+        "sound '{}' (scenario '{}', record {}): {}",
         name,
         scenario_name,
         record_index,
@@ -217,8 +220,9 @@ std::expected<SoundResourceId, std::string> SoundResourceCache::load(
       wav_bytes.size());
   m_audio.at(static_cast<std::size_t>(resource.index)) = audio;
 
-  App::Log::info("Audio: loaded sound '{}' (scenario '{}', record {}) -> resource {} "
-                 "({}, {} ch, {} Hz, {} ms, {} bytes)",
+  App::Log::debug(LogCategory::Audio,
+      "loaded sound '{}' (scenario '{}', record {}) -> resource {} "
+      "({}, {} ch, {} Hz, {} ms, {} bytes)",
       name,
       scenario_name,
       record_index,

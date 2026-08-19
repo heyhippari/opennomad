@@ -3,12 +3,8 @@
 // NOLINTBEGIN(misc-include-cleaner)
 // glm follows a single-include convention (see ModelViewerScene.cpp); clang-tidy
 // cannot trace each symbol back to a direct sub-header.
-#include <glad/glad.h>
-#include <glm/glm.hpp>
-#include <glm/gtc/matrix_transform.hpp>
-#include <glm/gtc/type_ptr.hpp>
-
 #include <fmt/format.h>
+#include <glad/glad.h>
 
 #include <algorithm>
 #include <array>
@@ -16,6 +12,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
 #include <memory>
 #include <span>
 #include <string>
@@ -32,6 +31,7 @@
 #include "Core/Interface/I2DPresentation.hpp"
 #include "Core/Interface/InterfaceManager.hpp"
 #include "Core/Log.hpp"
+#include "Core/LogCategory.hpp"
 #include "Core/Shader.hpp"
 #include "Core/Texture.hpp"
 #include "Core/Vertex.hpp"
@@ -162,15 +162,13 @@ std::expected<void, std::string> I2DRenderer::initialize() {
 
   auto shader{Shader::create(K_I2D_VERTEX_SOURCE, K_I2D_FRAGMENT_SOURCE)};
   if (!shader) {
-    return std::expected<void, std::string>{std::unexpect,
-        fmt::format("I2D renderer shader: {}", shader.error())};
+    return std::expected<void, std::string>{
+        std::unexpect, fmt::format("I2D renderer shader: {}", shader.error())};
   }
   m_shader = std::make_unique<Shader>(std::move(shader).value());
 
-  m_vertex_buffer = std::make_unique<VertexBuffer>(
-      std::span<const std::byte>{}, GL_DYNAMIC_DRAW);
-  m_index_buffer = std::make_unique<IndexBuffer>(
-      std::span<const std::uint32_t>{}, GL_DYNAMIC_DRAW);
+  m_vertex_buffer = std::make_unique<VertexBuffer>(std::span<const std::byte>{}, GL_DYNAMIC_DRAW);
+  m_index_buffer = std::make_unique<IndexBuffer>(std::span<const std::uint32_t>{}, GL_DYNAMIC_DRAW);
   m_vertex_array = std::make_unique<VertexArray>();
 
   m_vertex_array->bind();
@@ -234,8 +232,7 @@ void I2DRenderer::render(const InterfaceInstance& instance,
     return;
   }
 
-  const I2DPresentationTransform transform{
-      make_presentation_transform(pixel_width, pixel_height)};
+  const I2DPresentationTransform transform{make_presentation_transform(pixel_width, pixel_height)};
 
   // The recovered 640x480 reference canvas fills the entire drawable
   // framebuffer; no 4:3 letterboxing.
@@ -264,15 +261,14 @@ void I2DRenderer::render(const InterfaceInstance& instance,
 
   // 2. Interface bitmap artwork + text, batched by texture/blit state.
   m_shader->bind();
-  m_shader->set_uniform_mat4("u_mvp",
-      std::span<const GLfloat, 16>{glm::value_ptr(transform.projection), 16});
+  m_shader->set_uniform_mat4(
+      "u_mvp", std::span<const GLfloat, 16>{glm::value_ptr(transform.projection), 16});
   m_shader->set_uniform_int("u_texture0", 0);
 
   reset();
 
   // Selection ordinal over the current state's selectable text elements.
-  const std::vector<I2DTextElement*> selectable{
-      selectable_text_elements(*instance.current_state)};
+  const std::vector<I2DTextElement*> selectable{selectable_text_elements(*instance.current_state)};
   std::size_t selectable_ordinal{0};
 
   for (const I2DGroup& group : instance.current_state->groups) {
@@ -285,13 +281,10 @@ void I2DRenderer::render(const InterfaceInstance& instance,
         const float texture_width{static_cast<float>(texture.width())};
         const float texture_height{static_cast<float>(texture.height())};
         const float u0{static_cast<float>(bitmap->source.x) / texture_width};
-        const float u1{static_cast<float>(bitmap->source.x + bitmap->source.width) /
-                       texture_width};
-        const float v_top{
-            1.0F - (static_cast<float>(bitmap->source.y) / texture_height)};
-        const float v_bottom{1.0F -
-                             (static_cast<float>(bitmap->source.y + bitmap->source.height) /
-                                 texture_height)};
+        const float u1{static_cast<float>(bitmap->source.x + bitmap->source.width) / texture_width};
+        const float v_top{1.0F - (static_cast<float>(bitmap->source.y) / texture_height)};
+        const float v_bottom{
+            1.0F - (static_cast<float>(bitmap->source.y + bitmap->source.height) / texture_height)};
 
         float x0{static_cast<float>(bitmap->destination.x)};
         float y0{static_cast<float>(bitmap->destination.y)};
@@ -302,12 +295,12 @@ void I2DRenderer::render(const InterfaceInstance& instance,
         // top-centred with a small modernization margin). Recovered Runtime
         // coordinates are not mutated; the adjustment is applied here.
         if (element.presentation.anchor_top_center) {
-          const I2DTopCenterPlacement placement{compute_top_center_placement(
-              bitmap->destination,
+          const I2DTopCenterPlacement placement{compute_top_center_placement(bitmap->destination,
               element.presentation.top_margin_reference,
               element.presentation.clamp_width_to_viewport,
               pixel_width,
-              pixel_height)};
+              pixel_height,
+              element.presentation.top_center_scale)};
           x0 = placement.x0;
           y0 = placement.y0;
           x1 = placement.x1;
@@ -336,18 +329,21 @@ void I2DRenderer::render(const InterfaceInstance& instance,
         if (label.empty()) {
           continue;
         }
-        const FontResource* font{fonts.ensure_font(
-            text->font_key, transform.pixels_per_reference_unit)};
+        const FontResource* font{
+            fonts.ensure_font(text->font_key, transform.pixels_per_reference_unit)};
         if (font == nullptr) {
-          App::Log::warn("[I2D] no font loaded for key '{}'", text->font_key);
+          App::Log::warn(LogCategory::I2D, "no font loaded for key '{}'", text->font_key);
           continue;
         }
 
         // Recovered Runtime text-style behaviour (0x004769A0): inactive
         // elements divide the RGB components by two.
-        const float red{srgb_to_linear(selected ? text->red : static_cast<std::uint8_t>(text->red / 2U))};
-        const float green{srgb_to_linear(selected ? text->green : static_cast<std::uint8_t>(text->green / 2U))};
-        const float blue{srgb_to_linear(selected ? text->blue : static_cast<std::uint8_t>(text->blue / 2U))};
+        const float red{
+            srgb_to_linear(selected ? text->red : static_cast<std::uint8_t>(text->red / 2U))};
+        const float green{
+            srgb_to_linear(selected ? text->green : static_cast<std::uint8_t>(text->green / 2U))};
+        const float blue{
+            srgb_to_linear(selected ? text->blue : static_cast<std::uint8_t>(text->blue / 2U))};
         const std::array<float, 4> tint{red, green, blue, 1.0F};
 
         const float text_width{font->measure(label)};
@@ -481,8 +477,8 @@ void I2DRenderer::flush() {
       // draw never leaks into the next non-keyed draw.
       if (command.source_colour_key) {
         m_shader->set_uniform_int("u_source_colour_key_enabled", 1);
-        m_shader->set_uniform_vec3("u_source_colour_key",
-            std::span<const GLfloat, 3>{command.key.data(), 3});
+        m_shader->set_uniform_vec3(
+            "u_source_colour_key", std::span<const GLfloat, 3>{command.key.data(), 3});
       } else {
         m_shader->set_uniform_int("u_source_colour_key_enabled", 0);
       }
@@ -491,10 +487,8 @@ void I2DRenderer::flush() {
       // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast, performance-no-int-to-ptr)
       const auto* index_offset{reinterpret_cast<const void*>(
           static_cast<std::uintptr_t>(command.first_index) * sizeof(std::uint32_t))};
-      glDrawElements(GL_TRIANGLES,
-          static_cast<GLsizei>(command.index_count),
-          GL_UNSIGNED_INT,
-          index_offset);
+      glDrawElements(
+          GL_TRIANGLES, static_cast<GLsizei>(command.index_count), GL_UNSIGNED_INT, index_offset);
     }
     Texture2D::unbind();
     VertexArray::unbind();

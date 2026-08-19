@@ -1,9 +1,8 @@
 #pragma once
 
+#include <algorithm>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
-
-#include <algorithm>
 
 #include "Core/Interface/I2DModel.hpp"
 
@@ -51,9 +50,8 @@ struct I2DPresentationTransform {
   transform.pixel_width = pixel_width;
   transform.pixel_height = pixel_height;
 
-  const float scale{pixel_height > 0
-                        ? static_cast<float>(pixel_height) / k_reference_height
-                        : 1.0F};
+  const float scale{
+      pixel_height > 0 ? static_cast<float>(pixel_height) / k_reference_height : 1.0F};
   transform.pixels_per_reference_unit = scale;
 
   const float visible_logical_width{
@@ -65,12 +63,8 @@ struct I2DPresentationTransform {
 
   // Top-left origin: y grows down, so the ortho top/bottom are swapped
   // relative to the recovered canvas convention.
-  transform.projection = glm::ortho(transform.logical_left,
-      transform.logical_right,
-      k_reference_height,
-      0.0F,
-      -1.0F,
-      1.0F);
+  transform.projection = glm::ortho(
+      transform.logical_left, transform.logical_right, k_reference_height, 0.0F, -1.0F, 1.0F);
   return transform;
 }
 
@@ -93,26 +87,28 @@ struct I2DTopCenterPlacement {
 /// physical viewport is narrower than 4:3, `clamp_width_to_viewport` shrinks
 /// the element (preserving aspect) so it stays fully visible; on ordinary
 /// landscape displays this is a no-op.
-[[nodiscard]] inline I2DTopCenterPlacement compute_top_center_placement(
-    const I2DRect& destination,
+[[nodiscard]] inline I2DTopCenterPlacement compute_top_center_placement(const I2DRect& destination,
     const float top_margin_reference,
     const bool clamp_width_to_viewport,
     const int pixel_width,
-    const int pixel_height) {
-  const float reference_width{static_cast<float>(destination.width)};
-  const float reference_height{static_cast<float>(destination.height)};
+    const int pixel_height,
+    const float element_scale = 1.0F) {
+  const float presentation_scale{std::max(0.0F, element_scale)};
+  float width{reference_width * presentation_scale};
+  float height{reference_height * presentation_scale};
 
   float width{reference_width};
   float height{reference_height};
   if (clamp_width_to_viewport) {
-    // logo_scale = min(height_based_scale, pixel_width / 640).
-    const float height_scale{pixel_height > 0
-                                 ? static_cast<float>(pixel_height) / k_reference_height
-                                 : 1.0F};
-    const float width_capacity{pixel_width > 0
-                                   ? static_cast<float>(pixel_width) / k_reference_width
-                                   : 1.0F};
-    const float factor{std::clamp(std::min(1.0F, width_capacity / height_scale), 0.0F, 1.0F)};
+    const float height_scale{
+        pixel_height > 0 ? static_cast<float>(pixel_height) / k_reference_height : 1.0F};
+    const float visible_logical_width{pixel_width > 0 && height_scale > 0.0F
+                                          ? static_cast<float>(pixel_width) / height_scale
+                                          : k_reference_width};
+
+    const float factor{width > 0.0F
+                           ? std::clamp(std::min(1.0F, visible_logical_width / width), 0.0F, 1.0F)
+                           : 1.0F};
     width *= factor;
     height *= factor;
   }
