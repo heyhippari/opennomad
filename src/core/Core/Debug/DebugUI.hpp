@@ -7,7 +7,7 @@
 #include <optional>
 
 #include "Core/Debug/DebugContext.hpp"
-#include "Core/ModelScene.hpp"
+#include "Core/ModelViewerScene.hpp"
 #include "Core/Scene.hpp"
 
 namespace App {
@@ -79,10 +79,10 @@ class DebugUI {
   void show_opengl_state();
   void show_overlays();
   void show_sprite_inspector(float delta_time);
-  void show_sprite_resources_tab(ScenarioRuntime& runtime, ModelScene* scene);
-  void show_sprite_instances_tab(ScenarioRuntime& runtime, ModelScene* scene, float delta_time);
+  void show_sprite_resources_tab(ScenarioRuntime& runtime, ModelViewerScene* scene);
+  void show_sprite_instances_tab(ScenarioRuntime& runtime, ModelViewerScene* scene, float delta_time);
   void show_sprite_frames_tab(ScenarioRuntime& runtime);
-  static void show_sprite_queue_tab(ModelScene& scene);
+  static void show_sprite_queue_tab(ModelViewerScene& scene);
   void show_script_debugger();
   void show_audio_inspector();
   void show_scenarios();

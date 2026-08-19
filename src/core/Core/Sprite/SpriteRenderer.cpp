@@ -5,7 +5,7 @@
 // NOLINTBEGIN(misc-include-cleaner)
 // glm follows a "single-include" convention — the umbrella headers are the
 // canonical way to pull in the library, even though clang-tidy cannot trace
-// individual symbols back to a direct sub-header (see ModelScene.cpp).
+// individual symbols back to a direct sub-header (see ModelViewerScene.cpp).
 #include <algorithm>
 #include <array>
 #include <cmath>

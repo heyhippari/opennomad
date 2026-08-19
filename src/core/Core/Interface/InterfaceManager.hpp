@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <expected>
 #include <memory>
 #include <optional>
@@ -54,8 +55,12 @@ struct InterfaceInstance {
 
 /// Generic interface system: looks up a static descriptor, creates a runtime
 /// instance, loads its resources and delegates interface-specific setup to
-/// the descriptor's init callback. Owns the font registry, renderer and the
-/// active instance.
+/// the descriptor's init callback. Owns the font registry, renderer and every
+/// resident instance.
+///
+/// Residency and focus are tracked separately: many interfaces may be
+/// resident at once (Runtime already opens interface 35 while interface 29
+/// stays alive), while only one instance receives navigation input.
 class InterfaceManager {
  public:
   InterfaceManager();
@@ -69,70 +74,98 @@ class InterfaceManager {
   /// Generic Interface_Open equivalent: locate descriptor -> create instance
   /// -> load bitmap -> load string table -> descriptor-specific init ->
   /// establish root/current state. Requires a current GL context. Returns the
-  /// opened instance handle.
+  /// opened instance handle. Opening an interface never implicitly destroys
+  /// another resident instance; focus moves to the newly opened instance.
   [[nodiscard]] std::expected<InterfaceHandle, std::string> open(
       const InterfaceOpenRequest& request);
 
-  /// Generic close: descriptor destroy callback, then RAII resource release.
+  /// Generic close for one instance by handle: descriptor destroy callback,
+  /// then RAII resource release. A stale handle is a harmless no-op. When the
+  /// focused instance closes, focus moves to the most recently opened
+  /// remaining instance (or clears when none remain).
+  void close(InterfaceHandle handle);
+
+  /// Closes every resident interface (full teardown, e.g. destruction).
   void close();
 
-  [[nodiscard]] bool is_open() const {
-    return m_instance.has_value();
+  [[nodiscard]] bool contains(InterfaceHandle handle) const;
+
+  /// Finds a resident instance by handle (or nullptr for a stale handle).
+  [[nodiscard]] InterfaceInstance* find(InterfaceHandle handle);
+  [[nodiscard]] const InterfaceInstance* find(InterfaceHandle handle) const;
+
+  /// The focused (input-receiving) instance handle, or nullopt when closed.
+  [[nodiscard]] std::optional<InterfaceHandle> focused_handle() const {
+    return m_focused_interface;
   }
 
-  /// Queues a deferred completion request for the active instance (a New Game
-  /// child-state action). The completion is drained later by the application
-  /// so the active instance is not invalidated during element iteration.
-  void request_completion(std::int16_t result);
+  /// Makes an instance the focused (input-receiving) instance. Stale handles
+  /// are ignored.
+  void set_focused(InterfaceHandle handle);
 
-  /// Returns and clears the deferred completion, if one was requested.
+  /// Number of resident interfaces.
+  [[nodiscard]] std::size_t instance_count() const {
+    return m_instances.size();
+  }
+
+  /// The resident interface at `index` in opening (presentation) order.
+  [[nodiscard]] const InterfaceInstance* instance_at(std::size_t index) const;
+
+  /// The focused instance, or nullptr when none.
+  [[nodiscard]] const InterfaceInstance* focused_instance() const;
+
+  /// Queues a deferred completion request for `handle` (a New Game child-state
+  /// action). The completion is drained later by the application so the
+  /// instance is not invalidated during element iteration.
+  void request_completion(InterfaceHandle handle, std::int16_t result);
+
+  /// Returns and removes the oldest deferred completion, if any.
   [[nodiscard]] std::optional<InterfaceCompletion> take_completion();
 
-  /// The handle of the active instance, or nullopt when closed.
-  [[nodiscard]] std::optional<InterfaceHandle> active_handle() const {
-    return m_instance.has_value() ? std::optional<InterfaceHandle>{m_instance->handle}
-                                  : std::nullopt;
-  }
-
-  /// Per-frame update: advances the background animation and handles menu
-  /// navigation from the resolved action edges.
+  /// Per-frame update: advances every resident instance's background animation
+  /// and handles menu navigation on the focused instance.
   void update(float delta_time, const Input::InputManager& input);
 
-  /// Renders the active state into the given drawable framebuffer size.
+  /// Renders every resident instance in opening (presentation) order into the
+  /// given drawable framebuffer size.
   void render(int pixel_width, int pixel_height);
 
-  /// Creates a state owned by the active instance; returns its address
-  /// (nullptr when no interface is open).
-  [[nodiscard]] I2DState* create_state();
+  /// Creates a state owned by `instance`; returns its address (nullptr when
+  /// the allocation fails).
+  [[nodiscard]] I2DState* create_state(InterfaceInstance& instance);
 
   /// Loads the font for `key` through the font registry.
   [[nodiscard]] std::expected<void, std::string> load_font(char key);
 
-  /// The active instance (debug inspector); nullptr when closed.
-  [[nodiscard]] const InterfaceInstance* instance() const {
-    return m_instance.has_value() ? &*m_instance : nullptr;
-  }
   [[nodiscard]] const FontManager& fonts() const {
     return m_fonts;
   }
 
-  // --- Generic navigation (root menu) ---
+  // --- Generic navigation (focused interface) ---
   void select_previous();
   void select_next();
   void confirm();
   void cancel();
 
  private:
+  /// Mutable focused instance, or nullptr when none.
+  [[nodiscard]] InterfaceInstance* focused_instance_mut();
+
+  /// Destroys one resident instance (descriptor destroy + RAII release).
+  void destroy_instance(InterfaceInstance& instance);
+
   void handle_navigation(const Input::InputManager& input);
 
   std::unique_ptr<I2DRenderer> m_renderer;
   FontManager m_fonts;
-  std::optional<InterfaceInstance> m_instance;
+  /// Resident interfaces in opening order (presentation order).
+  std::vector<std::unique_ptr<InterfaceInstance>> m_instances;
+  /// Focused (input-receiving) instance; nullopt when none resident.
+  std::optional<InterfaceHandle> m_focused_interface;
   /// Generation counter for the next opened instance (used in handles).
   std::uint32_t m_generation{0};
-  /// Deferred completion request for the active instance, drained by the
-  /// application outside element iteration.
-  std::optional<InterfaceCompletion> m_pending_completion;
+  /// Deferred completion requests, drained one at a time by the application.
+  std::deque<InterfaceCompletion> m_completions;
 };
 
 /// Looks up a descriptor in the static interface registry.

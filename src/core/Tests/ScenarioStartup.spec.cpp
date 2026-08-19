@@ -201,7 +201,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK_EQ(controller.area_record()->script_offset(), 0x3FCU);
     CHECK_EQ(controller.area_record()->model3do_name(), "GRID");
     CHECK_EQ(controller.area_record()->scenario_scx_name(), "GRID");
-    CHECK(controller.grid_3do_model() != nullptr);
+    CHECK(manager.world_contexts()[0].decor_model.has_value());
 
     // GRID.SCX in world context 0, context 1 free, mode slot loaded.
     CHECK_EQ(manager.world_contexts()[0].scene_id, 0U);
@@ -213,7 +213,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     // Loaded, queued and activated — but not executed until tick().
     REQUIRE(controller.area_script() != nullptr);
     CHECK(controller.area_script()->state() == AreaScriptState::k_ready);
-    CHECK_FALSE(controller.dispatcher().main_menu_active());
+    CHECK_FALSE(controller.main_menu_active());
 
     controller.dispatcher().set_interface_open_sink(
         [](const App::InterfaceOpenRequest& request)
@@ -224,7 +224,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(controller.tick().has_value());
     CHECK(controller.ticked());
 
-    CHECK(controller.dispatcher().main_menu_active());
+    CHECK(controller.main_menu_active());
     CHECK(controller.area_script()->state() == AreaScriptState::k_waiting);
     CHECK_EQ(controller.area_script()->wait_state(), 6U);
   }

@@ -32,7 +32,8 @@ add_library(${NAME} STATIC
   Core/Mesh.hpp Core/Mesh.cpp
   Core/Texture.hpp Core/Texture.cpp
   Core/Scene.hpp
-  Core/ModelScene.hpp Core/ModelScene.cpp
+  Core/ModelViewerScene.hpp Core/ModelViewerScene.cpp
+  Core/WorldScene.hpp Core/WorldScene.cpp
   Core/SplashScene.hpp Core/SplashScene.cpp
   Core/Framebuffer.hpp Core/Framebuffer.cpp
   Core/TextureCube.hpp Core/TextureCube.cpp
@@ -66,15 +67,16 @@ add_library(${NAME} STATIC
   Core/Interface/I2DBumpEffect.hpp Core/Interface/I2DBumpEffect.cpp
   Core/Interface/I2DRenderer.hpp Core/Interface/I2DRenderer.cpp
   Core/Interface/InterfaceManager.hpp Core/Interface/InterfaceManager.cpp
+  Core/Interface/InterfacePresenter.hpp Core/Interface/InterfacePresenter.cpp
   Core/Omikron/IamStringTable.hpp Core/Omikron/IamStringTable.cpp
   Core/Script/ScriptOpcode.hpp
   Core/Script/ScriptRuntime.hpp Core/Script/ScriptRuntime.cpp
   Core/Script/AreaScriptOpcode.hpp
   Core/Script/AreaScriptRuntime.hpp Core/Script/AreaScriptRuntime.cpp
-  Core/MainMenuScene.hpp Core/MainMenuScene.cpp
   Core/TransitionScene.hpp Core/TransitionScene.cpp
   Core/DPIHandler.cpp Core/DPIHandler.hpp
   Core/FrameTiming.hpp
+  Core/GameDataLoader.hpp Core/GameDataLoader.cpp
   Core/Resources.hpp
   Core/Startup/StartupPhase.hpp
   Core/Startup/StartupTraceRecorder.hpp Core/Startup/StartupTraceRecorder.cpp

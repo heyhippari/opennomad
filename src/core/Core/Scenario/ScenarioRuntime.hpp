@@ -29,9 +29,9 @@ namespace App {
 /// runtime and the scenario sound resources.
 ///
 /// Implements `Script::ScriptWorld` so the script runtime can drive sprites
-/// and audio without a 3D scene. Both `ModelScene` (when a 3D world exists)
+/// and audio without a 3D scene. Both `ModelViewerScene` (when a 3D world exists)
 /// and the debug tools read from this owner; `Sprite::SpriteRenderer` (the GL
-/// billboard queue builder/drawer) stays in `ModelScene` because billboards
+/// billboard queue builder/drawer) stays in `ModelViewerScene` because billboards
 /// need a 3D camera basis.
 class ScenarioRuntime final : public Script::ScriptWorld {
  public:
@@ -75,7 +75,7 @@ class ScenarioRuntime final : public Script::ScriptWorld {
 
   [[nodiscard]] Sprite::SpritePool& sprite_pool();
   [[nodiscard]] const Sprite::SpritePool& sprite_pool() const;
-  /// Decoded resource pointer table consumed by ModelScene's sprite renderer.
+  /// Decoded resource pointer table consumed by ModelViewerScene's sprite renderer.
   [[nodiscard]] std::span<const Sprite::SpriteResource* const> sprite_resource_ptrs() const;
   /// Number of sprite effect resources indexed from the scenario.
   [[nodiscard]] std::size_t sprite_resource_count() const;
@@ -86,7 +86,7 @@ class ScenarioRuntime final : public Script::ScriptWorld {
   /// A decoded resource's GPU texture, or nullptr when not available.
   [[nodiscard]] const Texture2D* sprite_texture(
       std::size_t resource_index, std::size_t material_index) const;
-  /// GPU texture sets per resource; ModelScene passes this to
+  /// GPU texture sets per resource; ModelViewerScene passes this to
   /// SpriteRenderer::draw_pass.
   [[nodiscard]] const std::vector<std::vector<Texture2D>>& sprite_textures() const;
 
@@ -107,7 +107,7 @@ class ScenarioRuntime final : public Script::ScriptWorld {
   // --- World anchor ----------------------------------------------------------
 
   /// World-space anchor used as the fallback position for script-driven
-  /// sprites and owner resolution until a real XYZ pool is parsed. ModelScene
+  /// sprites and owner resolution until a real XYZ pool is parsed. ModelViewerScene
   /// sets this to its model centre; a menu leaves it at the origin.
   [[nodiscard]] std::array<float, 3> world_anchor() const;
   void set_world_anchor(std::array<float, 3> anchor);

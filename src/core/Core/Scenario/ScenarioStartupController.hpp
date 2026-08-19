@@ -12,7 +12,6 @@
 #include "Core/Omikron/IamArchive.hpp"
 #include "Core/Omikron/IamArea.hpp"
 #include "Core/Omikron/IamStart.hpp"
-#include "Core/Omikron/Model3DO.hpp"
 #include "Core/Script/AreaScriptRuntime.hpp"
 
 namespace App::Startup {
@@ -47,6 +46,9 @@ struct RuntimeAreaSlot {
 /// explicitly activated, and tick() runs the first interpreter tick.
 class ScenarioStartupController {
  public:
+  /// Interface ID of the main menu (confirmed from IAM/AREA record 118).
+  static constexpr std::uint16_t k_main_menu_interface{29};
+
   ScenarioStartupController() = default;
   ~ScenarioStartupController() = default;
 
@@ -102,6 +104,30 @@ class ScenarioStartupController {
     return m_dispatcher;
   }
 
+  /// Opens the preliminary interface 29 phase shown while the splash runs.
+  /// This is not the final main menu; close_preliminary_29() must be called
+  /// before the area script opens interface 29 as the real menu.
+  void open_preliminary_29();
+
+  /// Closes the preliminary interface 29 phase (idempotent).
+  void close_preliminary_29();
+
+  /// True while the preliminary splash interface 29 phase is open.
+  [[nodiscard]] bool preliminary_29_active() const {
+    return m_preliminary_29_active;
+  }
+
+  /// True once interface 29 has been requested, the main menu is active, and
+  /// it has not yet completed.
+  [[nodiscard]] bool main_menu_active() const {
+    return m_main_menu_active;
+  }
+
+  /// The handle of the active main-menu instance, or nullopt when none.
+  [[nodiscard]] std::optional<InterfaceHandle> active_handle() const {
+    return m_active_handle;
+  }
+
   [[nodiscard]] std::int16_t initial_area_id() const {
     return m_initial_area_id;
   }
@@ -127,10 +153,6 @@ class ScenarioStartupController {
   [[nodiscard]] const std::string& grid_3do_state() const {
     return m_grid_3do_state;
   }
-  /// Parsed GRID.3DO decor geometry, or nullptr when it was not loaded.
-  [[nodiscard]] const Omikron::Model3DOData* grid_3do_model() const {
-    return m_grid_3do_model.has_value() ? &*m_grid_3do_model : nullptr;
-  }
   [[nodiscard]] const std::string& last_error() const {
     return m_last_error;
   }
@@ -152,9 +174,6 @@ class ScenarioStartupController {
   /// unless the linked/secondary area is populated.
   std::array<RuntimeAreaSlot, 2> m_area_slots{};
   std::optional<Script::AreaScriptRuntime> m_area_script;
-  /// Parsed GRID.3DO decor geometry (loaded best-effort; not required to
-  /// render the menu).
-  std::optional<Omikron::Model3DOData> m_grid_3do_model;
 
   /// Reproduces Runtime's `areaMapping[areaId] = linkedAreaId` assignment.
   std::unordered_map<std::int32_t, std::int32_t> m_area_mapping;
@@ -175,8 +194,13 @@ class ScenarioStartupController {
   Startup::StartupTraceRecorder* m_trace{nullptr};
   /// Application audio system (may be null; music is non-fatal).
   Audio::AudioSystem* m_audio{nullptr};
-  /// UI dispatch; owns the native main-menu transition state.
+  /// UI dispatch; pure transport, no lifecycle policy.
   InterfaceDispatcher m_dispatcher;
+  /// Preliminary splash interface 29 phase (startup-order fidelity only).
+  bool m_preliminary_29_active{false};
+  /// Final main-menu instance opened by AREA opcode 0x46.
+  bool m_main_menu_active{false};
+  std::optional<InterfaceHandle> m_active_handle;
 };
 
 }  // namespace App

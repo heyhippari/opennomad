@@ -1,0 +1,58 @@
+#pragma once
+
+#include <cstdint>
+#include <expected>
+#include <memory>
+
+#include "Core/Interface/InterfacePresenter.hpp"
+#include "Core/Scene.hpp"
+
+namespace App {
+
+class ScenarioManager;
+
+namespace Interface {
+class InterfaceManager;
+}
+
+/// Stable normal runtime presentation scene, installed once after the startup
+/// videos/splash and kept active for the whole session. It composes the world
+/// presentation (today a clear-only seam for a future WorldRenderer) with the
+/// generic I2D interface presentation layer.
+///
+/// WorldScene observes runtime state owned by ScenarioManager and
+/// InterfaceManager. It does NOT own a ScenarioRuntime, does NOT execute
+/// scripts, and does NOT update AudioSystem.
+class WorldScene final : public Scene {
+ public:
+  static std::expected<std::unique_ptr<WorldScene>, std::string> create(
+      ScenarioManager& scenarios,
+      Interface::InterfaceManager& interfaces);
+
+  ~WorldScene() override = default;
+
+  WorldScene(const WorldScene&) = delete;
+  WorldScene(WorldScene&&) = delete;
+  WorldScene& operator=(const WorldScene&) = delete;
+  WorldScene& operator=(WorldScene&&) = delete;
+
+  void update(float delta_time, const Input::InputManager& input) override;
+  void render() override;
+  void resize(int width, int height) override;
+
+ private:
+  WorldScene(ScenarioManager& scenarios, Interface::InterfaceManager& interfaces);
+
+  ScenarioManager* m_scenarios{nullptr};
+  Interface::InterfacePresenter m_interfaces;
+  int m_width{640};
+  int m_height{480};
+
+  /// Last observed active-world identity; used to detect that the active
+  /// context changed or the same slot was recycled with a new generation.
+  std::uint32_t m_observed_scene_id{0};
+  std::uint32_t m_observed_generation{0};
+  bool m_world_observed{false};
+};
+
+}  // namespace App

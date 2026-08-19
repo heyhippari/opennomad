@@ -213,7 +213,7 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
     CHECK_EQ(engine.initial_area_id(), 118);
     CHECK_EQ(engine.linked_area_id(), -1);
     CHECK_EQ(engine.area_mapping(118), std::optional<std::int32_t>{-1});
-    CHECK(engine.dispatcher().main_menu_active());
+    CHECK(engine.main_menu_active());
     REQUIRE(engine.area_script() != nullptr);
     CHECK(engine.area_script()->state() == AreaScriptState::k_waiting);
     CHECK_EQ(engine.area_script()->wait_state(), 6U);
@@ -278,7 +278,7 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
     REQUIRE_FALSE(result.has_value());
     CHECK_FALSE(seq_of(recorder, "AreaContext.Created").has_value());
     CHECK_FALSE(seq_of(recorder, "ScenarioMode2.Complete").has_value());
-    CHECK_FALSE(engine.dispatcher().main_menu_active());
+    CHECK_FALSE(engine.main_menu_active());
   }
 
   TEST_CASE("an unknown opcode pauses the area script without opening the menu") {
@@ -301,7 +301,7 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
 
     REQUIRE(engine.area_script() != nullptr);
     CHECK(engine.area_script()->state() == AreaScriptState::k_paused_unsupported);
-    CHECK_FALSE(engine.dispatcher().main_menu_active());
+    CHECK_FALSE(engine.main_menu_active());
   }
 
   TEST_CASE("GRID.3DO present is parsed before GRID.SCX and startup reaches the menu") {
@@ -324,7 +324,7 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
     REQUIRE(engine.enter_mode(App::ScenarioMode::k_new_session, 0).has_value());
     REQUIRE(engine.enter_mode(App::ScenarioMode::k_tick, 0).has_value());
 
-    CHECK(engine.dispatcher().main_menu_active());
+    CHECK(engine.main_menu_active());
     const std::optional<std::uint32_t> grid_3do{
         seq_of(recorder, "AreaDependency.GRID_3DO.Loaded")};
     const std::optional<std::uint32_t> grid_scx{
@@ -355,7 +355,7 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
 
     REQUIRE(engine.area_script() != nullptr);
     CHECK(engine.area_script()->state() == AreaScriptState::k_waiting);
-    CHECK(engine.dispatcher().main_menu_active());
+    CHECK(engine.main_menu_active());
 
     // Track 109 was requested before the interface opened; no 87 yet.
     REQUIRE(seq_of(recorder, "Music.TrackRequested", "track=109").has_value());
@@ -364,19 +364,19 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
 
     // Later per-frame updates while waiting keep the script suspended and do
     // not request 87.
-    REQUIRE(engine.update().has_value());
-    REQUIRE(engine.update().has_value());
+    REQUIRE(engine.update(1.0F / 30.0F).has_value());
+    REQUIRE(engine.update(1.0F / 30.0F).has_value());
     CHECK(engine.area_script()->state() == AreaScriptState::k_waiting);
     CHECK_FALSE(seq_of(recorder, "Music.TrackRequested", "track=87").has_value());
 
     // New Game completes interface 29 with the active handle.
-    const std::optional<App::InterfaceHandle> handle{engine.dispatcher().active_handle()};
+    const std::optional<App::InterfaceHandle> handle{engine.active_handle()};
     REQUIRE(handle.has_value());
     engine.notify_interface_completion(App::InterfaceCompletion{.handle = *handle, .result = 0});
-    CHECK_FALSE(engine.dispatcher().main_menu_active());
+    CHECK_FALSE(engine.main_menu_active());
 
     // The next per-frame update resumes the script and requests 87.
-    REQUIRE(engine.update().has_value());
+    REQUIRE(engine.update(1.0F / 30.0F).has_value());
     CHECK(seq_of(recorder, "Music.TrackRequested", "track=87").has_value());
 
     // GRID world context 0 stays resident and active throughout.
@@ -384,6 +384,36 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
     CHECK_EQ(manager.world_contexts()[0].residency, WorldSceneResidencyState::LoadedActive);
     CHECK_EQ(manager.world_contexts()[0].scenario_path, "SCPTDATA/GRID.SCX");
     CHECK(manager.gameplay_mode_scx() != nullptr);
+  }
+
+  TEST_CASE("the scheduler advances gameplay and active world runtimes scene-independently") {
+    const TempDirectory temp;
+    write_boot_fixtures(temp);
+    const ScopedGameDataRoot root{temp.root()};
+
+    App::Startup::StartupTraceRecorder recorder;
+    App::ScenarioManager manager;
+    App::ScenarioEngine engine{manager, recorder};
+    engine.dispatcher().set_interface_open_sink(
+        [](const App::InterfaceOpenRequest& request)
+            -> std::expected<App::InterfaceHandle, std::string> {
+          return App::InterfaceHandle{.interface_id = request.interface_id, .generation = 1};
+        });
+
+    REQUIRE(engine.select_permanent_mode_script().has_value());
+    REQUIRE(engine.enter_mode(App::ScenarioMode::k_teardown, 0).has_value());
+    REQUIRE(engine.enter_mode(App::ScenarioMode::k_new_session, 0).has_value());
+    REQUIRE(engine.enter_mode(App::ScenarioMode::k_tick, 0).has_value());
+
+    // No Scene is involved: the scheduler drives the AREA script and the
+    // slot-owned runtimes directly through ScenarioManager.
+    CHECK(manager.gameplay_runtime() != nullptr);
+    CHECK(manager.world_runtime(0) != nullptr);
+    CHECK(manager.world_runtime(1) == nullptr);  // Inactive world has no runtime.
+
+    REQUIRE(engine.update(1.0F / 30.0F).has_value());
+    REQUIRE(engine.update(1.0F / 30.0F).has_value());
+    CHECK_EQ(manager.world_contexts()[0].residency, WorldSceneResidencyState::LoadedActive);
   }
 }
 

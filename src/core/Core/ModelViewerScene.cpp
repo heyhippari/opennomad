@@ -1,4 +1,4 @@
-#include "ModelScene.hpp"
+#include "ModelViewerScene.hpp"
 
 #include <SDL3/SDL_error.h>
 #include <SDL3/SDL_iostream.h>
@@ -509,7 +509,7 @@ constexpr float K_SPRITE_CAMERA_FOCUS_DISTANCE{6.0F};
 
 }  // namespace
 
-std::expected<ModelScene::DecodedModel, std::string> ModelScene::load_decoded_model(
+std::expected<ModelViewerScene::DecodedModel, std::string> ModelViewerScene::load_decoded_model(
     const std::filesystem::path& model_path) {
   APP_PROFILE_FUNCTION();
 
@@ -562,7 +562,7 @@ std::expected<ModelScene::DecodedModel, std::string> ModelScene::load_decoded_mo
       .display_name = model_path.string()};
 }
 
-std::expected<std::unique_ptr<ModelScene>, std::string> ModelScene::create() {
+std::expected<std::unique_ptr<ModelViewerScene>, std::string> ModelViewerScene::create() {
   APP_PROFILE_FUNCTION();
 
   //const std::filesystem::path model_path{Resources::game_data_path("MESHES/PERSOS/HO1_FN.3DO")};
@@ -570,17 +570,17 @@ std::expected<std::unique_ptr<ModelScene>, std::string> ModelScene::create() {
 
   auto decoded{load_decoded_model(model_path)};
   if (!decoded) {
-    return std::expected<std::unique_ptr<ModelScene>, std::string>{
+    return std::expected<std::unique_ptr<ModelViewerScene>, std::string>{
         std::unexpect, decoded.error()};
   }
 
   auto scene{create_from_geometry(
       decoded->groups, decoded->model, decoded->images, decoded->display_name)};
   if (!scene) {
-    return std::expected<std::unique_ptr<ModelScene>, std::string>{
+    return std::expected<std::unique_ptr<ModelViewerScene>, std::string>{
         std::unexpect, std::move(scene).error()};
   }
-  ModelScene& scene_ref{*scene.value()};
+  ModelViewerScene& scene_ref{*scene.value()};
   // Standalone model view has no scenario: attach an empty runtime so the
   // sprite/script accessors stay valid (empty pool, null script runtime).
   scene_ref.m_owned_runtime = std::make_unique<ScenarioRuntime>();
@@ -588,14 +588,14 @@ std::expected<std::unique_ptr<ModelScene>, std::string> ModelScene::create() {
   return scene;
 }
 
-std::expected<std::unique_ptr<ModelScene>, std::string> ModelScene::create_from_scx() {
+std::expected<std::unique_ptr<ModelViewerScene>, std::string> ModelViewerScene::create_from_scx() {
   APP_PROFILE_FUNCTION();
 
   const std::filesystem::path scx_path{Resources::game_data_path("SCPTDATA/aventure.SCX")};
 
   auto scx_file{read_file(scx_path)};
   if (!scx_file) {
-    return std::expected<std::unique_ptr<ModelScene>, std::string>{std::unexpect,
+    return std::expected<std::unique_ptr<ModelViewerScene>, std::string>{std::unexpect,
         fmt::format("Failed to open '{}': {}. Copy the game's SCPTDATA folder next to the "
                     "executable.",
             scx_path.string(),
@@ -604,7 +604,7 @@ std::expected<std::unique_ptr<ModelScene>, std::string> ModelScene::create_from_
 
   auto scx{Omikron::SCX::load(std::span<const std::byte>{scx_file.value()})};
   if (!scx) {
-    return std::expected<std::unique_ptr<ModelScene>, std::string>{
+    return std::expected<std::unique_ptr<ModelViewerScene>, std::string>{
         std::unexpect, fmt::format("Failed to parse '{}': {}", scx_path.string(), scx.error())};
   }
   App::Log::debug("'{}': {} sprites, {} waves, {} embedded models",
@@ -618,17 +618,17 @@ std::expected<std::unique_ptr<ModelScene>, std::string> ModelScene::create_from_
   const std::filesystem::path backdrop_path{Resources::game_data_path("MESHES/DECORS/Anekbah.3DO")};
   auto backdrop{load_decoded_model(backdrop_path)};
   if (!backdrop) {
-    return std::expected<std::unique_ptr<ModelScene>, std::string>{std::unexpect,
+    return std::expected<std::unique_ptr<ModelViewerScene>, std::string>{std::unexpect,
         fmt::format("Failed to load the backdrop for the sprite scene: {}", backdrop.error())};
   }
 
   auto scene{create_from_geometry(
       backdrop->groups, backdrop->model, backdrop->images, backdrop->display_name)};
   if (!scene) {
-    return std::expected<std::unique_ptr<ModelScene>, std::string>{
+    return std::expected<std::unique_ptr<ModelViewerScene>, std::string>{
         std::unexpect, std::move(scene).error()};
   }
-  ModelScene& scene_ref{*scene.value()};
+  ModelViewerScene& scene_ref{*scene.value()};
 
   // The level is far larger than a character model; frame it from further out.
   scene_ref.m_camera.set_position(scene_ref.m_model_center.at(0),
@@ -639,7 +639,7 @@ std::expected<std::unique_ptr<ModelScene>, std::string> ModelScene::create_from_
       scene_ref.m_model_center.at(2));
 
   if (auto result{scene_ref.initialize_sprite_renderer()}; !result) {
-    return std::expected<std::unique_ptr<ModelScene>, std::string>{
+    return std::expected<std::unique_ptr<ModelViewerScene>, std::string>{
         std::unexpect, std::move(result).error()};
   }
 
@@ -650,7 +650,7 @@ std::expected<std::unique_ptr<ModelScene>, std::string> ModelScene::create_from_
           /*audio=*/nullptr,
           /*activate_startup_scripts=*/true)};
       !result) {
-    return std::expected<std::unique_ptr<ModelScene>, std::string>{
+    return std::expected<std::unique_ptr<ModelViewerScene>, std::string>{
         std::unexpect, std::move(result).error()};
   }
   runtime->set_world_anchor(scene_ref.m_model_center);
@@ -660,12 +660,12 @@ std::expected<std::unique_ptr<ModelScene>, std::string> ModelScene::create_from_
   return scene;
 }
 
-std::expected<std::unique_ptr<ModelScene>, std::string> ModelScene::create_from_scenario_manager(
+std::expected<std::unique_ptr<ModelViewerScene>, std::string> ModelViewerScene::create_from_scenario_manager(
     ScenarioManager* manager) {
   APP_PROFILE_FUNCTION();
 
   if (manager == nullptr) {
-    return std::expected<std::unique_ptr<ModelScene>, std::string>{
+    return std::expected<std::unique_ptr<ModelViewerScene>, std::string>{
         std::unexpect, "ScenarioManager is null"};
   }
 
@@ -673,7 +673,7 @@ std::expected<std::unique_ptr<ModelScene>, std::string> ModelScene::create_from_
   // built by ScenarioManager when the gameplay-mode scenario was installed.
   ScenarioRuntime* runtime{manager->gameplay_runtime()};
   if (runtime == nullptr) {
-    return std::expected<std::unique_ptr<ModelScene>, std::string>{
+    return std::expected<std::unique_ptr<ModelViewerScene>, std::string>{
         std::unexpect, "Gameplay runtime not built"};
   }
 
@@ -682,17 +682,17 @@ std::expected<std::unique_ptr<ModelScene>, std::string> ModelScene::create_from_
   const std::filesystem::path backdrop_path{Resources::game_data_path("MESHES/DECORS/Anekbah.3DO")};
   auto backdrop{load_decoded_model(backdrop_path)};
   if (!backdrop) {
-    return std::expected<std::unique_ptr<ModelScene>, std::string>{std::unexpect,
+    return std::expected<std::unique_ptr<ModelViewerScene>, std::string>{std::unexpect,
         fmt::format("Failed to load the backdrop for the sprite scene: {}", backdrop.error())};
   }
 
   auto scene{create_from_geometry(
       backdrop->groups, backdrop->model, backdrop->images, backdrop->display_name)};
   if (!scene) {
-    return std::expected<std::unique_ptr<ModelScene>, std::string>{
+    return std::expected<std::unique_ptr<ModelViewerScene>, std::string>{
         std::unexpect, std::move(scene).error()};
   }
-  ModelScene& scene_ref{*scene.value()};
+  ModelViewerScene& scene_ref{*scene.value()};
 
   // The level is far larger than a character model; frame it from further out.
   scene_ref.m_camera.set_position(scene_ref.m_model_center.at(0),
@@ -704,7 +704,7 @@ std::expected<std::unique_ptr<ModelScene>, std::string> ModelScene::create_from_
 
   // Initialize sprites from the shared gameplay runtime and wire it in.
   if (auto result{scene_ref.initialize_sprite_renderer()}; !result) {
-    return std::expected<std::unique_ptr<ModelScene>, std::string>{
+    return std::expected<std::unique_ptr<ModelViewerScene>, std::string>{
         std::unexpect, std::move(result).error()};
   }
   runtime->set_world_anchor(scene_ref.m_model_center);
@@ -713,7 +713,7 @@ std::expected<std::unique_ptr<ModelScene>, std::string> ModelScene::create_from_
   return scene;
 }
 
-std::expected<std::unique_ptr<ModelScene>, std::string> ModelScene::create_from_geometry(
+std::expected<std::unique_ptr<ModelViewerScene>, std::string> ModelViewerScene::create_from_geometry(
     const std::vector<Omikron::MaterialGroup>& groups,
     const Omikron::Model3DOData& model,
     const std::vector<Omikron::Texture3DTImage>& images,
@@ -794,7 +794,7 @@ std::expected<std::unique_ptr<ModelScene>, std::string> ModelScene::create_from_
       static constexpr std::array<std::uint8_t, 4> k_white_pixel{255, 255, 255, 255};
       auto fallback{Texture2D::create(1, 1, std::span<const std::uint8_t>{k_white_pixel}, true)};
       if (!fallback) {
-        return std::expected<std::unique_ptr<ModelScene>, std::string>{
+        return std::expected<std::unique_ptr<ModelViewerScene>, std::string>{
             std::unexpect, std::move(fallback).error()};
       }
       textures.push_back(std::move(fallback).value());
@@ -805,7 +805,7 @@ std::expected<std::unique_ptr<ModelScene>, std::string> ModelScene::create_from_
         std::span<const std::uint8_t>{image.rgba8},
         true)};
     if (!texture) {
-      return std::expected<std::unique_ptr<ModelScene>, std::string>{
+      return std::expected<std::unique_ptr<ModelViewerScene>, std::string>{
           std::unexpect, std::move(texture).error()};
     }
     textures.push_back(std::move(texture).value());
@@ -813,39 +813,39 @@ std::expected<std::unique_ptr<ModelScene>, std::string> ModelScene::create_from_
 
   auto shader{Shader::create(K_VERTEX_SHADER_SOURCE, K_FRAGMENT_SHADER_SOURCE)};
   if (!shader) {
-    return std::expected<std::unique_ptr<ModelScene>, std::string>{
+    return std::expected<std::unique_ptr<ModelViewerScene>, std::string>{
         std::unexpect, std::move(shader).error()};
   }
   auto mirror_shader{Shader::create(K_VERTEX_SHADER_SOURCE, K_MIRROR_FRAGMENT_SHADER_SOURCE)};
   if (!mirror_shader) {
-    return std::expected<std::unique_ptr<ModelScene>, std::string>{
+    return std::expected<std::unique_ptr<ModelViewerScene>, std::string>{
         std::unexpect, std::move(mirror_shader).error()};
   }
   auto env_shader{Shader::create(K_ENV_VERTEX_SHADER_SOURCE, K_ENV_FRAGMENT_SHADER_SOURCE)};
   if (!env_shader) {
-    return std::expected<std::unique_ptr<ModelScene>, std::string>{
+    return std::expected<std::unique_ptr<ModelViewerScene>, std::string>{
         std::unexpect, std::move(env_shader).error()};
   }
   auto skybox_shader{Shader::create(K_SKYBOX_VERTEX_SHADER_SOURCE, K_SKYBOX_FRAGMENT_SHADER_SOURCE)};
   if (!skybox_shader) {
-    return std::expected<std::unique_ptr<ModelScene>, std::string>{
+    return std::expected<std::unique_ptr<ModelViewerScene>, std::string>{
         std::unexpect, std::move(skybox_shader).error()};
   }
   auto overlay_shader{
       Shader::create(K_OVERLAY_VERTEX_SHADER_SOURCE, K_OVERLAY_FRAGMENT_SHADER_SOURCE)};
   if (!overlay_shader) {
-    return std::expected<std::unique_ptr<ModelScene>, std::string>{
+    return std::expected<std::unique_ptr<ModelViewerScene>, std::string>{
         std::unexpect, std::move(overlay_shader).error()};
   }
   auto mirror_framebuffer{Framebuffer::create(k_mirror_resolution, k_mirror_resolution)};
   if (!mirror_framebuffer) {
-    return std::expected<std::unique_ptr<ModelScene>, std::string>{
+    return std::expected<std::unique_ptr<ModelViewerScene>, std::string>{
         std::unexpect, std::move(mirror_framebuffer).error()};
   }
   auto sky_cubemap{
       TextureCube::create(k_sky_cubemap_size, generate_sky_cubemap(k_sky_cubemap_size), true)};
   if (!sky_cubemap) {
-    return std::expected<std::unique_ptr<ModelScene>, std::string>{
+    return std::expected<std::unique_ptr<ModelViewerScene>, std::string>{
         std::unexpect, std::move(sky_cubemap).error()};
   }
 
@@ -989,7 +989,7 @@ std::expected<std::unique_ptr<ModelScene>, std::string> ModelScene::create_from_
 
   // The constructor is private; only the factory may build a scene.
   // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
-  return std::unique_ptr<ModelScene>{new ModelScene(groups,
+  return std::unique_ptr<ModelViewerScene>{new ModelViewerScene(groups,
       std::move(textures),
       std::move(shader).value(),
       std::move(mirror_shader).value(),
@@ -1006,7 +1006,7 @@ std::expected<std::unique_ptr<ModelScene>, std::string> ModelScene::create_from_
       model_center)};
 }
 
-ModelScene::ModelScene(const std::vector<Omikron::MaterialGroup>& groups,
+ModelViewerScene::ModelViewerScene(const std::vector<Omikron::MaterialGroup>& groups,
     std::vector<Texture2D> textures,
     Shader shader,
     Shader mirror_shader,
@@ -1145,7 +1145,7 @@ ModelScene::ModelScene(const std::vector<Omikron::MaterialGroup>& groups,
       m_model_center.at(0), m_model_center.at(1) + k_camera_height, m_model_center.at(2));
 }
 
-void ModelScene::draw_group(const std::size_t index) {
+void ModelViewerScene::draw_group(const std::size_t index) {
   m_shader.bind();
 
   const std::size_t material_index{static_cast<std::size_t>(m_group_material_ids.at(index))};
@@ -1164,7 +1164,7 @@ void ModelScene::draw_group(const std::size_t index) {
   m_meshes.at(index).draw();
 }
 
-void ModelScene::draw_mirror_group(const std::size_t index,
+void ModelViewerScene::draw_mirror_group(const std::size_t index,
     const glm::mat4& view,
     const glm::mat4& projection,
     const glm::mat4& model) {
@@ -1198,7 +1198,7 @@ void ModelScene::draw_mirror_group(const std::size_t index,
   m_meshes.at(index).draw();
 }
 
-void ModelScene::draw_env_group(const std::size_t index,
+void ModelViewerScene::draw_env_group(const std::size_t index,
     const glm::vec3& eye,
     const glm::vec4& clip_plane,
     const glm::mat4& view,
@@ -1235,7 +1235,7 @@ void ModelScene::draw_env_group(const std::size_t index,
   m_meshes.at(index).draw();
 }
 
-void ModelScene::draw_skybox_group(const std::size_t index) {
+void ModelViewerScene::draw_skybox_group(const std::size_t index) {
   m_skybox_shader.bind();
 
   const std::size_t material_index{static_cast<std::size_t>(m_group_material_ids.at(index))};
@@ -1249,7 +1249,7 @@ void ModelScene::draw_skybox_group(const std::size_t index) {
   m_meshes.at(index).draw();
 }
 
-void ModelScene::render_skybox(const glm::mat4& view, const glm::mat4& projection) {
+void ModelViewerScene::render_skybox(const glm::mat4& view, const glm::mat4& projection) {
   if (m_skybox_group_indices.empty()) {
     return;
   }
@@ -1277,7 +1277,7 @@ void ModelScene::render_skybox(const glm::mat4& view, const glm::mat4& projectio
   glDepthMask(GL_TRUE);
 }
 
-void ModelScene::update(const float delta_time, const Input::InputManager& input) {
+void ModelViewerScene::update(const float delta_time, const Input::InputManager& input) {
   APP_PROFILE_FUNCTION();
 
   m_camera_controller.update(input, delta_time);
@@ -1309,7 +1309,7 @@ void ModelScene::update(const float delta_time, const Input::InputManager& input
   }
 }
 
-void ModelScene::render() {
+void ModelViewerScene::render() {
   APP_PROFILE_FUNCTION();
 
   // The geometry lives in world space; the camera flies around it.
@@ -1350,7 +1350,7 @@ void ModelScene::render() {
   Shader::unbind();
 }
 
-void ModelScene::render_reflection(const MirrorSurface& mirror,
+void ModelViewerScene::render_reflection(const MirrorSurface& mirror,
     const glm::mat4& view,
     const glm::mat4& projection,
     const glm::mat4& model,
@@ -1384,7 +1384,7 @@ void ModelScene::render_reflection(const MirrorSurface& mirror,
   glViewport(0, 0, m_viewport_width, m_viewport_height);
 }
 
-void ModelScene::render_light_overlay(const glm::mat4& view, const glm::mat4& projection) {
+void ModelViewerScene::render_light_overlay(const glm::mat4& view, const glm::mat4& projection) {
   APP_PROFILE_FUNCTION();
 
   if (m_overlay_marker_count == 0U && m_overlay_line_count == 0U &&
@@ -1451,7 +1451,7 @@ std::array<float, 4> sprite_overlay_color(const Sprite::SpriteRenderMode mode) {
 
 }  // namespace
 
-void ModelScene::render_sprite_overlay(const glm::mat4& view, const glm::mat4& projection) {
+void ModelViewerScene::render_sprite_overlay(const glm::mat4& view, const glm::mat4& projection) {
   APP_PROFILE_FUNCTION();
 
   const std::vector<Sprite::SpriteDrawCommand>& commands{m_sprite_renderer.commands()};
@@ -1501,7 +1501,7 @@ void ModelScene::render_sprite_overlay(const glm::mat4& view, const glm::mat4& p
   Shader::unbind();
 }
 
-void ModelScene::render_scene(const glm::mat4& view,
+void ModelViewerScene::render_scene(const glm::mat4& view,
     const glm::mat4& projection,
     const glm::mat4& model,
     const glm::vec3& eye,
@@ -1631,7 +1631,7 @@ void ModelScene::render_scene(const glm::mat4& view,
   glDepthMask(GL_TRUE);
 }
 
-void ModelScene::resize(const int width, const int height) {
+void ModelViewerScene::resize(const int width, const int height) {
   APP_PROFILE_FUNCTION();
 
   if (width <= 0 || height <= 0) {
@@ -1654,7 +1654,7 @@ void ModelScene::resize(const int width, const int height) {
 // Sprite instances
 // ─────────────────────────────────────────────────────────────────────────────
 
-std::expected<void, std::string> ModelScene::initialize_sprite_renderer() {
+std::expected<void, std::string> ModelViewerScene::initialize_sprite_renderer() {
   APP_PROFILE_FUNCTION();
 
   if (auto result{m_sprite_renderer.initialize()}; !result) {
@@ -1664,19 +1664,19 @@ std::expected<void, std::string> ModelScene::initialize_sprite_renderer() {
   return {};
 }
 
-Script::ScriptRuntime* ModelScene::script_runtime() {
+Script::ScriptRuntime* ModelViewerScene::script_runtime() {
   return m_runtime == nullptr ? nullptr : m_runtime->script_runtime();
 }
 
-const Script::ScriptRuntime* ModelScene::script_runtime() const {
+const Script::ScriptRuntime* ModelViewerScene::script_runtime() const {
   return m_runtime == nullptr ? nullptr : m_runtime->script_runtime();
 }
 
-std::string_view ModelScene::script_scenario_name() const {
+std::string_view ModelViewerScene::script_scenario_name() const {
   return m_runtime == nullptr ? std::string_view{} : m_runtime->script_scenario_name();
 }
 
-std::expected<std::size_t, std::string> ModelScene::spawn_script_instance(
+std::expected<std::size_t, std::string> ModelViewerScene::spawn_script_instance(
     const std::size_t source_script_index) {
   if (m_runtime == nullptr) {
     return std::expected<std::size_t, std::string>{
@@ -1685,17 +1685,17 @@ std::expected<std::size_t, std::string> ModelScene::spawn_script_instance(
   return m_runtime->spawn_script_instance(source_script_index);
 }
 
-void ModelScene::set_audio_system(Audio::AudioSystem* const audio) {
+void ModelViewerScene::set_audio_system(Audio::AudioSystem* const audio) {
   if (m_runtime != nullptr) {
     m_runtime->set_audio_system(audio);
   }
 }
 
-Audio::AudioSystem* ModelScene::audio_system() {
+Audio::AudioSystem* ModelViewerScene::audio_system() {
   return m_runtime == nullptr ? nullptr : m_runtime->audio_system();
 }
 
-const Audio::AudioSystem* ModelScene::audio_system() const {
+const Audio::AudioSystem* ModelViewerScene::audio_system() const {
   return m_runtime == nullptr ? nullptr : m_runtime->audio_system();
 }
 
@@ -1703,110 +1703,110 @@ const Audio::AudioSystem* ModelScene::audio_system() const {
 
 
 
-Sprite::SpritePool& ModelScene::sprite_pool() { return m_runtime->sprite_pool(); }
+Sprite::SpritePool& ModelViewerScene::sprite_pool() { return m_runtime->sprite_pool(); }
 
-const Sprite::SpritePool& ModelScene::sprite_pool() const { return m_runtime->sprite_pool(); }
+const Sprite::SpritePool& ModelViewerScene::sprite_pool() const { return m_runtime->sprite_pool(); }
 
-const Sprite::SpriteQueueStats& ModelScene::sprite_queue_stats() const {
+const Sprite::SpriteQueueStats& ModelViewerScene::sprite_queue_stats() const {
   return m_sprite_renderer.queue_stats();
 }
 
-const std::vector<Sprite::SpriteDrawCommand>& ModelScene::sprite_commands() const {
+const std::vector<Sprite::SpriteDrawCommand>& ModelViewerScene::sprite_commands() const {
   return m_sprite_renderer.commands();
 }
 
-std::size_t ModelScene::sprite_resource_count() const {
+std::size_t ModelViewerScene::sprite_resource_count() const {
   return m_runtime->sprite_resource_count();
 }
 
-std::string_view ModelScene::sprite_resource_name(const std::size_t resource_index) const {
+std::string_view ModelViewerScene::sprite_resource_name(const std::size_t resource_index) const {
   return m_runtime->sprite_resource_name(resource_index);
 }
 
-const Sprite::SpriteResource* ModelScene::sprite_resource(const std::size_t resource_index) const {
+const Sprite::SpriteResource* ModelViewerScene::sprite_resource(const std::size_t resource_index) const {
   return m_runtime->sprite_resource(resource_index);
 }
 
-const Texture2D* ModelScene::sprite_texture(const std::size_t resource_index,
+const Texture2D* ModelViewerScene::sprite_texture(const std::size_t resource_index,
     const std::size_t material_index) const {
   return m_runtime->sprite_texture(resource_index, material_index);
 }
 
-std::expected<Sprite::SpriteHandle, std::string> ModelScene::spawn_sprite(
+std::expected<Sprite::SpriteHandle, std::string> ModelViewerScene::spawn_sprite(
     const std::size_t resource_index,
     const std::size_t object_index,
     const std::array<float, 3> position) {
   return m_runtime->spawn_sprite(resource_index, object_index, position);
 }
 
-std::expected<void, std::string> ModelScene::attach_sprite(const Sprite::SpriteHandle handle) {
+std::expected<void, std::string> ModelViewerScene::attach_sprite(const Sprite::SpriteHandle handle) {
   return m_runtime->sprite_pool().attach(handle);
 }
 
-std::expected<void, std::string> ModelScene::detach_sprite(const Sprite::SpriteHandle handle) {
+std::expected<void, std::string> ModelViewerScene::detach_sprite(const Sprite::SpriteHandle handle) {
   return m_runtime->sprite_pool().detach(handle);
 }
 
-std::expected<void, std::string> ModelScene::destroy_sprite(const Sprite::SpriteHandle handle) {
+std::expected<void, std::string> ModelViewerScene::destroy_sprite(const Sprite::SpriteHandle handle) {
   return m_runtime->sprite_pool().destroy(handle);
 }
 
-std::expected<void, std::string> ModelScene::set_sprite_frame(
+std::expected<void, std::string> ModelViewerScene::set_sprite_frame(
     const Sprite::SpriteHandle handle, const std::uint16_t frame_index) {
   return m_runtime->sprite_pool().set_frame(handle, frame_index);
 }
 
-void ModelScene::set_sprite_render_mode(
+void ModelViewerScene::set_sprite_render_mode(
     const Sprite::SpriteHandle handle, const Sprite::SpriteRenderMode mode) {
   m_runtime->sprite_pool().set_render_mode(handle, mode);
 }
 
-void ModelScene::set_sprite_type(const Sprite::SpriteHandle handle, const std::uint16_t type) {
+void ModelViewerScene::set_sprite_type(const Sprite::SpriteHandle handle, const std::uint16_t type) {
   m_runtime->sprite_pool().set_type(handle, type);
 }
 
-void ModelScene::set_sprite_position(
+void ModelViewerScene::set_sprite_position(
     const Sprite::SpriteHandle handle, const std::array<float, 3> position) {
   m_runtime->sprite_pool().set_position(handle, position);
 }
 
-void ModelScene::set_sprite_scale(
+void ModelViewerScene::set_sprite_scale(
     const Sprite::SpriteHandle handle, const float scale_x, const float scale_y) {
   m_runtime->sprite_pool().set_scale(handle, scale_x, scale_y);
 }
 
-void ModelScene::set_sprite_scale_x(const Sprite::SpriteHandle handle, const float scale_x) {
+void ModelViewerScene::set_sprite_scale_x(const Sprite::SpriteHandle handle, const float scale_x) {
   m_runtime->sprite_pool().set_scale_x(handle, scale_x);
 }
 
-void ModelScene::set_sprite_scale_y(const Sprite::SpriteHandle handle, const float scale_y) {
+void ModelViewerScene::set_sprite_scale_y(const Sprite::SpriteHandle handle, const float scale_y) {
   m_runtime->sprite_pool().set_scale_y(handle, scale_y);
 }
 
-void ModelScene::set_sprite_rotation(const Sprite::SpriteHandle handle, const float rotation) {
+void ModelViewerScene::set_sprite_rotation(const Sprite::SpriteHandle handle, const float rotation) {
   m_runtime->sprite_pool().set_rotation(handle, rotation);
 }
 
-void ModelScene::set_sprite_tint(
+void ModelViewerScene::set_sprite_tint(
     const Sprite::SpriteHandle handle, const std::array<float, 3> tint) {
   m_runtime->sprite_pool().set_tint(handle, tint);
 }
 
-void ModelScene::set_sprite_texture_offset(const Sprite::SpriteHandle handle,
+void ModelViewerScene::set_sprite_texture_offset(const Sprite::SpriteHandle handle,
     const float offset_u,
     const float offset_v) {
   m_runtime->sprite_pool().set_texture_offset(handle, offset_u, offset_v);
 }
 
-void ModelScene::set_sprite_unknown_24(const Sprite::SpriteHandle handle, const float value) {
+void ModelViewerScene::set_sprite_unknown_24(const Sprite::SpriteHandle handle, const float value) {
   m_runtime->sprite_pool().set_unknown_24(handle, value);
 }
 
-void ModelScene::reset_sprite_to_defaults(const Sprite::SpriteHandle handle) {
+void ModelViewerScene::reset_sprite_to_defaults(const Sprite::SpriteHandle handle) {
   m_runtime->sprite_pool().reset_to_defaults(handle);
 }
 
-std::array<float, 3> ModelScene::camera_focus_position() const {
+std::array<float, 3> ModelViewerScene::camera_focus_position() const {
   const glm::mat4 view{glm::make_mat4(m_camera.get_view_matrix().data())};
   const glm::vec3 position{glm::make_vec3(m_camera.get_position().data())};
   const glm::vec3 forward{view_basis(view).front};
@@ -1816,26 +1816,26 @@ std::array<float, 3> ModelScene::camera_focus_position() const {
   return target_storage;
 }
 
-void ModelScene::place_sprite_at_camera_focus(const Sprite::SpriteHandle handle) {
+void ModelViewerScene::place_sprite_at_camera_focus(const Sprite::SpriteHandle handle) {
   m_runtime->sprite_pool().set_position(handle, camera_focus_position());
 }
 
-void ModelScene::set_sprite_grayscale(const bool enabled) {
+void ModelViewerScene::set_sprite_grayscale(const bool enabled) {
   m_sprite_renderer.set_grayscale(enabled);
   m_sprite_grayscale_enabled = enabled;
 }
 
-bool ModelScene::sprite_grayscale() const { return m_sprite_grayscale_enabled; }
+bool ModelViewerScene::sprite_grayscale() const { return m_sprite_grayscale_enabled; }
 
-bool ModelScene::light_overlay_enabled() const { return m_light_overlay_enabled; }
+bool ModelViewerScene::light_overlay_enabled() const { return m_light_overlay_enabled; }
 
-void ModelScene::set_light_overlay_enabled(const bool enabled) {
+void ModelViewerScene::set_light_overlay_enabled(const bool enabled) {
   m_light_overlay_enabled = enabled;
 }
 
-bool ModelScene::sprite_overlay_enabled() const { return m_sprite_overlay_enabled; }
+bool ModelViewerScene::sprite_overlay_enabled() const { return m_sprite_overlay_enabled; }
 
-void ModelScene::set_sprite_overlay_enabled(const bool enabled) {
+void ModelViewerScene::set_sprite_overlay_enabled(const bool enabled) {
   m_sprite_overlay_enabled = enabled;
 }
 

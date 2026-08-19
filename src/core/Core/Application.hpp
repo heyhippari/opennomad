@@ -109,19 +109,21 @@ class Application {
   /// gamePaused maps to FrameTimingState::gameplay_paused; the game-command
   /// dispatcher itself does not exist yet.
   void dispatch_held_escape();
-  /// Completes the splash and runs scenario modes 3 -> 2 -> 1, opening the
-  /// native main menu. Returns false on a mandatory failure (startup stops).
+  /// Completes the splash and runs scenario modes 3 -> 2 -> 1, installing
+  /// the WorldScene after mode 2 establishes the world context and then
+  /// opening interface 29 through the AREA script. Returns false on a
+  /// mandatory failure (startup stops).
   bool advance_startup_past_splash();
-  /// Wires the interface dispatcher's menu-activation sink so the native
-  /// main-menu screen is constructed and installed by the area script's
-  /// interface-29 open (opcode 0x46), not by application startup directly.
-  void wire_menu_activation();
+  /// Wires the interface dispatcher's open sink so any AREA interface-open
+  /// request (opcode 0x46) is forwarded to the generic InterfaceManager.
+  /// No interface is special-cased and no scene is mutated here.
+  void wire_interface_dispatch();
   /// Drains deferred interface completions after the scene update: notifies
-  /// the scenario engine, closes the interface and swaps out MainMenuScene
-  /// (outside element iteration so the selected element is never invalidated).
+  /// the scenario engine and closes the specific completed interface by
+  /// handle. The active WorldScene is never replaced.
   void drain_interface_completions();
   /// Continues the scenario scheduler on the normal frame path after startup.
-  void update_scenario();
+  void update_scenario(float delta_seconds);
 
   static constexpr float kFixedTimestep{1.0F / 60.0F};
   /// Minimum interval between relative-mode re-enable attempts while
@@ -147,10 +149,11 @@ class Application {
   /// its GL resources. Declared after the window so its GL resources are
   /// released before the context is destroyed.
   std::unique_ptr<Interface::InterfaceManager> m_interface_manager{nullptr};
-  /// Seconds left before switching from the splash to the main menu.
+  /// Seconds left before switching from the splash to the runtime world.
   float m_splash_seconds_left{0.0F};
-  /// True once the splash has been replaced by the native main menu.
-  bool m_menu_shown{false};
+  /// True once the splash has been replaced by the stable WorldScene and the
+  /// startup scenario modes (3 -> 2 -> 1) have completed.
+  bool m_startup_complete{false};
 
   bool m_running{true};
   bool m_sdl_initialized{false};

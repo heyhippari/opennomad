@@ -18,24 +18,23 @@ using App::InterfaceHandle;
 using App::InterfaceOpenRequest;
 
 constexpr InterfaceOpenRequest k_menu_request{
-    .interface_id = InterfaceDispatcher::k_main_menu_interface, .operand_b = -1, .operand_c = 19};
+    .interface_id = 29, .operand_b = -1, .operand_c = 19};
 
 }  // namespace
 
 TEST_SUITE("Core::Interface::InterfaceDispatcher") {
-  TEST_CASE("interface 29 without a wired sink is unsupported and never active") {
+  TEST_CASE("an open request without a wired sink is unsupported") {
     InterfaceDispatcher dispatcher;
 
     const auto result{dispatcher.open(k_menu_request)};
     REQUIRE_FALSE(result.has_value());
-    CHECK_FALSE(dispatcher.main_menu_active());
+    CHECK(result.error().find("no interface open sink") != std::string::npos);
   }
 
-  TEST_CASE("a successful sink activates the main menu and returns the handle") {
+  TEST_CASE("a successful sink returns the handle and records the request") {
     InterfaceDispatcher dispatcher;
     std::vector<InterfaceOpenRequest> received;
-    const InterfaceHandle handle{.interface_id = InterfaceDispatcher::k_main_menu_interface,
-        .generation = 3};
+    const InterfaceHandle handle{.interface_id = 29, .generation = 3};
     dispatcher.set_interface_open_sink(
         [&received, handle](const InterfaceOpenRequest& request)
             -> std::expected<InterfaceHandle, std::string> {
@@ -47,28 +46,25 @@ TEST_SUITE("Core::Interface::InterfaceDispatcher") {
     REQUIRE(result.has_value());
     CHECK(result.value() == handle);
     REQUIRE_EQ(received.size(), 1U);
-    CHECK_EQ(received.at(0).interface_id, InterfaceDispatcher::k_main_menu_interface);
+    CHECK_EQ(received.at(0).interface_id, 29U);
     CHECK_EQ(received.at(0).operand_b, -1);
     CHECK_EQ(received.at(0).operand_c, 19);
-    CHECK(dispatcher.main_menu_active());
-    CHECK(dispatcher.active_handle() == handle);
-    CHECK_EQ(dispatcher.last_request().interface_id, InterfaceDispatcher::k_main_menu_interface);
+    CHECK_EQ(dispatcher.last_request().interface_id, 29U);
   }
 
-  TEST_CASE("a failing sink reports its error and never activates the menu") {
+  TEST_CASE("a failing sink reports its error") {
     InterfaceDispatcher dispatcher;
     dispatcher.set_interface_open_sink([](const InterfaceOpenRequest& /*request*/)
                                            -> std::expected<InterfaceHandle, std::string> {
-      return std::expected<InterfaceHandle, std::string>{std::unexpect, "menu construction failed"};
+      return std::expected<InterfaceHandle, std::string>{std::unexpect, "open failed"};
     });
 
     const auto result{dispatcher.open(k_menu_request)};
     REQUIRE_FALSE(result.has_value());
-    CHECK(result.error().find("menu construction failed") != std::string::npos);
-    CHECK_FALSE(dispatcher.main_menu_active());
+    CHECK(result.error().find("open failed") != std::string::npos);
   }
 
-  TEST_CASE("a non-menu interface delegates to the sink without activating the menu") {
+  TEST_CASE("any interface ID delegates to the sink unchanged") {
     InterfaceDispatcher dispatcher;
     std::uint16_t received_id{0};
     dispatcher.set_interface_open_sink(
@@ -81,68 +77,29 @@ TEST_SUITE("Core::Interface::InterfaceDispatcher") {
     const auto result{dispatcher.open(InterfaceOpenRequest{.interface_id = 7})};
     REQUIRE(result.has_value());
     CHECK_EQ(received_id, 7U);
-    CHECK_FALSE(dispatcher.main_menu_active());
   }
 
-  TEST_CASE("the preliminary interface 29 instance is independent of the final menu") {
+  TEST_CASE("a completion is forwarded to the completion sink verbatim") {
     InterfaceDispatcher dispatcher;
-
-    CHECK_FALSE(dispatcher.preliminary_29_active());
-    dispatcher.open_preliminary_29();
-    CHECK(dispatcher.preliminary_29_active());
-    CHECK_FALSE(dispatcher.main_menu_active());
-    dispatcher.close_preliminary_29();
-    CHECK_FALSE(dispatcher.preliminary_29_active());
-  }
-
-  TEST_CASE("a matching completion deactivates the menu and forwards to the sink") {
-    InterfaceDispatcher dispatcher;
-    const InterfaceHandle handle{.interface_id = InterfaceDispatcher::k_main_menu_interface,
-        .generation = 5};
-    dispatcher.set_interface_open_sink(
-        [handle](const InterfaceOpenRequest&) -> std::expected<InterfaceHandle, std::string> {
-          return handle;
-        });
-
     std::vector<InterfaceCompletion> completions;
     dispatcher.set_interface_completion_sink(
         [&completions](const InterfaceCompletion& completion) {
           completions.push_back(completion);
         });
 
-    REQUIRE(dispatcher.open(k_menu_request).has_value());
-    CHECK(dispatcher.main_menu_active());
-
-    dispatcher.notify_completion(InterfaceCompletion{.handle = handle, .result = 0});
-    CHECK_FALSE(dispatcher.main_menu_active());
-    CHECK_FALSE(dispatcher.active_handle().has_value());
+    const InterfaceCompletion completion{
+        .handle = InterfaceHandle{.interface_id = 29, .generation = 5}, .result = 0};
+    dispatcher.notify_completion(completion);
     REQUIRE_EQ(completions.size(), 1U);
-    CHECK(completions.at(0).handle == handle);
+    CHECK(completions.at(0).handle == completion.handle);
+    CHECK_EQ(completions.at(0).result, 0);
   }
 
-  TEST_CASE("a stale completion is rejected and never forwards") {
+  TEST_CASE("a completion without a wired sink is a harmless no-op") {
     InterfaceDispatcher dispatcher;
-    const InterfaceHandle handle{.interface_id = InterfaceDispatcher::k_main_menu_interface,
-        .generation = 5};
-    dispatcher.set_interface_open_sink(
-        [handle](const InterfaceOpenRequest&) -> std::expected<InterfaceHandle, std::string> {
-          return handle;
-        });
-
-    std::size_t forwarded{0};
-    dispatcher.set_interface_completion_sink(
-        [&forwarded](const InterfaceCompletion& /*completion*/) { ++forwarded; });
-
-    REQUIRE(dispatcher.open(k_menu_request).has_value());
-    CHECK(dispatcher.main_menu_active());
-
-    const InterfaceCompletion stale{
-        .handle = InterfaceHandle{.interface_id = InterfaceDispatcher::k_main_menu_interface,
-            .generation = 99},
-        .result = 0};
-    dispatcher.notify_completion(stale);
-    CHECK(dispatcher.main_menu_active());  // Still active: stale ignored.
-    CHECK_EQ(forwarded, 0U);
+    dispatcher.notify_completion(
+        InterfaceCompletion{.handle = InterfaceHandle{.interface_id = 29, .generation = 1},
+            .result = 0});
   }
 }
 

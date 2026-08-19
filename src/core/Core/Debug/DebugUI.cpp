@@ -32,7 +32,7 @@
 #include "Core/Interface/InterfaceManager.hpp"
 #include "Core/Interface/I2DModel.hpp"
 #include "Core/Log.hpp"
-#include "Core/ModelScene.hpp"
+#include "Core/ModelViewerScene.hpp"
 #include "Core/Omikron/IamArea.hpp"
 #include "Core/Omikron/Model3DO.hpp"
 #include "Core/Omikron/SCX.hpp"
@@ -643,7 +643,7 @@ void DebugUI::show_opengl_state() {
 void DebugUI::show_overlays() {
   ImGui::Begin("Overlays", &m_show_overlays);
 
-  auto* scene{dynamic_cast<ModelScene*>(m_context.scene)};
+  auto* scene{dynamic_cast<ModelViewerScene*>(m_context.scene)};
   if (scene == nullptr) {
     ImGui::TextUnformatted("Requires a 3D model scene.");
     ImGui::End();
@@ -678,13 +678,13 @@ void DebugUI::show_sprite_inspector(const float delta_time) {
 
   ScenarioRuntime* runtime{m_context.scenario_manager == nullptr
                                ? nullptr
-                               : m_context.scenario_manager->scenario_runtime()};
+                               : m_context.scenario_manager->gameplay_runtime()};
   if (runtime == nullptr) {
     ImGui::TextUnformatted("Sprite runtime not available.");
     ImGui::End();
     return;
   }
-  auto* scene{dynamic_cast<ModelScene*>(m_context.scene)};
+  auto* scene{dynamic_cast<ModelViewerScene*>(m_context.scene)};
 
   if (ImGui::BeginTabBar("SpriteTabs")) {
     if (ImGui::BeginTabItem("Resources")) {
@@ -713,7 +713,7 @@ void DebugUI::show_sprite_inspector(const float delta_time) {
   ImGui::End();
 }
 
-void DebugUI::show_sprite_resources_tab(ScenarioRuntime& runtime, ModelScene* const scene) {
+void DebugUI::show_sprite_resources_tab(ScenarioRuntime& runtime, ModelViewerScene* const scene) {
   ImGui::Text("Select an embedded effect resource, then spawn an instance.");
   ImGui::Text("Decoding is lazy: the resource loads on the first spawn.");
   if (ImGui::Button("Spawn from selected resource")) {
@@ -754,7 +754,7 @@ void DebugUI::show_sprite_resources_tab(ScenarioRuntime& runtime, ModelScene* co
 }
 
 void DebugUI::show_sprite_instances_tab(ScenarioRuntime& runtime,
-    ModelScene* const scene,
+    ModelViewerScene* const scene,
     const float delta_time) {
   Sprite::SpritePool& pool{runtime.sprite_pool()};
 
@@ -1012,7 +1012,7 @@ void DebugUI::show_sprite_frames_tab(ScenarioRuntime& runtime) {
   }
 }
 
-void DebugUI::show_sprite_queue_tab(ModelScene& scene) {  const Sprite::SpriteQueueStats& stats{scene.sprite_queue_stats()};
+void DebugUI::show_sprite_queue_tab(ModelViewerScene& scene) {  const Sprite::SpriteQueueStats& stats{scene.sprite_queue_stats()};
   ImGui::Text("Attached %lu | visible %lu | drawn %lu | culled %lu | invalid %lu",
       static_cast<unsigned long>(stats.attached),
       static_cast<unsigned long>(stats.visible),
@@ -1142,7 +1142,7 @@ void DebugUI::show_script_debugger() {
 
   ScenarioRuntime* scenario_runtime{m_context.scenario_manager == nullptr
                                        ? nullptr
-                                       : m_context.scenario_manager->scenario_runtime()};
+                                       : m_context.scenario_manager->gameplay_runtime()};
   if (scenario_runtime == nullptr) {
     ImGui::TextUnformatted("Scenario runtime not available.");
     ImGui::End();
@@ -1873,8 +1873,8 @@ void DebugUI::show_interface() {
     return;
   }
   const InterfaceDispatcher& dispatcher{engine->dispatcher()};
-  ImGui::Text("Main menu active: %s", dispatcher.main_menu_active() ? "yes" : "no");
-  ImGui::Text("Preliminary 29 active: %s", dispatcher.preliminary_29_active() ? "yes" : "no");
+  ImGui::Text("Main menu active: %s", engine->main_menu_active() ? "yes" : "no");
+  ImGui::Text("Preliminary 29 active: %s", engine->preliminary_29_active() ? "yes" : "no");
   const InterfaceOpenRequest& request{dispatcher.last_request()};
   ImGui::Text("Last request: id %u b %d c %d",
       static_cast<unsigned int>(request.interface_id),
@@ -1888,7 +1888,7 @@ void DebugUI::show_interface() {
   }
 
   ImGui::SeparatorText("I2D Inspector");
-  const Interface::InterfaceInstance* instance{manager->instance()};
+  const Interface::InterfaceInstance* instance{manager->focused_instance()};
   if (instance == nullptr || instance->descriptor == nullptr) {
     ImGui::TextUnformatted("No active interface.");
     ImGui::End();

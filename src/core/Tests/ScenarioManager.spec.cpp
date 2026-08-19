@@ -530,6 +530,82 @@ TEST_SUITE("Core::Scenario::ScenarioManager") {
     CHECK(manager.world_contexts()[1].residency == App::WorldSceneResidencyState::Free);
     CHECK_EQ(manager.loaded_scenario_count(), 0U);
   }
+
+  TEST_CASE("Boot installs a gameplay runtime and one world runtime, context 1 has none") {
+    const TempDirectory temp;
+    write_boot_fixtures(temp);
+    const ScopedGameDataRoot root{temp.root()};
+
+    App::ScenarioManager manager;
+    REQUIRE(manager.initialize_boot_scenarios().has_value());
+
+    CHECK(manager.gameplay_runtime() != nullptr);
+    CHECK(manager.world_runtime(0) != nullptr);
+    CHECK(manager.world_runtime(1) == nullptr);
+    CHECK_EQ(manager.active_script_instances_total(), 0U);  // All templates inactive.
+  }
+
+  TEST_CASE("Replacing the gameplay mode rebuilds the gameplay runtime, not the world runtime") {
+    const TempDirectory temp;
+    write_boot_fixtures(temp);
+    write_bytes(temp.root() / "SCPTDATA" / "shoot2.scx", make_script_scx(2));
+    const ScopedGameDataRoot root{temp.root()};
+
+    App::ScenarioManager manager;
+    REQUIRE(manager.initialize_boot_scenarios().has_value());
+
+    App::ScenarioRuntime* gameplay_before{manager.gameplay_runtime()};
+    App::ScenarioRuntime* world_before{manager.world_runtime(0)};
+    REQUIRE(gameplay_before != nullptr);
+    REQUIRE(world_before != nullptr);
+
+    REQUIRE(manager.set_gameplay_mode(App::GameplayMode::FirstPersonShooting).has_value());
+
+    CHECK(manager.gameplay_runtime() != gameplay_before);
+    CHECK(manager.world_runtime(0) == world_before);  // World context untouched.
+    CHECK(manager.world_contexts()[0].residency == App::WorldSceneResidencyState::LoadedActive);
+  }
+
+  TEST_CASE("World unload destroys the world runtime and advances the generation") {
+    const TempDirectory temp;
+    write_boot_fixtures(temp);
+    const ScopedGameDataRoot root{temp.root()};
+
+    App::ScenarioManager manager;
+    REQUIRE(manager.initialize_boot_scenarios().has_value());
+
+    REQUIRE(manager.world_runtime(0) != nullptr);
+    const std::uint32_t generation_before{manager.world_contexts()[0].generation};
+
+    REQUIRE(manager.deactivate_world_context(0).has_value());
+    REQUIRE(manager.unload_world_context(0).has_value());
+
+    CHECK(manager.world_runtime(0) == nullptr);
+    CHECK(manager.world_contexts()[0].residency == App::WorldSceneResidencyState::Free);
+    CHECK_EQ(manager.world_contexts()[0].generation, generation_before + 1U);
+  }
+
+  TEST_CASE("Recycling a LoadedInactive slot destroys the old runtime and creates a new one") {
+    const TempDirectory temp;
+    write_bytes(temp.root() / "SCPTDATA" / "A.SCX", make_script_scx(1));
+    write_bytes(temp.root() / "SCPTDATA" / "B.SCX", make_script_scx(1));
+    write_bytes(temp.root() / "SCPTDATA" / "C.SCX", make_script_scx(1));
+    const ScopedGameDataRoot root{temp.root()};
+
+    App::ScenarioManager manager;
+    REQUIRE(manager.load_world_context(1, std::nullopt, "SCPTDATA/A.SCX").has_value());
+    App::ScenarioRuntime* old_runtime{manager.world_runtime(1)};
+    REQUIRE(old_runtime != nullptr);
+
+    REQUIRE(manager.load_world_context(2, std::nullopt, "SCPTDATA/B.SCX").has_value());
+    // Both contexts resident; loading C recycles the lowest-index inactive
+    // context 0 (scene 1), destroying its runtime.
+    REQUIRE(manager.load_world_context(3, std::nullopt, "SCPTDATA/C.SCX").has_value());
+
+    CHECK(manager.world_runtime(1) == nullptr);
+    CHECK(manager.world_runtime(3) != nullptr);
+    CHECK(manager.world_runtime(3) != old_runtime);
+  }
 }
 
 // NOLINTEND(misc-use-anonymous-namespace, cppcoreguidelines-avoid-do-while, cert-err33-c,

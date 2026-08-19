@@ -15,14 +15,14 @@ A frame flows through the application in this order:
 4. `Window::end_frame()` draws the ImGui UI on top and presents the backbuffer.
 
 At startup the active scene is `SplashScene`, which shows `IMAGES/OMIKRON.BMP` (centred,
-contain-fit) for five seconds while `ModelScene` is preloaded; the application then swaps
+contain-fit) for five seconds while `ModelViewerScene` is preloaded; the application then swaps
 scenes and the splash's GL resources are released with it.
 
-The scene (`ModelScene`) loads the effect model `EFFECTS2_SMOKE2.3DO` embedded in the scenario
+The scene (`ModelViewerScene`) loads the effect model `EFFECTS2_SMOKE2.3DO` embedded in the scenario
 package `SCPTDATA/aventure.SCX` (indexed by the `Core::Omikron::SCX` reader and decoded through
 the same `Model3DO` / `Texture3DT` pipeline) and renders it with a free-flying camera
 (WASD + mouse look), exercising mirrors, environment-mapped meshes and skyboxes when the model
-carries those flags. Standalone loading (`ModelScene::create()`) still reads
+carries those flags. Standalone loading (`ModelViewerScene::create()`) still reads
 `MESHES/DECORS/Anekbah.3DO` with its `.3DT` sidecar.
 
 ## Omikron game data
@@ -116,7 +116,7 @@ decodes into `Omikron::Light` entries:
 | BGRA colour | Source colour bytes. |
 | six points | Slot 0 = light position, slot 1 = target (spot direction); slots 2–5 are cone/frustum shape data and unused. |
 
-Following the reference importer's interpretation, `ModelScene` turns each record into a spot
+Following the reference importer's interpretation, `ModelViewerScene` turns each record into a spot
 light: position = point 0, direction = point 1 − point 0, cone = 40° full hotspot fading to
 120° full falloff, linear attenuation between start and end, and colour × intensity ×
 `k_light_intensity_scale` (2.0 by default). Lights whose target coincides with their position
@@ -135,7 +135,7 @@ Embedded effect resources from `SCPTDATA/aventure.SCX` render as camera-facing b
 through the sprite system in `Core/Sprite/` (see docs/ReverseEngineering.md for the recovered
 Runtime semantics). The flow:
 
-1. `ModelScene::create_from_scx` parses the SCX container, loads the static Anekbah level as a
+1. `ModelViewerScene::create_from_scx` parses the SCX container, loads the static Anekbah level as a
    backdrop, and registers the 20 embedded effects as lazy `SpriteResource`s.
 2. `SpritePool` holds `SpriteInstance`s behind generation-counted `SpriteHandle`s; instances
    attach to the scene's render list (head-inserted, like the original) and are destroyed
@@ -163,7 +163,7 @@ Intended next steps for a full game pipeline, none of which require redesigning 
 - Animation playback (ANIMS) driving the skinned character meshes.
 - Level geometry import (MAP2D) feeding `Mesh` with larger vertex/index arrays.
 - Multiple scenes (menu, world, cutscene) swapped through the existing `Scene` interface.
-- A transform/scene-graph layer replacing the ad-hoc model matrix in `ModelScene::render()`.
+- A transform/scene-graph layer replacing the ad-hoc model matrix in `ModelViewerScene::render()`.
 - Orthographic and screen-space passes (e.g. for a software-rendered-style HUD).
 
 ## Notes

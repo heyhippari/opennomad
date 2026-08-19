@@ -1,7 +1,7 @@
 #include "Core/Interface/I2DRenderer.hpp"
 
 // NOLINTBEGIN(misc-include-cleaner)
-// glm follows a single-include convention (see ModelScene.cpp); clang-tidy
+// glm follows a single-include convention (see ModelViewerScene.cpp); clang-tidy
 // cannot trace each symbol back to a direct sub-header.
 #include <glad/glad.h>
 #include <glm/glm.hpp>

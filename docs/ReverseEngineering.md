@@ -288,7 +288,7 @@ through. Pinned by `ScriptRuntimeTest`.
 
 ### XYZ pointer pool (deferred)
 
-The XYZ-pointer pool is not parsed yet (it is not part of DEAD0002). `ModelScene::resolve_position`
+The XYZ-pointer pool is not parsed yet (it is not part of DEAD0002). `ModelViewerScene::resolve_position`
 falls back to the current model/3DO transform translation (the backdrop centre) for every index,
 logging once. The out-of-range-pause safety behaviour exists behind this fallback and is tested at
 the runtime level. Parsing the XYZ pool is a separate checkpoint.

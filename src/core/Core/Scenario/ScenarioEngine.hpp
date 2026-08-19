@@ -7,6 +7,7 @@
 #include <unordered_map>
 
 #include "Core/Omikron/IamArea.hpp"
+#include "Core/Omikron/Model3DO.hpp"
 #include "Core/Scenario/ScenarioManager.hpp"
 #include "Core/Scenario/ScenarioStartupController.hpp"
 #include "Core/Startup/StartupTraceRecorder.hpp"
@@ -52,11 +53,11 @@ class ScenarioEngine {
   /// music sink (opcode 0x67).
   void set_audio_system(Audio::AudioSystem* audio);
 
-  /// Per-frame scenario scheduler update: continues the active AREA script
-  /// across frames without re-entering a scenario mode or re-recording the
-  /// mode begin/complete trace events. No-op until a new session is
-  /// initialized.
-  [[nodiscard]] std::expected<void, std::string> update();
+  /// Per-frame scenario scheduler update: advances the active AREA script
+  /// and then ticks the gameplay-mode runtime and every LoadedActive world
+  /// runtime with the real application delta in seconds. No-op until a new
+  /// session is initialized.
+  [[nodiscard]] std::expected<void, std::string> update(float delta_seconds);
 
   /// Delivers a deferred interface completion to the dispatcher (updating the
   /// main-menu lifecycle) and resumes the waiting AREA script.
@@ -67,6 +68,27 @@ class ScenarioEngine {
   }
   [[nodiscard]] const InterfaceDispatcher& dispatcher() const {
     return m_startup.dispatcher();
+  }
+
+  /// Opens the preliminary interface 29 phase shown while the splash runs.
+  void open_preliminary_29() {
+    m_startup.open_preliminary_29();
+  }
+  /// Closes the preliminary interface 29 phase (idempotent).
+  void close_preliminary_29() {
+    m_startup.close_preliminary_29();
+  }
+  /// True while the preliminary splash interface 29 phase is open.
+  [[nodiscard]] bool preliminary_29_active() const {
+    return m_startup.preliminary_29_active();
+  }
+  /// True once the AREA script has opened interface 29 (the main menu).
+  [[nodiscard]] bool main_menu_active() const {
+    return m_startup.main_menu_active();
+  }
+  /// The handle of the active main-menu instance, or nullopt when none.
+  [[nodiscard]] std::optional<InterfaceHandle> active_handle() const {
+    return m_startup.active_handle();
   }
 
   [[nodiscard]] ScenarioManager& manager() {
@@ -106,9 +128,9 @@ class ScenarioEngine {
   [[nodiscard]] const std::string& grid_3do_state() const {
     return m_startup.grid_3do_state();
   }
-  [[nodiscard]] const Omikron::Model3DOData* grid_3do_model() const {
-    return m_startup.grid_3do_model();
-  }
+  /// Parsed GRID.3DO decor geometry, sourced from the GRID world context in
+  /// ScenarioManager (CPU ownership lives there, not in startup).
+  [[nodiscard]] const Omikron::Model3DOData* grid_3do_model() const;
   [[nodiscard]] const std::string& last_error() const {
     return m_startup.last_error();
   }

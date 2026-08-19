@@ -9,7 +9,9 @@
 
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Interface/InterfaceDispatcher.hpp"
+#include "Core/Omikron/Model3DO.hpp"
 #include "Core/Scenario/ScenarioManager.hpp"
+#include "Core/Scenario/ScenarioRuntime.hpp"
 #include "Core/Startup/StartupTraceRecorder.hpp"
 
 namespace App {
@@ -29,7 +31,7 @@ std::expected<void, std::string> ScenarioEngine::enter_mode(
       return {};
 
     case ScenarioMode::k_teardown: {
-      m_startup.dispatcher().close_preliminary_29();
+      m_startup.close_preliminary_29();
       m_trace.record("PreliminaryInterface29.Closed");
       m_trace.record("ScenarioMode3.Complete");
       if (auto result{select_permanent_mode_script_impl("ModeScript.Aventure.Reselected")};
@@ -79,13 +81,34 @@ void ScenarioEngine::set_audio_system(Audio::AudioSystem* audio) {
   m_startup.set_audio_system(audio);
 }
 
-std::expected<void, std::string> ScenarioEngine::update() {
+std::expected<void, std::string> ScenarioEngine::update(const float delta_seconds) {
   APP_PROFILE_FUNCTION();
 
   if (!m_startup.initialized()) {
     return {};
   }
-  return m_startup.tick();
+
+  // AREA/event runtime first (recovered order), then the gameplay-mode
+  // runtime, then every LoadedActive world runtime. LoadedInactive contexts
+  // are never ticked by default.
+  if (auto result{m_startup.tick()}; !result) {
+    return result;
+  }
+  if (auto* runtime{m_manager.gameplay_runtime()}) {
+    runtime->tick(delta_seconds);
+  }
+  for (auto* runtime : m_manager.active_world_runtimes()) {
+    runtime->tick(delta_seconds);
+  }
+  return {};
+}
+
+const Omikron::Model3DOData* ScenarioEngine::grid_3do_model() const {
+  const WorldSceneContext* context{m_manager.active_world_context()};
+  if (context != nullptr && context->decor_model.has_value()) {
+    return &*context->decor_model;
+  }
+  return nullptr;
 }
 
 void ScenarioEngine::notify_interface_completion(const InterfaceCompletion& completion) {

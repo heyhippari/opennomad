@@ -1,16 +1,11 @@
 #include "Core/Interface/InterfaceManager.hpp"
 
-#include <SDL3/SDL_error.h>
-#include <SDL3/SDL_iostream.h>
-#include <SDL3/SDL_stdinc.h>
 #include <fmt/format.h>
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
 #include <expected>
-#include <filesystem>
 #include <memory>
 #include <optional>
 #include <span>
@@ -20,6 +15,7 @@
 #include <vector>
 
 #include "Core/Debug/Instrumentor.hpp"
+#include "Core/GameDataLoader.hpp"
 #include "Core/Input/InputAction.hpp"
 #include "Core/Input/InputManager.hpp"
 #include "Core/Interface/I2DBumpBackground.hpp"
@@ -31,7 +27,6 @@
 #include "Core/Log.hpp"
 #include "Core/Omikron/BmpImage.hpp"
 #include "Core/Omikron/IamStringTable.hpp"
-#include "Core/Resources.hpp"
 #include "Core/Texture.hpp"
 
 namespace App::Interface {
@@ -63,26 +58,12 @@ std::string string_table_path(const std::string_view name) {
 std::expected<std::vector<std::byte>, std::string> read_file(const std::string& relative_path) {
   APP_PROFILE_FUNCTION();
 
-  const std::filesystem::path root_relative{Resources::game_data_path(
-      std::filesystem::path{relative_path})};
-  const std::filesystem::path resolved{Resources::resolve_case_insensitive(root_relative)};
-
-  std::size_t size{0};
-  void* raw{SDL_LoadFile(resolved.string().c_str(), &size)};
-  if (raw == nullptr) {
-    return std::expected<std::vector<std::byte>, std::string>{std::unexpect,
-        fmt::format("cannot read '{}' (resolved '{}'): {}",
-            relative_path,
-            resolved.string(),
-            SDL_GetError())};
+  auto loaded{load_game_file(relative_path)};
+  if (!loaded) {
+    return std::expected<std::vector<std::byte>, std::string>{
+        std::unexpect, std::move(loaded).error()};
   }
-
-  std::vector<std::byte> bytes(size);
-  if (size > 0) {
-    std::memcpy(bytes.data(), raw, size);
-  }
-  SDL_free(raw);
-  return bytes;
+  return std::move(loaded->bytes);
 }
 
 }  // namespace
@@ -127,8 +108,6 @@ std::expected<InterfaceHandle, std::string> InterfaceManager::open(
         fmt::format("interface {} is unsupported", interface_id)};
   }
 
-  close();
-
   App::Log::info("[I2D] opening interface {} \"{}\"", descriptor->id, descriptor->name);
 
   if (!m_renderer) {
@@ -140,9 +119,11 @@ std::expected<InterfaceHandle, std::string> InterfaceManager::open(
     }
   }
 
-  InterfaceInstance instance;
-  instance.descriptor = descriptor;
-  instance.open_request = request;
+  // Build the instance on the stack first: a failure must not leave a
+  // half-constructed instance in the resident set.
+  auto instance{std::make_unique<InterfaceInstance>()};
+  instance->descriptor = descriptor;
+  instance->open_request = request;
 
   // Descriptor bitmap resource (I2D/bitmaps/<name>).
   if (!descriptor->bitmap_name.empty()) {
@@ -163,7 +144,7 @@ std::expected<InterfaceHandle, std::string> InterfaceManager::open(
       return std::expected<InterfaceHandle, std::string>{
           std::unexpect, fmt::format("[I2D] bitmap: {}", texture.error())};
     }
-    instance.bitmap.emplace(std::move(texture).value());
+    instance->bitmap.emplace(std::move(texture).value());
     App::Log::info("[I2D] bitmap: {} ({}x{})", path, bmp->width, bmp->height);
   }
 
@@ -181,80 +162,164 @@ std::expected<InterfaceHandle, std::string> InterfaceManager::open(
           std::unexpect, fmt::format("[I2D] strings: {}", table.error())};
     }
     const std::size_t entry_count{table->size()};
-    instance.strings = std::move(table).value();
+    instance->strings = std::move(table).value();
     App::Log::info("[I2D] strings: {} ({} entries)", path, entry_count);
   }
 
-  m_instance.emplace(std::move(instance));
+  // Assign the handle before the descriptor init so interface-specific state
+  // (e.g. a completion action) can address this instance.
+  ++m_generation;
+  instance->handle = InterfaceHandle{.interface_id = interface_id, .generation = m_generation};
+
+  // Resident set before init: the init callback may reference the instance
+  // through create_state(); it must already be reachable.
+  m_instances.push_back(std::move(instance));
+  InterfaceInstance& resident{*m_instances.back()};
 
   // Interface-specific initialization builds the I2D state graph on top of
   // the now-loaded resources.
   if (descriptor->init != nullptr) {
-    descriptor->init(*this, *m_instance);
+    descriptor->init(*this, resident);
   }
 
-  if (m_instance->root_state == nullptr || m_instance->current_state == nullptr) {
+  if (resident.root_state == nullptr || resident.current_state == nullptr) {
     const std::string error{"interface initializer did not establish a root state"};
     App::Log::error("[I2D] {}", error);
-    m_instance.reset();
+    m_instances.pop_back();
     return std::expected<InterfaceHandle, std::string>{std::unexpect, error};
   }
 
-  ++m_generation;
-  m_instance->handle = InterfaceHandle{.interface_id = interface_id, .generation = m_generation};
-  const InterfaceHandle handle{m_instance->handle};
-  App::Log::info("[Interface] opened handle id={} gen={} \"{}\"",
+  const InterfaceHandle handle{resident.handle};
+  m_focused_interface = handle;
+  App::Log::info("[Interface] opened handle id={} gen={} \"{}\" ({} resident)",
       handle.interface_id,
       handle.generation,
-      descriptor->name);
+      descriptor->name,
+      m_instances.size());
   return handle;
 }
 
 void InterfaceManager::close() {
   APP_PROFILE_FUNCTION();
 
-  if (!m_instance.has_value()) {
-    return;
+  while (!m_instances.empty()) {
+    auto instance{std::move(m_instances.back())};
+    m_instances.pop_back();
+    destroy_instance(*instance);
   }
-  const InterfaceDescriptor* descriptor{m_instance->descriptor};
+  m_focused_interface.reset();
+}
+
+void InterfaceManager::close(const InterfaceHandle handle) {
+  APP_PROFILE_FUNCTION();
+
+  for (auto it{m_instances.begin()}; it != m_instances.end(); ++it) {
+    if ((*it)->handle == handle) {
+      destroy_instance(**it);
+      m_instances.erase(it);
+
+      // Re-focus the most recently opened remaining instance (or clear).
+      if (m_focused_interface.has_value() && m_focused_interface.value() == handle) {
+        m_focused_interface.reset();
+        if (!m_instances.empty()) {
+          m_focused_interface = m_instances.back()->handle;
+        }
+      }
+      return;
+    }
+  }
+  // Stale handle: harmless no-op.
+}
+
+void InterfaceManager::destroy_instance(InterfaceInstance& instance) {
+  const InterfaceDescriptor* descriptor{instance.descriptor};
   if (descriptor != nullptr && descriptor->destroy != nullptr) {
-    descriptor->destroy(*this, *m_instance);
+    descriptor->destroy(*this, instance);
   }
   App::Log::info("[I2D] closing interface {} \"{}\"",
       descriptor != nullptr ? descriptor->id : -1,
       descriptor != nullptr ? descriptor->name : "?");
   App::Log::info("[Interface] closed handle id={} gen={}",
-      m_instance->handle.interface_id,
-      m_instance->handle.generation);
-  m_instance.reset();
+      instance.handle.interface_id,
+      instance.handle.generation);
 }
 
-void InterfaceManager::request_completion(const std::int16_t result) {
-  if (!m_instance.has_value()) {
+bool InterfaceManager::contains(const InterfaceHandle handle) const {
+  return find(handle) != nullptr;
+}
+
+InterfaceInstance* InterfaceManager::find(const InterfaceHandle handle) {
+  for (const auto& instance : m_instances) {
+    if (instance->handle == handle) {
+      return instance.get();
+    }
+  }
+  return nullptr;
+}
+
+const InterfaceInstance* InterfaceManager::find(const InterfaceHandle handle) const {
+  for (const auto& instance : m_instances) {
+    if (instance->handle == handle) {
+      return instance.get();
+    }
+  }
+  return nullptr;
+}
+
+void InterfaceManager::set_focused(const InterfaceHandle handle) {
+  if (contains(handle)) {
+    m_focused_interface = handle;
+  }
+}
+
+const InterfaceInstance* InterfaceManager::instance_at(const std::size_t index) const {
+  if (index >= m_instances.size()) {
+    return nullptr;
+  }
+  return m_instances.at(index).get();
+}
+
+const InterfaceInstance* InterfaceManager::focused_instance() const {
+  if (!m_focused_interface.has_value()) {
+    return nullptr;
+  }
+  return find(m_focused_interface.value());
+}
+
+InterfaceInstance* InterfaceManager::focused_instance_mut() {
+  if (!m_focused_interface.has_value()) {
+    return nullptr;
+  }
+  return find(m_focused_interface.value());
+}
+
+void InterfaceManager::request_completion(const InterfaceHandle handle, const std::int16_t result) {
+  if (!contains(handle)) {
     return;
   }
-  m_pending_completion =
-      InterfaceCompletion{.handle = m_instance->handle, .result = result};
+  m_completions.push_back(InterfaceCompletion{.handle = handle, .result = result});
   App::Log::info("[Interface] completion requested handle id={} gen={} result={}",
-      m_instance->handle.interface_id,
-      m_instance->handle.generation,
+      handle.interface_id,
+      handle.generation,
       result);
 }
 
 std::optional<InterfaceCompletion> InterfaceManager::take_completion() {
-  std::optional<InterfaceCompletion> result{m_pending_completion};
-  m_pending_completion.reset();
-  return result;
+  if (m_completions.empty()) {
+    return std::nullopt;
+  }
+  InterfaceCompletion completion{m_completions.front()};
+  m_completions.pop_front();
+  return completion;
 }
 
 void InterfaceManager::update(const float delta_time, const Input::InputManager& input) {
   APP_PROFILE_FUNCTION();
 
-  if (!m_instance.has_value()) {
-    return;
-  }
-  if (m_instance->current_state != nullptr && m_instance->current_state->background != nullptr) {
-    m_instance->current_state->background->update(delta_time);
+  for (const auto& instance : m_instances) {
+    if (instance->current_state != nullptr && instance->current_state->background != nullptr) {
+      instance->current_state->background->update(delta_time);
+    }
   }
   handle_navigation(input);
 }
@@ -262,19 +327,19 @@ void InterfaceManager::update(const float delta_time, const Input::InputManager&
 void InterfaceManager::render(const int pixel_width, const int pixel_height) {
   APP_PROFILE_FUNCTION();
 
-  if (!m_instance.has_value() || m_renderer == nullptr) {
+  if (m_renderer == nullptr) {
     return;
   }
-  m_renderer->render(*m_instance, m_fonts, pixel_width, pixel_height);
+  for (const auto& instance : m_instances) {
+    m_renderer->render(*instance, m_fonts, pixel_width, pixel_height);
+  }
 }
 
-I2DState* InterfaceManager::create_state() {
-  if (!m_instance.has_value()) {
-    return nullptr;
-  }
+// NOLINTNEXTLINE(readability-convert-member-functions-to-static) — descriptor API parity
+I2DState* InterfaceManager::create_state(InterfaceInstance& instance) {
   auto state{std::make_unique<I2DState>()};
   I2DState* raw{state.get()};
-  m_instance->states.push_back(std::move(state));
+  instance.states.push_back(std::move(state));
   return raw;
 }
 
@@ -283,74 +348,78 @@ std::expected<void, std::string> InterfaceManager::load_font(const char key) {
 }
 
 void InterfaceManager::select_previous() {
-  if (!m_instance.has_value() || m_instance->current_state == nullptr) {
+  InterfaceInstance* instance{focused_instance_mut()};
+  if (instance == nullptr || instance->current_state == nullptr) {
     return;
   }
-  std::vector<I2DTextElement*> selectable{selectable_text_elements(*m_instance->current_state)};
+  std::vector<I2DTextElement*> selectable{selectable_text_elements(*instance->current_state)};
   if (selectable.empty()) {
     return;
   }
-  if (m_instance->selected_element == 0U) {
-    m_instance->selected_element = selectable.size() - 1U;
+  if (instance->selected_element == 0U) {
+    instance->selected_element = selectable.size() - 1U;
   } else {
-    --m_instance->selected_element;
+    --instance->selected_element;
   }
   App::Log::info("[I2D] active element: string[{}] \"{}\"",
-      selectable.at(m_instance->selected_element)->string_index,
-      m_instance->strings.at(selectable.at(m_instance->selected_element)->string_index));
+      selectable.at(instance->selected_element)->string_index,
+      instance->strings.at(selectable.at(instance->selected_element)->string_index));
 }
 
 void InterfaceManager::select_next() {
-  if (!m_instance.has_value() || m_instance->current_state == nullptr) {
+  InterfaceInstance* instance{focused_instance_mut()};
+  if (instance == nullptr || instance->current_state == nullptr) {
     return;
   }
-  std::vector<I2DTextElement*> selectable{selectable_text_elements(*m_instance->current_state)};
+  std::vector<I2DTextElement*> selectable{selectable_text_elements(*instance->current_state)};
   if (selectable.empty()) {
     return;
   }
-  m_instance->selected_element = (m_instance->selected_element + 1U) % selectable.size();
+  instance->selected_element = (instance->selected_element + 1U) % selectable.size();
   App::Log::info("[I2D] active element: string[{}] \"{}\"",
-      selectable.at(m_instance->selected_element)->string_index,
-      m_instance->strings.at(selectable.at(m_instance->selected_element)->string_index));
+      selectable.at(instance->selected_element)->string_index,
+      instance->strings.at(selectable.at(instance->selected_element)->string_index));
 }
 
 void InterfaceManager::confirm() {
-  if (!m_instance.has_value() || m_instance->current_state == nullptr) {
+  InterfaceInstance* instance{focused_instance_mut()};
+  if (instance == nullptr || instance->current_state == nullptr) {
     return;
   }
-  std::vector<I2DTextElement*> selectable{selectable_text_elements(*m_instance->current_state)};
+  std::vector<I2DTextElement*> selectable{selectable_text_elements(*instance->current_state)};
   if (selectable.empty()) {
     return;
   }
-  I2DTextElement* selected{selectable.at(m_instance->selected_element)};
+  I2DTextElement* selected{selectable.at(instance->selected_element)};
   I2DState* target{selected->target_state};
   if (target == nullptr) {
     return;  // Not selectable (should not happen for a selectable element).
   }
   App::Log::info("[I2D] activate: string[{}] \"{}\" -> child state",
       selected->string_index,
-      m_instance->strings.at(selected->string_index));
+      instance->strings.at(selected->string_index));
   if (target->on_enter) {
     // A state-specific enter action (e.g. queueing an interface completion)
     // owns the transition; the generic path must not also switch states.
-    target->on_enter(*this, *m_instance, *target);
+    target->on_enter(*this, *instance, *target);
     return;
   }
   // Generic child-state transition (no enter action).
-  m_instance->current_state = target;
-  m_instance->selected_element = 0U;
+  instance->current_state = target;
+  instance->selected_element = 0U;
 }
 
 void InterfaceManager::cancel() {
-  if (!m_instance.has_value() || m_instance->current_state == nullptr) {
+  InterfaceInstance* instance{focused_instance_mut()};
+  if (instance == nullptr || instance->current_state == nullptr) {
     return;
   }
-  if (m_instance->current_state->parent == nullptr) {
+  if (instance->current_state->parent == nullptr) {
     App::Log::debug("[I2D] cancel: already at the root state");
     return;
   }
-  m_instance->current_state = m_instance->current_state->parent;
-  m_instance->selected_element = 0U;
+  instance->current_state = instance->current_state->parent;
+  instance->selected_element = 0U;
   App::Log::info("[I2D] returned to parent state");
 }
 
@@ -381,11 +450,11 @@ namespace {
 void initialize_start_menu(InterfaceManager& manager, InterfaceInstance& instance) {
   App::Log::info("[I2D] initializing START MENU root state");
 
-  I2DState* root{manager.create_state()};
-  I2DState* new_game{manager.create_state()};
-  I2DState* load_game{manager.create_state()};
-  I2DState* options{manager.create_state()};
-  I2DState* quit{manager.create_state()};
+  I2DState* root{manager.create_state(instance)};
+  I2DState* new_game{manager.create_state(instance)};
+  I2DState* load_game{manager.create_state(instance)};
+  I2DState* options{manager.create_state(instance)};
+  I2DState* quit{manager.create_state(instance)};
   if (root == nullptr || new_game == nullptr || load_game == nullptr || options == nullptr ||
       quit == nullptr) {
     App::Log::error("[I2D] failed to allocate the START MENU state graph");
@@ -397,12 +466,13 @@ void initialize_start_menu(InterfaceManager& manager, InterfaceInstance& instanc
   options->parent = root;
   quit->parent = root;
 
-  // New Game completes interface 29. The result value is provisional and
-  // clearly documented; the important behavior is that the waiting AREA
-  // script resumes (which starts track 87 through opcode 0x67). Track 87 is
-  // never started directly here.
-  new_game->on_enter = [](InterfaceManager& manager_ref, InterfaceInstance&, I2DState&) {
-    manager_ref.request_completion(/*provisional result*/ 0);
+  // New Game completes this interface instance. The result value is
+  // provisional and clearly documented; the important behavior is that the
+  // waiting AREA script resumes (which starts track 87 through opcode 0x67).
+  // Track 87 is never started directly here.
+  new_game->on_enter = [](InterfaceManager& manager_ref, InterfaceInstance& instance_ref,
+                          I2DState&) {
+    manager_ref.request_completion(instance_ref.handle, /*provisional result*/ 0);
   };
 
   // Animated background: IMAGES/CLOUD.BMP. Missing source degrades to no

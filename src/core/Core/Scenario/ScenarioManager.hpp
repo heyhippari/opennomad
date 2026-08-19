@@ -11,6 +11,7 @@
 #include <string_view>
 #include <vector>
 
+#include "Core/Omikron/Model3DO.hpp"
 #include "Core/Omikron/SCX.hpp"
 
 namespace App::Script {
@@ -136,8 +137,16 @@ struct WorldSceneContext {
   /// Last load/parse error (kept for the inspector).
   std::string last_error;
 
-  // Future: world model ownership will be added here when decor associations
-  // are established and decoded.
+  /// CPU-side decor (level) model owned by this context. Loaded from the
+  /// resolved decor path; nullopt when the context has no decor or its load
+  /// failed. GL resources are never built here — presentation (WorldScene /
+  /// a future WorldRenderer) reads this CPU data.
+  std::optional<Omikron::Model3DOData> decor_model;
+
+  /// Per-context mutable scenario runtime (script runtime, sprite pool, sound
+  /// resources). Owned here so each SCX slot keeps its own state; built
+  /// transactionally before the context is installed.
+  std::unique_ptr<ScenarioRuntime> runtime;
 };
 
 /// Represents one scenario slot (gameplay-mode or world-context) for
@@ -232,6 +241,11 @@ class ScenarioManager {
   [[nodiscard]] WorldSceneContext* find_world_context(std::uint32_t scene_id);
   [[nodiscard]] const WorldSceneContext* find_world_context(std::uint32_t scene_id) const;
 
+  /// The currently attached (LoadedActive) world context, or nullptr when no
+  /// context is active. This is the presentation target of WorldScene.
+  [[nodiscard]] WorldSceneContext* active_world_context();
+  [[nodiscard]] const WorldSceneContext* active_world_context() const;
+
   /// Snapshot of all world context entries (for inspection).
   [[nodiscard]] std::span<const WorldSceneContext, 2> world_contexts() const;
 
@@ -258,12 +272,21 @@ class ScenarioManager {
   /// Count of active script instances across all loaded scenarios.
   [[nodiscard]] std::size_t active_script_instances_total() const;
 
-  /// Scene-independent gameplay runtime (sprite pool, script runtime, sound
-  /// resources) built from the current gameplay-mode scenario. Null until a
-  /// gameplay-mode scenario is installed. ModelScene and the debug tools read
-  /// from this so sprite/script state exists without a 3D scene.
-  [[nodiscard]] ScenarioRuntime* scenario_runtime();
-  [[nodiscard]] const ScenarioRuntime* scenario_runtime() const;
+  /// Mutable gameplay-mode scenario runtime (sprite pool, script runtime,
+  /// sound resources) built from the current gameplay-mode scenario. Null
+  /// until a gameplay-mode scenario is installed. ModelViewerScene (the development
+  /// viewer) and the debug tools read from this so sprite/script state exists
+  /// without a 3D scene.
+  [[nodiscard]] ScenarioRuntime* gameplay_runtime() const;
+
+  /// Mutable scenario runtime of a world context, or nullptr when the context
+  /// is not loaded. World-context scripts belong to this runtime, not the
+  /// gameplay-mode runtime.
+  [[nodiscard]] ScenarioRuntime* world_runtime(std::uint32_t scene_id) const;
+
+  /// Mutable scenario runtimes of every LoadedActive world context, for the
+  /// per-frame scheduler. LoadedInactive and Free contexts contribute none.
+  [[nodiscard]] std::vector<ScenarioRuntime*> active_world_runtimes() const;
 
   // --- Audio subsystem integration (future) ---------------------------------
 
@@ -297,16 +320,12 @@ class ScenarioManager {
     std::vector<std::byte> file_buffer;
     std::size_t file_size_bytes{0};
     std::string last_error;
+    /// Mutable scenario runtime owned by this slot (built transactionally).
+    std::unique_ptr<ScenarioRuntime> runtime;
   };
-
-  // Per-scenario resource ownership (ScriptRuntime, audio voices, sprite
-  // instances) will be managed through a future subsystem integration. For
-  // this milestone, scenarios are parsed and prepared but not executed.
 
   GameplayModeSlot m_gameplay_mode_slot;
   std::array<WorldSceneContext, WorldSceneContext::k_capacity> m_world_contexts;
-  /// Scene-independent runtime owning the gameplay-mode sprite/script state.
-  std::unique_ptr<ScenarioRuntime> m_scenario_runtime;
 
   Audio::AudioSystem* m_audio_system{nullptr};  ///< Non-owning.
 
@@ -318,22 +337,34 @@ class ScenarioManager {
   [[nodiscard]] std::expected<LoadedScenario, std::string> load_scenario(
       const std::string& scenario_path);
 
-  /// Atomically installs a loaded mode scenario into the gameplay-mode slot.
-  void install_gameplay_mode(GameplayMode mode, LoadedScenario loaded);
+  /// Builds a scenario runtime (script runtime, sprite pool, sound resources)
+  /// from a loaded package, with all script templates inactive. Returns an
+  /// error without mutating anything when construction fails.
+  [[nodiscard]] std::expected<std::unique_ptr<ScenarioRuntime>, std::string> prepare_runtime(
+      const std::string& scenario_name, const LoadedScenario& loaded);
 
-  /// Tears down the gameplay-mode slot completely (voices/instances stop is
-  /// a future integration point).
+  /// Atomically installs a loaded mode scenario and its runtime into the
+  /// gameplay-mode slot.
+  void install_gameplay_mode(GameplayMode mode,
+      LoadedScenario loaded,
+      std::unique_ptr<ScenarioRuntime> runtime);
+
+  /// Tears down the gameplay-mode slot completely (runtime first, then data).
   void teardown_gameplay_mode_slot();
 
-  /// Atomically installs a loaded scenario into a world context entry.
+  /// Atomically installs a loaded scenario, optional decor and runtime into a
+  /// world context entry.
   void install_world_context(WorldSceneContext& context,
-                             std::uint32_t scene_id,
-                             std::optional<std::string> decor_path,
-                             const std::string& scenario_path,
-                             LoadedScenario loaded,
-                             WorldSceneResidencyState residency);
+      std::uint32_t scene_id,
+      std::optional<std::string> decor_path,
+      std::string resolved_decor_path,
+      std::optional<Omikron::Model3DOData> decor_model,
+      const std::string& scenario_path,
+      LoadedScenario loaded,
+      std::unique_ptr<ScenarioRuntime> runtime,
+      WorldSceneResidencyState residency);
 
-  /// Tears down a world context completely, stopping owned voices/instances.
+  /// Tears down a world context completely (runtime/decor first, then data).
   void teardown_world_context(WorldSceneContext& context);
 
   /// Returns the best target context for allocation:

@@ -1,13 +1,9 @@
 #include "Core/Scenario/ScenarioStartupController.hpp"
 
-#include <SDL3/SDL_error.h>
-#include <SDL3/SDL_iostream.h>
-#include <SDL3/SDL_stdinc.h>
 #include <fmt/format.h>
 
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
 #include <expected>
 #include <filesystem>
 #include <optional>
@@ -21,12 +17,11 @@
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Audio/AudioSystem.hpp"
 #include "Core/Audio/AudioTypes.hpp"
+#include "Core/GameDataLoader.hpp"
 #include "Core/Interface/InterfaceDispatcher.hpp"
 #include "Core/Log.hpp"
 #include "Core/Omikron/IamArea.hpp"
 #include "Core/Omikron/IamStart.hpp"
-#include "Core/Omikron/Model3DO.hpp"
-#include "Core/Resources.hpp"
 #include "Core/Scenario/ScenarioManager.hpp"
 #include "Core/Script/AreaScriptRuntime.hpp"
 #include "Core/Startup/StartupTraceRecorder.hpp"
@@ -78,25 +73,12 @@ std::expected<std::vector<std::byte>, std::string> ScenarioStartupController::re
     const std::string& relative_path) {
   APP_PROFILE_FUNCTION();
 
-  const std::filesystem::path root_relative{Resources::game_data_path(relative_path)};
-  const std::filesystem::path resolved{Resources::resolve_case_insensitive(root_relative)};
-
-  std::size_t size{0};
-  void* raw{SDL_LoadFile(resolved.string().c_str(), &size)};
-  if (raw == nullptr) {
-    return std::expected<std::vector<std::byte>, std::string>{std::unexpect,
-        fmt::format("cannot read '{}' (resolved '{}'): {}",
-            relative_path,
-            resolved.string(),
-            SDL_GetError())};
+  auto loaded{load_game_file(relative_path)};
+  if (!loaded) {
+    return std::expected<std::vector<std::byte>, std::string>{
+        std::unexpect, std::move(loaded).error()};
   }
-
-  std::vector<std::byte> bytes(size);
-  if (size > 0) {
-    std::memcpy(bytes.data(), raw, size);
-  }
-  SDL_free(raw);
-  return bytes;
+  return std::move(loaded->bytes);
 }
 
 std::expected<void, std::string> ScenarioStartupController::select_permanent_mode_script(
@@ -128,7 +110,8 @@ void ScenarioStartupController::reset_session() {
   m_grid_scx_path.clear();
   m_grid_3do_path.clear();
   m_grid_3do_state.clear();
-  m_grid_3do_model.reset();
+  m_main_menu_active = false;
+  m_active_handle.reset();
   m_last_error.clear();
   m_initialized = false;
   m_ticked = false;
@@ -211,31 +194,18 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
   // 3. Dependencies in the original loader's order. For area 118 only the
   // scenario SCX and the primary 3DO names are populated.
 
-  // GRID.3DO: the decor model is not required to render the menu, so its load
-  // is best-effort and non-fatal; success or failure is represented honestly.
+  // GRID.3DO CPU ownership now lives in the world context (ScenarioManager
+  // loads and parses it inside load_world_context). The startup controller
+  // only derives the dependency name and records whether the dependency was
+  // requested and whether it ultimately loaded.
   m_grid_3do_path.clear();
   if (model_name.empty()) {
     m_grid_3do_state = "absent: no model 3DO name in the area record";
     record("AreaDependency.GRID_3DO.SkippedUnavailable");
   } else {
     m_grid_3do_path = dependency_path(K_DECOR_DIRECTORY, model_name, K_3DO_EXTENSION);
-    if (auto model_file{read_file(m_grid_3do_path)}) {
-      auto parsed_model{
-          Omikron::Model3DO::load(std::span<const std::byte>{model_file.value()})};
-      if (parsed_model) {
-        m_grid_3do_model.emplace(std::move(parsed_model).value());
-        m_grid_3do_state = "loaded";
-        record("AreaDependency.GRID_3DO.Loaded", m_grid_3do_path);
-      } else {
-        m_grid_3do_state = parsed_model.error();
-        App::Log::warn("GRID.3DO parse failed (non-fatal): {}", m_grid_3do_state);
-        record("AreaDependency.GRID_3DO.Failed", m_grid_3do_path);
-      }
-    } else {
-      m_grid_3do_state = model_file.error();
-      App::Log::warn("GRID.3DO unavailable (non-fatal): {}", m_grid_3do_state);
-      record("AreaDependency.GRID_3DO.Failed", m_grid_3do_path);
-    }
+    m_grid_3do_state = "requested";
+    record("AreaDependency.GRID_3DO.Requested", m_grid_3do_path);
   }
 
   if (scx_name.empty()) {
@@ -258,6 +228,21 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
     m_last_error = fmt::format("world activation: {}", result.error());
     App::Log::error("Startup failed: {}", m_last_error);
     return std::expected<void, std::string>{std::unexpect, m_last_error};
+  }
+
+  // Reflect the decor load result in the startup diagnostic without
+  // retaining a duplicate parsed model: the model object lives in the world
+  // context and is exposed through ScenarioManager.
+  if (!m_grid_3do_path.empty()) {
+    const WorldSceneContext* grid{manager.find_world_context(0)};
+    if (grid != nullptr && grid->decor_model.has_value()) {
+      m_grid_3do_state = "loaded";
+      record("AreaDependency.GRID_3DO.Loaded", m_grid_3do_path);
+    } else {
+      m_grid_3do_state = "unavailable";
+      App::Log::warn("GRID.3DO unavailable (non-fatal): {}", m_grid_3do_path);
+      record("AreaDependency.GRID_3DO.Failed", m_grid_3do_path);
+    }
   }
   record("AreaDependency.GRID_SCX.Loaded", "slot=world0");
 
@@ -303,7 +288,12 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
           App::Log::warn("interface {} dispatch failed: {}", request.interface_id, result.error());
           return result;
         }
-        if (request.interface_id == InterfaceDispatcher::k_main_menu_interface) {
+        // Startup-specific tracking: interface 29 is the main menu the
+        // recovered AREA path must open. The generic dispatcher has no
+        // knowledge of this.
+        if (request.interface_id == k_main_menu_interface) {
+          m_main_menu_active = true;
+          m_active_handle = result.value();
           record("MainMenu.Active");
         }
         return result;
@@ -311,6 +301,12 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
 
   m_dispatcher.set_interface_completion_sink(
       [this](const InterfaceCompletion& completion) {
+        if (m_active_handle.has_value() && completion.handle == m_active_handle.value()) {
+          m_main_menu_active = false;
+          m_active_handle.reset();
+          App::Log::info("main menu no longer active (interface {} completed)",
+              completion.handle.interface_id);
+        }
         if (auto result{complete_interface(completion)}; !result) {
           App::Log::warn("interface completion ignored: {}", result.error());
         }
@@ -407,6 +403,22 @@ void ScenarioStartupController::set_trace_recorder(Startup::StartupTraceRecorder
 
 void ScenarioStartupController::set_audio_system(Audio::AudioSystem* audio) {
   m_audio = audio;
+}
+
+void ScenarioStartupController::open_preliminary_29() {
+  APP_PROFILE_FUNCTION();
+
+  m_preliminary_29_active = true;
+  App::Log::info("preliminary interface 29 opened (splash)");
+}
+
+void ScenarioStartupController::close_preliminary_29() {
+  APP_PROFILE_FUNCTION();
+
+  if (m_preliminary_29_active) {
+    m_preliminary_29_active = false;
+    App::Log::info("preliminary interface 29 closed");
+  }
 }
 
 void ScenarioStartupController::record(std::string name, std::string detail) {

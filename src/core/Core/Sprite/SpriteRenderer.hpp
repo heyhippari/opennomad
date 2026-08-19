@@ -12,7 +12,7 @@
 
 #include <glad/glad.h>
 
-// NOLINTNEXTLINE(misc-include-cleaner) — glm umbrella include, see ModelScene.hpp.
+// NOLINTNEXTLINE(misc-include-cleaner) — glm umbrella include, see ModelViewerScene.hpp.
 #include <glm/glm.hpp>
 
 #include "Core/Buffers.hpp"

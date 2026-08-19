@@ -2067,7 +2067,7 @@ The following remain incompletely understood and should be documented separately
 
 - exact semantics of the `0x004CE...` / `0x004CF...` descriptor objects;
 - which descriptor corresponds to each visible menu object/item;
-- background/model/scene construction;
+- background/model/scene construction (the animated bump background is now recovered — see below);
 - camera state;
 - font/text rendering path;
 - item highlight/selection transitions;
@@ -2076,6 +2076,59 @@ The following remain incompletely understood and should be documented separately
 - localization;
 - per-frame menu update callbacks;
 - cleanup and state-transition callbacks.
+
+## Recovered main-menu rendering (I2D bump background + source-keyed logo)
+
+Two of the previously approximate rendering behaviours are now reproduced from `Runtime.exe` (`C:\Omikron\Sources\omikron\I2D_Bump.c`).
+
+### `IMAGES/CLOUD.BMP` is a height map, not display imagery
+
+`CLOUD.BMP` is a 256×256, 8-bit, uncompressed (`BI_RGB`), bottom-up indexed bitmap (validated against retail: header `BM`, DIB size 40, width 256, height 256, bpp 8, compression 0, colours-used 0). Runtime does not display its RGB appearance — it indexes the raw 8-bit pixel bytes directly as a height field:
+
+```c
+height[y * 256 + x]
+```
+
+Relevant Runtime addresses:
+
+```text
+0x004B19C0  I2D bump-background initialization
+0x004B1B00  per-frame bump lighting + final surface generation
+0x004B1F40  animated 480-entry / 640-entry distortion-table generation
+0x004B2220  CLOUD.BMP loading and custom colour-ramp construction
+```
+
+The recovered effect (implemented as the pure-CPU `I2DBumpEffect`):
+
+- a moving light on a circle of radius 64 around `(128, 128)`, angle starting at `10.0` and advancing `+0.0785` per tick (`_ftol` truncation toward zero);
+- signed 8-bit X/Y height gradients with wrapped neighbours (`(x + 1) & 0xFF`, `(y + 1) & 0xFF`);
+- per-pixel intensity `clamp(((dx * (x - light_x) + dy * (y - light_y)) >> 5) + 32, 0, 63)` (arithmetic `SAR` shift);
+- a recovered 64-entry colour ramp (burnt orange → dark brown → blue-green/teal);
+- two animated cosine lookup tables (480 row entries, 640 column entries) consumed in reverse order to warp the 256×256 lit map into a 640×480 surface.
+
+The palette anchors are `palette[0] ≈ (126, 29, 0)`, `palette[31] = palette[32] ≈ (19, 17, 13)`, `palette[63] ≈ (37, 108, 102)`. The first recovered tick yields `light_x = 75`, `light_y = 94`. Effect timing is fixed at 30 original ticks per second (Runtime constants are per effect update, not per second), independent of the host frame rate.
+
+### `I2D/bitmaps/gfxint.bmp` is source-colour-keyed
+
+The main-menu bitmap element (`~0x004CF1A8`) carries:
+
+```text
+source:      0,0,640,150
+destination: 0,0,640,150
+runtime flags: 0x40000100
+blit mode:   0x03
+```
+
+`runtime_flags` (`0x40000100`) and `runtime_blit_mode` (`0x03`) are distinct recovered fields. The low-level Runtime blit path (`~0x004810D0`) maps the mode byte as:
+
+```text
+bit 0 (0x01) = DDBLT_KEYSRC  = source colour key
+bit 1 (0x02) = DDBLT_KEYDEST = destination colour key
+```
+
+The main-menu element uses `0x03`, requesting both keys. The source surface key is confirmed as pixel value 0 (`DDCKEY_SRCBLT`, low = high = 0); the destination surface's `DDCKEY_DESTBLT` value has not yet been located, so destination-key emulation is intentionally deferred.
+
+This is why the black background of `gfxint.bmp` must not appear: those source pixels do not overwrite the bump background. The recovered key is "pixel value 0" in a 16-bit RGB555 surface, so the near-black palette background (retail `gfxint.BMP` palette index 255 = RGB 4,4,4) truncates to 0 and keys out; the I2D data model preserves this as a source colour key (not ordinary alpha), and the renderer reproduces the 5-bit comparison before discarding matching texels.
 
 ---
 

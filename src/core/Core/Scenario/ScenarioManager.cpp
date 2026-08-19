@@ -1,14 +1,9 @@
 #include "ScenarioManager.hpp"
 
-#include <SDL3/SDL_error.h>
-#include <SDL3/SDL_iostream.h>
-#include <SDL3/SDL_stdinc.h>
-
 #include <fmt/format.h>
 
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
 #include <expected>
 #include <filesystem>
 #include <memory>
@@ -21,9 +16,10 @@
 
 #include "Core/Audio/AudioSystem.hpp"
 #include "Core/Debug/Instrumentor.hpp"
+#include "Core/GameDataLoader.hpp"
 #include "Core/Log.hpp"
+#include "Core/Omikron/Model3DO.hpp"
 #include "Core/Omikron/SCX.hpp"
-#include "Core/Resources.hpp"
 #include "Core/Scenario/ScenarioRuntime.hpp"
 
 namespace App {
@@ -114,26 +110,22 @@ std::expected<void, std::string> ScenarioManager::set_gameplay_mode(const Gamepl
     return std::expected<void, std::string>{std::unexpect, std::move(loaded).error()};
   }
 
-  // Stop old mode-owned executions/instances/voices before installing the
-  // replacement (a future integration point for script/audio/sprite teardown).
-  teardown_gameplay_mode_slot();
-  install_gameplay_mode(mode, std::move(loaded).value());
-
-  // (Re)build the scene-independent gameplay runtime from the freshly
-  // installed mode scenario. Scripts stay inactive (activation is a future
-  // scenario-driven step); the sprite/script debug tools read this runtime.
-  auto runtime{std::make_unique<ScenarioRuntime>()};
-  if (auto result{runtime->initialize(m_gameplay_mode_slot.scx_data,
-          std::span<const std::byte>{m_gameplay_mode_slot.file_buffer},
-          m_gameplay_mode_slot.scenario_path,
-          m_audio_system,
-          /*activate_startup_scripts=*/false)};
-      !result) {
-    App::Log::warn("Scenario runtime init failed: {}", result.error());
-    m_scenario_runtime.reset();
-  } else {
-    m_scenario_runtime = std::move(runtime);
+  // Build the replacement runtime from the freshly parsed package BEFORE
+  // touching the resident slot, so a runtime-construction failure preserves
+  // the old mode slot (and its runtime) intact.
+  auto runtime{prepare_runtime(scenario_path, loaded.value())};
+  if (!runtime) {
+    m_gameplay_mode_slot.last_error = runtime.error();
+    App::Log::error("Scenario load failed: role=gameplay_mode mode={}: {}",
+        gameplay_mode_name(mode),
+        runtime.error());
+    return std::expected<void, std::string>{std::unexpect, std::move(runtime).error()};
   }
+
+  // Stop old mode-owned executions/instances/voices, then install the
+  // replacement and its runtime atomically.
+  teardown_gameplay_mode_slot();
+  install_gameplay_mode(mode, std::move(loaded).value(), std::move(runtime).value());
 
   App::Log::info(
       "Scenario loaded: role=gameplay_mode mode={} generation={} scripts={} active_scripts=0 "
@@ -175,6 +167,25 @@ std::expected<WorldSceneContext*, std::string> ScenarioManager::load_world_conte
       scene_id,
       scenario_path);
 
+  // Optional decor (level) model first: the recovered area-dependency loader
+  // parses GRID.3DO before GRID.SCX. Best-effort and non-fatal — a failure
+  // leaves the decor empty and is logged without failing the world load.
+  const std::string requested_decor{decor_path.value_or(std::string{})};
+  std::string resolved_decor_path;
+  std::optional<Omikron::Model3DOData> decor_model;
+  if (!requested_decor.empty()) {
+    if (auto decor_file{load_game_file(normalize_asset_path(requested_decor))}) {
+      if (auto parsed{Omikron::Model3DO::load(std::span<const std::byte>{decor_file->bytes})}) {
+        resolved_decor_path = decor_file->resolved.string();
+        decor_model.emplace(std::move(parsed).value());
+      } else {
+        App::Log::warn("World decor parse failed (non-fatal): {}", parsed.error());
+      }
+    } else {
+      App::Log::warn("World decor unavailable (non-fatal): {}", decor_file.error());
+    }
+  }
+
   // Load and parse into temporary ownership BEFORE mutating the target so a
   // failed load leaves every currently resident context intact.
   auto loaded{load_scenario(scenario_path)};
@@ -188,8 +199,22 @@ std::expected<WorldSceneContext*, std::string> ScenarioManager::load_world_conte
         std::unexpect, std::move(loaded).error()};
   }
 
+  // Build the replacement runtime from the freshly parsed package before
+  // touching the target so a runtime-construction failure leaves every
+  // resident context intact.
+  auto runtime{prepare_runtime(scenario_path, loaded.value())};
+  if (!runtime) {
+    target->last_error = runtime.error();
+    App::Log::error("Scenario load failed: role=world_scene cache_index={} scene_id={}: {}",
+        cache_index,
+        scene_id,
+        runtime.error());
+    return std::expected<WorldSceneContext*, std::string>{
+        std::unexpect, std::move(runtime).error()};
+  }
+
   // The replacement is ready: tear down the recycled entry (if any) and
-  // atomically install the new paired model/SCX state.
+  // atomically install the new paired model/SCX/runtime state.
   LoadedScenario package{std::move(loaded).value()};
   const std::size_t script_count{package.scx_data.scripts.size()};
   const std::size_t sound_count{package.scx_data.sounds.size()};
@@ -202,8 +227,11 @@ std::expected<WorldSceneContext*, std::string> ScenarioManager::load_world_conte
   install_world_context(*target,
       scene_id,
       std::move(decor_path),
+      std::move(resolved_decor_path),
+      std::move(decor_model),
       scenario_path,
       std::move(package),
+      std::move(runtime).value(),
       WorldSceneResidencyState::LoadedInactive);
 
   App::Log::info(
@@ -328,12 +356,41 @@ std::span<const std::byte> ScenarioManager::gameplay_mode_scx_bytes() const {
   return std::span<const std::byte>{m_gameplay_mode_slot.file_buffer};
 }
 
-ScenarioRuntime* ScenarioManager::scenario_runtime() {
-  return m_scenario_runtime.get();
+ScenarioRuntime* ScenarioManager::gameplay_runtime() const {
+  return m_gameplay_mode_slot.runtime.get();
 }
 
-const ScenarioRuntime* ScenarioManager::scenario_runtime() const {
-  return m_scenario_runtime.get();
+ScenarioRuntime* ScenarioManager::world_runtime(const std::uint32_t scene_id) const {
+  const WorldSceneContext* context{find_world_context(scene_id)};
+  return context == nullptr ? nullptr : context->runtime.get();
+}
+
+std::vector<ScenarioRuntime*> ScenarioManager::active_world_runtimes() const {
+  std::vector<ScenarioRuntime*> runtimes;
+  for (const WorldSceneContext& context : m_world_contexts) {
+    if (context.residency == WorldSceneResidencyState::LoadedActive && context.runtime != nullptr) {
+      runtimes.push_back(context.runtime.get());
+    }
+  }
+  return runtimes;
+}
+
+WorldSceneContext* ScenarioManager::active_world_context() {
+  for (WorldSceneContext& context : m_world_contexts) {
+    if (context.residency == WorldSceneResidencyState::LoadedActive) {
+      return &context;
+    }
+  }
+  return nullptr;
+}
+
+const WorldSceneContext* ScenarioManager::active_world_context() const {
+  for (const WorldSceneContext& context : m_world_contexts) {
+    if (context.residency == WorldSceneResidencyState::LoadedActive) {
+      return &context;
+    }
+  }
+  return nullptr;
 }
 
 const Omikron::ScxData* ScenarioManager::world_context_scx(const std::uint32_t scene_id) const {
@@ -363,6 +420,12 @@ std::vector<LoadedScenarioView> ScenarioManager::scenario_inventory() const {
     view.model_count = m_gameplay_mode_slot.scx_data.models.size();
     view.shared_value_count = m_gameplay_mode_slot.scx_data.shared_values.size();
     view.loaded = !m_gameplay_mode_slot.resolved_path.empty();
+    if (m_gameplay_mode_slot.runtime != nullptr &&
+        m_gameplay_mode_slot.runtime->script_runtime() != nullptr) {
+      view.active_script_instances =
+          m_gameplay_mode_slot.runtime->script_runtime()->instances().size();
+      view.render_instances = m_gameplay_mode_slot.runtime->sprite_pool().attached_count();
+    }
     view.last_error = m_gameplay_mode_slot.last_error;
     results.push_back(std::move(view));
   }
@@ -391,6 +454,10 @@ std::vector<LoadedScenarioView> ScenarioManager::scenario_inventory() const {
       view.model_count = ctx.scx_data->models.size();
       view.shared_value_count = ctx.scx_data->shared_values.size();
     }
+    if (ctx.runtime != nullptr && ctx.runtime->script_runtime() != nullptr) {
+      view.active_script_instances = ctx.runtime->script_runtime()->instances().size();
+      view.render_instances = ctx.runtime->sprite_pool().attached_count();
+    }
     results.push_back(std::move(view));
   }
 
@@ -414,16 +481,29 @@ std::size_t ScenarioManager::loaded_scenario_count() const {
 }
 
 std::size_t ScenarioManager::active_script_instances_total() const {
-  if (m_scenario_runtime == nullptr || m_scenario_runtime->script_runtime() == nullptr) {
-    return 0;
+  std::size_t total{0};
+  const auto count_runtime = [&total](const ScenarioRuntime* runtime) {
+    if (runtime != nullptr && runtime->script_runtime() != nullptr) {
+      total += runtime->script_runtime()->instances().size();
+    }
+  };
+
+  count_runtime(m_gameplay_mode_slot.runtime.get());
+  for (const WorldSceneContext& context : m_world_contexts) {
+    count_runtime(context.runtime.get());
   }
-  return m_scenario_runtime->script_runtime()->instances().size();
+  return total;
 }
 
 void ScenarioManager::set_audio_system(Audio::AudioSystem* audio_system) {
   m_audio_system = audio_system;
-  if (m_scenario_runtime != nullptr) {
-    m_scenario_runtime->set_audio_system(audio_system);
+  if (m_gameplay_mode_slot.runtime != nullptr) {
+    m_gameplay_mode_slot.runtime->set_audio_system(audio_system);
+  }
+  for (WorldSceneContext& context : m_world_contexts) {
+    if (context.runtime != nullptr) {
+      context.runtime->set_audio_system(audio_system);
+    }
   }
 }
 
@@ -442,31 +522,16 @@ std::expected<ScenarioManager::LoadedScenario, std::string> ScenarioManager::loa
   APP_PROFILE_FUNCTION();
 
   const std::string normalized{normalize_asset_path(scenario_path)};
-  const std::filesystem::path root_relative{Resources::game_data_path(normalized)};
-  const std::filesystem::path resolved{Resources::resolve_case_insensitive(root_relative)};
-
-  App::Log::debug("Scenario file resolution: requested='{}' normalized='{}' resolved='{}",
-      scenario_path,
-      normalized,
-      resolved.string());
-
-  std::size_t size{0};
-  void* raw{SDL_LoadFile(resolved.string().c_str(), &size)};
-  if (raw == nullptr) {
+  auto loaded_file{load_game_file(normalized)};
+  if (!loaded_file) {
     return std::expected<LoadedScenario, std::string>{std::unexpect,
-        fmt::format("Failed to open scenario file: requested='{}' resolved='{}': {}",
+        fmt::format("Failed to open scenario file: requested='{}': {}",
             scenario_path,
-            resolved.string(),
-            SDL_GetError())};
+            loaded_file.error())};
   }
 
-  std::vector<std::byte> file_buffer(size);
-  if (size > 0) {
-    std::memcpy(file_buffer.data(), raw, size);
-  }
-  SDL_free(raw);
-
-  auto scx{Omikron::SCX::load(std::span<const std::byte>{file_buffer})};
+  const std::filesystem::path resolved{loaded_file->resolved};
+  auto scx{Omikron::SCX::load(std::span<const std::byte>{loaded_file->bytes})};
   if (!scx) {
     return std::expected<LoadedScenario, std::string>{std::unexpect,
         fmt::format("Failed to parse scenario: requested='{}' resolved='{}' error='{}'",
@@ -483,24 +548,42 @@ std::expected<ScenarioManager::LoadedScenario, std::string> ScenarioManager::loa
       scx->models.size());
 
   return LoadedScenario{.resolved_path = resolved.string(),
-      .file_buffer = std::move(file_buffer),
+      .file_buffer = std::move(loaded_file->bytes),
       .scx_data = std::move(scx).value()};
 }
 
-void ScenarioManager::install_gameplay_mode(const GameplayMode mode, LoadedScenario loaded) {
+std::expected<std::unique_ptr<ScenarioRuntime>, std::string> ScenarioManager::prepare_runtime(
+    const std::string& scenario_name, const LoadedScenario& loaded) {
+  auto runtime{std::make_unique<ScenarioRuntime>()};
+  if (auto result{runtime->initialize(loaded.scx_data,
+          std::span<const std::byte>{loaded.file_buffer},
+          scenario_name,
+          m_audio_system,
+          /*activate_startup_scripts=*/false)};
+      !result) {
+    return std::expected<std::unique_ptr<ScenarioRuntime>, std::string>{
+        std::unexpect, fmt::format("Scenario runtime init failed: {}", result.error())};
+  }
+  return runtime;
+}
+
+void ScenarioManager::install_gameplay_mode(const GameplayMode mode,
+    LoadedScenario loaded,
+    std::unique_ptr<ScenarioRuntime> runtime) {
   m_gameplay_mode_slot.current_mode = mode;
   m_gameplay_mode_slot.scenario_path = std::string{gameplay_mode_scenario_path(mode)};
   m_gameplay_mode_slot.resolved_path = std::move(loaded.resolved_path);
   m_gameplay_mode_slot.file_buffer = std::move(loaded.file_buffer);
   m_gameplay_mode_slot.scx_data = std::move(loaded.scx_data);
+  m_gameplay_mode_slot.runtime = std::move(runtime);
   m_gameplay_mode_slot.file_size_bytes = m_gameplay_mode_slot.file_buffer.size();
   m_gameplay_mode_slot.last_error.clear();
   ++m_gameplay_mode_slot.generation;
 }
 
 void ScenarioManager::teardown_gameplay_mode_slot() {
-  // Stop or detach mode-owned voices/instances/executions (future integration).
-  m_scenario_runtime.reset();
+  // Destroy the slot-owned runtime before releasing its SCX backing bytes.
+  m_gameplay_mode_slot.runtime.reset();
   m_gameplay_mode_slot.scx_data = Omikron::ScxData{};
   m_gameplay_mode_slot.file_buffer.clear();
   m_gameplay_mode_slot.scenario_path.clear();
@@ -509,37 +592,42 @@ void ScenarioManager::teardown_gameplay_mode_slot() {
   m_gameplay_mode_slot.last_error.clear();
 }
 
-// NOLINTNEXTLINE(readability-convert-member-functions-to-static) — future decor/model ownership
+// NOLINTNEXTLINE(readability-convert-member-functions-to-static) — slot-teardown responsibilities
 void ScenarioManager::install_world_context(WorldSceneContext& context,
     const std::uint32_t scene_id,
     std::optional<std::string> decor_path,
+    std::string resolved_decor_path,
+    std::optional<Omikron::Model3DOData> decor_model,
     const std::string& scenario_path,
     LoadedScenario loaded,
+    std::unique_ptr<ScenarioRuntime> runtime,
     const WorldSceneResidencyState residency) {
   context.scene_id = scene_id;
   context.decor_path = std::move(decor_path);
-  context.resolved_decor_path.clear();  // Decor decoding is a future milestone.
+  context.resolved_decor_path = std::move(resolved_decor_path);
+  context.decor_model = std::move(decor_model);
   context.scenario_path = scenario_path;
   context.resolved_scenario_path = std::move(loaded.resolved_path);
   context.scx_file_buffer = std::move(loaded.file_buffer);
   context.scx_data = std::move(loaded.scx_data);
+  context.runtime = std::move(runtime);
   context.file_size_bytes = context.scx_file_buffer.size();
   context.residency = residency;
   context.last_error.clear();
   ++context.generation;
 }
 
-// NOLINTNEXTLINE(readability-convert-member-functions-to-static) — future voice/instance teardown
+// NOLINTNEXTLINE(readability-convert-member-functions-to-static) — slot-teardown responsibilities
 void ScenarioManager::teardown_world_context(WorldSceneContext& context) {
-  // Stop or detach voices owned by this context (future integration).
-  // Remove sprite instances owned by this context (future integration).
-  // Clear the loaded scenario data.
-
+  // Destroy the context-owned runtime and decor before releasing its SCX
+  // backing bytes, so no runtime object outlives its slot's data.
+  context.runtime.reset();
+  context.decor_model.reset();
+  context.decor_path.reset();
+  context.resolved_decor_path.clear();
   context.scx_data.reset();
   context.scx_file_buffer.clear();
   context.scene_id = 0;
-  context.decor_path.reset();
-  context.resolved_decor_path.clear();
   context.scenario_path.clear();
   context.resolved_scenario_path.clear();
   context.file_size_bytes = 0;

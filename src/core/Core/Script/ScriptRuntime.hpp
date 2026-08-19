@@ -169,7 +169,7 @@ struct HandlerResult {
 };
 
 /// Abstract world service connecting script handlers to the existing sprite
-/// renderer/runtime. Implemented by ModelScene; faked in tests.
+/// renderer/runtime. Implemented by ModelViewerScene; faked in tests.
 class ScriptWorld {
  public:
   virtual ~ScriptWorld() = default;

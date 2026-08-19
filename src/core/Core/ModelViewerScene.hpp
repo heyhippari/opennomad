@@ -52,31 +52,31 @@ class AudioSystem;
 /// Renders an Omikron 3D model, explorable with a free-flying camera
 /// driven by the input system (WASD + Space/LeftShift movement, mouse look).
 /// Also hosts the SCX script runtime and serves as its sprite world service.
-class ModelScene final : public Scene {
+class ModelViewerScene final : public Scene {
  public:
   /// Loads a standalone model (MESHES/DECORS/Anekbah.3DO with its .3DT
   /// texture sidecar) relative to the executable and builds the
   /// render-ready scene.
-  static std::expected<std::unique_ptr<ModelScene>, std::string> create();
+  static std::expected<std::unique_ptr<ModelViewerScene>, std::string> create();
 
   /// Loads the EFFECTS2_SMOKE2.3DO effect model embedded in
   /// SCPTDATA/aventure.SCX relative to the executable and builds the
   /// render-ready scene. The model is decoded through the same Model3DO /
   /// Texture3DT pipeline as standalone files.
-  static std::expected<std::unique_ptr<ModelScene>, std::string> create_from_scx();
+  static std::expected<std::unique_ptr<ModelViewerScene>, std::string> create_from_scx();
 
   /// Creates the scene using pre-loaded scenarios from ScenarioManager.
   /// The manager owns the parsed SCX data and provides access to gameplay and
   /// world scenarios. Scripts are kept inactive until explicitly activated.
-  static std::expected<std::unique_ptr<ModelScene>, std::string> create_from_scenario_manager(
+  static std::expected<std::unique_ptr<ModelViewerScene>, std::string> create_from_scenario_manager(
       ScenarioManager* manager);
 
-  ~ModelScene() override = default;
+  ~ModelViewerScene() override = default;
 
-  ModelScene(const ModelScene&) = delete;
-  ModelScene(ModelScene&&) = delete;
-  ModelScene& operator=(ModelScene other) = delete;
-  ModelScene& operator=(ModelScene&& other) = delete;
+  ModelViewerScene(const ModelViewerScene&) = delete;
+  ModelViewerScene(ModelViewerScene&&) = delete;
+  ModelViewerScene& operator=(ModelViewerScene other) = delete;
+  ModelViewerScene& operator=(ModelViewerScene&& other) = delete;
 
   void update(float delta_time, const Input::InputManager& input) override;
   void render() override;
@@ -186,7 +186,7 @@ class ModelScene final : public Scene {
     std::array<float, 4> color{0.0F, 0.0F, 0.0F, 1.0F};
   };
 
-  ModelScene(const std::vector<Omikron::MaterialGroup>& groups,
+  ModelViewerScene(const std::vector<Omikron::MaterialGroup>& groups,
              std::vector<Texture2D> textures,
              Shader shader,
              Shader mirror_shader,
@@ -205,7 +205,7 @@ class ModelScene final : public Scene {
   /// Builds the render-ready scene from decoded geometry, material
   /// descriptors and textures: GPU uploads, shaders, light block and the
   /// scene object itself. Shared by the standalone and SCX load paths.
-  static std::expected<std::unique_ptr<ModelScene>, std::string> create_from_geometry(
+  static std::expected<std::unique_ptr<ModelViewerScene>, std::string> create_from_geometry(
       const std::vector<Omikron::MaterialGroup>& groups,
       const Omikron::Model3DOData& model,
       const std::vector<Omikron::Texture3DTImage>& images,

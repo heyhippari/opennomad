@@ -40,7 +40,6 @@
 #include "Core/Interface/InterfaceManager.hpp"
 #include "Core/Log.hpp"
 #include "Core/MainLoopController.hpp"
-#include "Core/MainMenuScene.hpp"
 #include "Core/RuntimeActivityState.hpp"
 #include "Core/Scenario/ScenarioEngine.hpp"
 #include "Core/Scenario/ScenarioManager.hpp"
@@ -49,11 +48,11 @@
 #include "Core/Startup/StartupMediaPolicy.hpp"
 #include "Core/Startup/StartupPhase.hpp"
 #include "Core/Startup/StartupTraceRecorder.hpp"
-#include "Core/TransitionScene.hpp"
 #include "Core/Video/StartupVideoSequence.hpp"
 #include "Core/Video/VideoPlayer.hpp"
 #include "Core/Video/VideoScene.hpp"
 #include "Core/Window.hpp"
+#include "Core/WorldScene.hpp"
 
 namespace App {
 
@@ -101,7 +100,7 @@ Application::Application(Application&& other) noexcept
       m_scene(std::move(other.m_scene)),
       m_interface_manager(std::move(other.m_interface_manager)),
       m_splash_seconds_left(other.m_splash_seconds_left),
-      m_menu_shown(other.m_menu_shown),
+      m_startup_complete(other.m_startup_complete),
       m_running(other.m_running),
       m_sdl_initialized(std::exchange(other.m_sdl_initialized, false)),
       m_mouse_captured(other.m_mouse_captured),
@@ -267,7 +266,7 @@ std::expected<Application, std::string> Application::create(const std::string& t
     return std::expected<Application, std::string>{std::unexpect,
         fmt::format("Can't initialize Omikron: {}", std::move(splash).error())};
   }
-  app.m_scenario_engine->dispatcher().open_preliminary_29();
+  app.m_scenario_engine->open_preliminary_29();
   app.m_trace->record("Splash.Omikron.Prepared");
   swallow_expected(app.m_coordinator->complete(
       Startup::StartupPhase::k_prepare_splash, Startup::StartupPhaseStatus::k_complete));
@@ -331,9 +330,10 @@ void App::Application::run() {
   // buttons already held before the first event are not missed.
   seed_held_input();
 
-  // Wire the menu-activation sink before the splash can complete: the area
-  // script's interface-29 open (opcode 0x46) constructs the native menu.
-  wire_menu_activation();
+  // Wire the interface dispatch sink before the splash can complete: the area
+  // script's interface-29 open (opcode 0x46) opens the interface through the
+  // generic InterfaceManager; the already-installed WorldScene presents it.
+  wire_interface_dispatch();
 
   // The recovered frame clock re-baselines on the first frame: start with
   // the timing-reset request set so no pre-loop time is measured.
@@ -519,11 +519,11 @@ void Application::run_engine_frame() {
     m_accumulator -= kFixedTimestep;
   }
 
-  // --- Splash countdown -> scenario modes 3 -> 2 -> 1 -> main menu ---
-  if (!m_menu_shown) {
+  // --- Splash countdown -> scenario modes 3 -> 2 -> 1 -> interface 29 ---
+  if (!m_startup_complete) {
     m_splash_seconds_left -= delta_seconds;
     if (m_splash_seconds_left <= 0.0F) {
-      m_menu_shown = advance_startup_past_splash();
+      m_startup_complete = advance_startup_past_splash();
     }
   }
 
@@ -542,7 +542,7 @@ void Application::run_engine_frame() {
   // Continue the scenario scheduler on the normal frame path. The initial
   // mode-1 execution already happened during startup; this keeps a waiting
   // or resumed AREA script progressing without re-entering a scenario mode.
-  update_scenario();
+  update_scenario(delta_seconds);
 
   // Update the audio subsystem once per executed frame using real seconds
   // (never Omikron 30 Hz delta units). SDL3_mixer mixes asynchronously, but
@@ -621,25 +621,18 @@ void Application::dispatch_held_escape() {
   // (docs/ReverseEngineering.md).
 }
 
-void Application::wire_menu_activation() {
+void Application::wire_interface_dispatch() {
   if (m_scenario_engine == nullptr || m_interface_manager == nullptr) {
     return;
   }
-  // The area script's opcode 0x46 requests interface 29; the generic
-  // interface system opens it. Only after a successful open is the native
-  // menu installed as the visible scene (MainMenuScene is a thin adapter).
+  // The area script's opcode 0x46 requests an interface; the generic
+  // interface system opens it. No interface ID is special-cased and no scene
+  // is mutated here — the already-installed WorldScene presents whatever the
+  // InterfaceManager reports.
   m_scenario_engine->dispatcher().set_interface_open_sink(
       [this](const InterfaceOpenRequest& request)
           -> std::expected<InterfaceHandle, std::string> {
-        auto result{m_interface_manager->open(request)};
-        if (!result) {
-          return result;
-        }
-        if (request.interface_id == InterfaceDispatcher::k_main_menu_interface) {
-          m_scene = MainMenuScene::create(*m_interface_manager);
-          m_window->debug_ui().set_scene(m_scene.get());
-        }
-        return result;
+        return m_interface_manager->open(request);
       });
 }
 
@@ -653,25 +646,19 @@ void Application::drain_interface_completions() {
     if (m_scenario_engine != nullptr) {
       m_scenario_engine->notify_interface_completion(completion.value());
     }
-    if (m_interface_manager->is_open()) {
-      m_interface_manager->close();
-    }
-    // Interface 29 completed: MainMenuScene must no longer reference the
-    // closed instance. Install a clearly documented transitional scene; the
-    // Kay'l introduction is a later milestone and GRID world context 0 stays
-    // resident in ScenarioManager.
-    m_scene = TransitionScene::create();
-    m_window->debug_ui().set_scene(m_scene.get());
+    // Close only the specific completed instance; other resident interfaces
+    // stay alive. The WorldScene remains installed regardless.
+    m_interface_manager->close(completion->handle);
   }
 }
 
-void Application::update_scenario() {
+void Application::update_scenario(const float delta_seconds) {
   APP_PROFILE_FUNCTION();
 
   if (m_scenario_engine == nullptr) {
     return;
   }
-  if (auto result{m_scenario_engine->update()}; !result) {
+  if (auto result{m_scenario_engine->update(delta_seconds)}; !result) {
     App::Log::error("Scenario update failed: {}", result.error());
   }
 }
@@ -722,20 +709,36 @@ bool Application::advance_startup_past_splash() {
   if (!run_phase(Startup::StartupPhase::k_initialize_new_session, ScenarioMode::k_new_session)) {
     return false;
   }
+
+  // After mode 2 has successfully established the world context, install the
+  // stable WorldScene. Mode 1 then executes, the AREA script opens interface
+  // 29, and the WorldScene's InterfacePresenter presents it. No frame is
+  // rendered in the middle of this synchronous startup sequence, so GRID is
+  // never exposed before the main menu.
+  {
+    auto world{WorldScene::create(*m_scenario_manager, *m_interface_manager)};
+    if (!world) {
+      App::Log::error("Can't initialize Omikron: {}", std::move(world).error());
+      m_running = false;
+      return false;
+    }
+    m_scene = std::move(world).value();
+    m_window->debug_ui().set_scene(m_scene.get());
+  }
+
   if (!run_phase(Startup::StartupPhase::k_run_initial_area_script, ScenarioMode::k_tick)) {
     return false;
   }
 
-  // The area script's opcode 0x46 already opened interface 29 during mode 1,
-  // which constructs and installs the native main menu through the dispatcher
-  // sink. There is no direct menu creation here: the menu is only active when
-  // the script requested it.
+  // The area script's opcode 0x46 already opened interface 29 during mode 1;
+  // the InterfaceManager owns it and the WorldScene presents it. There is no
+  // direct menu creation here and no scene swap.
   if (auto result{m_coordinator->begin(Startup::StartupPhase::k_open_main_menu)}; !result) {
     App::Log::error("Startup ordering error: {}", result.error());
     m_running = false;
     return false;
   }
-  if (!m_scenario_engine->dispatcher().main_menu_active()) {
+  if (!m_scenario_engine->main_menu_active()) {
     App::Log::error(
         "Can't initialize Omikron: the area script did not open interface 29 (no main menu)");
     swallow_expected(m_coordinator->complete(

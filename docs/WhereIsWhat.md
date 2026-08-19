@@ -14,6 +14,26 @@ The Runtime-style sprite system lives in `Core/Sprite/`: `SpriteInstance`/`Sprit
 instance pool), `SpriteFrame` (frame-descriptor resolution), `SpriteResource` (decoded embedded effects),
 `SpriteRenderMode` (mode → GL state table) and `SpriteRenderer` (CPU billboard queue + GPU drawing).
 
+## Architecture ownership
+
+OpenNomad maps recovered Runtime ownership onto four distinct responsibilities (this is an OpenNomad
+architectural mapping, not a claim that Runtime itself had C++ classes with these names):
+
+- **Scenario state** is owned by `ScenarioManager` / `ScenarioRuntime`: one gameplay-mode SCX slot
+  (`aventure.scx`) plus two world-context SCX slots (`GRID.SCX` in context 0). Each slot owns its own
+  parsed SCX, backing bytes, decor model (world contexts) and a mutable `ScenarioRuntime`.
+- **Simulation** is advanced by `ScenarioEngine` (the sole scheduler): the AREA/event runtime, then the
+  gameplay-mode runtime, then every `LoadedActive` world runtime, each frame.
+- **World presentation** is performed by `WorldScene`, the stable post-splash runtime scene. It observes
+  the active world context (identity/generation) but never owns a runtime, never executes scripts and
+  never updates audio.
+- **I2D interfaces** are one presentation layer inside `WorldScene`, via `InterfacePresenter`. The generic
+  `InterfaceManager` owns multiple resident `InterfaceInstance`s, tracks focus separately from residency,
+  and queues completions; no interface is a `Scene`.
+
+`ModelViewerScene` remains a development-only presentation tool (free-flight camera, standalone model
+loading, SCX-effect testing, debug overlays). It is not the Runtime world.
+
 ## Tests
 
 The test setup is done under `src/tests/`. Test implementations are under the respective source code unit, e.g. App
