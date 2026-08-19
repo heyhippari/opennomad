@@ -10,7 +10,6 @@
 #include <SDL3/SDL_scancode.h>
 #include <SDL3/SDL_timer.h>
 #include <SDL3/SDL_video.h>
-// vcpkg installs the backend headers flat (no backends/ prefix).
 #include <fmt/format.h>
 #include <imgui.h>
 #include <imgui_impl_sdl3.h>
@@ -307,8 +306,18 @@ std::expected<Application, std::string> Application::create(const std::string& t
 Application::~Application() {
   APP_PROFILE_FUNCTION();
 
-  // Destroy GL resources while the window's context is still alive.
+  // Release every GL-owning subsystem while the window's GL context is still
+  // alive, then destroy the window (and its context) last. The interface
+  // manager owns the I2D renderer and bump background, whose destructors call
+  // glDelete*; without this ordering those calls run against a dead context
+  // (a quit / ALT+F4 segfault). The remaining members are CPU-only but are
+  // released in dependency order (engine -> manager -> coordinator -> trace).
   m_scene.reset();
+  m_interface_manager.reset();
+  m_scenario_engine.reset();
+  m_scenario_manager.reset();
+  m_coordinator.reset();
+  m_trace.reset();
   m_audio.reset();
   m_window.reset();
   if (m_sdl_initialized) {
