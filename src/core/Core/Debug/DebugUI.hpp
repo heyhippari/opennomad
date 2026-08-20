@@ -14,7 +14,7 @@
 namespace App {
 class ScenarioManager;
 class ScenarioRuntime;
-}
+}  // namespace App
 
 namespace App::Debug {
 
@@ -35,19 +35,27 @@ class DebugUI {
   DebugUI& operator=(DebugUI&& other) = delete;
 
   /// Set or update the SDL window reference.
-  void set_window(SDL_Window* window) { m_window = window; }
+  void set_window(SDL_Window* window) {
+    m_window = window;
+  }
 
   /// Wires the active scene so sprite tools can inspect and drive it. The
   /// pointer is non-owning; clear it before the scene is destroyed.
-  void set_scene(Scene* scene) { m_context.scene = scene; }
+  void set_scene(Scene* scene) {
+    m_context.scene = scene;
+  }
 
   /// Wires the scenario manager so the Scenarios view can inspect the
   /// gameplay-mode slot and both world contexts. Non-owning.
-  void set_scenario_manager(ScenarioManager* manager) { m_context.scenario_manager = manager; }
+  void set_scenario_manager(ScenarioManager* manager) {
+    m_context.scenario_manager = manager;
+  }
 
   /// Replaces the full debug-context wiring in one call. Non-owning pointers;
   /// Application owns every subsystem and clears them before teardown.
-  void set_context(DebugContext context) { m_context = context; }
+  void set_context(DebugContext context) {
+    m_context = context;
+  }
 
   /// Render all active debug windows. Call each frame.
   /// @param delta_time  Frame delta in seconds.
@@ -79,9 +87,24 @@ class DebugUI {
   void show_log();
   void show_opengl_state();
   void show_overlays();
+
+  enum class DebugRuntimeTarget : std::uint8_t {
+    k_active_world,
+    k_gameplay_mode,
+    k_world_slot_0,
+    k_world_slot_1,
+  };
+
+  /// Shared target selector used by the SCX script/sprite inspectors.
+  void show_runtime_target_selector();
+  /// Resolves the selected runtime and clears stale inspector selections when
+  /// its target, scene ID or generation changes.
+  [[nodiscard]] ScenarioRuntime* selected_scenario_runtime();
+
   void show_sprite_inspector(float delta_time);
   void show_sprite_resources_tab(ScenarioRuntime& runtime, ModelViewerScene* scene);
-  void show_sprite_instances_tab(ScenarioRuntime& runtime, ModelViewerScene* scene, float delta_time);
+  void show_sprite_instances_tab(
+      ScenarioRuntime& runtime, ModelViewerScene* scene, float delta_time);
   void show_sprite_frames_tab(ScenarioRuntime& runtime);
   static void show_sprite_queue_tab(ModelViewerScene& scene);
   void show_script_debugger();
@@ -92,9 +115,9 @@ class DebugUI {
   void show_interface();
   void show_startup_trace();
   static void show_script_command(Script::ScriptInstance& instance,
-                                  Script::RuntimeScriptCommand& command,
-                                  std::size_t command_index,
-                                  bool is_root);
+      Script::RuntimeScriptCommand& command,
+      std::size_t command_index,
+      bool is_root);
 
   SDL_Window* m_window{nullptr};
   /// Non-owning wiring to every subsystem the debug windows inspect.
@@ -127,6 +150,14 @@ class DebugUI {
 
   // Internal frame counter for periodic queries
   std::uint64_t m_frame_count{0};
+
+  // --- Shared SCX runtime inspector target ---
+  DebugRuntimeTarget m_runtime_target{DebugRuntimeTarget::k_active_world};
+  DebugRuntimeTarget m_last_runtime_target{DebugRuntimeTarget::k_active_world};
+  ScenarioRuntime* m_last_runtime{nullptr};
+  std::uint32_t m_last_runtime_scene_id{0};
+  std::uint32_t m_last_runtime_generation{0};
+  bool m_runtime_identity_initialized{false};
 
   // --- Sprite inspector state ---
   std::size_t m_sprite_selected_resource{0};

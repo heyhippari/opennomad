@@ -244,8 +244,8 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
     ordered("IAM_START.Loaded", {}, "IAM_START.InitialArea", "id=118 linked=-1");
     ordered("IAM_START.InitialArea", {}, "IAM_AREA.RecordLoaded", "id=118");
     ordered("IAM_AREA.RecordLoaded", {}, "IAM_AREA.Parsed", "scriptOffset=0x3fc");
-    ordered("AreaDependency.GRID_3DO.Failed", {}, "AreaDependency.GRID_SCX.Loaded", {});
-    ordered("AreaDependency.GRID_SCX.Loaded", {}, "AreaContext.Created", "area=118");
+    ordered("AreaDependency.Decor.Failed", {}, "AreaDependency.Scenario.Loaded", {});
+    ordered("AreaDependency.Scenario.Loaded", {}, "AreaContext.Created", "area=118");
     ordered("AreaContext.Created", {}, "AreaContext.EventQueued", "event=1");
     ordered("AreaContext.EventQueued", {}, "AreaContext.Activated", {});
     ordered("AreaContext.Activated", {}, "ScenarioMode2.Complete", {});
@@ -325,13 +325,13 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
     REQUIRE(engine.enter_mode(App::ScenarioMode::k_tick, 0).has_value());
 
     CHECK(engine.main_menu_active());
-    const std::optional<std::uint32_t> grid_3do{
-        seq_of(recorder, "AreaDependency.GRID_3DO.Loaded")};
-    const std::optional<std::uint32_t> grid_scx{
-        seq_of(recorder, "AreaDependency.GRID_SCX.Loaded")};
-    REQUIRE(grid_3do.has_value());
-    REQUIRE(grid_scx.has_value());
-    CHECK_LT(grid_3do.value(), grid_scx.value());
+    const std::optional<std::uint32_t> decor{
+        seq_of(recorder, "AreaDependency.Decor.Loaded")};
+    const std::optional<std::uint32_t> scenario{
+        seq_of(recorder, "AreaDependency.Scenario.Loaded")};
+    REQUIRE(decor.has_value());
+    REQUIRE(scenario.has_value());
+    CHECK_LT(decor.value(), scenario.value());
   }
 
   TEST_CASE("music 109 plays, interface 29 suspends the script, completion resumes 87") {

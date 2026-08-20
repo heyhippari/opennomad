@@ -37,7 +37,7 @@ struct RuntimeAreaSlot {
 };
 
 /// Staged startup that follows the recovered Runtime.exe path:
-/// IAM/START -> IAM/AREA record -> GRID.3DO/GRID.SCX dependencies ->
+/// IAM/START -> IAM/AREA record -> area-selected decor/SCX dependencies ->
 /// area script context -> interface 29 -> native main menu.
 ///
 /// The controller owns all loaded byte buffers; parsers and the script VM
@@ -143,15 +143,17 @@ class ScenarioStartupController {
   [[nodiscard]] bool ticked() const {
     return m_ticked;
   }
-  [[nodiscard]] const std::string& grid_scx_path() const {
-    return m_grid_scx_path;
+/// Scenario dependency selected by the initial IAM/AREA record.
+  [[nodiscard]] const std::string& initial_world_scenario_path() const {
+    return m_initial_world_scenario_path;
   }
-  [[nodiscard]] const std::string& grid_3do_path() const {
-    return m_grid_3do_path;
+  /// Decor dependency selected by the initial IAM/AREA record.
+  [[nodiscard]] const std::string& initial_world_decor_path() const {
+    return m_initial_world_decor_path;
   }
-  /// Honest dependency state string for GRID.3DO (requested/loaded/...).
-  [[nodiscard]] const std::string& grid_3do_state() const {
-    return m_grid_3do_state;
+  /// Honest initial decor dependency state (requested/loaded/...).
+  [[nodiscard]] const std::string& initial_world_decor_state() const {
+    return m_initial_world_decor_state;
   }
   [[nodiscard]] const std::string& last_error() const {
     return m_last_error;
@@ -180,9 +182,12 @@ class ScenarioStartupController {
 
   std::int16_t m_initial_area_id{0};
   std::int16_t m_linked_area_id{0};
-  std::string m_grid_scx_path;
-  std::string m_grid_3do_path;
-  std::string m_grid_3do_state;
+  /// Dependencies selected by the initial IAM/AREA record. These describe
+  /// startup history only; the current world is always queried from
+  /// ScenarioManager because world contexts can later be replaced/recycled.
+  std::string m_initial_world_scenario_path;
+  std::string m_initial_world_decor_path;
+  std::string m_initial_world_decor_state;
   std::string m_last_error;
   bool m_initialized{false};
   bool m_ticked{false};

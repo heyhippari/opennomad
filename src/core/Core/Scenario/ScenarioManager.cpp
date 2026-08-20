@@ -27,8 +27,8 @@ namespace App {
 
 namespace {
 
-/// "SCPTDATA/GRID.SCX" -> "GRID": the canonical game path without the
-/// archive directory and extension, for readable lifecycle messages.
+/// "SCPTDATA/Hall27.SCX" -> "Hall27": the canonical game path without
+/// the archive directory and extension, for readable lifecycle messages.
 std::string scenario_basename(const std::string_view path) {
   return std::filesystem::path{std::string{path}}.stem().string();
 }
@@ -53,41 +53,6 @@ std::expected<void, std::string> ScenarioManager::reset_for_new_session() {
     }
   }
   m_world_presentation.clear();
-  return {};
-}
-
-std::expected<void, std::string> ScenarioManager::initialize_boot_scenarios() {
-  APP_PROFILE_FUNCTION();
-
-  const BootConfiguration config;
-  App::Log::debug(LogCategory::Scenario, "bootstrap begin");
-
-  if (auto result{set_gameplay_mode(config.initial_gameplay_mode)}; !result) {
-    App::Log::error(LogCategory::Scenario, "Bootstrap failed: gameplay mode scenario load: {}", result.error());
-    return std::expected<void, std::string>{std::unexpect, std::move(result).error()};
-  }
-
-  auto world{load_world_context(config.initial_world_scene_id,
-      config.initial_decor_path,
-      config.initial_world_scenario_path)};
-  if (!world) {
-    App::Log::error(LogCategory::Scenario, "Bootstrap failed: world scenario load: {}", world.error());
-    teardown_gameplay_mode_slot();
-    return std::expected<void, std::string>{std::unexpect, std::move(world).error()};
-  }
-
-  if (auto result{activate_world_context(config.initial_world_scene_id)}; !result) {
-    App::Log::error(LogCategory::Scenario, "Bootstrap failed: world activation: {}", result.error());
-    if (WorldSceneContext* context{find_world_context(config.initial_world_scene_id)};
-        context != nullptr) {
-      teardown_world_context(*context);
-      context->residency = WorldSceneResidencyState::Free;
-      ++context->generation;
-    }
-    teardown_gameplay_mode_slot();
-    return std::expected<void, std::string>{std::unexpect, std::move(result).error()};
-  }
-
   return {};
 }
 
@@ -175,9 +140,9 @@ std::expected<WorldSceneContext*, std::string> ScenarioManager::load_world_conte
       scene_id,
       scenario_path);
 
-  // Optional decor (level) model first: the recovered area-dependency loader
-  // parses GRID.3DO before GRID.SCX. Best-effort and non-fatal — a failure
-  // leaves the decor empty and is logged without failing the world load.
+  // Optional decor (level) model first: the recovered AREA dependency loader
+  // parses the decor before the scenario SCX. Best-effort and non-fatal — a
+  // failure leaves the decor empty and is logged without failing the world load.
   const std::string requested_decor{decor_path.value_or(std::string{})};
   std::string resolved_decor_path;
   std::optional<Omikron::Model3DOData> decor_model;

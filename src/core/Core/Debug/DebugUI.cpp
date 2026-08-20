@@ -800,17 +800,90 @@ void DebugUI::show_overlays() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Shared scenario-runtime target
+// ─────────────────────────────────────────────────────────────────────────────
+
+void DebugUI::show_runtime_target_selector() {
+  int target{static_cast<int>(m_runtime_target)};
+  if (ImGui::Combo("Runtime target",
+          &target,
+          "Active world\0Gameplay mode\0World slot 0\0World slot 1\0\0")) {
+    m_runtime_target = static_cast<DebugRuntimeTarget>(target);
+  }
+}
+
+ScenarioRuntime* DebugUI::selected_scenario_runtime() {
+  ScenarioManager* manager{m_context.scenario_manager};
+  ScenarioRuntime* runtime{nullptr};
+  std::uint32_t scene_id{0};
+  std::uint32_t generation{0};
+
+  if (manager != nullptr) {
+    switch (m_runtime_target) {
+      case DebugRuntimeTarget::k_active_world:
+        if (const WorldSceneContext* context{manager->active_world_context()}; context != nullptr) {
+          runtime = context->runtime.get();
+          scene_id = context->scene_id;
+          generation = context->generation;
+        }
+        break;
+
+      case DebugRuntimeTarget::k_gameplay_mode:
+        runtime = manager->gameplay_runtime();
+        break;
+
+      case DebugRuntimeTarget::k_world_slot_0:
+      case DebugRuntimeTarget::k_world_slot_1: {
+        const auto contexts{manager->world_contexts()};
+        const WorldSceneContext& context{m_runtime_target == DebugRuntimeTarget::k_world_slot_0
+                                             ? contexts.front()
+                                             : contexts.back()};
+        scene_id = context.scene_id;
+        generation = context.generation;
+        if (context.residency != WorldSceneResidencyState::Free) {
+          runtime = context.runtime.get();
+        }
+        break;
+      }
+    }
+  }
+
+  const bool identity_changed{!m_runtime_identity_initialized ||
+                              m_last_runtime_target != m_runtime_target ||
+                              m_last_runtime != runtime || m_last_runtime_scene_id != scene_id ||
+                              m_last_runtime_generation != generation};
+  if (identity_changed) {
+    m_runtime_identity_initialized = true;
+    m_last_runtime_target = m_runtime_target;
+    m_last_runtime = runtime;
+    m_last_runtime_scene_id = scene_id;
+    m_last_runtime_generation = generation;
+
+    m_sprite_selected_resource = 0;
+    m_sprite_selected_handle = Sprite::SpriteHandle{};
+    m_sprite_play_accumulator = 0.0F;
+    m_script_selected_instance = 0;
+    m_script_selected_source.reset();
+  }
+
+  return runtime;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Sprite Inspector
 // ─────────────────────────────────────────────────────────────────────────────
 
 void DebugUI::show_sprite_inspector(const float delta_time) {
   ImGui::Begin("Sprite Inspector", &m_show_sprite_inspector);
 
-  ScenarioRuntime* runtime{m_context.scenario_manager == nullptr
-                               ? nullptr
-                               : m_context.scenario_manager->gameplay_runtime()};
+  show_runtime_target_selector();
+  ScenarioRuntime* runtime{selected_scenario_runtime()};
+  ImGui::SameLine();
+  ImGui::TextDisabled("%s",
+      runtime == nullptr ? "(not loaded)"
+                         : fmt::format("{}", runtime->script_scenario_name()).c_str());
   if (runtime == nullptr) {
-    ImGui::TextUnformatted("Sprite runtime not available.");
+    ImGui::TextUnformatted("Sprite runtime not available for this target.");
     ImGui::End();
     return;
   }
@@ -2019,16 +2092,38 @@ void DebugUI::show_startup() {
     }
   }
 
-  ImGui::SeparatorText("GRID dependencies");
-  ImGui::Text("GRID.SCX: %s", engine->grid_scx_path().c_str());
-  ImGui::Text(
-      "GRID.3DO: %s (%s)", engine->grid_3do_path().c_str(), engine->grid_3do_state().c_str());
-  const Omikron::Model3DOData* grid{engine->grid_3do_model()};
-  ImGui::Text("GRID.3DO parsed: %s", grid == nullptr ? "no" : "yes");
-  if (grid != nullptr) {
-    ImGui::Text("meshes %lu materials %lu",
-        static_cast<unsigned long>(grid->meshes.size()),
-        static_cast<unsigned long>(grid->materials.size()));
+  ImGui::SeparatorText("Initial AREA dependencies");
+  ImGui::Text("Scenario SCX: %s", engine->initial_world_scenario_path().c_str());
+  ImGui::Text("Decor 3DO: %s (%s)",
+      engine->initial_world_decor_path().empty() ? "(none)"
+                                                 : engine->initial_world_decor_path().c_str(),
+      engine->initial_world_decor_state().empty() ? "not requested"
+                                                  : engine->initial_world_decor_state().c_str());
+
+  ImGui::SeparatorText("Active world context");
+  const ScenarioManager& scenarios{engine->manager()};
+  const WorldSceneContext* active_world{scenarios.active_world_context()};
+  if (active_world == nullptr) {
+    ImGui::TextUnformatted("(none)");
+  } else {
+    ImGui::Text("Scene ID: %u  generation: %u", active_world->scene_id, active_world->generation);
+    ImGui::Text("Residency: %s", residency_name(active_world->residency));
+    ImGui::Text("Scenario: %s",
+        active_world->scenario_path.empty() ? "(none)" : active_world->scenario_path.c_str());
+    if (!active_world->resolved_scenario_path.empty()) {
+      ImGui::Text("Resolved scenario: %s", active_world->resolved_scenario_path.c_str());
+    }
+    ImGui::Text("Decor: %s",
+        active_world->decor_path.has_value() ? active_world->decor_path->c_str() : "(none)");
+    if (!active_world->resolved_decor_path.empty()) {
+      ImGui::Text("Resolved decor: %s", active_world->resolved_decor_path.c_str());
+    }
+    ImGui::Text("Decor parsed: %s", active_world->decor_model.has_value() ? "yes" : "no");
+    if (active_world->decor_model.has_value()) {
+      ImGui::Text("meshes %lu materials %lu",
+          static_cast<unsigned long>(active_world->decor_model->meshes.size()),
+          static_cast<unsigned long>(active_world->decor_model->materials.size()));
+    }
   }
   if (!engine->last_error().empty()) {
     ImGui::TextColored(K_WARNING_COLOR, "Last error: %s", engine->last_error().c_str());
@@ -2114,9 +2209,8 @@ void DebugUI::show_interface() {
               bitmap->destination.height,
               bitmap->runtime_flags);
         } else if (const auto* text{std::get_if<Interface::I2DTextElement>(&element.data)}) {
-          const bool selected{
-              state != nullptr && text->selectable() &&
-              selectable_ordinal == state->selected_element};
+          const bool selected{state != nullptr && text->selectable() &&
+                              selectable_ordinal == state->selected_element};
           if (text->selectable()) {
             ++selectable_ordinal;
           }

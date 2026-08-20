@@ -204,6 +204,14 @@ void write_boot_fixtures(const TempDirectory& temp) {
   write_bytes(temp.root() / "SCPTDATA" / "Grid.SCX", make_script_scx(5));
 }
 
+/// Test fixture only: reproduce the historical initial pair explicitly.
+/// GRID remains a fixture value here, not a ScenarioManager bootstrap policy.
+void initialize_grid_fixture(App::ScenarioManager& manager) {
+  REQUIRE(manager.set_gameplay_mode(App::GameplayMode::Adventure).has_value());
+  REQUIRE(manager.load_world_context(0, std::nullopt, "SCPTDATA/GRID.SCX").has_value());
+  REQUIRE(manager.activate_world_context(0).has_value());
+}
+
 }  // namespace
 
 TEST_SUITE("Core::Scenario::ScenarioManager") {
@@ -213,7 +221,7 @@ TEST_SUITE("Core::Scenario::ScenarioManager") {
     const ScopedGameDataRoot root{temp.root()};
 
     App::ScenarioManager manager;
-    REQUIRE(manager.initialize_boot_scenarios().has_value());
+    initialize_grid_fixture(manager);
 
     CHECK_EQ(manager.world_contexts().size(), 2U);
     CHECK(manager.gameplay_mode_scx() != nullptr);
@@ -223,13 +231,13 @@ TEST_SUITE("Core::Scenario::ScenarioManager") {
     CHECK(manager.world_contexts()[1].residency == App::WorldSceneResidencyState::Free);
   }
 
-  TEST_CASE("Boot installs aventure then GRID into world context 0") {
+  TEST_CASE("Fixture installs aventure then GRID into world context 0") {
     const TempDirectory temp;
     write_boot_fixtures(temp);
     const ScopedGameDataRoot root{temp.root()};
 
     App::ScenarioManager manager;
-    REQUIRE(manager.initialize_boot_scenarios().has_value());
+    initialize_grid_fixture(manager);
 
     const std::vector<App::LoadedScenarioView> inventory{manager.scenario_inventory()};
     REQUIRE_EQ(inventory.size(), 3U);
@@ -247,7 +255,7 @@ TEST_SUITE("Core::Scenario::ScenarioManager") {
     const ScopedGameDataRoot root{temp.root()};
 
     App::ScenarioManager manager;
-    REQUIRE(manager.initialize_boot_scenarios().has_value());
+    initialize_grid_fixture(manager);
     const std::string mode_path{manager.scenario_inventory().at(0).resolved_path};
 
     REQUIRE(manager.deactivate_world_context(0).has_value());
@@ -265,7 +273,7 @@ TEST_SUITE("Core::Scenario::ScenarioManager") {
     const ScopedGameDataRoot root{temp.root()};
 
     App::ScenarioManager manager;
-    REQUIRE(manager.initialize_boot_scenarios().has_value());
+    initialize_grid_fixture(manager);
 
     REQUIRE(manager.set_gameplay_mode(App::GameplayMode::FirstPersonShooting).has_value());
     CHECK(manager.current_gameplay_mode() == App::GameplayMode::FirstPersonShooting);
@@ -320,7 +328,7 @@ TEST_SUITE("Core::Scenario::ScenarioManager") {
     const ScopedGameDataRoot root{temp.root()};
 
     App::ScenarioManager manager;
-    REQUIRE(manager.initialize_boot_scenarios().has_value());  // context 0 active.
+    initialize_grid_fixture(manager);  // context 0 active.
     REQUIRE(manager.load_world_context(2, std::nullopt, "SCPTDATA/B.SCX").has_value());
     REQUIRE(manager.load_world_context(3, std::nullopt, "SCPTDATA/C.SCX").has_value());
 
@@ -337,7 +345,7 @@ TEST_SUITE("Core::Scenario::ScenarioManager") {
     const ScopedGameDataRoot root{temp.root()};
 
     App::ScenarioManager manager;
-    REQUIRE(manager.initialize_boot_scenarios().has_value());  // context 0 active.
+    initialize_grid_fixture(manager);  // context 0 active.
     REQUIRE(manager.load_world_context(2, std::nullopt, "SCPTDATA/B.SCX").has_value());
     REQUIRE(manager.activate_world_context(2).has_value());  // context 1 active.
 
@@ -357,7 +365,7 @@ TEST_SUITE("Core::Scenario::ScenarioManager") {
     const ScopedGameDataRoot root{temp.root()};
 
     App::ScenarioManager manager;
-    REQUIRE(manager.initialize_boot_scenarios().has_value());
+    initialize_grid_fixture(manager);
 
     const App::Omikron::ScxData* before{manager.world_context_scx(0)};
     const std::uint32_t generation_before{manager.world_contexts()[0].generation};
@@ -380,7 +388,7 @@ TEST_SUITE("Core::Scenario::ScenarioManager") {
     const ScopedGameDataRoot root{temp.root()};
 
     App::ScenarioManager manager;
-    REQUIRE(manager.initialize_boot_scenarios().has_value());
+    initialize_grid_fixture(manager);
     REQUIRE(manager.deactivate_world_context(0).has_value());
     REQUIRE(manager.load_world_context(2, std::nullopt, "SCPTDATA/B.SCX").has_value());
     REQUIRE(manager.unload_world_context(0).has_value());
@@ -417,7 +425,7 @@ TEST_SUITE("Core::Scenario::ScenarioManager") {
     const ScopedGameDataRoot root{temp.root()};
 
     App::ScenarioManager manager;
-    REQUIRE(manager.initialize_boot_scenarios().has_value());
+    initialize_grid_fixture(manager);
     REQUIRE(manager.load_world_context(9, std::nullopt, "SCPTDATA/Snd.SCX").has_value());
 
     CHECK_EQ(manager.active_script_instances_total(), 0U);
@@ -429,16 +437,17 @@ TEST_SUITE("Core::Scenario::ScenarioManager") {
     CHECK_EQ(manager.active_script_instances_total(), 0U);  // No implicit execution.
   }
 
-  TEST_CASE("Missing GRID.SCX produces a path-specific startup error and rolls back") {
+  TEST_CASE("A missing world SCX leaves the gameplay-mode slot intact") {
     const TempDirectory temp;
     write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_script_scx(1));
     const ScopedGameDataRoot root{temp.root()};
 
     App::ScenarioManager manager;
-    auto result{manager.initialize_boot_scenarios()};
+    REQUIRE(manager.set_gameplay_mode(App::GameplayMode::Adventure).has_value());
+    auto result{manager.load_world_context(0, std::nullopt, "SCPTDATA/GRID.SCX")};
     REQUIRE_FALSE(result.has_value());
     CHECK(result.error().find("SCPTDATA/GRID.SCX") != std::string::npos);
-    CHECK(manager.gameplay_mode_scx() == nullptr);
+    CHECK(manager.gameplay_mode_scx() != nullptr);
     CHECK(manager.world_contexts()[0].residency == App::WorldSceneResidencyState::Free);
     CHECK(manager.world_contexts()[1].residency == App::WorldSceneResidencyState::Free);
   }
@@ -450,7 +459,7 @@ TEST_SUITE("Core::Scenario::ScenarioManager") {
     const ScopedGameDataRoot root{temp.root()};
 
     App::ScenarioManager manager;
-    REQUIRE(manager.initialize_boot_scenarios().has_value());
+    initialize_grid_fixture(manager);
 
     auto result{manager.load_world_context(5, std::nullopt, "SCPTDATA/Bad.SCX")};
     REQUIRE_FALSE(result.has_value());
@@ -468,7 +477,7 @@ TEST_SUITE("Core::Scenario::ScenarioManager") {
     const ScopedGameDataRoot root{temp.root()};
 
     App::ScenarioManager manager;
-    REQUIRE(manager.initialize_boot_scenarios().has_value());
+    initialize_grid_fixture(manager);
 
     auto result{manager.set_gameplay_mode(App::GameplayMode::FirstPersonShooting)};
     REQUIRE_FALSE(result.has_value());
@@ -531,13 +540,13 @@ TEST_SUITE("Core::Scenario::ScenarioManager") {
     CHECK_EQ(manager.loaded_scenario_count(), 0U);
   }
 
-  TEST_CASE("Boot installs a gameplay runtime and one world runtime, context 1 has none") {
+  TEST_CASE("Fixture installs a gameplay runtime and one world runtime, context 1 has none") {
     const TempDirectory temp;
     write_boot_fixtures(temp);
     const ScopedGameDataRoot root{temp.root()};
 
     App::ScenarioManager manager;
-    REQUIRE(manager.initialize_boot_scenarios().has_value());
+    initialize_grid_fixture(manager);
 
     CHECK(manager.gameplay_runtime() != nullptr);
     CHECK(manager.world_runtime(0) != nullptr);
@@ -552,7 +561,7 @@ TEST_SUITE("Core::Scenario::ScenarioManager") {
     const ScopedGameDataRoot root{temp.root()};
 
     App::ScenarioManager manager;
-    REQUIRE(manager.initialize_boot_scenarios().has_value());
+    initialize_grid_fixture(manager);
 
     App::ScenarioRuntime* gameplay_before{manager.gameplay_runtime()};
     App::ScenarioRuntime* world_before{manager.world_runtime(0)};
@@ -572,7 +581,7 @@ TEST_SUITE("Core::Scenario::ScenarioManager") {
     const ScopedGameDataRoot root{temp.root()};
 
     App::ScenarioManager manager;
-    REQUIRE(manager.initialize_boot_scenarios().has_value());
+    initialize_grid_fixture(manager);
 
     REQUIRE(manager.world_runtime(0) != nullptr);
     const std::uint32_t generation_before{manager.world_contexts()[0].generation};

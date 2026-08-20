@@ -128,7 +128,7 @@ struct WorldSceneContext {
   /// Resolved decor/level model path (empty until a decor association is
   /// recovered and loaded).
   std::string resolved_decor_path;
-  /// Requested scenario path (e.g., "SCPTDATA/GRID.SCX").
+  /// Requested scenario path (e.g., "SCPTDATA/Hall27.SCX").
   std::string scenario_path;
   /// Resolved on-disk scenario path (diagnostics).
   std::string resolved_scenario_path;
@@ -188,14 +188,6 @@ class ScenarioManager {
   ScenarioManager(ScenarioManager&&) = delete;
   ScenarioManager& operator=(const ScenarioManager&) = delete;
   ScenarioManager& operator=(ScenarioManager&&) = delete;
-
-  /// Initializes the three-slot architecture with the default boot scenarios:
-  /// Adventure mode (aventure.scx) and world context 0 (GRID.SCX in world
-  /// context 0, marked active). World context 1 remains Free.
-  ///
-  /// All templates in both boot scenarios are loaded but remain inactive.
-  /// This is a transactional operation: failure leaves all slots empty.
-  [[nodiscard]] std::expected<void, std::string> initialize_boot_scenarios();
 
   // --- Gameplay-mode slot operations ----------------------------------------
 
@@ -278,9 +270,9 @@ class ScenarioManager {
 
   /// Mutable gameplay-mode scenario runtime (sprite pool, script runtime,
   /// sound resources) built from the current gameplay-mode scenario. Null
-  /// until a gameplay-mode scenario is installed. ModelViewerScene (the development
-  /// viewer) and the debug tools read from this so sprite/script state exists
-  /// without a 3D scene.
+  /// until a gameplay-mode scenario is installed. ModelViewerScene uses this
+  /// slot directly; debug tools can select either this runtime or any world
+  /// runtime explicitly.
   [[nodiscard]] ScenarioRuntime* gameplay_runtime() const;
 
   /// Mutable scenario runtime of a world context, or nullptr when the context
@@ -305,13 +297,6 @@ class ScenarioManager {
   }
 
  private:
-  /// Boot configuration (centralized, no INI).
-  struct BootConfiguration {
-    GameplayMode initial_gameplay_mode{GameplayMode::Adventure};
-    std::uint32_t initial_world_scene_id{0};
-    std::string initial_world_scenario_path{"SCPTDATA/GRID.SCX"};
-    std::optional<std::string> initial_decor_path{std::nullopt};  ///< Null until mapping recovered.
-  };
 
   /// A fully loaded scenario package: the parsed data plus the backing byte
   /// buffer whose offsets the parsed data indexes into.

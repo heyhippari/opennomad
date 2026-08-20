@@ -783,8 +783,8 @@ bool Application::advance_startup_past_splash() {
   // After mode 2 has successfully established the world context, install the
   // stable WorldScene. Mode 1 then executes, the AREA script opens interface
   // 29, and the WorldScene's InterfacePresenter presents it. No frame is
-  // rendered in the middle of this synchronous startup sequence, so GRID is
-  // never exposed before the main menu.
+  // rendered in the middle of this synchronous startup sequence, so the
+  // initial world context is never exposed before the main menu.
   {
     auto world{WorldScene::create(*m_scenario_manager, *m_interface_manager)};
     if (!world) {

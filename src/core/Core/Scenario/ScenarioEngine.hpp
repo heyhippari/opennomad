@@ -7,7 +7,6 @@
 #include <unordered_map>
 
 #include "Core/Omikron/IamArea.hpp"
-#include "Core/Omikron/Model3DO.hpp"
 #include "Core/Scenario/ScenarioManager.hpp"
 #include "Core/Scenario/ScenarioStartupController.hpp"
 #include "Core/Startup/StartupTraceRecorder.hpp"
@@ -119,18 +118,15 @@ class ScenarioEngine {
   [[nodiscard]] bool ticked() const {
     return m_startup.ticked();
   }
-  [[nodiscard]] const std::string& grid_scx_path() const {
-    return m_startup.grid_scx_path();
+  [[nodiscard]] const std::string& initial_world_scenario_path() const {
+    return m_startup.initial_world_scenario_path();
   }
-  [[nodiscard]] const std::string& grid_3do_path() const {
-    return m_startup.grid_3do_path();
+  [[nodiscard]] const std::string& initial_world_decor_path() const {
+    return m_startup.initial_world_decor_path();
   }
-  [[nodiscard]] const std::string& grid_3do_state() const {
-    return m_startup.grid_3do_state();
+  [[nodiscard]] const std::string& initial_world_decor_state() const {
+    return m_startup.initial_world_decor_state();
   }
-  /// Parsed GRID.3DO decor geometry, sourced from the GRID world context in
-  /// ScenarioManager (CPU ownership lives there, not in startup).
-  [[nodiscard]] const Omikron::Model3DOData* grid_3do_model() const;
   [[nodiscard]] const std::string& last_error() const {
     return m_startup.last_error();
   }

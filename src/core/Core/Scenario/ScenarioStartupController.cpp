@@ -116,9 +116,9 @@ void ScenarioStartupController::reset_session() {
   m_area_mapping.clear();
   m_initial_area_id = 0;
   m_linked_area_id = 0;
-  m_grid_scx_path.clear();
-  m_grid_3do_path.clear();
-  m_grid_3do_state.clear();
+  m_initial_world_scenario_path.clear();
+  m_initial_world_decor_path.clear();
+  m_initial_world_decor_state.clear();
   m_main_menu_active = false;
   m_active_handle.reset();
   m_last_error.clear();
@@ -203,21 +203,21 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
   record("IAM_AREA.RecordLoaded", fmt::format("id={} size={:#x}", area_id, record_size));
   record("IAM_AREA.Parsed", fmt::format("scriptOffset={:#x}", script_offset));
 
-  // 3. Dependencies in the original loader's order. For area 118 only the
-  // scenario SCX and the primary 3DO names are populated.
+  // 3. Dependencies in the original loader's order. The names are supplied
+  // by the active IAM/AREA record; GRID is merely the value used by area 118,
+  // not a special world-scenario role.
 
-  // GRID.3DO CPU ownership now lives in the world context (ScenarioManager
-  // loads and parses it inside load_world_context). The startup controller
-  // only derives the dependency name and records whether the dependency was
-  // requested and whether it ultimately loaded.
-  m_grid_3do_path.clear();
+  // Decor CPU ownership lives in the world context. Startup retains only the
+  // initial dependency path/state for historical diagnostics.
+  m_initial_world_decor_path.clear();
   if (model_name.empty()) {
-    m_grid_3do_state = "absent: no model 3DO name in the area record";
-    record("AreaDependency.GRID_3DO.SkippedUnavailable");
+    m_initial_world_decor_state = "absent: no model 3DO name in the area record";
+    record("AreaDependency.Decor.SkippedUnavailable");
   } else {
-    m_grid_3do_path = dependency_path(K_DECOR_DIRECTORY, model_name, K_3DO_EXTENSION);
-    m_grid_3do_state = "requested";
-    record("AreaDependency.GRID_3DO.Requested", m_grid_3do_path);
+    m_initial_world_decor_path =
+        dependency_path(K_DECOR_DIRECTORY, model_name, K_3DO_EXTENSION);
+    m_initial_world_decor_state = "requested";
+    record("AreaDependency.Decor.Requested", m_initial_world_decor_path);
   }
 
   if (scx_name.empty()) {
@@ -226,11 +226,14 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
     return std::expected<void, std::string>{std::unexpect, m_last_error};
   }
 
-  m_grid_scx_path = dependency_path(K_SCPTDATA_DIRECTORY, scx_name, K_SCX_EXTENSION);
+  m_initial_world_scenario_path =
+      dependency_path(K_SCPTDATA_DIRECTORY, scx_name, K_SCX_EXTENSION);
 
   const std::optional<std::string> decor_path{
-      m_grid_3do_path.empty() ? std::nullopt : std::optional<std::string>{m_grid_3do_path}};
-  auto world{manager.load_world_context(0, decor_path, m_grid_scx_path)};
+      m_initial_world_decor_path.empty()
+          ? std::nullopt
+          : std::optional<std::string>{m_initial_world_decor_path}};
+  auto world{manager.load_world_context(0, decor_path, m_initial_world_scenario_path)};
   if (!world) {
     m_last_error = fmt::format("world scenario load: {}", world.error());
     App::Log::error(LogCategory::Startup, "Startup failed: {}", m_last_error);
@@ -245,19 +248,21 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
   // Reflect the decor load result in the startup diagnostic without
   // retaining a duplicate parsed model: the model object lives in the world
   // context and is exposed through ScenarioManager.
-  if (!m_grid_3do_path.empty()) {
-    const WorldSceneContext* grid{manager.find_world_context(0)};
-    if (grid != nullptr && grid->decor_model.has_value()) {
-      m_grid_3do_state = "loaded";
-      record("AreaDependency.GRID_3DO.Loaded", m_grid_3do_path);
+  if (!m_initial_world_decor_path.empty()) {
+    const WorldSceneContext* world_context{manager.find_world_context(0)};
+    if (world_context != nullptr && world_context->decor_model.has_value()) {
+      m_initial_world_decor_state = "loaded";
+      record("AreaDependency.Decor.Loaded", m_initial_world_decor_path);
     } else {
-      m_grid_3do_state = "unavailable";
-      App::Log::warn(
-          LogCategory::Scenario, "GRID.3DO unavailable (non-fatal): {}", m_grid_3do_path);
-      record("AreaDependency.GRID_3DO.Failed", m_grid_3do_path);
+      m_initial_world_decor_state = "unavailable";
+      App::Log::warn(LogCategory::Scenario,
+          "World decor unavailable (non-fatal): {}",
+          m_initial_world_decor_path);
+      record("AreaDependency.Decor.Failed", m_initial_world_decor_path);
     }
   }
-  record("AreaDependency.GRID_SCX.Loaded", "slot=world0");
+  record("AreaDependency.Scenario.Loaded",
+      fmt::format("slot=world0 path={}", m_initial_world_scenario_path));
 
   // 4. Area script context: create, queue event/state 1, activate. The
   // first interpreter tick runs in tick().
@@ -313,9 +318,10 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
               request.operand_b,
               request.operand_c));
       App::Log::debug(LogCategory::Script,
-          "AREA opcode 0x39 — started GRID script {} '{}' as instance {}",
+          "AREA opcode 0x39 — started world script {} '{}' from '{}' as instance {}",
           request.script_id,
           scripts.at(index).name,
+          context->scenario_path,
           created.value());
       return created;
     }

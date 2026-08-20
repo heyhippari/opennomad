@@ -9,7 +9,6 @@
 
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Interface/InterfaceDispatcher.hpp"
-#include "Core/Omikron/Model3DO.hpp"
 #include "Core/Scenario/ScenarioManager.hpp"
 #include "Core/Scenario/ScenarioRuntime.hpp"
 #include "Core/Startup/StartupTraceRecorder.hpp"
@@ -101,14 +100,6 @@ std::expected<void, std::string> ScenarioEngine::update(const float delta_second
     runtime->tick(delta_seconds);
   }
   return {};
-}
-
-const Omikron::Model3DOData* ScenarioEngine::grid_3do_model() const {
-  const WorldSceneContext* context{m_manager.active_world_context()};
-  if (context != nullptr && context->decor_model.has_value()) {
-    return &*context->decor_model;
-  }
-  return nullptr;
 }
 
 void ScenarioEngine::notify_interface_completion(const InterfaceCompletion& completion) {

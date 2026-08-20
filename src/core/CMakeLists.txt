@@ -81,7 +81,6 @@ add_library(${NAME} STATIC
   Core/Script/ScriptRuntime.hpp Core/Script/ScriptRuntime.cpp
   Core/Script/AreaScriptOpcode.hpp
   Core/Script/AreaScriptRuntime.hpp Core/Script/AreaScriptRuntime.cpp
-  Core/TransitionScene.hpp Core/TransitionScene.cpp
   Core/DPIHandler.cpp Core/DPIHandler.hpp
   Core/FrameTiming.hpp
   Core/GameDataLoader.hpp Core/GameDataLoader.cpp
