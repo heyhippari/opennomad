@@ -24,6 +24,7 @@ using App::InterfaceHandle;
 using App::InterfaceOpenRequest;
 using App::Audio::MusicTrackRequest;
 using App::Script::AreaCameraRequest;
+using App::Script::AreaCameraRequest;
 using App::Script::AreaPresentationRequest;
 using App::Script::AreaScriptRuntime;
 using App::Script::AreaScriptState;
@@ -73,6 +74,15 @@ Buffer make_new_game_event_script() {
   bytes.u8(0x76).u32(0x00FFFFFFU).u16(5).u16(0);
   bytes.u8(0x60).u16(2158).u16(25).u16(1);
   bytes.u8(0x04).u16(0x00A6);  // +0x76 -> +0x11F
+
+  // Retail branch at +0x79, selected when interface-29 result != 0.
+  bytes.u8(0x77).u32(0).u16(30).u16(0);          // +0x79
+  bytes.u8(0x5F).u16(2172).u16(0).u16(2);       // +0x82
+  bytes.u8(0x5F).u16(2148).u16(130).u16(2);     // +0x89
+  bytes.u8(0x4E).u16(310).u16(1);               // +0x90
+  bytes.u8(0x3C).u16(310).u16(1).u16(0);        // +0x95
+
+
   bytes.zeros(0x11FU - bytes.data().size());
   bytes.u8(0x03);  // +0x11F
   return bytes;
@@ -281,7 +291,7 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
             .has_value());
   }
 
-  TEST_CASE("The retail New Game branch executes through its first event terminator") {
+  TEST_CASE("The result-zero AREA branch executes through its first event terminator") {
     const Buffer bytes{make_new_game_event_script()};
     AreaScriptRuntime runtime{bytes.data()};
 
@@ -303,8 +313,8 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     REQUIRE(runtime.complete_interface_wait(InterfaceCompletion{.handle = menu_handle, .result = 0})
             .has_value());
 
-    // Result 0 takes the New Game branch. Runtime's presentation helpers set
-    // the context-yield flag, so mode 2 ends this interpreter tick.
+    // Result 0 keeps execution on the fall-through branch. Runtime's
+    // presentation helpers set the context-yield flag.
     REQUIRE(runtime.run() == AreaScriptState::k_running);
     CHECK(runtime.cinematic_letterbox_requested());
     REQUIRE(runtime.last_presentation_request().has_value());
@@ -350,6 +360,51 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     CHECK_EQ(runtime.evaluation_stack_depth(), 0U);
   }
 
+  TEST_CASE("Retail New Game result 3 reaches AREA character activation") {
+    const Buffer bytes{make_new_game_event_script()};
+    AreaScriptRuntime runtime{bytes.data()};
+
+    const InterfaceHandle menu_handle{.interface_id = 29, .generation = 1};
+    runtime.set_interface_sink(
+        [menu_handle](const InterfaceOpenRequest&) -> std::expected<InterfaceHandle, std::string> {
+          return menu_handle;
+        });
+
+    runtime.queue_event(1);
+    runtime.activate();
+    REQUIRE(runtime.run() == AreaScriptState::k_waiting);
+
+    REQUIRE(runtime.complete_interface_wait(
+                InterfaceCompletion{.handle = menu_handle, .result = 3})
+                .has_value());
+    CHECK_EQ(runtime.variable(19), std::optional<std::int32_t>{3});
+
+    // global[19] != 0 makes opcode 0x06 branch to +0x79.
+    // 0x77 and both 0x5F operations each yield one AREA tick.
+    REQUIRE(runtime.run() == AreaScriptState::k_running);
+    REQUIRE(runtime.last_presentation_request().has_value());
+    CHECK_EQ(runtime.last_presentation_request()->mode, 2U);
+
+    REQUIRE(runtime.run() == AreaScriptState::k_running);
+    REQUIRE(runtime.last_camera_request().has_value());
+    CHECK_EQ(runtime.last_camera_request()->camera_id, 2172U);
+
+    REQUIRE(runtime.run() == AreaScriptState::k_running);
+    REQUIRE(runtime.last_camera_request().has_value());
+    CHECK_EQ(runtime.last_camera_request()->camera_id, 2148U);
+
+    // 0x4E does not yield. It records character 310 activation and execution
+    // immediately advances into the next, intentionally still-unsupported
+    // opcode 0x3C (StartCharacterScriptTracked).
+    REQUIRE(runtime.run() == AreaScriptState::k_paused_unsupported);
+    CHECK_EQ(runtime.pause_info().offset, 0x95U);
+    CHECK_EQ(runtime.pause_info().opcode, 0x3CU);
+
+    REQUIRE(runtime.last_character_activation_request().has_value());
+    CHECK_EQ(runtime.last_character_activation_request()->character_id, 310);
+    CHECK(runtime.last_character_activation_request()->apply_area_transform);
+  }
+
   TEST_CASE("The opcode registry knows the recovered New Game VM primitives") {
     CHECK(App::Script::area_opcode_name(0x03) != nullptr);
     CHECK(App::Script::area_opcode_name(0x04) != nullptr);
@@ -359,6 +414,7 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     CHECK(App::Script::area_opcode_name(0x0D) != nullptr);
     CHECK(App::Script::area_opcode_name(0x19) != nullptr);
     CHECK(App::Script::area_opcode_name(0x39) != nullptr);
+    CHECK(App::Script::area_opcode_name(0x4E) != nullptr);
     CHECK(App::Script::area_opcode_name(0x46) != nullptr);
     CHECK(App::Script::area_opcode_name(0x5F) != nullptr);
     CHECK(App::Script::area_opcode_name(0x60) != nullptr);

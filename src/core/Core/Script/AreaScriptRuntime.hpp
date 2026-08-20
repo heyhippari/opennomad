@@ -64,6 +64,24 @@ struct AreaScxScriptRequest {
   std::int16_t operand_c{0};
 };
 
+/// Recovered AREA opcode 0x4E character activation request.
+///
+/// Runtime resolves character_id through the active AREA's table 0. For a
+/// resident runtime character it reactivates the character and marks its AREA
+/// presence bit. When apply_area_transform is true it also applies the
+/// position/orientation serialized in that table-0 record.
+///
+/// character_id == -1 is Runtime's special current-character path; it clears
+/// model flag bit 0x2 instead of looking up a table-0 record.
+///
+/// OpenNomad does not yet own a runtime character subsystem, so the AREA VM
+/// preserves this operation as a typed request rather than fabricating a
+/// character implementation here.
+struct AreaCharacterActivationRequest {
+  std::int16_t character_id{0};
+  bool apply_area_transform{false};
+};
+
 /// Recovered camera operation emitted by opcodes 0x5F/0x60.
 struct AreaCameraRequest {
   std::uint16_t camera_id{0};
@@ -201,6 +219,10 @@ class AreaScriptRuntime {
   [[nodiscard]] std::size_t evaluation_stack_depth() const {
     return m_evaluation_stack.size();
   }
+  [[nodiscard]] const std::optional<AreaCharacterActivationRequest>&
+  last_character_activation_request() const {
+    return m_last_character_activation_request;
+  }
   [[nodiscard]] const std::optional<AreaCameraRequest>& last_camera_request() const {
     return m_last_camera_request;
   }
@@ -259,6 +281,7 @@ class AreaScriptRuntime {
   MusicSink m_music_sink;
   ScxScriptSink m_scx_script_sink;
   InstructionSink m_instruction_sink;
+  std::optional<AreaCharacterActivationRequest> m_last_character_activation_request;
   std::optional<AreaCameraRequest> m_last_camera_request;
   std::optional<AreaPresentationRequest> m_last_presentation_request;
   bool m_cinematic_letterbox_requested{false};

@@ -533,13 +533,15 @@ void initialize_start_menu(InterfaceManager& manager, InterfaceInstance& instanc
     }
   };
 
-  // New Game completes this interface instance. The result value is
-  // provisional and clearly documented; the important behavior is that the
-  // waiting AREA script resumes (which starts track 87 through opcode 0x67).
-  // Track 87 is never started directly here.
+  // Runtime New Game callback @ 0x0047A2B0 stores result 3 in the interface
+  // state. The generic interface-completion path later writes that result to
+  // AREA opcode 0x46's destination global (global 19 for interface 29).
+  //
+  // AREA 118 tests global 19 against zero; result 3 selects the branch which
+  // materializes Kay'l and starts the GRID intro scripts.
   new_game->on_enter =
       [](InterfaceManager& manager_ref, InterfaceInstance& instance_ref, I2DState&) {
-        manager_ref.request_completion(instance_ref.handle, /*provisional result*/ 0);
+        manager_ref.request_completion(instance_ref.handle, 3);
       };
 
   // Animated background: IMAGES/CLOUD.BMP. Missing source degrades to no

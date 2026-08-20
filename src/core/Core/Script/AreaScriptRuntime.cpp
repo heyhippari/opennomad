@@ -37,6 +37,7 @@ constexpr std::uint32_t K_OP_SET_GLOBAL_VARIABLE{0x0E};
 constexpr std::uint32_t K_OP_EQUAL{0x19};
 constexpr std::uint32_t K_OP_CHARACTER_LOOKUP{0x38};
 constexpr std::uint32_t K_OP_START_SCX_SCRIPT{0x39};
+constexpr std::uint32_t K_OP_ACTIVATE_CHARACTER{0x4E};
 constexpr std::uint32_t K_OP_CHARACTER_SELECTION_RESET{0x4F};
 constexpr std::uint32_t K_OP_ACTIVATE_SUBSYSTEM{0x68};
 constexpr std::uint32_t K_OP_OBJECT_ACTIVATE{0x5C};
@@ -64,6 +65,8 @@ constexpr std::array<AreaOperandWidth, 1> K_OPERANDS_0D{AreaOperandWidth::k_int1
 constexpr std::array<AreaOperandWidth, 2> K_OPERANDS_0E{
     AreaOperandWidth::k_int16, AreaOperandWidth::k_int8};
 constexpr std::array<AreaOperandWidth, 1> K_OPERANDS_38{AreaOperandWidth::k_int16};
+constexpr std::array<AreaOperandWidth, 2> K_OPERANDS_4E{
+    AreaOperandWidth::k_int16, AreaOperandWidth::k_int16};
 constexpr std::array<AreaOperandWidth, 1> K_OPERANDS_4F{AreaOperandWidth::k_int16};
 constexpr std::array<AreaOperandWidth, 1> K_OPERANDS_5C{AreaOperandWidth::k_int16};
 constexpr std::array<AreaOperandWidth, 3> K_OPERANDS_3X_I16{
@@ -75,7 +78,7 @@ constexpr std::array<AreaOperandWidth, 3> K_OPERANDS_67{
 constexpr std::array<AreaOperandWidth, 3> K_OPERANDS_PRESENTATION{
     AreaOperandWidth::k_int32, AreaOperandWidth::k_int16, AreaOperandWidth::k_int16};
 
-constexpr std::array<AreaOpcodeInfo, 22> K_AREA_OPCODE_TABLE{
+constexpr std::array<AreaOpcodeInfo, 23> K_AREA_OPCODE_TABLE{
     AreaOpcodeInfo{.opcode = K_OP_END_EVENT,
         .name = "EndEvent",
         .support = OpcodeSupport::k_supported,
@@ -146,6 +149,15 @@ constexpr std::array<AreaOpcodeInfo, 22> K_AREA_OPCODE_TABLE{
         .notes = "resolves operand 0 against active SCX script template +0x1A and waits",
         .operands = K_OPERANDS_3X_I16.data(),
         .operand_count = K_OPERANDS_3X_I16.size()},
+    AreaOpcodeInfo{.opcode = K_OP_ACTIVATE_CHARACTER,
+        .name = "ActivateCharacter",
+        .support = OpcodeSupport::k_supported,
+        .provisional = true,
+        .notes =
+            "reactivates an AREA table-0 character and optionally applies its "
+            "serialized position/orientation; -1 uses the current-character flag path",
+        .operands = K_OPERANDS_4E.data(),
+        .operand_count = K_OPERANDS_4E.size()},
     AreaOpcodeInfo{.opcode = K_OP_CHARACTER_SELECTION_RESET,
         .name = "CharacterSelectionReset",
         .support = OpcodeSupport::k_supported,
@@ -639,6 +651,29 @@ void AreaScriptRuntime::execute_instruction() {
       wait_after_instruction = true;
       entry.effect = fmt::format(
           "start SCX script {} as instance {} and wait", request.script_id, instance.value());
+      break;
+    }
+    case K_OP_ACTIVATE_CHARACTER: {
+      // Runtime handler 0x00403CB0:
+      //   operand 0 -> CHARACTERS ID, resolved through AREA table 0
+      //   operand 1 -> nonzero: apply table-0 position/orientation
+      //
+      // A normal character is reactivated through 0x0041CCA0 and its AREA
+      // presence bit is set through 0x0040AF30. When operand 1 is nonzero,
+      // 0x0041BDF0 applies the table record's x/y/z/orientation transform.
+      //
+      // character -1 instead operates on the current character and clears
+      // model flag bit 0x2 through 0x0041CED0.
+      //
+      // There is deliberately no wait or dispatcher yield here.
+      const AreaCharacterActivationRequest request{
+          .character_id = static_cast<std::int16_t>(operands.at(0)),
+          .apply_area_transform = operands.at(1) != 0};
+      m_last_character_activation_request = request;
+      entry.effect = request.character_id == -1
+                         ? "clear current-character runtime flag 0x2"
+                         : fmt::format("activate character {}{}", request.character_id,
+                               request.apply_area_transform ? " at AREA transform" : "");
       break;
     }
     case K_OP_PLAY_MUSIC: {

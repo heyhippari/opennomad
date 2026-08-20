@@ -59,6 +59,7 @@ std::string dependency_path(const std::string_view directory,
 bool is_provisional_trace_opcode(const std::uint32_t opcode) {
   switch (opcode) {
     case 0x38:
+    case 0x4E:
     case 0x4F:
     case 0x68:
     case 0x5F:

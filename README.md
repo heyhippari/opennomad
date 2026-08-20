@@ -43,3 +43,11 @@ Next steps: handle the `Quit` menu entry, improve the presentation of the menu a
 There's not much to run at the moment, but if you're really motivated, follow the instructions in [docs/QuickStart.md](the quick start documentation).
 
 You can then either copy the original files next to the executable or set an environment variable names `OPENNOMAD_GAME_DATA_ROOT` to the root folder of the game (Where `Runtime.exe` is located).
+
+## Special Thanks
+
+The folks from the original [Mayerem forum (Archive.org mirror)](https://web.archive.org/web/20220121223412/https://www.mayerem.fr/forum.php?sid=8e541bcc0bc6b57fbcf03698ca51995a), for getting the idea of an open source Omikron: The Nomad Soul in my head all these years ago.
+
+[Chevluh](https://github.com/Chevluh/) and Abjab from the Mayerem forum, for the work on [Omikron_Blender_Importer](https://github.com/Chevluh/Omikron_Blender_Importer), documenting some of the 3DO/3DT format.
+
+Quantic Dream and Eidos, for making the game in the first place, and making the little kid I was in 1999 dream about parallel dimensions inside my computer.
