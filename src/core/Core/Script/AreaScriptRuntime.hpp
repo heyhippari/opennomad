@@ -139,6 +139,10 @@ class AreaScriptRuntime {
   using ScxScriptSink =
       std::function<std::expected<std::size_t, std::string>(const AreaScxScriptRequest&)>;
 
+  /// Presentation bridge for 0x5F/0x60. The VM still owns AREA wait/yield
+  /// semantics; the sink receives each command exactly once for rendering.
+  using CameraSink = std::function<void(const AreaCameraRequest&)>;
+
   /// Sink invoked before each instruction executes, with the decoded opcode
   /// and operands. Used to emit ordered per-instruction startup trace events.
   using InstructionSink =
@@ -170,6 +174,9 @@ class AreaScriptRuntime {
 
   /// Wires AREA opcode 0x39 to the active world's SCX ScriptRuntime.
   void set_scx_script_sink(ScxScriptSink sink);
+
+  /// Wires AREA camera opcodes to the world presentation mailbox.
+  void set_camera_sink(CameraSink sink);
 
   /// Wires the pre-execution instruction sink (per-instruction diagnostics).
   void set_instruction_sink(InstructionSink sink);
@@ -280,6 +287,7 @@ class AreaScriptRuntime {
   InterfaceSink m_interface_sink;
   MusicSink m_music_sink;
   ScxScriptSink m_scx_script_sink;
+  CameraSink m_camera_sink;
   InstructionSink m_instruction_sink;
   std::optional<AreaCharacterActivationRequest> m_last_character_activation_request;
   std::optional<AreaCameraRequest> m_last_camera_request;

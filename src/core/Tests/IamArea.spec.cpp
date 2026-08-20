@@ -20,7 +20,15 @@ namespace {
 
 using App::Omikron::IamAreaRecord;
 
+void write_i16(std::vector<std::byte>& data, const std::size_t offset, const std::int16_t value) {
+  std::memcpy(data.data() + offset, &value, sizeof(value));
+}
+
 void write_u16(std::vector<std::byte>& data, const std::size_t offset, const std::uint16_t value) {
+  std::memcpy(data.data() + offset, &value, sizeof(value));
+}
+
+void write_i32(std::vector<std::byte>& data, const std::size_t offset, const std::int32_t value) {
   std::memcpy(data.data() + offset, &value, sizeof(value));
 }
 
@@ -92,6 +100,39 @@ TEST_SUITE("Core::Omikron::IamAreaRecord") {
     CHECK_EQ(IamAreaRecord::known_table_stride(5), std::optional<std::size_t>{0x10});
     CHECK_EQ(IamAreaRecord::known_table_stride(6), std::optional<std::size_t>{0x2C});
     CHECK_EQ(IamAreaRecord::known_table_stride(7), std::optional<std::size_t>{0x08});
+  }
+
+  TEST_CASE("AREA table 6 exposes recovered camera records by signed ID") {
+    constexpr std::size_t k_camera_offset{IamAreaRecord::k_header_size};
+    std::vector<std::byte> data(k_camera_offset + 0x2CU, std::byte{});
+    write_u32(data, IamAreaRecord::k_offset_script, IamAreaRecord::k_header_size);
+    write_u32(data, IamAreaRecord::k_offset_table_offsets + (6U * 4U), k_camera_offset);
+    write_u16(data, IamAreaRecord::k_offset_table_counts + (6U * 2U), 1);
+
+    write_i32(data, k_camera_offset + 0x00U, -3287);
+    write_i32(data, k_camera_offset + 0x04U, -159);
+    write_i32(data, k_camera_offset + 0x08U, -1701);
+    write_i32(data, k_camera_offset + 0x0CU, -3214);
+    write_i32(data, k_camera_offset + 0x10U, -269);
+    write_i32(data, k_camera_offset + 0x14U, -944);
+    write_i16(data, k_camera_offset + 0x18U, 2172);
+    write_u16(data, k_camera_offset + 0x1AU, 12);
+    write_i16(data, k_camera_offset + 0x1CU, 0);
+    write_i16(data, k_camera_offset + 0x1EU, 853);
+    write_i16(data, k_camera_offset + 0x20U, -1);
+    write_i16(data, k_camera_offset + 0x22U, -1);
+
+    const auto record{IamAreaRecord::load(data)};
+    REQUIRE(record.has_value());
+    const auto camera{record->camera_by_id(2172)};
+    REQUIRE(camera.has_value());
+    CHECK_EQ(camera->eye.at(0), -3287);
+    CHECK_EQ(camera->eye.at(1), -159);
+    CHECK_EQ(camera->eye.at(2), -1701);
+    CHECK_EQ(camera->target.at(2), -944);
+    CHECK_EQ(camera->camera_type, 12U);
+    CHECK_EQ(camera->focal_parameter, 853);
+    CHECK_FALSE(record->camera_by_id(999).has_value());
   }
 }
 

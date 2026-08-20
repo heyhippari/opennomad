@@ -153,9 +153,8 @@ constexpr std::array<AreaOpcodeInfo, 23> K_AREA_OPCODE_TABLE{
         .name = "ActivateCharacter",
         .support = OpcodeSupport::k_supported,
         .provisional = true,
-        .notes =
-            "reactivates an AREA table-0 character and optionally applies its "
-            "serialized position/orientation; -1 uses the current-character flag path",
+        .notes = "reactivates an AREA table-0 character and optionally applies its "
+                 "serialized position/orientation; -1 uses the current-character flag path",
         .operands = K_OPERANDS_4E.data(),
         .operand_count = K_OPERANDS_4E.size()},
     AreaOpcodeInfo{.opcode = K_OP_CHARACTER_SELECTION_RESET,
@@ -306,6 +305,10 @@ void AreaScriptRuntime::set_music_sink(MusicSink sink) {
 
 void AreaScriptRuntime::set_scx_script_sink(ScxScriptSink sink) {
   m_scx_script_sink = std::move(sink);
+}
+
+void AreaScriptRuntime::set_camera_sink(CameraSink sink) {
+  m_camera_sink = std::move(sink);
 }
 
 void AreaScriptRuntime::set_instruction_sink(InstructionSink sink) {
@@ -672,7 +675,8 @@ void AreaScriptRuntime::execute_instruction() {
       m_last_character_activation_request = request;
       entry.effect = request.character_id == -1
                          ? "clear current-character runtime flag 0x2"
-                         : fmt::format("activate character {}{}", request.character_id,
+                         : fmt::format("activate character {}{}",
+                               request.character_id,
                                request.apply_area_transform ? " at AREA transform" : "");
       break;
     }
@@ -737,6 +741,9 @@ void AreaScriptRuntime::execute_instruction() {
               .duration_units = duration,
               .flags = static_cast<std::int16_t>(operands.at(2)),
               .wait_for_completion = wait};
+      if (m_camera_sink) {
+        m_camera_sink(m_last_camera_request.value());
+      }
       entry.effect = fmt::format("camera {} duration={} flags={}{}",
           m_last_camera_request->camera_id,
           duration,
@@ -759,9 +766,8 @@ void AreaScriptRuntime::execute_instruction() {
     }
     case K_OP_PRESENTATION_EFFECT:
     case K_OP_PRESENTATION_EFFECT_ALT: {
-      const std::uint8_t mode{opcode == K_OP_PRESENTATION_EFFECT
-              ? std::uint8_t{1}
-              : std::uint8_t{2}};
+      const std::uint8_t mode{
+          opcode == K_OP_PRESENTATION_EFFECT ? std::uint8_t{1} : std::uint8_t{2}};
       m_last_presentation_request = AreaPresentationRequest{.mode = mode,
           .color = static_cast<std::uint32_t>(operands.at(0)),
           .operand_b = static_cast<std::int16_t>(operands.at(1)),

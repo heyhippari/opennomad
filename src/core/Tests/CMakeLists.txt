@@ -24,6 +24,10 @@ add_executable(FrameTimingTest FrameTiming.spec.cpp $<TARGET_OBJECTS:TestRunner>
 add_test(NAME FrameTimingTest COMMAND FrameTimingTest)
 target_link_libraries(FrameTimingTest PRIVATE doctest::doctest Core)
 
+add_executable(WorldCameraTest WorldCamera.spec.cpp $<TARGET_OBJECTS:TestRunner>)
+add_test(NAME WorldCameraTest COMMAND WorldCameraTest)
+target_link_libraries(WorldCameraTest PRIVATE doctest::doctest Core)
+
 add_executable(Model3DOTest Model3DO.spec.cpp $<TARGET_OBJECTS:TestRunner>)
 add_test(NAME Model3DOTest COMMAND Model3DOTest)
 target_link_libraries(Model3DOTest PRIVATE doctest::doctest Core)

@@ -17,9 +17,21 @@ namespace App::Omikron {
 
 namespace {
 
+std::int16_t read_i16_at(const std::span<const std::byte> data, const std::size_t offset) {
+  std::int16_t value{0};
+  std::memcpy(&value, data.subspan(offset, 2U).data(), sizeof(value));
+  return value;
+}
+
 std::uint16_t read_u16_at(const std::span<const std::byte> data, const std::size_t offset) {
   std::uint16_t value{0};
   std::memcpy(&value, data.subspan(offset, 2U).data(), sizeof(value));
+  return value;
+}
+
+std::int32_t read_i32_at(const std::span<const std::byte> data, const std::size_t offset) {
+  std::int32_t value{0};
+  std::memcpy(&value, data.subspan(offset, 4U).data(), sizeof(value));
   return value;
 }
 
@@ -193,6 +205,39 @@ std::expected<std::span<const std::byte>, std::string> IamAreaRecord::table_view
             span_end)};
   }
   return std::span<const std::byte>{m_bytes}.subspan(offset, count * (*stride));
+}
+
+std::optional<IamAreaCameraRecord> IamAreaRecord::camera_by_id(const std::int16_t camera_id) const {
+  constexpr std::size_t k_camera_table_index{6};
+  constexpr std::size_t k_camera_stride{0x2C};
+
+  auto table{table_view(k_camera_table_index)};
+  if (!table) {
+    return std::nullopt;
+  }
+
+  for (std::size_t index{0}; index < table_count(k_camera_table_index); ++index) {
+    const std::span<const std::byte> record{
+        table->subspan(index * k_camera_stride, k_camera_stride)};
+    IamAreaCameraRecord camera;
+    for (std::size_t axis{0}; axis < 3U; ++axis) {
+      camera.eye.at(axis) = read_i32_at(record, axis * 4U);
+      camera.target.at(axis) = read_i32_at(record, 0x0CU + (axis * 4U));
+    }
+    camera.camera_id = read_i16_at(record, 0x18U);
+    camera.camera_type = read_u16_at(record, 0x1AU);
+    camera.angle_units = read_i16_at(record, 0x1CU);
+    camera.focal_parameter = read_i16_at(record, 0x1EU);
+    camera.field_20 = read_i16_at(record, 0x20U);
+    camera.field_22 = read_i16_at(record, 0x22U);
+    for (std::size_t slot{0}; slot < camera.tail_fields.size(); ++slot) {
+      camera.tail_fields.at(slot) = read_u16_at(record, 0x24U + (slot * 2U));
+    }
+    if (camera.camera_id == camera_id) {
+      return camera;
+    }
+  }
+  return std::nullopt;
 }
 
 }  // namespace App::Omikron

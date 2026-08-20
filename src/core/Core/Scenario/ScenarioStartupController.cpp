@@ -28,6 +28,7 @@
 #include "Core/Script/AreaScriptRuntime.hpp"
 #include "Core/Script/ScriptRuntime.hpp"
 #include "Core/Startup/StartupTraceRecorder.hpp"
+#include "Core/WorldPresentation.hpp"
 
 namespace App {
 
@@ -320,6 +321,54 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
     }
     return std::expected<std::size_t, std::string>{std::unexpect,
         fmt::format("SCX script ID {} not found in active world", request.script_id)};
+  });
+
+  area_script.set_camera_sink([this](const Script::AreaCameraRequest& request) {
+    if (m_manager == nullptr || !m_area_slots.at(0).primary.has_value()) {
+      App::Log::warn(LogCategory::Scenario,
+          "AREA camera {} requested without an active AREA/world owner",
+          request.camera_id);
+      return;
+    }
+
+    const auto camera{
+        m_area_slots.at(0).primary->camera_by_id(static_cast<std::int16_t>(request.camera_id))};
+    if (!camera.has_value()) {
+      App::Log::warn(
+          LogCategory::Scenario, "AREA camera {} not found in table 6", request.camera_id);
+      return;
+    }
+
+    const WorldSceneContext* context{m_manager->active_world_context()};
+    if (context == nullptr) {
+      App::Log::warn(LogCategory::Scenario,
+          "AREA camera {} requested without an active world context",
+          request.camera_id);
+      return;
+    }
+
+    m_manager->world_presentation().enqueue_camera(WorldCameraCommand{.scene_id = context->scene_id,
+        .scene_generation = context->generation,
+        .camera_id = request.camera_id,
+        .runtime_eye = camera->eye,
+        .runtime_target = camera->target,
+        .duration_units = request.duration_units,
+        .flags = request.flags,
+        .wait_for_completion = request.wait_for_completion,
+        .camera_type = camera->camera_type,
+        .angle_units = camera->angle_units,
+        .focal_parameter = camera->focal_parameter,
+        .field_20 = camera->field_20,
+        .field_22 = camera->field_22,
+        .tail_fields = camera->tail_fields});
+
+    record("AreaScript.CameraRequested",
+        fmt::format("id={} duration={} flags={} type={} focal={}",
+            request.camera_id,
+            request.duration_units,
+            request.flags,
+            camera->camera_type,
+            camera->focal_parameter));
   });
 
   area_script.set_interface_sink([this](const InterfaceOpenRequest& request)

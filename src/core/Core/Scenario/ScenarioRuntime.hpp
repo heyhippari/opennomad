@@ -31,8 +31,8 @@ namespace App {
 /// Implements `Script::ScriptWorld` so the script runtime can drive sprites
 /// and audio without a 3D scene. Both `ModelViewerScene` (when a 3D world exists)
 /// and the debug tools read from this owner; `Sprite::SpriteRenderer` (the GL
-/// billboard queue builder/drawer) stays in `ModelViewerScene` because billboards
-/// need a 3D camera basis.
+/// billboard queue builder/drawer) stays in the presentation scene/renderer
+/// because billboards need a 3D camera basis.
 class ScenarioRuntime final : public Script::ScriptWorld {
  public:
   ScenarioRuntime() = default;

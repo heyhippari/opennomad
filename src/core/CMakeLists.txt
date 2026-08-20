@@ -34,6 +34,9 @@ add_library(${NAME} STATIC
   Core/Texture.hpp Core/Texture.cpp
   Core/IntegerTexture.hpp Core/IntegerTexture.cpp
   Core/Scene.hpp
+  Core/WorldPresentation.hpp
+  Core/WorldCamera.hpp Core/WorldCamera.cpp
+  Core/WorldRenderer.hpp Core/WorldRenderer.cpp
   Core/ModelViewerScene.hpp Core/ModelViewerScene.cpp
   Core/WorldScene.hpp Core/WorldScene.cpp
   Core/SplashScene.hpp Core/SplashScene.cpp

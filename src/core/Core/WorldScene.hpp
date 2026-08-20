@@ -6,10 +6,12 @@
 
 #include "Core/Interface/InterfacePresenter.hpp"
 #include "Core/Scene.hpp"
+#include "Core/WorldCamera.hpp"
 
 namespace App {
 
 class ScenarioManager;
+class WorldRenderer;
 
 namespace Interface {
 class InterfaceManager;
@@ -17,8 +19,7 @@ class InterfaceManager;
 
 /// Stable normal runtime presentation scene, installed once after the startup
 /// videos/splash and kept active for the whole session. It composes the world
-/// presentation (today a clear-only seam for a future WorldRenderer) with the
-/// generic I2D interface presentation layer.
+/// renderer/scripted camera with the generic I2D interface presentation layer.
 ///
 /// WorldScene observes runtime state owned by ScenarioManager and
 /// InterfaceManager. It does NOT own a ScenarioRuntime, does NOT execute
@@ -26,10 +27,9 @@ class InterfaceManager;
 class WorldScene final : public Scene {
  public:
   static std::expected<std::unique_ptr<WorldScene>, std::string> create(
-      ScenarioManager& scenarios,
-      Interface::InterfaceManager& interfaces);
+      ScenarioManager& scenarios, Interface::InterfaceManager& interfaces);
 
-  ~WorldScene() override = default;
+  ~WorldScene() override;
 
   WorldScene(const WorldScene&) = delete;
   WorldScene(WorldScene&&) = delete;
@@ -45,6 +45,8 @@ class WorldScene final : public Scene {
 
   ScenarioManager* m_scenarios{nullptr};
   Interface::InterfacePresenter m_interfaces;
+  std::unique_ptr<WorldRenderer> m_world_renderer;
+  WorldCameraSystem m_camera;
   int m_width{640};
   int m_height{480};
 

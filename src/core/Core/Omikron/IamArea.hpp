@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -9,6 +10,24 @@
 #include <vector>
 
 namespace App::Omikron {
+
+/// One 0x2C-byte AREA table-6 camera record.
+///
+/// Runtime's camera selection handlers copy the first two 3-vectors into the
+/// active camera definition. +0x1C is normalized as an angle-like quantity;
+/// +0x1E is copied as a float focal/zoom parameter. The remaining attachment
+/// fields are preserved until their exact semantics are fully recovered.
+struct IamAreaCameraRecord {
+  std::array<std::int32_t, 3> eye{};     ///< +0x00..+0x08, Runtime XYZ.
+  std::array<std::int32_t, 3> target{};  ///< +0x0C..+0x14, Runtime XYZ.
+  std::int16_t camera_id{0};             ///< +0x18.
+  std::uint16_t camera_type{0};          ///< +0x1A.
+  std::int16_t angle_units{0};           ///< +0x1C.
+  std::int16_t focal_parameter{0};       ///< +0x1E.
+  std::int16_t field_20{0};              ///< +0x20.
+  std::int16_t field_22{0};              ///< +0x22.
+  std::array<std::uint16_t, 4> tail_fields{};  ///< +0x24..+0x2A.
+};
 
 /// Parsed, owning representation of one IAM/AREA record. Serialized offsets
 /// remain immutable; runtime values (script span, table views) are computed
@@ -73,6 +92,10 @@ class IamAreaRecord {
   /// unresolved is a structured error rather than a guessed view.
   [[nodiscard]] std::expected<std::span<const std::byte>, std::string> table_view(
       std::size_t index) const;
+
+  /// Finds a table-6 camera by its signed camera ID.
+  [[nodiscard]] std::optional<IamAreaCameraRecord> camera_by_id(std::int16_t camera_id) const;
+
 
   /// Known serialized stride of a table, when established. Tables 0, 1, 2, 4,
   /// 5, 6 and 7 have confirmed strides; table 3's semantics remain unresolved.

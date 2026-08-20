@@ -52,6 +52,7 @@ std::expected<void, std::string> ScenarioManager::reset_for_new_session() {
       ++context.generation;
     }
   }
+  m_world_presentation.clear();
   return {};
 }
 

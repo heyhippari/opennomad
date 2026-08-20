@@ -13,6 +13,7 @@
 
 #include "Core/Omikron/Model3DO.hpp"
 #include "Core/Omikron/SCX.hpp"
+#include "Core/WorldPresentation.hpp"
 
 namespace App::Script {
 class ScriptRuntime;
@@ -83,9 +84,12 @@ inline constexpr GameplayModeDefinition k_gameplay_mode_scenarios[]{
 /// Snake-case name of a gameplay mode (diagnostics).
 [[nodiscard]] constexpr std::string_view gameplay_mode_name(const GameplayMode mode) {
   switch (mode) {
-    case GameplayMode::Adventure:           return "adventure";
-    case GameplayMode::FirstPersonShooting: return "first_person_shooting";
-    case GameplayMode::HandToHandCombat:    return "hand_to_hand_combat";
+    case GameplayMode::Adventure:
+      return "adventure";
+    case GameplayMode::FirstPersonShooting:
+      return "first_person_shooting";
+    case GameplayMode::HandToHandCombat:
+      return "hand_to_hand_combat";
   }
   return "unknown";
 }
@@ -104,7 +108,7 @@ inline constexpr GameplayModeDefinition k_gameplay_mode_scenarios[]{
 /// index. Includes a generation counter to detect use-after-free.
 struct ScenarioIdentity {
   ScenarioRole role;
-  std::uint32_t slot;      ///< Mode slot index (0) or world context index (0 or 1).
+  std::uint32_t slot;  ///< Mode slot index (0) or world context index (0 or 1).
   std::uint32_t generation;
 };
 
@@ -293,6 +297,13 @@ class ScenarioManager {
   /// Injects the audio system for scenario-owned voice lifecycle management.
   void set_audio_system(Audio::AudioSystem* audio_system);
 
+  [[nodiscard]] WorldPresentationState& world_presentation() {
+    return m_world_presentation;
+  }
+  [[nodiscard]] const WorldPresentationState& world_presentation() const {
+    return m_world_presentation;
+  }
+
  private:
   /// Boot configuration (centralized, no INI).
   struct BootConfiguration {
@@ -327,6 +338,10 @@ class ScenarioManager {
   GameplayModeSlot m_gameplay_mode_slot;
   std::array<WorldSceneContext, WorldSceneContext::k_capacity> m_world_contexts;
 
+  /// CPU-only command mailbox between AREA/scenario execution and the stable
+  /// WorldScene presentation layer.
+  WorldPresentationState m_world_presentation;
+
   Audio::AudioSystem* m_audio_system{nullptr};  ///< Non-owning.
 
   /// Normalizes legacy Windows separators to the portable form.
@@ -345,9 +360,8 @@ class ScenarioManager {
 
   /// Atomically installs a loaded mode scenario and its runtime into the
   /// gameplay-mode slot.
-  void install_gameplay_mode(GameplayMode mode,
-      LoadedScenario loaded,
-      std::unique_ptr<ScenarioRuntime> runtime);
+  void install_gameplay_mode(
+      GameplayMode mode, LoadedScenario loaded, std::unique_ptr<ScenarioRuntime> runtime);
 
   /// Tears down the gameplay-mode slot completely (runtime first, then data).
   void teardown_gameplay_mode_slot();
