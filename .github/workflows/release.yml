@@ -20,12 +20,45 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configure CMake
-        run: cmake -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}}
+      # SDL3's overlay port finds the Wayland/X11/IBus/libdecor backends via
+      # pkg-config at configure time (see overlay-ports/sdl3/portfile.cmake).
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libx11-dev libxft-dev libxext-dev \
+            libwayland-dev libxkbcommon-dev libegl1-mesa-dev \
+            libibus-1.0-dev libdecor-0-dev libgl1-mesa-dev
+
+      # Dependencies come from vcpkg (vcpkg.json); the action installs the
+      # registry at the builtin-baseline and bootstraps the vcpkg binary.
+      - name: Set up vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgDirectory: '${{ github.workspace }}/vcpkg'
+          # The default '**/vcpkg.json' also matches overlay-ports/sdl3/vcpkg.json,
+          # which has no builtin-baseline. The action then finds the manifest
+          # "multiple times" and gives up. Pin the glob to the repository-root
+          # manifest, which holds the builtin-baseline commit id.
+          vcpkgJsonGlob: 'vcpkg.json'
+
+      # Linux uses the custom overlay triplet (shared libs + glad core profile).
+      - name: Configure CMake (Linux)
+        if: runner.os == 'Linux'
+        run: cmake -B "${{ github.workspace }}/build" -DCMAKE_BUILD_TYPE="${{ env.BUILD_TYPE }}" -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-linux-dynamic-glcore
+
+      - name: Configure CMake (macOS)
+        if: runner.os == 'macOS'
+        run: cmake -B "${{ github.workspace }}/build" -DCMAKE_BUILD_TYPE="${{ env.BUILD_TYPE }}" -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake"
+
+      - name: Configure CMake (Windows)
+        if: runner.os == 'Windows'
+        run: cmake -B "${{ github.workspace }}/build" -DCMAKE_BUILD_TYPE="${{ env.BUILD_TYPE }}" -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake"
 
       - name: Build
-        run: cmake --build ${{github.workspace}}/build --config ${{env.BUILD_TYPE}}
+        run: cmake --build "${{ github.workspace }}/build" --config "${{ env.BUILD_TYPE }}"
 
       - name: Test
-        working-directory: ${{github.workspace}}/build
-        run: ctest -C ${{env.BUILD_TYPE}}
+        working-directory: ${{ github.workspace }}/build
+        run: ctest -C "${{ env.BUILD_TYPE }}" --output-on-failure
