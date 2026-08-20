@@ -20,7 +20,12 @@
     },
     {
       "name": "sdl3",
-      "features": ["alsa", "ibus", "libdecor", "vulkan", "wayland", "x11"]
+      "features": ["vulkan"]
+    },
+    {
+      "name": "sdl3",
+      "features": ["alsa", "ibus", "libdecor", "wayland", "x11"],
+      "platform": "linux"
     },
     {
       "name": "sdl3-image",
