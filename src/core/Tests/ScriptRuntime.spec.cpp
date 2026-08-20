@@ -32,6 +32,7 @@ constexpr std::uint32_t K_SET_FRAME{0x04000029U};
 constexpr std::uint32_t K_PLAY_SOUND{0x05000014U};
 constexpr std::uint32_t K_PLAY_SYNC_SOUND{0x05000015U};
 constexpr std::uint32_t K_STOP_SOUND{0x05000016U};
+constexpr std::uint32_t K_WAIT{0x06000017U};
 
 /// Synthetic sprite handle for the fake world.
 constexpr App::Sprite::SpriteHandle K_HANDLE{100, 1};
@@ -62,8 +63,7 @@ class FakeWorld final : public App::Script::ScriptWorld {
   std::expected<App::Sprite::SpriteHandle, std::string> ensure_sprite(
       const std::uint32_t /*source*/) override {
     if (fail_ensure) {
-      return std::expected<App::Sprite::SpriteHandle, std::string>{
-          std::unexpect, "no such sprite"};
+      return std::expected<App::Sprite::SpriteHandle, std::string>{std::unexpect, "no such sprite"};
     }
     return K_HANDLE;
   }
@@ -94,8 +94,7 @@ class FakeWorld final : public App::Script::ScriptWorld {
   std::expected<std::array<float, 3>, std::string> resolve_position(
       const std::uint32_t /*xyz*/) override {
     if (fail_position) {
-      return std::expected<std::array<float, 3>, std::string>{
-          std::unexpect, "no xyz"};
+      return std::expected<std::array<float, 3>, std::string>{std::unexpect, "no xyz"};
     }
     return fallback_position;
   }
@@ -103,28 +102,26 @@ class FakeWorld final : public App::Script::ScriptWorld {
   std::expected<App::Audio::SoundDescriptor, std::string> resolve_sound(
       const std::uint32_t /*index*/) override {
     if (fail_sound) {
-      return std::expected<App::Audio::SoundDescriptor, std::string>{
-          std::unexpect, "no sound"};
+      return std::expected<App::Audio::SoundDescriptor, std::string>{std::unexpect, "no sound"};
     }
     return sound_descriptor;
   }
   std::expected<App::Audio::AudioOwnerToken, std::string> resolve_audio_owner(
       const std::int32_t object_index) override {
     if (fail_owner) {
-      return std::expected<App::Audio::AudioOwnerToken, std::string>{
-          std::unexpect, "no object"};
+      return std::expected<App::Audio::AudioOwnerToken, std::string>{std::unexpect, "no object"};
     }
     if (object_index == -1) {
       return App::Audio::AudioOwnerToken{};
     }
-    return App::Audio::AudioOwnerToken{
-        .scenario = this, .object_index = static_cast<std::uint32_t>(object_index), .generation = 1};
+    return App::Audio::AudioOwnerToken{.scenario = this,
+        .object_index = static_cast<std::uint32_t>(object_index),
+        .generation = 1};
   }
   std::expected<App::Audio::Vec3, std::string> resolve_owner_position(
       const App::Audio::AudioOwnerToken& /*owner*/) override {
     if (fail_owner_position) {
-      return std::expected<App::Audio::Vec3, std::string>{
-          std::unexpect, "no position"};
+      return std::expected<App::Audio::Vec3, std::string>{std::unexpect, "no position"};
     }
     return App::Audio::Vec3{1.0F, 2.0F, 3.0F};
   }
@@ -132,8 +129,7 @@ class FakeWorld final : public App::Script::ScriptWorld {
       const App::Audio::SoundPlayRequest& request) override {
     play_requests.push_back(request);
     if (fail_play) {
-      return std::expected<App::Audio::VoiceHandle, std::string>{
-          std::unexpect, "pool full"};
+      return std::expected<App::Audio::VoiceHandle, std::string>{std::unexpect, "pool full"};
     }
     return App::Audio::VoiceHandle{.index = 3, .generation = 1};
   }
@@ -141,8 +137,12 @@ class FakeWorld final : public App::Script::ScriptWorld {
       const App::Audio::SoundResourceId sound, const App::Audio::AudioOwnerToken& owner) override {
     stop_requests.push_back({sound, owner});
   }
-  App::Audio::AudioContextInfo audio_context() const override { return {}; }
-  std::string_view scenario_name() const override { return "test"; }
+  App::Audio::AudioContextInfo audio_context() const override {
+    return {};
+  }
+  std::string_view scenario_name() const override {
+    return "test";
+  }
 };
 
 /// Builds one parsed script command.
@@ -167,8 +167,8 @@ struct RuntimeFixture {
   FakeWorld world;
   std::unique_ptr<App::Script::ScriptRuntime> runtime;
 
-  RuntimeFixture(std::vector<App::Omikron::ScxScript> scripts,
-      std::vector<App::Omikron::ScriptValue> values) {
+  RuntimeFixture(
+      std::vector<App::Omikron::ScxScript> scripts, std::vector<App::Omikron::ScriptValue> values) {
     scx.scripts = std::move(scripts);
     scx.shared_values = std::move(values);
     runtime = std::move(App::Script::ScriptRuntime::create(scx, world, "test").value());
@@ -215,6 +215,29 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
     CHECK_EQ(std::string{App::Script::opcode_name(K_PLAY_SYNC_SOUND)}, "PlaySyncSound");
     CHECK_EQ(std::string{App::Script::opcode_name(K_STOP_SOUND)}, "StopSound");
     CHECK_FALSE(App::Script::opcode_owns_sprite(K_PLAY_SOUND));
+    CHECK_EQ(std::string{App::Script::opcode_name(K_WAIT)}, "Wait");
+    CHECK_FALSE(App::Script::opcode_owns_sprite(K_WAIT));
+  }
+
+  TEST_CASE("Wait advances mutable elapsed time in 30 Hz script-frame units") {
+    // Wait5sec in Grid.SCX uses exactly: duration=150.0, elapsed=0.0.
+    RuntimeFixture fixture{
+        {single_root_script(command(K_WAIT, 0, 2))}, make_values(2, {0x43160000U, 0U})};
+    REQUIRE(fixture.runtime->create_instance(0).has_value());
+
+    fixture.runtime->step_tick(60.0F);
+    CHECK_EQ(
+        fixture.runtime->instances().at(0).value_pool.at(1).as_float(), doctest::Approx(60.0F));
+    CHECK_EQ(fixture.runtime->run_state(), App::Script::ScriptRunState::k_running);
+
+    fixture.runtime->step_tick(60.0F);
+    CHECK_EQ(
+        fixture.runtime->instances().at(0).value_pool.at(1).as_float(), doctest::Approx(120.0F));
+
+    fixture.runtime->step_tick(30.0F);
+    CHECK_EQ(
+        fixture.runtime->instances().at(0).value_pool.at(1).as_float(), doctest::Approx(150.0F));
+    CHECK_EQ(fixture.runtime->run_state(), App::Script::ScriptRunState::k_completed);
   }
 
   TEST_CASE("SetSpriteFrame selects the frame and completes in one tick") {
@@ -231,8 +254,8 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
 
   TEST_CASE("ScaleSpriteOnX interpolates with the confirmed equation and order") {
     // args: sprite, initial=1, target=3, current=1, duration=10, elapsed=0.
-    RuntimeFixture fixture{{single_root_script(
-        command(K_SCALE_X, 0, 6, std::nullopt, 0xFFFFFFFFU))},
+    RuntimeFixture fixture{
+        {single_root_script(command(K_SCALE_X, 0, 6, std::nullopt, 0xFFFFFFFFU))},
         make_values(6, {0, 0x3F800000U, 0x40400000U, 0x3F800000U, 0x41200000U, 0})};
 
     REQUIRE(fixture.runtime->create_instance(0).has_value());
@@ -252,8 +275,8 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
   TEST_CASE("Scale completion snaps to the target and resets for repetition") {
     // Infinite limit keeps the command repeatable: first completion snaps to
     // target, then current/elapsed reset for the next cycle.
-    RuntimeFixture fixture{{single_root_script(
-        command(K_SCALE_X, 0, 6, std::nullopt, 0xFFFFFFFFU))},
+    RuntimeFixture fixture{
+        {single_root_script(command(K_SCALE_X, 0, 6, std::nullopt, 0xFFFFFFFFU))},
         make_values(6, {0, 0x3F800000U, 0x40000000U, 0x3F800000U, 0x3F800000U, 0})};
     REQUIRE(fixture.runtime->create_instance(0).has_value());
 
@@ -270,8 +293,7 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
 
   TEST_CASE("SetSpriteRolling converts degrees to radians during interpolation") {
     // initial=0, target=90, current=0, duration=90, elapsed=0, infinite.
-    RuntimeFixture fixture{{single_root_script(
-        command(K_ROLL, 0, 6, std::nullopt, 0xFFFFFFFFU))},
+    RuntimeFixture fixture{{single_root_script(command(K_ROLL, 0, 6, std::nullopt, 0xFFFFFFFFU))},
         make_values(6, {0, 0, 0x42B40000U, 0, 0x42B40000U, 0})};
     REQUIRE(fixture.runtime->create_instance(0).has_value());
 
@@ -319,8 +341,8 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
     fixture.runtime->tick(1.0F);
 
     CHECK_EQ(fixture.runtime->run_state(), App::Script::ScriptRunState::k_paused_on_error);
-    CHECK_EQ(fixture.runtime->pause_info().reason,
-        App::Script::ScriptPauseReason::k_missing_resource);
+    CHECK_EQ(
+        fixture.runtime->pause_info().reason, App::Script::ScriptPauseReason::k_missing_resource);
   }
 
   TEST_CASE("Unhandled opcode pauses before mutating anything") {
@@ -386,15 +408,14 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
   }
 
   TEST_CASE("Reset restores initial values and counters") {
-    RuntimeFixture fixture{{single_root_script(
-        command(K_SCALE_X, 0, 6, std::nullopt, 0xFFFFFFFFU))},
+    RuntimeFixture fixture{
+        {single_root_script(command(K_SCALE_X, 0, 6, std::nullopt, 0xFFFFFFFFU))},
         make_values(6, {0, 0x3F800000U, 0x40000000U, 0x3F800000U, 0x41200000U, 0})};
     const std::size_t id{fixture.runtime->create_instance(0).value()};
 
     fixture.runtime->step_tick(2.0F);
     // Interpolation mutated the working current value (1 + (2-1)/10 * 2 = 1.2).
-    CHECK_EQ(fixture.runtime->instances().at(0).value_pool.at(3).as_float(),
-        doctest::Approx(1.2F));
+    CHECK_EQ(fixture.runtime->instances().at(0).value_pool.at(3).as_float(), doctest::Approx(1.2F));
 
     REQUIRE(fixture.runtime->reset_instance(id).has_value());
     const App::Script::ScriptInstance& instance{fixture.runtime->instances().at(0)};
@@ -404,8 +425,8 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
   }
 
   TEST_CASE("Two instances of the same script do not share mutable state") {
-    RuntimeFixture fixture{{single_root_script(
-        command(K_SCALE_X, 0, 6, std::nullopt, 0xFFFFFFFFU))},
+    RuntimeFixture fixture{
+        {single_root_script(command(K_SCALE_X, 0, 6, std::nullopt, 0xFFFFFFFFU))},
         make_values(6, {0, 0x3F800000U, 0x40000000U, 0x3F800000U, 0x41200000U, 0})};
     REQUIRE(fixture.runtime->create_instance(0).has_value());
     REQUIRE(fixture.runtime->create_instance(0).has_value());
@@ -423,8 +444,7 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
 
   TEST_CASE("Invalid argument count pauses with a structured reason") {
     // SetSpriteFrame needs 2 arguments; supply 1.
-    RuntimeFixture fixture{
-        {single_root_script(command(K_SET_FRAME, 0, 1))}, make_values(1, {0})};
+    RuntimeFixture fixture{{single_root_script(command(K_SET_FRAME, 0, 1))}, make_values(1, {0})};
     REQUIRE(fixture.runtime->create_instance(0).has_value());
 
     fixture.runtime->tick(1.0F);
@@ -442,8 +462,8 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
     fixture.runtime->tick(1.0F);
 
     CHECK_EQ(fixture.runtime->run_state(), App::Script::ScriptRunState::k_paused_on_error);
-    CHECK_EQ(fixture.runtime->pause_info().reason,
-        App::Script::ScriptPauseReason::k_invalid_duration);
+    CHECK_EQ(
+        fixture.runtime->pause_info().reason, App::Script::ScriptPauseReason::k_invalid_duration);
   }
 
   TEST_CASE("Paused execution does not advance time or mutate commands") {
@@ -460,8 +480,8 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
   }
 
   TEST_CASE("SetSpriteType writes the requested type and increments once") {
-    RuntimeFixture fixture{{single_root_script(command(K_SET_SPRITE_TYPE, 0, 2))},
-        make_values(2, {0, 7})};
+    RuntimeFixture fixture{
+        {single_root_script(command(K_SET_SPRITE_TYPE, 0, 2))}, make_values(2, {0, 7})};
     REQUIRE(fixture.runtime->create_instance(0).has_value());
 
     fixture.runtime->step_tick(1.0F);
@@ -472,8 +492,8 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
   }
 
   TEST_CASE("SetSpriteType writes zero explicitly") {
-    RuntimeFixture fixture{{single_root_script(command(K_SET_SPRITE_TYPE, 0, 2))},
-        make_values(2, {0, 0})};
+    RuntimeFixture fixture{
+        {single_root_script(command(K_SET_SPRITE_TYPE, 0, 2))}, make_values(2, {0, 0})};
     REQUIRE(fixture.runtime->create_instance(0).has_value());
 
     fixture.runtime->step_tick(1.0F);
@@ -483,8 +503,8 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
   }
 
   TEST_CASE("SetSpriteType truncates to the low 16 bits") {
-    RuntimeFixture fixture{{single_root_script(command(K_SET_SPRITE_TYPE, 0, 2))},
-        make_values(2, {0, 0x10005U})};
+    RuntimeFixture fixture{
+        {single_root_script(command(K_SET_SPRITE_TYPE, 0, 2))}, make_values(2, {0, 0x10005U})};
     REQUIRE(fixture.runtime->create_instance(0).has_value());
 
     fixture.runtime->step_tick(1.0F);
@@ -500,8 +520,7 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
     script.linked_command_count = 1;
     script.execution_context_field_34 = 1;
     script.root_commands.push_back(command(K_SET_SPRITE_TYPE, 0, 2, 0));
-    script.linked_commands.push_back(
-        command(K_SET_FRAME, 2, 2, std::nullopt, 0xFFFFFFFFU));
+    script.linked_commands.push_back(command(K_SET_FRAME, 2, 2, std::nullopt, 0xFFFFFFFFU));
 
     RuntimeFixture fixture{{script}, make_values(4, {0, 7, 0, 5})};
     REQUIRE(fixture.runtime->create_instance(0).has_value());
@@ -524,8 +543,8 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
     fixture.runtime->step_tick(1.0F);
 
     CHECK_EQ(fixture.runtime->run_state(), App::Script::ScriptRunState::k_paused_on_error);
-    CHECK_EQ(fixture.runtime->pause_info().reason,
-        App::Script::ScriptPauseReason::k_missing_resource);
+    CHECK_EQ(
+        fixture.runtime->pause_info().reason, App::Script::ScriptPauseReason::k_missing_resource);
   }
 
   TEST_CASE("SetSpriteType pauses on a malformed argument count") {
@@ -541,16 +560,14 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
   }
 
   TEST_CASE("Real delta converts to script frames with the three-frame clamp") {
-    CHECK_EQ(App::Script::convert_real_delta_to_script_frames(1.0F / 30.0F),
-        doctest::Approx(1.0F));
-    CHECK_EQ(App::Script::convert_real_delta_to_script_frames(1.0F / 60.0F),
-        doctest::Approx(0.5F));
+    CHECK_EQ(App::Script::convert_real_delta_to_script_frames(1.0F / 30.0F), doctest::Approx(1.0F));
+    CHECK_EQ(App::Script::convert_real_delta_to_script_frames(1.0F / 60.0F), doctest::Approx(0.5F));
     CHECK_EQ(App::Script::convert_real_delta_to_script_frames(0.1F), doctest::Approx(3.0F));
   }
 
   TEST_CASE("Display3DSprite with duration 60 exhausts on the 60th frame at delta 1.0") {
-    RuntimeFixture fixture{{single_root_script(command(K_DISPLAY_3D, 0, 4))},
-        make_values(4, {0, 0, 0x42700000U, 0})};
+    RuntimeFixture fixture{
+        {single_root_script(command(K_DISPLAY_3D, 0, 4))}, make_values(4, {0, 0, 0x42700000U, 0})};
     REQUIRE(fixture.runtime->create_instance(0).has_value());
 
     for (int update{0}; update < 59; ++update) {
@@ -565,8 +582,8 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
   }
 
   TEST_CASE("Display3DSprite with duration 60 exhausts on the 120th frame at delta 0.5") {
-    RuntimeFixture fixture{{single_root_script(command(K_DISPLAY_3D, 0, 4))},
-        make_values(4, {0, 0, 0x42700000U, 0})};
+    RuntimeFixture fixture{
+        {single_root_script(command(K_DISPLAY_3D, 0, 4))}, make_values(4, {0, 0, 0x42700000U, 0})};
     REQUIRE(fixture.runtime->create_instance(0).has_value());
 
     for (int update{0}; update < 119; ++update) {
@@ -668,8 +685,8 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
   // ─────────────────────────────────────────────────────────────────────────
 
   TEST_CASE("PlaySound {9,0,0,-1} queues one nonspatial one-shot and latches") {
-    RuntimeFixture fixture{{single_root_script(command(K_PLAY_SOUND, 0, 4))},
-        make_values(4, {9, 0, 0, 0xFFFFFFFFU})};
+    RuntimeFixture fixture{
+        {single_root_script(command(K_PLAY_SOUND, 0, 4))}, make_values(4, {9, 0, 0, 0xFFFFFFFFU})};
     REQUIRE(fixture.runtime->create_instance(0).has_value());
 
     fixture.runtime->step_tick(1.0F);
@@ -686,8 +703,8 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
   }
 
   TEST_CASE("PlaySound does not queue twice") {
-    RuntimeFixture fixture{{single_root_script(command(K_PLAY_SOUND, 0, 4))},
-        make_values(4, {9, 0, 0, 0xFFFFFFFFU})};
+    RuntimeFixture fixture{
+        {single_root_script(command(K_PLAY_SOUND, 0, 4))}, make_values(4, {9, 0, 0, 0xFFFFFFFFU})};
     REQUIRE(fixture.runtime->create_instance(0).has_value());
 
     fixture.runtime->step_tick(1.0F);
@@ -697,8 +714,8 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
   }
 
   TEST_CASE("PlaySound loop flag bit 0 produces looping") {
-    RuntimeFixture fixture{{single_root_script(command(K_PLAY_SOUND, 0, 4))},
-        make_values(4, {9, 1, 0, 0xFFFFFFFFU})};
+    RuntimeFixture fixture{
+        {single_root_script(command(K_PLAY_SOUND, 0, 4))}, make_values(4, {9, 1, 0, 0xFFFFFFFFU})};
     REQUIRE(fixture.runtime->create_instance(0).has_value());
 
     fixture.runtime->step_tick(1.0F);
@@ -715,13 +732,13 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
     fixture.runtime->step_tick(1.0F);
 
     REQUIRE_EQ(fixture.world.play_requests.size(), 1U);
-    CHECK_FALSE(fixture.world.play_requests.at(0).loop);   // bit 0 clear.
+    CHECK_FALSE(fixture.world.play_requests.at(0).loop);  // bit 0 clear.
     CHECK_EQ(fixture.world.play_requests.at(0).raw_flags, 0x08U);
   }
 
   TEST_CASE("Attached PlaySound uses the recovered 78/1170 distance defaults") {
-    RuntimeFixture fixture{{single_root_script(command(K_PLAY_SOUND, 0, 4))},
-        make_values(4, {9, 0, 0, 5})};
+    RuntimeFixture fixture{
+        {single_root_script(command(K_PLAY_SOUND, 0, 4))}, make_values(4, {9, 0, 0, 5})};
     REQUIRE(fixture.runtime->create_instance(0).has_value());
 
     fixture.runtime->step_tick(1.0F);
@@ -737,8 +754,8 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
   }
 
   TEST_CASE("PlaySound queue failure still latches and exhausts") {
-    RuntimeFixture fixture{{single_root_script(command(K_PLAY_SOUND, 0, 4))},
-        make_values(4, {9, 0, 0, 0xFFFFFFFFU})};
+    RuntimeFixture fixture{
+        {single_root_script(command(K_PLAY_SOUND, 0, 4))}, make_values(4, {9, 0, 0, 0xFFFFFFFFU})};
     fixture.world.fail_play = true;
     REQUIRE(fixture.runtime->create_instance(0).has_value());
 
@@ -782,8 +799,8 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
   }
 
   TEST_CASE("Attached PlaySyncSound uses the recovered 0/30 distance defaults") {
-    RuntimeFixture fixture{{single_root_script(command(K_PLAY_SYNC_SOUND, 0, 5))},
-        make_values(5, {9, 0, 0, 0, 5})};
+    RuntimeFixture fixture{
+        {single_root_script(command(K_PLAY_SYNC_SOUND, 0, 5))}, make_values(5, {9, 0, 0, 0, 5})};
     REQUIRE(fixture.runtime->create_instance(0).has_value());
 
     fixture.runtime->step_tick(1.0F);
@@ -796,8 +813,8 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
   }
 
   TEST_CASE("StopSound -1 stops the first matching null-owner voice") {
-    RuntimeFixture fixture{{single_root_script(command(K_STOP_SOUND, 0, 2))},
-        make_values(2, {9, 0xFFFFFFFFU})};
+    RuntimeFixture fixture{
+        {single_root_script(command(K_STOP_SOUND, 0, 2))}, make_values(2, {9, 0xFFFFFFFFU})};
     REQUIRE(fixture.runtime->create_instance(0).has_value());
 
     fixture.runtime->step_tick(1.0F);
@@ -809,8 +826,8 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
   }
 
   TEST_CASE("StopSound with an object stops the matching (soundId, owner) voice") {
-    RuntimeFixture fixture{{single_root_script(command(K_STOP_SOUND, 0, 2))},
-        make_values(2, {9, 5})};
+    RuntimeFixture fixture{
+        {single_root_script(command(K_STOP_SOUND, 0, 2))}, make_values(2, {9, 5})};
     REQUIRE(fixture.runtime->create_instance(0).has_value());
 
     fixture.runtime->step_tick(1.0F);
@@ -822,8 +839,8 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
   }
 
   TEST_CASE("PlaySound reset clears the latch and stops the matching voice") {
-    RuntimeFixture fixture{{single_root_script(command(K_PLAY_SOUND, 0, 4))},
-        make_values(4, {9, 0, 0, 0xFFFFFFFFU})};
+    RuntimeFixture fixture{
+        {single_root_script(command(K_PLAY_SOUND, 0, 4))}, make_values(4, {9, 0, 0, 0xFFFFFFFFU})};
     const std::size_t id{fixture.runtime->create_instance(0).value()};
 
     fixture.runtime->step_tick(1.0F);

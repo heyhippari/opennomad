@@ -35,6 +35,8 @@ enum class AreaScriptState : std::uint8_t {
 enum class AreaWaitKind : std::uint8_t {
   k_none,
   k_interface,
+  k_scx_script,
+  k_camera,
 };
 
 /// Typed wait state: enough information to associate a completion with the
@@ -45,6 +47,37 @@ struct AreaWaitState {
   /// Recovered legacy wait-state value (6 for interfaces).
   std::uint16_t runtime_state{0};
   std::optional<App::InterfaceHandle> interface;
+  /// Destination START/global variable for an interface result (opcode 0x46).
+  std::optional<std::uint16_t> interface_result_variable;
+  /// SCX ScriptRuntime instance spawned by opcode 0x39.
+  std::optional<std::size_t> scx_script_instance;
+  /// Remaining 30 Hz scenario units for the timed camera wait used by 0x60.
+  float remaining_scenario_frames{0.0F};
+};
+
+/// AREA opcode 0x39 request. Runtime resolves operand 0 against the active
+/// SCX template's +0x1A script ID; the other operands are preserved until
+/// their semantics are fully recovered.
+struct AreaScxScriptRequest {
+  std::uint16_t script_id{0};
+  std::int16_t operand_b{0};
+  std::int16_t operand_c{0};
+};
+
+/// Recovered camera operation emitted by opcodes 0x5F/0x60.
+struct AreaCameraRequest {
+  std::uint16_t camera_id{0};
+  std::int16_t duration_units{0};
+  std::int16_t flags{0};
+  bool wait_for_completion{false};
+};
+
+/// Shared presentation request used by 0x76 (mode 1) and 0x77 (mode 2).
+struct AreaPresentationRequest {
+  std::uint8_t mode{0};
+  std::uint32_t color{0};
+  std::int16_t operand_b{0};
+  std::int16_t operand_c{0};
 };
 
 /// One decoded instruction boundary and its operands (sign-extended), kept
@@ -75,18 +108,23 @@ class AreaScriptRuntime {
   /// Sink for the interface-open opcode (0x46): the full open request. The
   /// sink opens the interface and returns the opened instance handle, or an
   /// error. Wired by the startup controller to the UI dispatch.
-  using InterfaceSink = std::function<
-      std::expected<App::InterfaceHandle, std::string>(const App::InterfaceOpenRequest&)>;
+  using InterfaceSink = std::function<std::expected<App::InterfaceHandle, std::string>(
+      const App::InterfaceOpenRequest&)>;
 
   /// Sink for the music opcode (0x67): the typed track request. Wired by the
   /// startup controller to the audio system. Fire-and-forget (void); failures
   /// are logged by the sink and never stop the script.
   using MusicSink = std::function<void(const Audio::MusicTrackRequest& request)>;
 
+  /// Bridge from compact AREA bytecode to the active world's SCX ScriptRuntime.
+  /// Returns the newly-created ScriptRuntime instance ID.
+  using ScxScriptSink =
+      std::function<std::expected<std::size_t, std::string>(const AreaScxScriptRequest&)>;
+
   /// Sink invoked before each instruction executes, with the decoded opcode
   /// and operands. Used to emit ordered per-instruction startup trace events.
-  using InstructionSink = std::function<void(
-      std::uint32_t opcode, const std::vector<std::int32_t>& operands)>;
+  using InstructionSink =
+      std::function<void(std::uint32_t opcode, const std::vector<std::int32_t>& operands)>;
 
   explicit AreaScriptRuntime(std::span<const std::byte> script_bytes);
 
@@ -104,13 +142,16 @@ class AreaScriptRuntime {
 
   /// Executes queued work until the context waits, pauses, completes, fails,
   /// or the per-call instruction budget is exhausted. Returns the new state.
-  [[nodiscard]] AreaScriptState run();
+  [[nodiscard]] AreaScriptState run(float real_delta_seconds = 0.0F);
 
   /// Wires the interface-open sink (opcode 0x46).
   void set_interface_sink(InterfaceSink sink);
 
   /// Wires the music sink (opcode 0x67).
   void set_music_sink(MusicSink sink);
+
+  /// Wires AREA opcode 0x39 to the active world's SCX ScriptRuntime.
+  void set_scx_script_sink(ScxScriptSink sink);
 
   /// Wires the pre-execution instruction sink (per-instruction diagnostics).
   void set_instruction_sink(InstructionSink sink);
@@ -121,6 +162,10 @@ class AreaScriptRuntime {
   /// On success the script resumes at the instruction after opcode 0x46.
   [[nodiscard]] std::expected<void, std::string> complete_interface_wait(
       const App::InterfaceCompletion& completion);
+
+  /// Completes the SCX-script wait created by opcode 0x39. The instance ID
+  /// must match the one returned by the bridge sink.
+  [[nodiscard]] std::expected<void, std::string> complete_scx_script_wait(std::size_t instance_id);
 
   [[nodiscard]] AreaScriptState state() const {
     return m_state;
@@ -153,6 +198,21 @@ class AreaScriptRuntime {
     return m_variables;
   }
 
+  [[nodiscard]] std::size_t evaluation_stack_depth() const {
+    return m_evaluation_stack.size();
+  }
+  [[nodiscard]] const std::optional<AreaCameraRequest>& last_camera_request() const {
+    return m_last_camera_request;
+  }
+  [[nodiscard]] const std::optional<AreaPresentationRequest>& last_presentation_request() const {
+    return m_last_presentation_request;
+  }
+  /// True after 0x84 and false after 0x85. Rendering the recovered 60-unit
+  /// transition remains a presentation-layer responsibility.
+  [[nodiscard]] bool cinematic_letterbox_requested() const {
+    return m_cinematic_letterbox_requested;
+  }
+
   [[nodiscard]] const AreaPauseInfo& pause_info() const {
     return m_pause_info;
   }
@@ -177,6 +237,14 @@ class AreaScriptRuntime {
   /// Formats up to eight bytes at `offset` as two-digit hex.
   [[nodiscard]] std::string nearby_bytes_hex(std::size_t offset) const;
 
+  /// Pops one value from Runtime's compact-VM evaluation stack.
+  [[nodiscard]] std::expected<std::int32_t, std::string> pop_evaluation_value();
+
+  /// Resolves a signed relative jump from the byte immediately following the
+  /// displacement operand.
+  [[nodiscard]] std::expected<std::size_t, std::string> relative_target(
+      std::size_t base, std::int32_t displacement) const;
+
   std::span<const std::byte> m_script;
   std::deque<std::uint16_t> m_queued_events;
   bool m_active{false};
@@ -186,9 +254,17 @@ class AreaScriptRuntime {
   AreaWaitState m_wait{};
   std::optional<std::int16_t> m_completion_result;
   std::unordered_map<std::uint16_t, std::int32_t> m_variables;
+  std::vector<std::int32_t> m_evaluation_stack;
   InterfaceSink m_interface_sink;
   MusicSink m_music_sink;
+  ScxScriptSink m_scx_script_sink;
   InstructionSink m_instruction_sink;
+  std::optional<AreaCameraRequest> m_last_camera_request;
+  std::optional<AreaPresentationRequest> m_last_presentation_request;
+  bool m_cinematic_letterbox_requested{false};
+  /// Runtime side-effect handlers set context flag 0x10; the central AREA
+  /// dispatcher observes it and yields until the next scenario tick.
+  bool m_yield_requested{false};
   AreaPauseInfo m_pause_info;
   std::deque<AreaInstructionTrace> m_trace;
   std::size_t m_executed_instruction_count{0};

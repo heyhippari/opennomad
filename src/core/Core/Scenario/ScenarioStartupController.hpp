@@ -83,7 +83,7 @@ class ScenarioStartupController {
   [[nodiscard]] std::expected<void, std::string> initialize(ScenarioManager& manager);
 
   /// Executes one area-script interpreter tick (mode 1).
-  [[nodiscard]] std::expected<void, std::string> tick();
+  [[nodiscard]] std::expected<void, std::string> tick(float delta_seconds = 0.0F);
 
   /// True once the new session has been initialized (area script exists).
   [[nodiscard]] bool initialized() const {
@@ -194,6 +194,8 @@ class ScenarioStartupController {
   Startup::StartupTraceRecorder* m_trace{nullptr};
   /// Application audio system (may be null; music is non-fatal).
   Audio::AudioSystem* m_audio{nullptr};
+  /// Scenario owner used by the AREA -> SCX ScriptRuntime bridge.
+  ScenarioManager* m_manager{nullptr};
   /// UI dispatch; pure transport, no lifecycle policy.
   InterfaceDispatcher m_dispatcher;
   /// Preliminary splash interface 29 phase (startup-order fidelity only).

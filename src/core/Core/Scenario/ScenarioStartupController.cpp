@@ -14,9 +14,9 @@
 #include <utility>
 #include <vector>
 
-#include "Core/Debug/Instrumentor.hpp"
 #include "Core/Audio/AudioSystem.hpp"
 #include "Core/Audio/AudioTypes.hpp"
+#include "Core/Debug/Instrumentor.hpp"
 #include "Core/GameDataLoader.hpp"
 #include "Core/Interface/InterfaceDispatcher.hpp"
 #include "Core/Log.hpp"
@@ -24,7 +24,9 @@
 #include "Core/Omikron/IamArea.hpp"
 #include "Core/Omikron/IamStart.hpp"
 #include "Core/Scenario/ScenarioManager.hpp"
+#include "Core/Scenario/ScenarioRuntime.hpp"
 #include "Core/Script/AreaScriptRuntime.hpp"
+#include "Core/Script/ScriptRuntime.hpp"
 #include "Core/Startup/StartupTraceRecorder.hpp"
 
 namespace App {
@@ -59,9 +61,13 @@ bool is_provisional_trace_opcode(const std::uint32_t opcode) {
     case 0x38:
     case 0x4F:
     case 0x68:
-    case 0x5C:
+    case 0x5F:
+    case 0x60:
     case 0x83:
     case 0x76:
+    case 0x77:
+    case 0x84:
+    case 0x85:
       return true;
     default:
       return false;
@@ -115,6 +121,7 @@ void ScenarioStartupController::reset_session() {
   m_active_handle.reset();
   m_last_error.clear();
   m_initialized = false;
+  m_manager = nullptr;
   m_ticked = false;
   m_event_started = false;
   m_waiting_recorded = false;
@@ -123,6 +130,7 @@ void ScenarioStartupController::reset_session() {
 std::expected<void, std::string> ScenarioStartupController::initialize_new_session(
     ScenarioManager& manager) {
   APP_PROFILE_FUNCTION();
+  m_manager = &manager;
 
   // 1. IAM/START.
   auto start_file{read_file(std::string{K_IAM_START_PATH})};
@@ -144,8 +152,8 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
   m_initial_area_id = start_view.initial_area_id();
   m_linked_area_id = start_view.linked_area_id();
   record("IAM_START.Loaded");
-  record("IAM_START.InitialArea",
-      fmt::format("id={} linked={}", m_initial_area_id, m_linked_area_id));
+  record(
+      "IAM_START.InitialArea", fmt::format("id={} linked={}", m_initial_area_id, m_linked_area_id));
   App::Log::info(LogCategory::Startup, "starting new session — area={}", m_initial_area_id);
 
   if (m_initial_area_id < 0) {
@@ -242,7 +250,8 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
       record("AreaDependency.GRID_3DO.Loaded", m_grid_3do_path);
     } else {
       m_grid_3do_state = "unavailable";
-      App::Log::warn(LogCategory::Scenario, "GRID.3DO unavailable (non-fatal): {}", m_grid_3do_path);
+      App::Log::warn(
+          LogCategory::Scenario, "GRID.3DO unavailable (non-fatal): {}", m_grid_3do_path);
       record("AreaDependency.GRID_3DO.Failed", m_grid_3do_path);
     }
   }
@@ -255,10 +264,7 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
 
   area_script.set_music_sink([this](const Audio::MusicTrackRequest& request) {
     record("Music.TrackRequested",
-        fmt::format("track={} loop={} mode={}",
-            request.track_id,
-            request.loop,
-            request.mode_flag));
+        fmt::format("track={} loop={} mode={}", request.track_id, request.loop, request.mode_flag));
     App::Log::debug(LogCategory::Script,
         "AREA opcode 0x67 — music track={} loop={} mode={}",
         request.track_id,
@@ -271,52 +277,88 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
       return;
     }
     if (auto result{m_audio->play_music_track(request)}; !result) {
-      App::Log::warn(LogCategory::Music, "track {} play failed: {}", request.track_id, result.error());
+      App::Log::warn(
+          LogCategory::Music, "track {} play failed: {}", request.track_id, result.error());
       record("Music.TrackFailed", result.error());
     }
   });
 
-  area_script.set_interface_sink(
-      [this](const InterfaceOpenRequest& request) -> std::expected<InterfaceHandle, std::string> {
-        record("Interface.OpenRequested",
-            fmt::format("id={} arg2={} arg3={}",
-                request.interface_id,
-                request.operand_b,
-                request.operand_c));
-        App::Log::debug(LogCategory::Script,
-            "AREA opcode 0x46 — interface={} args=({},{})",
-            request.interface_id,
-            request.operand_b,
-            request.operand_c);
-        auto result{m_dispatcher.open(request)};
-        if (!result) {
-          App::Log::warn(LogCategory::Interface,
-              "interface {} dispatch failed: {}",
-              request.interface_id,
-              result.error());
-          return result;
-        }
-        // Startup-specific tracking: interface 29 is the main menu the
-        // recovered AREA path must open. The generic dispatcher has no
-        // knowledge of this.
-        if (request.interface_id == k_main_menu_interface) {
-          m_main_menu_active = true;
-          m_active_handle = result.value();
-          record("MainMenu.Active");
-        }
-        return result;
-      });
+  area_script.set_scx_script_sink([this](const Script::AreaScxScriptRequest& request)
+                                      -> std::expected<std::size_t, std::string> {
+    if (m_manager == nullptr) {
+      return std::expected<std::size_t, std::string>{
+          std::unexpect, "scenario manager is not available"};
+    }
+    WorldSceneContext* context{m_manager->active_world_context()};
+    if (context == nullptr || !context->scx_data.has_value() || context->runtime == nullptr) {
+      return std::expected<std::size_t, std::string>{std::unexpect, "no active world SCX runtime"};
+    }
 
-  m_dispatcher.set_interface_completion_sink(
-      [this](const InterfaceCompletion& completion) {
-        if (m_active_handle.has_value() && completion.handle == m_active_handle.value()) {
-          m_main_menu_active = false;
-          m_active_handle.reset();
-        }
-        if (auto result{complete_interface(completion)}; !result) {
-          App::Log::warn(LogCategory::Interface, "interface completion ignored: {}", result.error());
-        }
-      });
+    const auto& scripts{context->scx_data->scripts};
+    for (std::size_t index{0}; index < scripts.size(); ++index) {
+      if (scripts.at(index).script_id != request.script_id) {
+        continue;
+      }
+      auto created{context->runtime->spawn_script_instance(index)};
+      if (!created) {
+        return created;
+      }
+      record("AreaScript.ScxScriptStarted",
+          fmt::format("id={} name='{}' instance={} args=({}, {})",
+              request.script_id,
+              scripts.at(index).name,
+              created.value(),
+              request.operand_b,
+              request.operand_c));
+      App::Log::debug(LogCategory::Script,
+          "AREA opcode 0x39 — started GRID script {} '{}' as instance {}",
+          request.script_id,
+          scripts.at(index).name,
+          created.value());
+      return created;
+    }
+    return std::expected<std::size_t, std::string>{std::unexpect,
+        fmt::format("SCX script ID {} not found in active world", request.script_id)};
+  });
+
+  area_script.set_interface_sink([this](const InterfaceOpenRequest& request)
+                                     -> std::expected<InterfaceHandle, std::string> {
+    record("Interface.OpenRequested",
+        fmt::format(
+            "id={} arg2={} arg3={}", request.interface_id, request.operand_b, request.operand_c));
+    App::Log::debug(LogCategory::Script,
+        "AREA opcode 0x46 — interface={} args=({},{})",
+        request.interface_id,
+        request.operand_b,
+        request.operand_c);
+    auto result{m_dispatcher.open(request)};
+    if (!result) {
+      App::Log::warn(LogCategory::Interface,
+          "interface {} dispatch failed: {}",
+          request.interface_id,
+          result.error());
+      return result;
+    }
+    // Startup-specific tracking: interface 29 is the main menu the
+    // recovered AREA path must open. The generic dispatcher has no
+    // knowledge of this.
+    if (request.interface_id == k_main_menu_interface) {
+      m_main_menu_active = true;
+      m_active_handle = result.value();
+      record("MainMenu.Active");
+    }
+    return result;
+  });
+
+  m_dispatcher.set_interface_completion_sink([this](const InterfaceCompletion& completion) {
+    if (m_active_handle.has_value() && completion.handle == m_active_handle.value()) {
+      m_main_menu_active = false;
+      m_active_handle.reset();
+    }
+    if (auto result{complete_interface(completion)}; !result) {
+      App::Log::warn(LogCategory::Interface, "interface completion ignored: {}", result.error());
+    }
+  });
 
   area_script.set_instruction_sink(
       [this](const std::uint32_t opcode, const std::vector<std::int32_t>& operands) {
@@ -356,7 +398,7 @@ std::expected<void, std::string> ScenarioStartupController::initialize(ScenarioM
   return initialize_new_session(manager);
 }
 
-std::expected<void, std::string> ScenarioStartupController::tick() {
+std::expected<void, std::string> ScenarioStartupController::tick(const float delta_seconds) {
   APP_PROFILE_FUNCTION();
 
   if (!m_initialized) {
@@ -371,6 +413,44 @@ std::expected<void, std::string> ScenarioStartupController::tick() {
   Script::AreaScriptRuntime& area_script{*m_area_script};
   m_ticked = true;
 
+  // Opcode 0x39 bridges into the active world's SCX runtime and yields the
+  // AREA VM until that concrete ScriptRuntime instance completes.
+  if (area_script.state() == Script::AreaScriptState::k_waiting &&
+      area_script.wait_info().kind == Script::AreaWaitKind::k_scx_script) {
+    if (m_manager == nullptr || !area_script.wait_info().scx_script_instance.has_value()) {
+      m_last_error = "AREA SCX-script wait has no scenario owner or instance ID";
+      return std::expected<void, std::string>{std::unexpect, m_last_error};
+    }
+    const WorldSceneContext* context{m_manager->active_world_context()};
+    if (context == nullptr || context->runtime == nullptr ||
+        context->runtime->script_runtime() == nullptr) {
+      m_last_error = "AREA is waiting on an SCX script but no active world runtime exists";
+      return std::expected<void, std::string>{std::unexpect, m_last_error};
+    }
+
+    const Script::ScriptRuntime* script_runtime{context->runtime->script_runtime()};
+    const std::size_t instance_id{area_script.wait_info().scx_script_instance.value()};
+    const Script::ScriptInstance* instance{script_runtime->instance(instance_id)};
+    if (instance == nullptr) {
+      m_last_error = fmt::format("AREA is waiting on missing SCX script instance {}", instance_id);
+      return std::expected<void, std::string>{std::unexpect, m_last_error};
+    }
+    if (instance->paused) {
+      m_last_error = fmt::format("SCX script instance {} '{}' paused: {}",
+          instance_id,
+          instance->script_name,
+          instance->pause_info.reason_text);
+      return std::expected<void, std::string>{std::unexpect, m_last_error};
+    }
+    if (instance->completed) {
+      if (auto completed{area_script.complete_scx_script_wait(instance_id)}; !completed) {
+        m_last_error = completed.error();
+        return std::expected<void, std::string>{std::unexpect, m_last_error};
+      }
+      record("AreaScript.ScxScriptCompleted", fmt::format("instance={}", instance_id));
+    }
+  }
+
   // Event 1 is recorded as started exactly once; a resumed script continues
   // from its existing instruction pointer on later frames without re-recording.
   if (!m_event_started) {
@@ -379,7 +459,13 @@ std::expected<void, std::string> ScenarioStartupController::tick() {
     m_event_started = true;
   }
 
-  const Script::AreaScriptState state{area_script.run()};
+  // A completion may have resumed the VM and immediately lead to another
+  // wait kind in this same tick; allow that transition to be recorded.
+  if (area_script.state() != Script::AreaScriptState::k_waiting) {
+    m_waiting_recorded = false;
+  }
+
+  const Script::AreaScriptState state{area_script.run(delta_seconds)};
 
   if (state == Script::AreaScriptState::k_failed) {
     m_last_error = area_script.pause_info().reason_text;
@@ -387,6 +473,9 @@ std::expected<void, std::string> ScenarioStartupController::tick() {
   }
   // A waiting script is a harmless no-op across frames; record the transition
   // into waiting only once so per-frame ticks stay quiet.
+  if (state != Script::AreaScriptState::k_waiting) {
+    m_waiting_recorded = false;
+  }
   if (state == Script::AreaScriptState::k_waiting && !m_waiting_recorded) {
     record("AreaContext.Waiting", fmt::format("state={}", area_script.wait_state()));
     m_waiting_recorded = true;

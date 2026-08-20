@@ -2,6 +2,7 @@
 
 #include <fmt/format.h>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -14,8 +15,8 @@
 #include <utility>
 #include <vector>
 
-#include "Core/Debug/Instrumentor.hpp"
 #include "Core/Audio/AudioTypes.hpp"
+#include "Core/Debug/Instrumentor.hpp"
 #include "Core/Interface/InterfaceDispatcher.hpp"
 #include "Core/Log.hpp"
 #include "Core/LogCategory.hpp"
@@ -26,37 +27,90 @@ namespace App::Script {
 
 namespace {
 
+constexpr std::uint32_t K_OP_END_EVENT{0x03};
+constexpr std::uint32_t K_OP_JUMP_RELATIVE{0x04};
+constexpr std::uint32_t K_OP_BRANCH_IF_FALSE{0x06};
+constexpr std::uint32_t K_OP_PUSH_INT8{0x07};
+constexpr std::uint32_t K_OP_PUSH_GLOBAL_VARIABLE{0x0A};
 constexpr std::uint32_t K_OP_SET_GLOBAL_VARIABLE_ONE{0x0D};
 constexpr std::uint32_t K_OP_SET_GLOBAL_VARIABLE{0x0E};
+constexpr std::uint32_t K_OP_EQUAL{0x19};
 constexpr std::uint32_t K_OP_CHARACTER_LOOKUP{0x38};
+constexpr std::uint32_t K_OP_START_SCX_SCRIPT{0x39};
 constexpr std::uint32_t K_OP_CHARACTER_SELECTION_RESET{0x4F};
 constexpr std::uint32_t K_OP_ACTIVATE_SUBSYSTEM{0x68};
 constexpr std::uint32_t K_OP_OBJECT_ACTIVATE{0x5C};
+constexpr std::uint32_t K_OP_CAMERA_SELECT{0x5F};
+constexpr std::uint32_t K_OP_CAMERA_MOVE_WAIT{0x60};
 constexpr std::uint32_t K_OP_SUBSYSTEM_OPERATION{0x83};
 constexpr std::uint32_t K_OP_PLAY_MUSIC{0x67};
 constexpr std::uint32_t K_OP_PRESENTATION_EFFECT{0x76};
+constexpr std::uint32_t K_OP_PRESENTATION_EFFECT_ALT{0x77};
 constexpr std::uint32_t K_OP_OPEN_INTERFACE{0x46};
+constexpr std::uint32_t K_OP_BEGIN_CINEMATIC_LETTERBOX{0x84};
+constexpr std::uint32_t K_OP_END_CINEMATIC_LETTERBOX{0x85};
 
 /// Wait state assigned by the interface-open opcode (recovered value 6).
 constexpr std::uint16_t K_OPEN_INTERFACE_WAIT_STATE{6};
+/// Wait state assigned by camera opcode 0x60 when its duration is non-zero.
+constexpr std::uint16_t K_CAMERA_WAIT_STATE{7};
+/// Runtime's script/scenario time base (1.0 unit = 1/30 second).
+constexpr float K_AREA_FRAMES_PER_SECOND{30.0F};
 
+constexpr std::array<AreaOperandWidth, 0> K_OPERANDS_NONE{};
+constexpr std::array<AreaOperandWidth, 1> K_OPERANDS_I8{AreaOperandWidth::k_int8};
+constexpr std::array<AreaOperandWidth, 1> K_OPERANDS_I16{AreaOperandWidth::k_int16};
 constexpr std::array<AreaOperandWidth, 1> K_OPERANDS_0D{AreaOperandWidth::k_int16};
 constexpr std::array<AreaOperandWidth, 2> K_OPERANDS_0E{
     AreaOperandWidth::k_int16, AreaOperandWidth::k_int8};
 constexpr std::array<AreaOperandWidth, 1> K_OPERANDS_38{AreaOperandWidth::k_int16};
 constexpr std::array<AreaOperandWidth, 1> K_OPERANDS_4F{AreaOperandWidth::k_int16};
-constexpr std::array<AreaOperandWidth, 0> K_OPERANDS_68{};
 constexpr std::array<AreaOperandWidth, 1> K_OPERANDS_5C{AreaOperandWidth::k_int16};
+constexpr std::array<AreaOperandWidth, 3> K_OPERANDS_3X_I16{
+    AreaOperandWidth::k_int16, AreaOperandWidth::k_int16, AreaOperandWidth::k_int16};
 constexpr std::array<AreaOperandWidth, 2> K_OPERANDS_83{
     AreaOperandWidth::k_int16, AreaOperandWidth::k_int16};
 constexpr std::array<AreaOperandWidth, 3> K_OPERANDS_67{
     AreaOperandWidth::k_int16, AreaOperandWidth::k_int16, AreaOperandWidth::k_int16};
-constexpr std::array<AreaOperandWidth, 3> K_OPERANDS_76{
+constexpr std::array<AreaOperandWidth, 3> K_OPERANDS_PRESENTATION{
     AreaOperandWidth::k_int32, AreaOperandWidth::k_int16, AreaOperandWidth::k_int16};
-constexpr std::array<AreaOperandWidth, 3> K_OPERANDS_46{
-    AreaOperandWidth::k_int16, AreaOperandWidth::k_int16, AreaOperandWidth::k_int16};
 
-constexpr std::array<AreaOpcodeInfo, 10> K_AREA_OPCODE_TABLE{
+constexpr std::array<AreaOpcodeInfo, 22> K_AREA_OPCODE_TABLE{
+    AreaOpcodeInfo{.opcode = K_OP_END_EVENT,
+        .name = "EndEvent",
+        .support = OpcodeSupport::k_supported,
+        .provisional = false,
+        .notes = "terminates the current queued AREA event",
+        .operands = K_OPERANDS_NONE.data(),
+        .operand_count = K_OPERANDS_NONE.size()},
+    AreaOpcodeInfo{.opcode = K_OP_JUMP_RELATIVE,
+        .name = "JumpRelative",
+        .support = OpcodeSupport::k_supported,
+        .provisional = false,
+        .notes = "signed relative jump from the post-operand instruction pointer",
+        .operands = K_OPERANDS_I16.data(),
+        .operand_count = K_OPERANDS_I16.size()},
+    AreaOpcodeInfo{.opcode = K_OP_BRANCH_IF_FALSE,
+        .name = "BranchIfFalse",
+        .support = OpcodeSupport::k_supported,
+        .provisional = false,
+        .notes = "pops one value and jumps when it is zero",
+        .operands = K_OPERANDS_I16.data(),
+        .operand_count = K_OPERANDS_I16.size()},
+    AreaOpcodeInfo{.opcode = K_OP_PUSH_INT8,
+        .name = "PushInt8",
+        .support = OpcodeSupport::k_supported,
+        .provisional = false,
+        .notes = "pushes a signed immediate byte",
+        .operands = K_OPERANDS_I8.data(),
+        .operand_count = K_OPERANDS_I8.size()},
+    AreaOpcodeInfo{.opcode = K_OP_PUSH_GLOBAL_VARIABLE,
+        .name = "PushGlobalVariable",
+        .support = OpcodeSupport::k_supported,
+        .provisional = false,
+        .notes = "pushes a START/global variable value (zero when unset)",
+        .operands = K_OPERANDS_I16.data(),
+        .operand_count = K_OPERANDS_I16.size()},
     AreaOpcodeInfo{.opcode = K_OP_SET_GLOBAL_VARIABLE_ONE,
         .name = "SetGlobalVariableOne",
         .support = OpcodeSupport::k_supported,
@@ -64,6 +118,13 @@ constexpr std::array<AreaOpcodeInfo, 10> K_AREA_OPCODE_TABLE{
         .notes = "sets START/global variable <operand 0> to 1",
         .operands = K_OPERANDS_0D.data(),
         .operand_count = K_OPERANDS_0D.size()},
+    AreaOpcodeInfo{.opcode = K_OP_EQUAL,
+        .name = "Equal",
+        .support = OpcodeSupport::k_supported,
+        .provisional = false,
+        .notes = "pops rhs/lhs and pushes 1 when equal, otherwise 0",
+        .operands = K_OPERANDS_NONE.data(),
+        .operand_count = K_OPERANDS_NONE.size()},
     AreaOpcodeInfo{.opcode = K_OP_SET_GLOBAL_VARIABLE,
         .name = "SetGlobalVariable",
         .support = OpcodeSupport::k_supported,
@@ -78,6 +139,13 @@ constexpr std::array<AreaOpcodeInfo, 10> K_AREA_OPCODE_TABLE{
         .notes = "character-related lookup/activation via area table 0",
         .operands = K_OPERANDS_38.data(),
         .operand_count = K_OPERANDS_38.size()},
+    AreaOpcodeInfo{.opcode = K_OP_START_SCX_SCRIPT,
+        .name = "StartScxScript",
+        .support = OpcodeSupport::k_supported,
+        .provisional = false,
+        .notes = "resolves operand 0 against active SCX script template +0x1A and waits",
+        .operands = K_OPERANDS_3X_I16.data(),
+        .operand_count = K_OPERANDS_3X_I16.size()},
     AreaOpcodeInfo{.opcode = K_OP_CHARACTER_SELECTION_RESET,
         .name = "CharacterSelectionReset",
         .support = OpcodeSupport::k_supported,
@@ -85,13 +153,6 @@ constexpr std::array<AreaOpcodeInfo, 10> K_AREA_OPCODE_TABLE{
         .notes = "character-related selection/reset behavior",
         .operands = K_OPERANDS_4F.data(),
         .operand_count = K_OPERANDS_4F.size()},
-    AreaOpcodeInfo{.opcode = K_OP_ACTIVATE_SUBSYSTEM,
-        .name = "ActivateSubsystem",
-        .support = OpcodeSupport::k_supported,
-        .provisional = true,
-        .notes = "activates a subsystem",
-        .operands = K_OPERANDS_68.data(),
-        .operand_count = K_OPERANDS_68.size()},
     AreaOpcodeInfo{.opcode = K_OP_OBJECT_ACTIVATE,
         .name = "ObjectActivate",
         .support = OpcodeSupport::k_supported,
@@ -99,6 +160,20 @@ constexpr std::array<AreaOpcodeInfo, 10> K_AREA_OPCODE_TABLE{
         .notes = "object-related activation/load behavior",
         .operands = K_OPERANDS_5C.data(),
         .operand_count = K_OPERANDS_5C.size()},
+    AreaOpcodeInfo{.opcode = K_OP_CAMERA_SELECT,
+        .name = "CameraSelect",
+        .support = OpcodeSupport::k_supported,
+        .provisional = true,
+        .notes = "selects/schedules an IAM camera without wait-state 7",
+        .operands = K_OPERANDS_3X_I16.data(),
+        .operand_count = K_OPERANDS_3X_I16.size()},
+    AreaOpcodeInfo{.opcode = K_OP_CAMERA_MOVE_WAIT,
+        .name = "CameraMoveAndWait",
+        .support = OpcodeSupport::k_supported,
+        .provisional = true,
+        .notes = "selects/schedules an IAM camera; nonzero duration waits in state 7",
+        .operands = K_OPERANDS_3X_I16.data(),
+        .operand_count = K_OPERANDS_3X_I16.size()},
     AreaOpcodeInfo{.opcode = K_OP_SUBSYSTEM_OPERATION,
         .name = "SubsystemOperation",
         .support = OpcodeSupport::k_supported,
@@ -106,6 +181,13 @@ constexpr std::array<AreaOpcodeInfo, 10> K_AREA_OPCODE_TABLE{
         .notes = "unresolved subsystem operation",
         .operands = K_OPERANDS_83.data(),
         .operand_count = K_OPERANDS_83.size()},
+    AreaOpcodeInfo{.opcode = K_OP_ACTIVATE_SUBSYSTEM,
+        .name = "ActivateSubsystem",
+        .support = OpcodeSupport::k_supported,
+        .provisional = true,
+        .notes = "activates a subsystem",
+        .operands = K_OPERANDS_NONE.data(),
+        .operand_count = K_OPERANDS_NONE.size()},
     AreaOpcodeInfo{.opcode = K_OP_PLAY_MUSIC,
         .name = "PlayMusic",
         .support = OpcodeSupport::k_supported,
@@ -118,16 +200,37 @@ constexpr std::array<AreaOpcodeInfo, 10> K_AREA_OPCODE_TABLE{
         .name = "PresentationEffect",
         .support = OpcodeSupport::k_supported,
         .provisional = true,
-        .notes = "presentation/fade/effect behavior",
-        .operands = K_OPERANDS_76.data(),
-        .operand_count = K_OPERANDS_76.size()},
+        .notes = "presentation/fade/effect mode 1",
+        .operands = K_OPERANDS_PRESENTATION.data(),
+        .operand_count = K_OPERANDS_PRESENTATION.size()},
+    AreaOpcodeInfo{.opcode = K_OP_PRESENTATION_EFFECT_ALT,
+        .name = "PresentationEffectAlt",
+        .support = OpcodeSupport::k_supported,
+        .provisional = true,
+        .notes = "presentation/fade/effect mode 2",
+        .operands = K_OPERANDS_PRESENTATION.data(),
+        .operand_count = K_OPERANDS_PRESENTATION.size()},
     AreaOpcodeInfo{.opcode = K_OP_OPEN_INTERFACE,
         .name = "OpenInterface",
         .support = OpcodeSupport::k_supported,
         .provisional = false,
-        .notes = "opens interface <operand 0> and waits (wait state 6)",
-        .operands = K_OPERANDS_46.data(),
-        .operand_count = K_OPERANDS_46.size()},
+        .notes = "opens interface, waits in state 6, writes result to operand 2 variable",
+        .operands = K_OPERANDS_3X_I16.data(),
+        .operand_count = K_OPERANDS_3X_I16.size()},
+    AreaOpcodeInfo{.opcode = K_OP_BEGIN_CINEMATIC_LETTERBOX,
+        .name = "BeginCinematicLetterbox",
+        .support = OpcodeSupport::k_supported,
+        .provisional = true,
+        .notes = "begins the recovered top/bottom cinematic mask transition",
+        .operands = K_OPERANDS_NONE.data(),
+        .operand_count = K_OPERANDS_NONE.size()},
+    AreaOpcodeInfo{.opcode = K_OP_END_CINEMATIC_LETTERBOX,
+        .name = "EndCinematicLetterbox",
+        .support = OpcodeSupport::k_supported,
+        .provisional = true,
+        .notes = "ends the recovered top/bottom cinematic mask transition",
+        .operands = K_OPERANDS_NONE.data(),
+        .operand_count = K_OPERANDS_NONE.size()},
 };
 
 std::uint8_t read_u8_at(const std::span<const std::byte> data, const std::size_t offset) {
@@ -189,6 +292,10 @@ void AreaScriptRuntime::set_music_sink(MusicSink sink) {
   m_music_sink = std::move(sink);
 }
 
+void AreaScriptRuntime::set_scx_script_sink(ScxScriptSink sink) {
+  m_scx_script_sink = std::move(sink);
+}
+
 void AreaScriptRuntime::set_instruction_sink(InstructionSink sink) {
   m_instruction_sink = std::move(sink);
 }
@@ -208,12 +315,41 @@ std::expected<void, std::string> AreaScriptRuntime::complete_interface_wait(
   }
 
   m_completion_result = completion.result;
+  if (m_wait.interface_result_variable.has_value()) {
+    m_variables[m_wait.interface_result_variable.value()] =
+        static_cast<std::int32_t>(completion.result);
+  }
   m_wait = AreaWaitState{};
   m_wait_state = 0;
   m_state = AreaScriptState::k_running;
   App::Log::debug(LogCategory::Script,
       "area script resumed after interface {} at +{:#x}",
       completion.handle.interface_id,
+      m_ip);
+  return {};
+}
+
+std::expected<void, std::string> AreaScriptRuntime::complete_scx_script_wait(
+    const std::size_t instance_id) {
+  if (m_state != AreaScriptState::k_waiting) {
+    return std::expected<void, std::string>{std::unexpect, "area script is not waiting"};
+  }
+  if (m_wait.kind != AreaWaitKind::k_scx_script) {
+    return std::expected<void, std::string>{
+        std::unexpect, "area script is not waiting on an SCX script"};
+  }
+  if (!m_wait.scx_script_instance.has_value() ||
+      m_wait.scx_script_instance.value() != instance_id) {
+    return std::expected<void, std::string>{
+        std::unexpect, "SCX script completion does not match the waiting instance"};
+  }
+
+  m_wait = AreaWaitState{};
+  m_wait_state = 0;
+  m_state = AreaScriptState::k_running;
+  App::Log::debug(LogCategory::Script,
+      "area script resumed after SCX script instance {} at +{:#x}",
+      instance_id,
       m_ip);
   return {};
 }
@@ -226,11 +362,26 @@ std::optional<std::int32_t> AreaScriptRuntime::variable(const std::uint16_t id) 
   return found->second;
 }
 
-AreaScriptState AreaScriptRuntime::run() {
+AreaScriptState AreaScriptRuntime::run(const float real_delta_seconds) {
   APP_PROFILE_FUNCTION();
 
   if (!m_active) {
     return m_state;
+  }
+
+  // Camera opcode 0x60 uses legacy wait state 7. Until the WorldRenderer owns
+  // Runtime's callback path, advance the recovered duration in the same 30 Hz
+  // scenario units used by the rest of the script system.
+  if (m_state == AreaScriptState::k_waiting && m_wait.kind == AreaWaitKind::k_camera) {
+    const float delta_frames{std::max(0.0F, real_delta_seconds) * K_AREA_FRAMES_PER_SECOND};
+    m_wait.remaining_scenario_frames =
+        std::max(0.0F, m_wait.remaining_scenario_frames - delta_frames);
+    if (m_wait.remaining_scenario_frames > 0.0F) {
+      return m_state;
+    }
+    m_wait = AreaWaitState{};
+    m_wait_state = 0;
+    m_state = AreaScriptState::k_running;
   }
 
   if (m_state != AreaScriptState::k_ready && m_state != AreaScriptState::k_running) {
@@ -243,9 +394,11 @@ AreaScriptState AreaScriptRuntime::run() {
     }
     m_queued_events.pop_front();
     m_ip = 0;
+    m_evaluation_stack.clear();
     m_state = AreaScriptState::k_running;
   }
 
+  m_yield_requested = false;
   std::size_t budget{k_instruction_budget};
   while (m_state == AreaScriptState::k_running && budget > 0U) {
     if (m_ip >= m_script.size()) {
@@ -254,9 +407,34 @@ AreaScriptState AreaScriptRuntime::run() {
     }
     --budget;
     execute_instruction();
+    if (m_yield_requested) {
+      break;
+    }
   }
 
   return m_state;
+}
+
+std::expected<std::int32_t, std::string> AreaScriptRuntime::pop_evaluation_value() {
+  if (m_evaluation_stack.empty()) {
+    return std::expected<std::int32_t, std::string>{
+        std::unexpect, "AREA evaluation stack underflow"};
+  }
+  const std::int32_t value{m_evaluation_stack.back()};
+  m_evaluation_stack.pop_back();
+  return value;
+}
+
+std::expected<std::size_t, std::string> AreaScriptRuntime::relative_target(
+    const std::size_t base, const std::int32_t displacement) const {
+  const std::int64_t target{
+      static_cast<std::int64_t>(base) + static_cast<std::int64_t>(displacement)};
+  if (std::cmp_less(target, 0) || std::cmp_greater(target, m_script.size())) {
+    return std::expected<std::size_t, std::string>{std::unexpect,
+        fmt::format(
+            "relative branch target {:#x} outside script size {:#x}", target, m_script.size())};
+  }
+  return static_cast<std::size_t>(target);
 }
 
 void AreaScriptRuntime::execute_instruction() {
@@ -337,8 +515,68 @@ void AreaScriptRuntime::execute_instruction() {
   entry.offset = instruction_offset;
   entry.opcode = opcode;
   entry.opcode_name = info->name;
+  std::size_t next_ip{cursor};
+  bool wait_after_instruction{false};
 
   switch (opcode) {
+    case K_OP_END_EVENT:
+      entry.effect = "terminate current AREA event";
+      m_evaluation_stack.clear();
+      m_state = AreaScriptState::k_ready;
+      break;
+    case K_OP_JUMP_RELATIVE: {
+      auto target{relative_target(cursor, operands.at(0))};
+      if (!target) {
+        m_pause_info = AreaPauseInfo{.offset = instruction_offset,
+            .opcode = opcode,
+            .opcode_name = std::string{info->name},
+            .reason_text = target.error(),
+            .nearby_bytes = nearby_bytes_hex(instruction_offset)};
+        m_state = AreaScriptState::k_failed;
+        return;
+      }
+      next_ip = target.value();
+      entry.effect = fmt::format("jump to +{:#x}", next_ip);
+      break;
+    }
+    case K_OP_BRANCH_IF_FALSE: {
+      auto condition{pop_evaluation_value()};
+      if (!condition) {
+        m_pause_info = AreaPauseInfo{.offset = instruction_offset,
+            .opcode = opcode,
+            .opcode_name = std::string{info->name},
+            .reason_text = condition.error(),
+            .nearby_bytes = nearby_bytes_hex(instruction_offset)};
+        m_state = AreaScriptState::k_failed;
+        return;
+      }
+      if (condition.value() == 0) {
+        auto target{relative_target(cursor, operands.at(0))};
+        if (!target) {
+          m_pause_info = AreaPauseInfo{.offset = instruction_offset,
+              .opcode = opcode,
+              .opcode_name = std::string{info->name},
+              .reason_text = target.error(),
+              .nearby_bytes = nearby_bytes_hex(instruction_offset)};
+          m_state = AreaScriptState::k_failed;
+          return;
+        }
+        next_ip = target.value();
+      }
+      entry.effect = fmt::format("condition={} next=+{:#x}", condition.value(), next_ip);
+      break;
+    }
+    case K_OP_PUSH_INT8:
+      m_evaluation_stack.push_back(operands.at(0));
+      entry.effect = fmt::format("push {}", operands.at(0));
+      break;
+    case K_OP_PUSH_GLOBAL_VARIABLE: {
+      const std::uint16_t id{static_cast<std::uint16_t>(operands.at(0))};
+      const std::int32_t value{variable(id).value_or(0)};
+      m_evaluation_stack.push_back(value);
+      entry.effect = fmt::format("push global variable {} ({})", id, value);
+      break;
+    }
     case K_OP_SET_GLOBAL_VARIABLE_ONE:
       m_variables[static_cast<std::uint16_t>(operands.at(0))] = 1;
       entry.effect =
@@ -350,6 +588,59 @@ void AreaScriptRuntime::execute_instruction() {
           static_cast<std::uint16_t>(operands.at(0)),
           operands.at(1));
       break;
+    case K_OP_EQUAL: {
+      auto rhs{pop_evaluation_value()};
+      auto lhs{pop_evaluation_value()};
+      if (!rhs || !lhs) {
+        const std::string reason{!rhs ? rhs.error() : lhs.error()};
+        m_pause_info = AreaPauseInfo{.offset = instruction_offset,
+            .opcode = opcode,
+            .opcode_name = std::string{info->name},
+            .reason_text = reason,
+            .nearby_bytes = nearby_bytes_hex(instruction_offset)};
+        m_state = AreaScriptState::k_failed;
+        return;
+      }
+      const std::int32_t result{lhs.value() == rhs.value() ? 1 : 0};
+      m_evaluation_stack.push_back(result);
+      entry.effect = fmt::format("{} == {} -> {}", lhs.value(), rhs.value(), result);
+      break;
+    }
+    case K_OP_START_SCX_SCRIPT: {
+      if (!m_scx_script_sink) {
+        m_pause_info = AreaPauseInfo{.offset = instruction_offset,
+            .opcode = opcode,
+            .opcode_name = std::string{info->name},
+            .reason_text = "SCX script bridge is not wired",
+            .nearby_bytes = nearby_bytes_hex(instruction_offset)};
+        m_state = AreaScriptState::k_failed;
+        return;
+      }
+      const AreaScxScriptRequest request{.script_id = static_cast<std::uint16_t>(operands.at(0)),
+          .operand_b = static_cast<std::int16_t>(operands.at(1)),
+          .operand_c = static_cast<std::int16_t>(operands.at(2))};
+      auto instance{m_scx_script_sink(request)};
+      if (!instance) {
+        m_pause_info = AreaPauseInfo{.offset = instruction_offset,
+            .opcode = opcode,
+            .opcode_name = std::string{info->name},
+            .reason_text = fmt::format(
+                "failed to start SCX script {}: {}", request.script_id, instance.error()),
+            .nearby_bytes = nearby_bytes_hex(instruction_offset)};
+        m_state = AreaScriptState::k_failed;
+        return;
+      }
+      m_wait = AreaWaitState{.kind = AreaWaitKind::k_scx_script,
+          .runtime_state = 0,
+          .interface = std::nullopt,
+          .interface_result_variable = std::nullopt,
+          .scx_script_instance = instance.value(),
+          .remaining_scenario_frames = 0.0F};
+      wait_after_instruction = true;
+      entry.effect = fmt::format(
+          "start SCX script {} as instance {} and wait", request.script_id, instance.value());
+      break;
+    }
     case K_OP_PLAY_MUSIC: {
       const Audio::MusicTrackRequest request{
           .track_id = static_cast<std::int16_t>(operands.at(0)),
@@ -391,11 +682,71 @@ void AreaScriptRuntime::execute_instruction() {
       }
       m_wait = AreaWaitState{.kind = AreaWaitKind::k_interface,
           .runtime_state = K_OPEN_INTERFACE_WAIT_STATE,
-          .interface = handle};
-      entry.effect =
-          fmt::format("open interface {} (operands {}, {})", interface_id, operand_b, operand_c);
+          .interface = handle,
+          .interface_result_variable =
+              operand_c >= 0 ? std::optional<std::uint16_t>{static_cast<std::uint16_t>(operand_c)}
+                             : std::nullopt,
+          .scx_script_instance = std::nullopt,
+          .remaining_scenario_frames = 0.0F};
+      wait_after_instruction = true;
+      entry.effect = fmt::format(
+          "open interface {} (operand {}, result variable {})", interface_id, operand_b, operand_c);
       break;
     }
+    case K_OP_CAMERA_SELECT:
+    case K_OP_CAMERA_MOVE_WAIT: {
+      const std::int16_t duration{static_cast<std::int16_t>(operands.at(1))};
+      const bool wait{opcode == K_OP_CAMERA_MOVE_WAIT && duration != 0};
+      m_last_camera_request =
+          AreaCameraRequest{.camera_id = static_cast<std::uint16_t>(operands.at(0)),
+              .duration_units = duration,
+              .flags = static_cast<std::int16_t>(operands.at(2)),
+              .wait_for_completion = wait};
+      entry.effect = fmt::format("camera {} duration={} flags={}{}",
+          m_last_camera_request->camera_id,
+          duration,
+          m_last_camera_request->flags,
+          wait ? " and wait" : "");
+      if (wait) {
+        const float duration_frames{
+            duration < 0 ? -static_cast<float>(duration) : static_cast<float>(duration)};
+        m_wait_state = K_CAMERA_WAIT_STATE;
+        m_wait = AreaWaitState{.kind = AreaWaitKind::k_camera,
+            .runtime_state = K_CAMERA_WAIT_STATE,
+            .interface = std::nullopt,
+            .interface_result_variable = std::nullopt,
+            .scx_script_instance = std::nullopt,
+            .remaining_scenario_frames = duration_frames};
+        wait_after_instruction = true;
+      }
+      m_yield_requested = true;
+      break;
+    }
+    case K_OP_PRESENTATION_EFFECT:
+    case K_OP_PRESENTATION_EFFECT_ALT: {
+      const std::uint8_t mode{opcode == K_OP_PRESENTATION_EFFECT
+              ? std::uint8_t{1}
+              : std::uint8_t{2}};
+      m_last_presentation_request = AreaPresentationRequest{.mode = mode,
+          .color = static_cast<std::uint32_t>(operands.at(0)),
+          .operand_b = static_cast<std::int16_t>(operands.at(1)),
+          .operand_c = static_cast<std::int16_t>(operands.at(2))};
+      entry.effect = fmt::format("presentation mode={} color={:#010x} args=({}, {})",
+          mode,
+          m_last_presentation_request->color,
+          m_last_presentation_request->operand_b,
+          m_last_presentation_request->operand_c);
+      m_yield_requested = true;
+      break;
+    }
+    case K_OP_BEGIN_CINEMATIC_LETTERBOX:
+      m_cinematic_letterbox_requested = true;
+      entry.effect = "begin cinematic top/bottom mask transition";
+      break;
+    case K_OP_END_CINEMATIC_LETTERBOX:
+      m_cinematic_letterbox_requested = false;
+      entry.effect = "end cinematic top/bottom mask transition";
+      break;
     default:
       // Provisional compatibility action: decode and record the observed
       // state effect without pretending the subsystem is fully implemented.
@@ -411,12 +762,15 @@ void AreaScriptRuntime::execute_instruction() {
   entry.operands = std::move(operands);
   append_trace(std::move(entry));
 
-  m_ip = cursor;
+  m_ip = next_ip;
   ++m_executed_instruction_count;
 
-  if (opcode == K_OP_OPEN_INTERFACE) {
+  if (wait_after_instruction) {
     m_state = AreaScriptState::k_waiting;
-    App::Log::debug(LogCategory::Script, "area script waiting on interface (wait state {})", m_wait_state);
+    App::Log::debug(LogCategory::Script,
+        "area script waiting (kind={}, wait state={})",
+        static_cast<int>(m_wait.kind),
+        m_wait_state);
   }
 }
 

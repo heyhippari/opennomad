@@ -19,13 +19,16 @@
 
 namespace {
 
-using App::Script::AreaScriptRuntime;
-using App::Script::AreaScriptState;
-using App::Script::AreaWaitKind;
-using App::Audio::MusicTrackRequest;
+using App::InterfaceCompletion;
 using App::InterfaceHandle;
 using App::InterfaceOpenRequest;
-using App::InterfaceCompletion;
+using App::Audio::MusicTrackRequest;
+using App::Script::AreaCameraRequest;
+using App::Script::AreaPresentationRequest;
+using App::Script::AreaScriptRuntime;
+using App::Script::AreaScriptState;
+using App::Script::AreaScxScriptRequest;
+using App::Script::AreaWaitKind;
 
 /// The confirmed area-118 startup prefix (script-relative offsets 0..0x2C).
 Buffer make_startup_prefix() {
@@ -52,11 +55,34 @@ Buffer make_menu_music_script() {
   return bytes;
 }
 
+/// Retail area-118 path through New Game up to the first event terminator.
+Buffer make_new_game_event_script() {
+  Buffer bytes{make_startup_prefix()};
+  bytes.u8(0x67).u16(87).u16(1).u16(1);  // +0x2D
+  bytes.u8(0x84);                        // +0x34 letterbox
+  bytes.u8(0x07).u8(0);                  // +0x35 push 0
+  bytes.u8(0x0A).u16(19);                // +0x37 push global 19
+  bytes.u8(0x19);                        // +0x3A equal
+  bytes.u8(0x06).u16(0x003B);            // +0x3B false -> +0x79
+  bytes.u8(0x77).u32(0x00FFFFFFU).u16(30).u16(20);
+  bytes.u8(0x5F).u16(2152).u16(0).u16(3);
+  bytes.u8(0x39).u16(20).u16(0).u16(0);
+  bytes.u8(0x5F).u16(2153).u16(0).u16(1);
+  bytes.u8(0x5C).u16(753);
+  bytes.u8(0x60).u16(2154).u16(100).u16(1);
+  bytes.u8(0x76).u32(0x00FFFFFFU).u16(5).u16(0);
+  bytes.u8(0x60).u16(2158).u16(25).u16(1);
+  bytes.u8(0x04).u16(0x00A6);  // +0x76 -> +0x11F
+  bytes.zeros(0x11FU - bytes.data().size());
+  bytes.u8(0x03);  // +0x11F
+  return bytes;
+}
+
 /// An interface sink that records the request and returns a fixed handle.
-auto recording_interface_sink(std::optional<InterfaceOpenRequest>& captured,
-    const InterfaceHandle handle) {
-  return [&captured, handle](const InterfaceOpenRequest& request)
-             -> std::expected<InterfaceHandle, std::string> {
+auto recording_interface_sink(
+    std::optional<InterfaceOpenRequest>& captured, const InterfaceHandle handle) {
+  return [&captured, handle](
+             const InterfaceOpenRequest& request) -> std::expected<InterfaceHandle, std::string> {
     captured = request;
     return handle;
   };
@@ -89,8 +115,9 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     std::optional<MusicTrackRequest> music;
     const InterfaceHandle menu_handle{.interface_id = 29, .generation = 7};
     runtime.set_interface_sink(recording_interface_sink(opened, menu_handle));
-    runtime.set_music_sink(
-        [&music](const MusicTrackRequest& request) { music = request; });
+    runtime.set_music_sink([&music](const MusicTrackRequest& request) {
+      music = request;
+    });
 
     runtime.queue_event(1);
     runtime.activate();
@@ -137,8 +164,9 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     AreaScriptRuntime runtime{bytes.data()};
 
     std::optional<MusicTrackRequest> music;
-    runtime.set_music_sink(
-        [&music](const MusicTrackRequest& request) { music = request; });
+    runtime.set_music_sink([&music](const MusicTrackRequest& request) {
+      music = request;
+    });
 
     runtime.queue_event(1);
     runtime.activate();
@@ -187,8 +215,9 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     std::vector<MusicTrackRequest> music;
     const InterfaceHandle menu_handle{.interface_id = 29, .generation = 1};
     runtime.set_interface_sink(recording_interface_sink(opened, menu_handle));
-    runtime.set_music_sink(
-        [&music](const MusicTrackRequest& request) { music.push_back(request); });
+    runtime.set_music_sink([&music](const MusicTrackRequest& request) {
+      music.push_back(request);
+    });
 
     runtime.queue_event(1);
     runtime.activate();
@@ -210,6 +239,8 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     REQUIRE(runtime.complete_interface_wait(completion).has_value());
     CHECK(runtime.state() == AreaScriptState::k_running);
     CHECK_EQ(runtime.completion_result(), std::optional<std::int16_t>{0});
+    // Runtime writes interface results through operand 2 of opcode 0x46.
+    CHECK_EQ(runtime.variable(19), std::optional<std::int32_t>{0});
 
     // The next run executes opcode 0x67 (87, 1, 1) then runs past the end.
     static_cast<void>(runtime.run());
@@ -234,27 +265,107 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     CHECK(runtime.run() == AreaScriptState::k_waiting);
 
     // Stale generation: rejected, still waiting.
-    const InterfaceCompletion stale{.handle = InterfaceHandle{.interface_id = 29, .generation = 99},
-        .result = 0};
+    const InterfaceCompletion stale{
+        .handle = InterfaceHandle{.interface_id = 29, .generation = 99}, .result = 0};
     REQUIRE_FALSE(runtime.complete_interface_wait(stale).has_value());
     CHECK(runtime.state() == AreaScriptState::k_waiting);
 
     // Matching completion resumes exactly once.
-    REQUIRE(runtime.complete_interface_wait(
-                     InterfaceCompletion{.handle = menu_handle, .result = 0})
-                .has_value());
+    REQUIRE(runtime.complete_interface_wait(InterfaceCompletion{.handle = menu_handle, .result = 0})
+            .has_value());
     CHECK(runtime.state() == AreaScriptState::k_running);
 
     // A duplicate matching completion is rejected (not waiting anymore).
-    REQUIRE_FALSE(runtime.complete_interface_wait(
-                          InterfaceCompletion{.handle = menu_handle, .result = 0})
-                      .has_value());
+    REQUIRE_FALSE(
+        runtime.complete_interface_wait(InterfaceCompletion{.handle = menu_handle, .result = 0})
+            .has_value());
   }
 
-  TEST_CASE("The opcode registry knows the confirmed opcodes only") {
+  TEST_CASE("The retail New Game branch executes through its first event terminator") {
+    const Buffer bytes{make_new_game_event_script()};
+    AreaScriptRuntime runtime{bytes.data()};
+
+    const InterfaceHandle menu_handle{.interface_id = 29, .generation = 1};
+    std::vector<AreaScxScriptRequest> scripts;
+    runtime.set_interface_sink(
+        [menu_handle](const InterfaceOpenRequest&) -> std::expected<InterfaceHandle, std::string> {
+          return menu_handle;
+        });
+    runtime.set_scx_script_sink(
+        [&scripts](const AreaScxScriptRequest& request) -> std::expected<std::size_t, std::string> {
+          scripts.push_back(request);
+          return 42U;
+        });
+
+    runtime.queue_event(1);
+    runtime.activate();
+    REQUIRE(runtime.run() == AreaScriptState::k_waiting);
+    REQUIRE(runtime.complete_interface_wait(InterfaceCompletion{.handle = menu_handle, .result = 0})
+            .has_value());
+
+    // Result 0 takes the New Game branch. Runtime's presentation helpers set
+    // the context-yield flag, so mode 2 ends this interpreter tick.
+    REQUIRE(runtime.run() == AreaScriptState::k_running);
+    CHECK(runtime.cinematic_letterbox_requested());
+    REQUIRE(runtime.last_presentation_request().has_value());
+    CHECK_EQ(runtime.last_presentation_request()->mode, 2U);
+
+    // Camera 2152 similarly yields one AREA tick.
+    REQUIRE(runtime.run() == AreaScriptState::k_running);
+    REQUIRE(runtime.last_camera_request().has_value());
+    CHECK_EQ(runtime.last_camera_request()->camera_id, 2152U);
+
+    // The next tick reaches AREA -> SCX script ID 20 (Wait5sec) and waits on
+    // the concrete ScriptRuntime instance returned by the bridge.
+    REQUIRE(runtime.run() == AreaScriptState::k_waiting);
+    CHECK(runtime.wait_info().kind == AreaWaitKind::k_scx_script);
+    REQUIRE_EQ(scripts.size(), 1U);
+    CHECK_EQ(scripts.at(0).script_id, 20U);
+
+    REQUIRE(runtime.complete_scx_script_wait(42U).has_value());
+    REQUIRE(runtime.run() == AreaScriptState::k_running);
+    REQUIRE(runtime.last_camera_request().has_value());
+    CHECK_EQ(runtime.last_camera_request()->camera_id, 2153U);
+
+    REQUIRE(runtime.run() == AreaScriptState::k_waiting);
+    CHECK(runtime.wait_info().kind == AreaWaitKind::k_camera);
+    REQUIRE(runtime.last_camera_request().has_value());
+    CHECK_EQ(runtime.last_camera_request()->camera_id, 2154U);
+    CHECK_EQ(runtime.wait_state(), 7U);
+
+    // Camera 2154 waits 100 scenario frames. The resumed tick reaches 0x76,
+    // records presentation mode 1, and yields before camera 2158.
+    REQUIRE(runtime.run(100.0F / 30.0F) == AreaScriptState::k_running);
+    REQUIRE(runtime.last_presentation_request().has_value());
+    CHECK_EQ(runtime.last_presentation_request()->mode, 1U);
+
+    REQUIRE(runtime.run() == AreaScriptState::k_waiting);
+    REQUIRE(runtime.last_camera_request().has_value());
+    CHECK_EQ(runtime.last_camera_request()->camera_id, 2158U);
+
+    // The final timed wait resumes into 0x04, which lands exactly on +0x11F
+    // and executes the event terminator 0x03.
+    CHECK(runtime.run(25.0F / 30.0F) == AreaScriptState::k_ready);
+    CHECK_EQ(runtime.instruction_pointer(), 0x120U);
+    CHECK_EQ(runtime.evaluation_stack_depth(), 0U);
+  }
+
+  TEST_CASE("The opcode registry knows the recovered New Game VM primitives") {
+    CHECK(App::Script::area_opcode_name(0x03) != nullptr);
+    CHECK(App::Script::area_opcode_name(0x04) != nullptr);
+    CHECK(App::Script::area_opcode_name(0x06) != nullptr);
+    CHECK(App::Script::area_opcode_name(0x07) != nullptr);
+    CHECK(App::Script::area_opcode_name(0x0A) != nullptr);
     CHECK(App::Script::area_opcode_name(0x0D) != nullptr);
+    CHECK(App::Script::area_opcode_name(0x19) != nullptr);
+    CHECK(App::Script::area_opcode_name(0x39) != nullptr);
     CHECK(App::Script::area_opcode_name(0x46) != nullptr);
+    CHECK(App::Script::area_opcode_name(0x5F) != nullptr);
+    CHECK(App::Script::area_opcode_name(0x60) != nullptr);
     CHECK(App::Script::area_opcode_name(0x67) != nullptr);
+    CHECK(App::Script::area_opcode_name(0x77) != nullptr);
+    CHECK(App::Script::area_opcode_name(0x84) != nullptr);
+    CHECK(App::Script::area_opcode_name(0x85) != nullptr);
     CHECK(App::Script::area_opcode_name(0x99) == nullptr);
   }
 }

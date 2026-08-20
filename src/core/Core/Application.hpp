@@ -109,10 +109,12 @@ class Application {
   /// gamePaused maps to FrameTimingState::gameplay_paused; the game-command
   /// dispatcher itself does not exist yet.
   void dispatch_held_escape();
-  /// Completes the splash and runs scenario modes 3 -> 2 -> 1, installing
-  /// the WorldScene after mode 2 establishes the world context and then
-  /// opening interface 29 through the AREA script. Returns false on a
-  /// mandatory failure (startup stops).
+  /// Advances post-splash startup. The first call runs scenario modes
+  /// 3 -> 2 -> 1 and installs the WorldScene. Mode 1 may yield before AREA
+  /// opcode 0x46 opens interface 29; in that case later frames keep ticking
+  /// the scenario and this function returns false without treating the wait
+  /// as a failure. Returns true once interface 29 is active and startup has
+  /// completely finished. Fatal failures set m_running false.
   bool advance_startup_past_splash();
   /// Wires the interface dispatcher's open sink so any AREA interface-open
   /// request (opcode 0x46) is forwarded to the generic InterfaceManager.
@@ -152,8 +154,14 @@ class Application {
   /// Seconds left before switching from the splash to the runtime world.
   float m_splash_seconds_left{0.0F};
   /// True once the splash has been replaced by the stable WorldScene and the
-  /// startup scenario modes (3 -> 2 -> 1) have completed.
+  /// startup sequence has fully reached the main menu.
   bool m_startup_complete{false};
+
+  /// True after the initial post-splash scenario mode-1 tick has run and
+  /// StartupCoordinator::k_open_main_menu has begun, but AREA opcode 0x46
+  /// has not necessarily executed yet. Presentation opcode 0x76 immediately
+  /// before 0x46 deliberately yields the AREA VM to the following tick.
+  bool m_startup_waiting_for_main_menu{false};
 
   bool m_running{true};
   bool m_sdl_initialized{false};

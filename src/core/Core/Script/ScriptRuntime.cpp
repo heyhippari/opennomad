@@ -39,6 +39,8 @@ constexpr std::uint32_t K_SET_SPRITE_FRAME{0x04000029U};
 constexpr std::uint32_t K_PLAY_SOUND{0x05000014U};
 constexpr std::uint32_t K_PLAY_SYNC_SOUND{0x05000015U};
 constexpr std::uint32_t K_STOP_SOUND{0x05000016U};
+// Control/timing opcode used by GRID script ID 20 ("Wait5sec").
+constexpr std::uint32_t K_WAIT{0x06000017U};
 /// Mask identifying the audio/music opcode family for the debugger's extra
 /// audio diagnostics.
 constexpr std::uint32_t K_AUDIO_OPCODE_FAMILY{0x05000000U};
@@ -94,8 +96,12 @@ constexpr std::array<OpcodeSemanticParam, 2> K_SET_FRAME_PARAMS{
 constexpr std::array<OpcodeSemanticParam, 1> K_SET_SPRITE_TYPE_PARAMS{
     OpcodeSemanticParam{.semantic_type = k_semantic_sprite, .argument_index = 0},
 };
+constexpr std::array<OpcodeSemanticParam, 2> K_WAIT_PARAMS{
+    OpcodeSemanticParam{.semantic_type = k_semantic_duration, .argument_index = 0},
+    OpcodeSemanticParam{.semantic_type = k_semantic_progress_elapsed, .argument_index = 1},
+};
 
-constexpr std::array<OpcodeInfo, 11> K_OPCODE_TABLE{
+constexpr std::array<OpcodeInfo, 12> K_OPCODE_TABLE{
     OpcodeInfo{.opcode = K_SET_SPRITE_TYPE,
         .name = "SetSpriteType",
         .expected_argument_count = 2,
@@ -185,16 +191,29 @@ constexpr std::array<OpcodeInfo, 11> K_OPCODE_TABLE{
         .owns_sprite = false,
         .support = OpcodeSupport::k_supported,
         .notes = "args: sound index, object index/-1 (null owner)."},
+    OpcodeInfo{.opcode = K_WAIT,
+        .name = "Wait",
+        .expected_argument_count = 2,
+        .semantic_params = K_WAIT_PARAMS.data(),
+        .semantic_param_count = K_WAIT_PARAMS.size(),
+        .owns_sprite = false,
+        .support = OpcodeSupport::k_supported,
+        .notes = "args: duration in 30 Hz script frames, mutable elapsed progress."},
 };
 
 /// Human-readable status label for the trace window.
 const char* status_name(const ScriptCommandStatus status) {
   switch (status) {
-    case ScriptCommandStatus::k_running:   return "running";
-    case ScriptCommandStatus::k_completed: return "completed";
-    case ScriptCommandStatus::k_paused:    return "paused";
-    case ScriptCommandStatus::k_error:     return "error";
-    default:                               return "unknown";
+    case ScriptCommandStatus::k_running:
+      return "running";
+    case ScriptCommandStatus::k_completed:
+      return "completed";
+    case ScriptCommandStatus::k_paused:
+      return "paused";
+    case ScriptCommandStatus::k_error:
+      return "error";
+    default:
+      return "unknown";
   }
 }
 
@@ -238,6 +257,11 @@ void reinitialize_command(ScriptInstance& instance, RuntimeScriptCommand& comman
         instance.value_pool.at(base + 3U).raw = 0;  // voiceIndex+1 latch.
       }
       break;
+    case K_WAIT:
+      if ((base + 1U) < pool_size && command.value_count >= 2U) {
+        instance.value_pool.at(base + 1U).set_float(0.0F);
+      }
+      break;
     default:
       break;
   }
@@ -247,17 +271,28 @@ void reinitialize_command(ScriptInstance& instance, RuntimeScriptCommand& comman
 
 const char* pause_reason_name(const ScriptPauseReason reason) {
   switch (reason) {
-    case ScriptPauseReason::k_none:                     return "none";
-    case ScriptPauseReason::k_unhandled_opcode:         return "unhandled opcode";
-    case ScriptPauseReason::k_invalid_argument_count:   return "invalid argument count";
-    case ScriptPauseReason::k_out_of_range_index:       return "out-of-range index";
-    case ScriptPauseReason::k_missing_resource:         return "missing resource";
-    case ScriptPauseReason::k_invalid_linked_command:   return "invalid linked command";
-    case ScriptPauseReason::k_invalid_group:            return "invalid group";
-    case ScriptPauseReason::k_command_budget_exhausted: return "command budget exhausted";
-    case ScriptPauseReason::k_unsupported_subsystem:    return "unsupported subsystem";
-    case ScriptPauseReason::k_invalid_duration:         return "invalid duration";
-    default:                                            return "unknown";
+    case ScriptPauseReason::k_none:
+      return "none";
+    case ScriptPauseReason::k_unhandled_opcode:
+      return "unhandled opcode";
+    case ScriptPauseReason::k_invalid_argument_count:
+      return "invalid argument count";
+    case ScriptPauseReason::k_out_of_range_index:
+      return "out-of-range index";
+    case ScriptPauseReason::k_missing_resource:
+      return "missing resource";
+    case ScriptPauseReason::k_invalid_linked_command:
+      return "invalid linked command";
+    case ScriptPauseReason::k_invalid_group:
+      return "invalid group";
+    case ScriptPauseReason::k_command_budget_exhausted:
+      return "command budget exhausted";
+    case ScriptPauseReason::k_unsupported_subsystem:
+      return "unsupported subsystem";
+    case ScriptPauseReason::k_invalid_duration:
+      return "invalid duration";
+    default:
+      return "unknown";
   }
 }
 
@@ -351,6 +386,11 @@ std::expected<std::size_t, std::string> ScriptRuntime::create_instance(
       instance.script_name,
       instance.root_commands.size(),
       instance.linked_commands.size());
+  // A completed runtime may receive another instance later through AREA
+  // opcode 0x39; creating it makes the scenario schedulable again.
+  if (m_run_state == ScriptRunState::k_completed) {
+    m_run_state = ScriptRunState::k_running;
+  }
   m_instances.push_back(std::move(instance));
   return instance_id;
 }
@@ -364,14 +404,12 @@ void ScriptRuntime::tick(const float real_delta_seconds) {
 
   // Centralized real-seconds -> 30 Hz script-frame conversion (clamped to
   // three frames). Handlers and the scheduler only ever see script frames.
-  const float unclamped_script_delta_frames{
-      real_delta_seconds * k_script_frames_per_second};
+  const float unclamped_script_delta_frames{real_delta_seconds * k_script_frames_per_second};
   const float script_delta_frames{convert_real_delta_to_script_frames(real_delta_seconds)};
   m_last_real_delta_seconds = real_delta_seconds;
   m_last_script_delta_frames = script_delta_frames;
-  m_last_script_delta_clamped =
-      script_delta_frames != unclamped_script_delta_frames &&
-      unclamped_script_delta_frames > k_max_script_delta_frames;
+  m_last_script_delta_clamped = script_delta_frames != unclamped_script_delta_frames &&
+                                unclamped_script_delta_frames > k_max_script_delta_frames;
   advance(script_delta_frames);
 }
 
@@ -404,9 +442,8 @@ void ScriptRuntime::advance(const float script_delta_frames) {
   }
 }
 
-bool ScriptRuntime::advance_instance(ScriptInstance& instance,
-    const float script_delta_frames,
-    std::size_t& budget) {
+bool ScriptRuntime::advance_instance(
+    ScriptInstance& instance, const float script_delta_frames, std::size_t& budget) {
   if (instance.current_group_index >= instance.root_commands.size()) {
     instance.completed = true;
     return true;
@@ -432,8 +469,7 @@ bool ScriptRuntime::advance_instance(ScriptInstance& instance,
   --budget;
   const ScriptCommandStatus root_status{
       dispatch_command(instance, root, script_delta_frames, group_index, 0, 0, true)};
-  if (root_status == ScriptCommandStatus::k_paused ||
-      root_status == ScriptCommandStatus::k_error) {
+  if (root_status == ScriptCommandStatus::k_paused || root_status == ScriptCommandStatus::k_error) {
     return false;
   }
 
@@ -485,13 +521,8 @@ bool ScriptRuntime::advance_instance(ScriptInstance& instance,
     --budget;
 
     RuntimeScriptCommand& command{instance.linked_commands.at(index)};
-    const ScriptCommandStatus status{dispatch_command(instance,
-        command,
-        script_delta_frames,
-        group_index,
-        chain_position,
-        index,
-        false)};
+    const ScriptCommandStatus status{dispatch_command(
+        instance, command, script_delta_frames, group_index, chain_position, index, false)};
     if (status == ScriptCommandStatus::k_paused || status == ScriptCommandStatus::k_error) {
       return false;
     }
@@ -538,9 +569,8 @@ ScriptCommandStatus ScriptRuntime::dispatch_command(ScriptInstance& instance,
     argument_snapshot.reserve(command.value_count);
     for (std::uint32_t index{0}; index < command.value_count; ++index) {
       const std::size_t pool_index{command.first_value_index + index};
-      argument_snapshot.push_back(pool_index < instance.value_pool.size()
-              ? instance.value_pool.at(pool_index).raw
-              : 0U);
+      argument_snapshot.push_back(
+          pool_index < instance.value_pool.size() ? instance.value_pool.at(pool_index).raw : 0U);
     }
   }
 
@@ -552,10 +582,10 @@ ScriptCommandStatus ScriptRuntime::dispatch_command(ScriptInstance& instance,
   } else if (info->support != OpcodeSupport::k_supported) {
     result.status = ScriptCommandStatus::k_paused;
     result.pause_reason = ScriptPauseReason::k_unhandled_opcode;
-    result.reason_text =
-        fmt::format("opcode {:#010x} ({}) is known but unsupported: {}", command.opcode,
-            info->name,
-            info->notes);
+    result.reason_text = fmt::format("opcode {:#010x} ({}) is known but unsupported: {}",
+        command.opcode,
+        info->name,
+        info->notes);
   } else if (info->expected_argument_count != 0U &&
              command.value_count < info->expected_argument_count) {
     result.status = ScriptCommandStatus::k_paused;
@@ -591,6 +621,9 @@ ScriptCommandStatus ScriptRuntime::dispatch_command(ScriptInstance& instance,
       case K_STOP_SOUND:
         result = handle_stop_sound(instance, command);
         break;
+      case K_WAIT:
+        result = handle_wait(instance, command, script_delta_frames);
+        break;
       default:
         result.status = ScriptCommandStatus::k_paused;
         result.pause_reason = ScriptPauseReason::k_unhandled_opcode;
@@ -619,8 +652,8 @@ ScriptCommandStatus ScriptRuntime::dispatch_command(ScriptInstance& instance,
     entry.group_index = group_index;
     entry.chain_position = chain_position;
     entry.opcode = command.opcode;
-    entry.opcode_name = info != nullptr ? std::string{info->name}
-                                        : fmt::format("{:#010x}", command.opcode);
+    entry.opcode_name =
+        info != nullptr ? std::string{info->name} : fmt::format("{:#010x}", command.opcode);
     entry.status_before = count_before == 0U ? "idle" : "active";
     entry.status_after = status_name(result.status);
     entry.execution_count_before = count_before;
@@ -629,17 +662,14 @@ ScriptCommandStatus ScriptRuntime::dispatch_command(ScriptInstance& instance,
     std::string mutated;
     for (std::uint32_t index{0}; index < command.value_count; ++index) {
       const std::size_t pool_index{command.first_value_index + index};
-      const std::uint32_t after{pool_index < instance.value_pool.size()
-              ? instance.value_pool.at(pool_index).raw
-              : 0U};
+      const std::uint32_t after{
+          pool_index < instance.value_pool.size() ? instance.value_pool.at(pool_index).raw : 0U};
       if (argument_snapshot.at(index) != after) {
         if (!mutated.empty()) {
           mutated += ", ";
         }
-        mutated += fmt::format("arg{} {:#010x}->{:#010x}",
-            index,
-            argument_snapshot.at(index),
-            after);
+        mutated +=
+            fmt::format("arg{} {:#010x}->{:#010x}", index, argument_snapshot.at(index), after);
       }
     }
     entry.mutated_arguments = std::move(mutated);
@@ -678,8 +708,8 @@ void ScriptRuntime::pause(ScriptInstance& instance,
   for (std::uint32_t index{0}; index < command.value_count; ++index) {
     const std::size_t pool_index{command.first_value_index + index};
     const Omikron::ScriptValue value{pool_index < instance.value_pool.size()
-            ? instance.value_pool.at(pool_index)
-            : Omikron::ScriptValue{}};
+                                         ? instance.value_pool.at(pool_index)
+                                         : Omikron::ScriptValue{}};
     info.arguments.push_back(ScriptArgumentView{.raw = value.raw,
         .as_signed = value.as_signed(),
         .as_unsigned = value.as_unsigned(),
@@ -687,17 +717,17 @@ void ScriptRuntime::pause(ScriptInstance& instance,
   }
   info.execution_limit = command.execution_limit;
   info.execution_count = command.execution_count;
-  info.next_command_index = command.next_linked_command_index.has_value()
-      ? static_cast<std::int32_t>(command.next_linked_command_index.value())
-      : -1;
+  info.next_command_index =
+      command.next_linked_command_index.has_value()
+          ? static_cast<std::int32_t>(command.next_linked_command_index.value())
+          : -1;
   info.tick = m_tick;
   info.reason = reason;
 
   // Audio/music family: append audio-specific diagnostic context.
   if ((command.opcode & K_AUDIO_OPCODE_MASK) == K_AUDIO_OPCODE_FAMILY) {
     const Audio::AudioContextInfo context{m_world->audio_context()};
-    reason_text += fmt::format(
-        " | audio: available={}, format='{}', voices {}/{} active, music {}",
+    reason_text += fmt::format(" | audio: available={}, format='{}', voices {}/{} active, music {}",
         context.available,
         context.negotiated_format,
         context.active_voices,
@@ -711,8 +741,8 @@ void ScriptRuntime::pause(ScriptInstance& instance,
   info.reason_text = std::move(reason_text);
 
   m_run_state = reason == ScriptPauseReason::k_unhandled_opcode
-      ? ScriptRunState::k_paused_on_unhandled
-      : ScriptRunState::k_paused_on_error;
+                    ? ScriptRunState::k_paused_on_unhandled
+                    : ScriptRunState::k_paused_on_error;
 
   App::Log::warn(LogCategory::Script,
       "pause: {} (scenario '{}', script '{}' instance {}, group {}, chain {}, command {}, "
@@ -921,6 +951,44 @@ HandlerResult ScriptRuntime::handle_display_3d_sprite(
       .reason_text = {}};
 }
 
+HandlerResult ScriptRuntime::handle_wait(
+    ScriptInstance& instance, RuntimeScriptCommand& command, const float script_delta_frames) {
+  const std::uint32_t base{command.first_value_index};
+  const float duration{instance.value_pool.at(base).as_float()};
+  const float elapsed{instance.value_pool.at(base + 1U).as_float()};
+
+  // Runtime's normal path for 0x06000017 compares elapsed against duration,
+  // adds the global script delta, stores elapsed back to argument 1, then
+  // increments the function progress once the duration is reached.
+  if (duration <= 0.0F || elapsed >= duration) {
+    command.execution_count += 1;
+    return HandlerResult{.status = ScriptCommandStatus::k_completed,
+        .pause_reason = ScriptPauseReason::k_none,
+        .reason_text = {}};
+  }
+
+  const float next_elapsed{elapsed + script_delta_frames};
+  instance.value_pool.at(base + 1U).set_float(next_elapsed);
+  if (next_elapsed < duration) {
+    return HandlerResult{.status = ScriptCommandStatus::k_running,
+        .pause_reason = ScriptPauseReason::k_none,
+        .reason_text = {}};
+  }
+
+  command.execution_count += 1;
+  if (command.execution_limit != K_INFINITE_EXECUTION_LIMIT &&
+      command.execution_count >= command.execution_limit) {
+    return HandlerResult{.status = ScriptCommandStatus::k_completed,
+        .pause_reason = ScriptPauseReason::k_none,
+        .reason_text = {}};
+  }
+
+  instance.value_pool.at(base + 1U).set_float(0.0F);
+  return HandlerResult{.status = ScriptCommandStatus::k_running,
+      .pause_reason = ScriptPauseReason::k_none,
+      .reason_text = {}};
+}
+
 namespace {
 
 /// Completion predicate shared by the audio handlers: the command exhausts
@@ -951,7 +1019,8 @@ HandlerResult ScriptRuntime::handle_play_sound(
   // Preserve and log unknown flag bits; never assign invented meanings.
   const std::uint32_t unknown_bits{flags & ~1U};
   if (unknown_bits != 0U) {
-    App::Log::debug(LogCategory::Script, "PlaySound: preserving unknown flag bits {:#010x}", unknown_bits);
+    App::Log::debug(
+        LogCategory::Script, "PlaySound: preserving unknown flag bits {:#010x}", unknown_bits);
   }
 
   if (started != 0U) {
@@ -966,12 +1035,17 @@ HandlerResult ScriptRuntime::handle_play_sound(
 
   auto sound{m_world->resolve_sound(sound_index)};
   if (!sound) {
-    App::Log::warn(LogCategory::Script, "PlaySound: sound index {} unavailable: {}", sound_index, sound.error());
+    App::Log::warn(LogCategory::Script,
+        "PlaySound: sound index {} unavailable: {}",
+        sound_index,
+        sound.error());
     instance.value_pool.at(base + 2U).raw = 1;  // latch even on failure.
     return audio_completion(command);
   }
   if (!sound->resource.valid()) {
-    App::Log::warn(LogCategory::Script, "PlaySound: sound index {} resolves to an invalid resource", sound_index);
+    App::Log::warn(LogCategory::Script,
+        "PlaySound: sound index {} resolves to an invalid resource",
+        sound_index);
     instance.value_pool.at(base + 2U).raw = 1;
     return audio_completion(command);
   }
@@ -990,19 +1064,22 @@ HandlerResult ScriptRuntime::handle_play_sound(
   } else {
     auto owner{m_world->resolve_audio_owner(object_index)};
     if (!owner) {
-      App::Log::warn(LogCategory::Script, "PlaySound: object index {} unavailable: {}", object_index, owner.error());
+      App::Log::warn(LogCategory::Script,
+          "PlaySound: object index {} unavailable: {}",
+          object_index,
+          owner.error());
       instance.value_pool.at(base + 2U).raw = 1;
       return audio_completion(command);
     }
     auto position{m_world->resolve_owner_position(owner.value())};
     if (!position) {
-      App::Log::warn(LogCategory::Script, "PlaySound: owner position unavailable: {}", position.error());
+      App::Log::warn(
+          LogCategory::Script, "PlaySound: owner position unavailable: {}", position.error());
       instance.value_pool.at(base + 2U).raw = 1;
       return audio_completion(command);
     }
     request.owner = owner.value();
-    request.emitter = Audio::SoundEmitterState{
-        .position = position.value(),
+    request.emitter = Audio::SoundEmitterState{.position = position.value(),
         .velocity = {0.0F, 0.0F, 0.0F},
         .minimum_distance = K_PLAY_SOUND_MIN_DISTANCE,
         .maximum_distance = K_PLAY_SOUND_MAX_DISTANCE};
@@ -1012,7 +1089,8 @@ HandlerResult ScriptRuntime::handle_play_sound(
   if (!voice) {
     App::Log::warn(LogCategory::Script, "PlaySound: queue rejected: {}", voice.error());
   } else {
-    App::Log::debug(LogCategory::Script, "PlaySound: queued voice {}:{} for sound '{}' ({} {})",
+    App::Log::debug(LogCategory::Script,
+        "PlaySound: queued voice {}:{} for sound '{}' ({} {})",
         voice->index,
         voice->generation,
         sound->name,
@@ -1048,16 +1126,22 @@ HandlerResult ScriptRuntime::handle_play_sync_sound(
   const std::int32_t object_index{instance.value_pool.at(base + 4U).as_signed()};
   const std::uint32_t unknown_bits{flags & ~1U};
   if (unknown_bits != 0U) {
-    App::Log::debug(LogCategory::Script, "PlaySyncSound: preserving unknown flag bits {:#010x}", unknown_bits);
+    App::Log::debug(
+        LogCategory::Script, "PlaySyncSound: preserving unknown flag bits {:#010x}", unknown_bits);
   }
 
   auto sound{m_world->resolve_sound(sound_index)};
   if (!sound) {
-    App::Log::warn(LogCategory::Script, "PlaySyncSound: sound index {} unavailable: {}", sound_index, sound.error());
+    App::Log::warn(LogCategory::Script,
+        "PlaySyncSound: sound index {} unavailable: {}",
+        sound_index,
+        sound.error());
     return audio_completion(command);
   }
   if (!sound->resource.valid()) {
-    App::Log::warn(LogCategory::Script, "PlaySyncSound: sound index {} resolves to an invalid resource", sound_index);
+    App::Log::warn(LogCategory::Script,
+        "PlaySyncSound: sound index {} resolves to an invalid resource",
+        sound_index);
     return audio_completion(command);
   }
 
@@ -1074,17 +1158,20 @@ HandlerResult ScriptRuntime::handle_play_sync_sound(
   } else {
     auto owner{m_world->resolve_audio_owner(object_index)};
     if (!owner) {
-      App::Log::warn(LogCategory::Script, "PlaySyncSound: object index {} unavailable: {}", object_index, owner.error());
+      App::Log::warn(LogCategory::Script,
+          "PlaySyncSound: object index {} unavailable: {}",
+          object_index,
+          owner.error());
       return audio_completion(command);
     }
     auto position{m_world->resolve_owner_position(owner.value())};
     if (!position) {
-      App::Log::warn(LogCategory::Script, "PlaySyncSound: owner position unavailable: {}", position.error());
+      App::Log::warn(
+          LogCategory::Script, "PlaySyncSound: owner position unavailable: {}", position.error());
       return audio_completion(command);
     }
     request.owner = owner.value();
-    request.emitter = Audio::SoundEmitterState{
-        .position = position.value(),
+    request.emitter = Audio::SoundEmitterState{.position = position.value(),
         .velocity = {0.0F, 0.0F, 0.0F},
         .minimum_distance = K_PLAY_SYNC_MIN_DISTANCE,
         .maximum_distance = K_PLAY_SYNC_MAX_DISTANCE};
@@ -1109,12 +1196,18 @@ HandlerResult ScriptRuntime::handle_stop_sound(
 
   auto sound{m_world->resolve_sound(sound_index)};
   if (!sound) {
-    App::Log::debug(LogCategory::Script, "StopSound: sound index {} unavailable: {}", sound_index, sound.error());
+    App::Log::debug(LogCategory::Script,
+        "StopSound: sound index {} unavailable: {}",
+        sound_index,
+        sound.error());
     return audio_completion(command);
   }
   auto owner{m_world->resolve_audio_owner(object_index)};
   if (!owner) {
-    App::Log::debug(LogCategory::Script, "StopSound: object index {} unavailable: {}", object_index, owner.error());
+    App::Log::debug(LogCategory::Script,
+        "StopSound: object index {} unavailable: {}",
+        object_index,
+        owner.error());
     return audio_completion(command);
   }
 
@@ -1203,7 +1296,9 @@ void ScriptRuntime::set_user_paused(const bool paused) {
   }
 }
 
-bool ScriptRuntime::user_paused() const { return m_user_paused; }
+bool ScriptRuntime::user_paused() const {
+  return m_user_paused;
+}
 
 void ScriptRuntime::step_tick(const float script_delta_frames) {
   const ScriptRunState previous{m_run_state};
@@ -1319,11 +1414,17 @@ void ScriptRuntime::reset_all() {
   App::Log::debug(LogCategory::Script, "reset all instances");
 }
 
-ScriptRunState ScriptRuntime::run_state() const { return m_run_state; }
+ScriptRunState ScriptRuntime::run_state() const {
+  return m_run_state;
+}
 
-const std::vector<ScriptInstance>& ScriptRuntime::instances() const { return m_instances; }
+const std::vector<ScriptInstance>& ScriptRuntime::instances() const {
+  return m_instances;
+}
 
-std::vector<ScriptInstance>& ScriptRuntime::instances() { return m_instances; }
+std::vector<ScriptInstance>& ScriptRuntime::instances() {
+  return m_instances;
+}
 
 const ScriptInstance* ScriptRuntime::instance(const std::size_t instance_id) const {
   for (const ScriptInstance& candidate : m_instances) {
@@ -1344,20 +1445,36 @@ const ScriptPauseInfo& ScriptRuntime::pause_info() const {
   return k_empty;
 }
 
-const std::deque<CommandTraceEntry>& ScriptRuntime::trace() const { return m_trace; }
+const std::deque<CommandTraceEntry>& ScriptRuntime::trace() const {
+  return m_trace;
+}
 
-bool ScriptRuntime::trace_enabled() const { return m_trace_enabled; }
+bool ScriptRuntime::trace_enabled() const {
+  return m_trace_enabled;
+}
 
-void ScriptRuntime::set_trace_enabled(const bool enabled) { m_trace_enabled = enabled; }
+void ScriptRuntime::set_trace_enabled(const bool enabled) {
+  m_trace_enabled = enabled;
+}
 
-std::uint64_t ScriptRuntime::tick_count() const { return m_tick; }
+std::uint64_t ScriptRuntime::tick_count() const {
+  return m_tick;
+}
 
-const Omikron::ScxData& ScriptRuntime::scx() const { return *m_scx; }
+const Omikron::ScxData& ScriptRuntime::scx() const {
+  return *m_scx;
+}
 
-float ScriptRuntime::last_real_delta_seconds() const { return m_last_real_delta_seconds; }
+float ScriptRuntime::last_real_delta_seconds() const {
+  return m_last_real_delta_seconds;
+}
 
-float ScriptRuntime::last_script_delta_frames() const { return m_last_script_delta_frames; }
+float ScriptRuntime::last_script_delta_frames() const {
+  return m_last_script_delta_frames;
+}
 
-bool ScriptRuntime::last_script_delta_clamped() const { return m_last_script_delta_clamped; }
+bool ScriptRuntime::last_script_delta_clamped() const {
+  return m_last_script_delta_clamped;
+}
 
 }  // namespace App::Script

@@ -114,6 +114,7 @@ Application::Application(Application&& other) noexcept
       m_interface_manager(std::move(other.m_interface_manager)),
       m_splash_seconds_left(other.m_splash_seconds_left),
       m_startup_complete(other.m_startup_complete),
+      m_startup_waiting_for_main_menu(other.m_startup_waiting_for_main_menu),
       m_running(other.m_running),
       m_sdl_initialized(std::exchange(other.m_sdl_initialized, false)),
       m_mouse_captured(other.m_mouse_captured),
@@ -545,6 +546,14 @@ void Application::run_engine_frame() {
     }
   }
 
+  // A genuine post-splash startup failure stops the application. Do not
+  // continue updating/rendering subsystems for the remainder of this frame.
+  // A normal AREA yield while waiting for interface 29 leaves m_running true,
+  // so the scenario update below still executes the next recovered tick.
+  if (!m_running) {
+    return;
+  }
+
   if (m_scene != nullptr) {
     m_scene->update(delta_seconds, m_input);
     // Scenes receive the drawable pixel size: the aspect ratio matches the
@@ -696,6 +705,41 @@ bool Application::advance_startup_past_splash() {
     return false;
   }
 
+  // Finishes the phase that may span multiple AREA ticks. Runtime's AREA
+  // dispatcher yields after presentation opcode 0x76, which appears directly
+  // before the main-menu 0x46 in the initial event. Therefore interface 29 is
+  // not required to exist during the first mode-1 call.
+  const auto finish_main_menu_phase = [this]() -> bool {
+    if (auto result{m_coordinator->complete(
+            Startup::StartupPhase::k_open_main_menu,
+            Startup::StartupPhaseStatus::k_complete)};
+        !result) {
+      App::Log::error(LogCategory::Startup, "Startup ordering error: {}", result.error());
+      m_running = false;
+      return false;
+    }
+    if (auto result{m_coordinator->finish()}; !result) {
+      App::Log::error(LogCategory::Startup, "Startup ordering error: {}", result.error());
+      m_running = false;
+      return false;
+    }
+
+    m_startup_waiting_for_main_menu = false;
+    App::Log::info(LogCategory::Startup, "startup complete");
+    m_input.reset();
+    return true;
+  };
+
+  // Re-entry after the initial mode-1 tick yielded before opcode 0x46.
+  // The normal ScenarioEngine::update() path runs between calls and advances
+  // the AREA context one recovered scenario tick at a time.
+  if (m_startup_waiting_for_main_menu) {
+    if (!m_scenario_engine->main_menu_active()) {
+      return false;
+    }
+    return finish_main_menu_phase();
+  }
+
   m_trace->record("Splash.Omikron.Complete");
 
   if (auto result{m_coordinator->complete(
@@ -756,39 +800,26 @@ bool Application::advance_startup_past_splash() {
     return false;
   }
 
-  // The area script's opcode 0x46 already opened interface 29 during mode 1;
-  // the InterfaceManager owns it and the WorldScene presents it. There is no
-  // direct menu creation here and no scene swap.
+  // Begin the main-menu phase, but do not require opcode 0x46 to have run in
+  // this same mode-1 call. The recovered AREA VM deliberately yields after
+  // opcode 0x76 immediately before it. The normal per-frame scenario update
+  // will resume the context and reach 0x46 on a subsequent tick.
   if (auto result{m_coordinator->begin(Startup::StartupPhase::k_open_main_menu)}; !result) {
     App::Log::error(LogCategory::Startup, "Startup ordering error: {}", result.error());
     m_running = false;
     return false;
   }
-  if (!m_scenario_engine->main_menu_active()) {
-    App::Log::error(LogCategory::Core,
-        "Can't initialize Omikron: the area script did not open interface 29 (no main menu)");
-    swallow_expected(m_coordinator->complete(
-        Startup::StartupPhase::k_open_main_menu, Startup::StartupPhaseStatus::k_failed,
-        "area script did not open interface 29"));
-    m_running = false;
-    return false;
-  }
-  if (auto result{m_coordinator->complete(
-          Startup::StartupPhase::k_open_main_menu, Startup::StartupPhaseStatus::k_complete)};
-      !result) {
-    App::Log::error(LogCategory::Startup, "Startup ordering error: {}", result.error());
-    m_running = false;
-    return false;
-  }
-  if (auto result{m_coordinator->finish()}; !result) {
-    App::Log::error(LogCategory::Startup, "Startup ordering error: {}", result.error());
-    m_running = false;
-    return false;
-  }
 
-  App::Log::info(LogCategory::Startup, "startup complete");
-  m_input.reset();
-  return true;
+  m_startup_waiting_for_main_menu = true;
+
+  if (!m_scenario_engine->main_menu_active()) {
+    // Not an error: AREA yielded at a recovered side-effect boundary.
+    return false;
+  }
+  
+  // Usually false on retail data because 0x76 yielded immediately before
+  // 0x46, but retain the synchronous case for other AREA programs.
+  return finish_main_menu_phase();
 }
 
 void Application::seed_held_input() {

@@ -91,7 +91,7 @@ std::expected<void, std::string> ScenarioEngine::update(const float delta_second
   // AREA/event runtime first (recovered order), then the gameplay-mode
   // runtime, then every LoadedActive world runtime. LoadedInactive contexts
   // are never ticked by default.
-  if (auto result{m_startup.tick()}; !result) {
+  if (auto result{m_startup.tick(delta_seconds)}; !result) {
     return result;
   }
   if (auto* runtime{m_manager.gameplay_runtime()}) {

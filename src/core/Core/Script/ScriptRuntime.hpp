@@ -327,6 +327,8 @@ class ScriptRuntime {
       ScriptInstance& instance, RuntimeScriptCommand& command, float script_delta_frames);
   HandlerResult handle_display_3d_sprite(
       ScriptInstance& instance, RuntimeScriptCommand& command, float script_delta_frames);
+  static HandlerResult handle_wait(
+      ScriptInstance& instance, RuntimeScriptCommand& command, float script_delta_frames);
   HandlerResult handle_play_sound(
       ScriptInstance& instance, RuntimeScriptCommand& command);
   HandlerResult handle_play_sync_sound(
