@@ -64,18 +64,30 @@ void swallow_expected(std::expected<void, std::string> result) {
   static_cast<void>(result);
 }
 
-/// Presents startup videos through a VideoScene. Rendering bypasses the
-/// debug UI (no ImGui during video playback); input is resolved by the
-/// application's input manager and delivered through the playback loop's
-/// stop predicate (see Application::create).
+/// Presents startup videos through a VideoScene. The debug UI is composited
+/// over the video only while the mouse is released (F12), so the debug menu
+/// stays usable before the normal frame loop begins; input is resolved by
+/// the application's input manager through the playback loop's stop
+/// predicate (see Application::create).
 class StartupVideoPresenter final : public Video::VideoPresenter {
  public:
   StartupVideoPresenter(Window* window, Video::VideoScene* scene)
-      : m_window(window), m_scene(scene) {}
+      : m_window(window), m_scene(scene), m_last_ticks{SDL_GetTicks()} {}
 
   void present(const Video::VideoFrame& frame) override {
     glViewport(0, 0, m_window->get_pixel_width(), m_window->get_pixel_height());
     m_scene->present_frame(frame);
+
+    // F12 releases the mouse during video playback. Once released, draw the
+    // debug UI over the video so the menu bar (and any open debug windows)
+    // remain interactive before the normal frame loop starts.
+    if (!SDL_GetWindowRelativeMouseMode(m_window->get_native_window())) {
+      const std::uint64_t now{SDL_GetTicks()};
+      const float delta_seconds{static_cast<float>(now - m_last_ticks) / 1000.0F};
+      m_last_ticks = now;
+      m_window->render_debug_ui_overlay(delta_seconds);
+    }
+
     {
       APP_PROFILE_SCOPE("VideoPresentSwap");
       SDL_GL_SwapWindow(m_window->get_native_window());
@@ -85,6 +97,7 @@ class StartupVideoPresenter final : public Video::VideoPresenter {
  private:
   Window* m_window{nullptr};
   Video::VideoScene* m_scene{nullptr};
+  std::uint64_t m_last_ticks{0};
 };
 
 }  // namespace
@@ -146,7 +159,7 @@ std::expected<Application, std::string> Application::create(const std::string& t
 
   // --- Phase 2: create the application/render window ---
   swallow_expected(coordinator->begin(Startup::StartupPhase::k_create_windows));
-  auto window{Window::create(Window::Settings{.title = title})};
+  auto window{Window::create(Window::Settings{.title = title, .start_fullscreen = true})};
   if (!window) {
     SDL_Quit();
     return std::expected<Application, std::string>{std::unexpect,
@@ -208,6 +221,12 @@ std::expected<Application, std::string> Application::create(const std::string& t
   // The skip action must be registered before the videos: the playback loop
   // asks the input manager whether Escape was pressed this frame.
   app.m_input.add_scheme(Input::ControlScheme::make_keyboard_mouse_default());
+
+  // Capture the mouse FPS-style from the very start. F12 releases it and
+  // clicking the window re-captures it (poll_events). Requesting it before
+  // the videos lets the focus-gained / retry paths heal an early failure
+  // (the window may not be focused until its first present on Wayland).
+  app.set_mouse_captured(true);
 
   // --- Phases 4-6: startup videos (sequential; optional presentation) ---
   // The video system is scoped so it is fully closed before aventure.SCX.
@@ -300,11 +319,6 @@ std::expected<Application, std::string> Application::create(const std::string& t
   // gate current on those platforms (docs/ReverseEngineering.md).
   app.m_activity.on_application_active(true);
 
-  // Capture the mouse FPS-style. F12 releases it and clicking the window
-  // re-captures it (poll_events). The default control scheme, including the
-  // Escape skip action, was registered before the startup videos.
-  app.set_mouse_captured(true);
-
   app.m_sdl_initialized = true;
   return app;
 }
@@ -363,6 +377,13 @@ void App::Application::run() {
     m_trace->record("Splash.Omikron.Active");
   }
   App::Log::info(LogCategory::Startup, "displaying Omikron splash");
+
+  // The startup videos already presented the first frames; ask the
+  // compositor for keyboard focus again now that the surface is mapped.
+  // Without focus the FPS-style mouse capture cannot engage on Wayland,
+  // and the pre-present activation request made while showing the window
+  // may have been ignored by the compositor.
+  SDL_RaiseWindow(m_window->get_native_window());
 
   while (m_running) {
     APP_PROFILE_SCOPE("MainLoop");
@@ -567,6 +588,14 @@ void Application::set_mouse_captured(const bool captured) {
   APP_PROFILE_FUNCTION();
 
   m_mouse_captured = captured;
+  if (captured) {
+    // Hide the cursor immediately so it never flashes while the window is
+    // still unfocused. Wayland only engages the pointer lock once the window
+    // has keyboard focus, so relative mode alone cannot hide it yet.
+    SDL_HideCursor();
+  } else {
+    SDL_ShowCursor();
+  }
   m_window->set_relative_mouse_mode(captured);
 }
 

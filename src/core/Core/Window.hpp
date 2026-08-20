@@ -24,6 +24,9 @@ class Window {
     std::string title;
     int width{800};
     int height{600};
+    /// Creates the window already fullscreen; F11 / Alt+Enter then restores
+    /// the windowed size.
+    bool start_fullscreen{false};
   };
 
   /// Creates the SDL window, GL context, ImGui backend and renderer state.
@@ -41,6 +44,11 @@ class Window {
 
   /// Finish a frame: draw the UI over the scene and present the backbuffer.
   void end_frame();
+
+  /// Renders the debug UI over the current backbuffer without clearing it.
+  /// Used by the startup-video presenter, which draws video frames directly
+  /// before swapping and bypasses the normal begin/end frame pair.
+  void render_debug_ui_overlay(float delta_time);
 
   void toggle_fullscreen();
   void on_minimize();
@@ -113,6 +121,10 @@ class Window {
 
   /// Cached logical and drawable dimensions, updated from SDL resize events.
   WindowSizeState m_size;
+  /// Windowed geometry to restore when leaving fullscreen. Kept separate
+  /// from m_size, which tracks the live (possibly fullscreen) size.
+  int m_windowed_width{800};
+  int m_windowed_height{600};
   int m_window_pos_x{SDL_WINDOWPOS_CENTERED};
   int m_window_pos_y{SDL_WINDOWPOS_CENTERED};
 

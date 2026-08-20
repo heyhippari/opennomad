@@ -41,7 +41,9 @@ Window::Window(const Settings& settings)
       m_size{.width = m_settings.width,
           .height = m_settings.height,
           .pixel_width = m_settings.width,
-          .pixel_height = m_settings.height} {
+          .pixel_height = m_settings.height},
+      m_windowed_width{m_settings.width},
+      m_windowed_height{m_settings.height} {
   APP_PROFILE_FUNCTION();
 
   // Create window with graphics context
@@ -67,10 +69,14 @@ Window::Window(const Settings& settings)
 
   // SDL_CreateWindow cannot be used in a member initializer (needs m_settings first).
   // NOLINTNEXTLINE(cppcoreguidelines-prefer-member-initializer)
-  m_window.reset(SDL_CreateWindow(settings.title.c_str(),
-      m_settings.width,
-      m_settings.height,
-      SDL_WINDOW_OPENGL | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_RESIZABLE));
+  SDL_WindowFlags window_flags{SDL_WINDOW_OPENGL | SDL_WINDOW_HIGH_PIXEL_DENSITY |
+                               SDL_WINDOW_RESIZABLE};
+  if (m_settings.start_fullscreen) {
+    window_flags |= SDL_WINDOW_FULLSCREEN;
+    m_window_mode = WindowMode::BorderlessFullscreen;
+  }
+  m_window.reset(SDL_CreateWindow(
+      settings.title.c_str(), m_settings.width, m_settings.height, window_flags));
 
   SDL_SetWindowMinimumSize(m_window.get(), 640, 480);
 
@@ -206,6 +212,34 @@ void Window::end_frame() {
   SDL_GL_SwapWindow(m_window.get());
 }
 
+void Window::render_debug_ui_overlay(const float delta_time) {
+  APP_PROFILE_FUNCTION();
+
+  // Mirror begin_frame()'s ImGui plumbing but do not clear the backbuffer:
+  // the caller has already drawn content (a startup video frame) that the
+  // debug UI must be composited on top of. The backbuffer is presented by
+  // the caller, not here.
+  ImGui_ImplOpenGL3_NewFrame();
+  ImGui_ImplSDL3_NewFrame();
+  ImGui::NewFrame();
+
+  if (!m_minimized) {
+    m_debug_ui.update(delta_time);
+  }
+
+  ImGui::Render();
+  ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
+  const ImGuiIO& io{ImGui::GetIO()};
+  if ((io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) != 0) {
+    SDL_Window* backup_current_window{SDL_GL_GetCurrentWindow()};
+    SDL_GLContext backup_current_context{SDL_GL_GetCurrentContext()};
+    ImGui::UpdatePlatformWindows();
+    ImGui::RenderPlatformWindowsDefault();
+    SDL_GL_MakeCurrent(backup_current_window, backup_current_context);
+  }
+}
+
 void Window::on_minimize() {
   APP_PROFILE_FUNCTION();
 
@@ -257,7 +291,7 @@ void Window::toggle_fullscreen() {
 
   if (m_window_mode == WindowMode::Windowed) {
     // Save the current windowed geometry so we can restore it later.
-    SDL_GetWindowSize(m_window.get(), &m_size.width, &m_size.height);
+    SDL_GetWindowSize(m_window.get(), &m_windowed_width, &m_windowed_height);
     SDL_GetWindowPosition(m_window.get(), &m_window_pos_x, &m_window_pos_y);
 
     SDL_SetWindowFullscreen(m_window.get(), true);
@@ -266,7 +300,7 @@ void Window::toggle_fullscreen() {
     // Set the desired windowed geometry *before* leaving fullscreen — this
     // avoids a race where SDL3 auto-restores an unexpected size and then a
     // subsequent SDL_SetWindowSize call is ignored by the window manager.
-    SDL_SetWindowSize(m_window.get(), m_size.width, m_size.height);
+    SDL_SetWindowSize(m_window.get(), m_windowed_width, m_windowed_height);
     SDL_SetWindowPosition(m_window.get(), m_window_pos_x, m_window_pos_y);
     SDL_SetWindowFullscreen(m_window.get(), false);
     m_window_mode = WindowMode::Windowed;
