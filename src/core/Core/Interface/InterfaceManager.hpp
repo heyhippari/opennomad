@@ -48,9 +48,6 @@ struct InterfaceInstance {
   std::vector<std::unique_ptr<I2DState>> states;
   I2DState* root_state{nullptr};
   I2DState* current_state{nullptr};
-  /// Index into the current state's selectable text elements (iteration
-  /// order).
-  std::size_t selected_element{0};
 };
 
 /// Generic interface system: looks up a static descriptor, creates a runtime

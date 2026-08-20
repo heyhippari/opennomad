@@ -1,5 +1,7 @@
 #include "Core/Interface/InterfaceManager.hpp"
 
+#include <SDL3/SDL_error.h>
+#include <SDL3/SDL_events.h>
 #include <fmt/format.h>
 
 #include <array>
@@ -110,7 +112,8 @@ std::expected<InterfaceHandle, std::string> InterfaceManager::open(
         std::unexpect, fmt::format("interface {} is unsupported", interface_id)};
   }
 
-  App::Log::debug(LogCategory::I2D, "opening interface {} \"{}\"", descriptor->id, descriptor->name);
+  App::Log::debug(
+      LogCategory::I2D, "opening interface {} \"{}\"", descriptor->id, descriptor->name);
 
   if (!m_renderer) {
     m_renderer = std::make_unique<I2DRenderer>();
@@ -379,7 +382,7 @@ std::expected<void, std::string> InterfaceManager::load_font(const char key) {
 }
 
 void InterfaceManager::select_previous() {
-  InterfaceInstance* instance{focused_instance_mut()};
+  const InterfaceInstance* instance{focused_instance_mut()};
   if (instance == nullptr || instance->current_state == nullptr) {
     return;
   }
@@ -387,19 +390,20 @@ void InterfaceManager::select_previous() {
   if (selectable.empty()) {
     return;
   }
-  if (instance->selected_element == 0U) {
-    instance->selected_element = selectable.size() - 1U;
+  std::size_t& selected{instance->current_state->selected_element};
+  if (selected == 0U) {
+    selected = selectable.size() - 1U;
   } else {
-    --instance->selected_element;
+    --selected;
   }
   App::Log::debug(LogCategory::I2D,
       "active element: string[{}] \"{}\"",
-      selectable.at(instance->selected_element)->string_index,
-      instance->strings.at(selectable.at(instance->selected_element)->string_index));
+      selectable.at(selected)->string_index,
+      instance->strings.at(selectable.at(selected)->string_index));
 }
 
 void InterfaceManager::select_next() {
-  InterfaceInstance* instance{focused_instance_mut()};
+  const InterfaceInstance* instance{focused_instance_mut()};
   if (instance == nullptr || instance->current_state == nullptr) {
     return;
   }
@@ -407,11 +411,12 @@ void InterfaceManager::select_next() {
   if (selectable.empty()) {
     return;
   }
-  instance->selected_element = (instance->selected_element + 1U) % selectable.size();
+  std::size_t& selected{instance->current_state->selected_element};
+  selected = (selected + 1U) % selectable.size();
   App::Log::debug(LogCategory::I2D,
       "active element: string[{}] \"{}\"",
-      selectable.at(instance->selected_element)->string_index,
-      instance->strings.at(selectable.at(instance->selected_element)->string_index));
+      selectable.at(selected)->string_index,
+      instance->strings.at(selectable.at(selected)->string_index));
 }
 
 void InterfaceManager::confirm() {
@@ -423,7 +428,7 @@ void InterfaceManager::confirm() {
   if (selectable.empty()) {
     return;
   }
-  I2DTextElement* selected{selectable.at(instance->selected_element)};
+  I2DTextElement* selected{selectable.at(instance->current_state->selected_element)};
   I2DState* target{selected->target_state};
   if (target == nullptr) {
     return;  // Not selectable (should not happen for a selectable element).
@@ -440,7 +445,6 @@ void InterfaceManager::confirm() {
   }
   // Generic child-state transition (no enter action).
   instance->current_state = target;
-  instance->selected_element = 0U;
 }
 
 void InterfaceManager::cancel() {
@@ -453,7 +457,6 @@ void InterfaceManager::cancel() {
     return;
   }
   instance->current_state = instance->current_state->parent;
-  instance->selected_element = 0U;
   App::Log::debug(LogCategory::I2D, "returned to parent state");
 }
 
@@ -489,8 +492,14 @@ void initialize_start_menu(InterfaceManager& manager, InterfaceInstance& instanc
   I2DState* load_game{manager.create_state(instance)};
   I2DState* options{manager.create_state(instance)};
   I2DState* quit{manager.create_state(instance)};
+
+  // Synthetic OpenNomad action state. Runtime stores the Yes action directly
+  // on the text element (callback 0x0047BC10); our current I2D abstraction
+  // represents element actions through target-state enter callbacks.
+  I2DState* quit_yes_action{manager.create_state(instance)};
+
   if (root == nullptr || new_game == nullptr || load_game == nullptr || options == nullptr ||
-      quit == nullptr) {
+      quit == nullptr || quit_yes_action == nullptr) {
     App::Log::error(LogCategory::I2D, "failed to allocate the START MENU state graph");
     return;
   }
@@ -499,6 +508,30 @@ void initialize_start_menu(InterfaceManager& manager, InterfaceInstance& instanc
   load_game->parent = root;
   options->parent = root;
   quit->parent = root;
+  quit_yes_action->parent = quit;
+
+  // Runtime Quit-state initializer @ 0x0047BBB0:
+  //   WORD [0x004CEF12] = 1   -> default choice is "No"
+  //   WORD [0x004CF004] = 5   -> title string is IAM/Menu[5] ("Quit")
+  //
+  // on_enter owns this transition because it must also establish the
+  // Runtime-authored initial selection.
+  quit->on_enter = [](InterfaceManager&, InterfaceInstance& instance_ref, I2DState& state_ref) {
+    state_ref.selected_element = k_start_menu_quit_default_choice;
+    instance_ref.current_state = &state_ref;
+  };
+
+  // Runtime Yes callback @ 0x0047BC10 ultimately executes
+  // PostQuitMessage(0). SDL_EVENT_QUIT is the direct SDL equivalent: enqueue
+  // the request and let Application::process_event() perform normal shutdown
+  // rather than tearing the engine down from inside interface iteration.
+  quit_yes_action->on_enter = [](InterfaceManager&, InterfaceInstance&, I2DState&) {
+    SDL_Event quit_event{};
+    quit_event.type = SDL_EVENT_QUIT;
+    if (!SDL_PushEvent(&quit_event)) {
+      App::Log::error(LogCategory::Interface, "failed to post quit event: {}", SDL_GetError());
+    }
+  };
 
   // New Game completes this interface instance. The result value is
   // provisional and clearly documented; the important behavior is that the
@@ -513,6 +546,7 @@ void initialize_start_menu(InterfaceManager& manager, InterfaceInstance& instanc
   // background (the canvas stays clear) rather than an invented asset.
   if (auto background{I2DBumpBackground::create()}) {
     root->background = background->get();
+    quit->background = background->get();
     instance.background = std::move(background).value();
   } else {
     App::Log::warn(LogCategory::I2D, "background unavailable: {}", background.error());
@@ -521,6 +555,11 @@ void initialize_start_menu(InterfaceManager& manager, InterfaceInstance& instanc
   // Font key 'I' -> MENUINTR (the FNT renderer falls back to the TTF).
   if (auto result{manager.load_font('I')}; !result) {
     App::Log::warn(LogCategory::I2D, "font 'I' unavailable: {}", result.error());
+  }
+
+  // Runtime's Yes/No confirmation elements use font key 'S' -> SNEAK.FNT.
+  if (auto result{manager.load_font('S')}; !result) {
+    App::Log::warn(LogCategory::I2D, "font 'S' unavailable: {}", result.error());
   }
 
   // Runtime bitmap element approximately 0x004CF1A8.
@@ -570,9 +609,58 @@ void initialize_start_menu(InterfaceManager& manager, InterfaceInstance& instanc
   }
   root->groups.push_back(std::move(text_group));
 
+  // Quit confirmation title. Runtime changes this element's string index to
+  // IAM/Menu[5] ("Quit") immediately before entering the state.
+  I2DGroup quit_title_group;
+  quit_title_group.runtime_flags = k_start_menu_text_group_flags;
+  quit_title_group.elements.push_back(
+      I2DElement{.data = I2DTextElement{
+                     .string_index = k_start_menu_quit_title.string_index,
+                     .font_key = k_start_menu_quit_title.font_key,
+                     .bounds = I2DRect{
+                         .x = k_start_menu_quit_title.x,
+                         .y = k_start_menu_quit_title.y,
+                         .width = k_start_menu_quit_title.width,
+                         .height = k_start_menu_quit_title.height},
+                     .red = 255,
+                     .green = 255,
+                     .blue = 255,
+                     .target_state = nullptr},
+          .presentation = I2DPresentationHints{}});
+  quit->groups.push_back(std::move(quit_title_group));
+
+  // Runtime confirmation selector:
+  //   IAM/Menu[6] = "Yes" -> callback 0x0047BC10 -> PostQuitMessage(0)
+  //   IAM/Menu[7] = "No"  -> parent/root state 0x004CF218
+  //
+  // Both recovered elements intentionally share the same 640x40 rectangle;
+  // the group's selected member is the one presented.
+  const std::array<I2DState*, 2> quit_targets{quit_yes_action, root};
+  I2DGroup quit_choice_group;
+  quit_choice_group.runtime_flags = k_start_menu_text_group_flags;
+  quit_choice_group.render_selected_only = true;
+  for (std::size_t index{0}; index < k_start_menu_quit_choices.size(); ++index) {
+    const RecoveredTextEntry& entry{k_start_menu_quit_choices.at(index)};
+    quit_choice_group.elements.push_back(
+        I2DElement{.data = I2DTextElement{.string_index = entry.string_index,
+                       .font_key = entry.font_key,
+                       .bounds = I2DRect{
+                           .x = entry.x,
+                           .y = entry.y,
+                           .width = entry.width,
+                           .height = entry.height},
+                       .red = 255,
+                       .green = 255,
+                       .blue = 255,
+                       .target_state = quit_targets.at(index)},
+            .presentation = I2DPresentationHints{}});
+  }
+  quit->groups.push_back(std::move(quit_choice_group));
+  quit->selected_element = k_start_menu_quit_default_choice;
+
   instance.root_state = root;
   instance.current_state = root;
-  instance.selected_element = 0U;
+  root->selected_element = 0U;
 
   App::Log::debug(LogCategory::I2D, "root state: 4 selectable text elements");
   App::Log::debug(LogCategory::I2D, "active element: string[{}] \"{}\"", 0, instance.strings.at(0));

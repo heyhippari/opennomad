@@ -1,11 +1,11 @@
 #include "DebugUI.hpp"
 
-#include <glad/glad.h>
-#include <imgui.h>
-
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_mouse.h>
 #include <SDL3/SDL_video.h>
+#include <fmt/format.h>
+#include <glad/glad.h>
+#include <imgui.h>
 #include <spdlog/common.h>
 
 #include <algorithm>
@@ -22,16 +22,14 @@
 #include <variant>
 #include <vector>
 
-#include <fmt/format.h>
-
 #include "Core/Audio/AudioSystem.hpp"
 #include "Core/Audio/AudioTypes.hpp"
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Debug/LogFilter.hpp"
 #include "Core/Debug/Metrics.hpp"
+#include "Core/Interface/I2DModel.hpp"
 #include "Core/Interface/InterfaceDispatcher.hpp"
 #include "Core/Interface/InterfaceManager.hpp"
-#include "Core/Interface/I2DModel.hpp"
 #include "Core/Log.hpp"
 #include "Core/LogCategory.hpp"
 #include "Core/ModelViewerScene.hpp"
@@ -66,13 +64,20 @@ namespace {
 /// Map an spdlog level to an ImVec4 colour.
 inline ImVec4 level_color(spdlog::level::level_enum lev) {
   switch (lev) {
-    case spdlog::level::trace:    return {0.6F, 0.6F, 0.6F, 1.0F};
-    case spdlog::level::debug:    return {0.5F, 0.5F, 1.0F, 1.0F};
-    case spdlog::level::info:     return {0.3F, 1.0F, 0.3F, 1.0F};
-    case spdlog::level::warn:     return {1.0F, 1.0F, 0.2F, 1.0F};
-    case spdlog::level::err:      return {1.0F, 0.3F, 0.3F, 1.0F};
-    case spdlog::level::critical: return {1.0F, 0.0F, 0.0F, 1.0F};
-    default:                      std::unreachable();  // off / n_levels never reach the sink
+    case spdlog::level::trace:
+      return {0.6F, 0.6F, 0.6F, 1.0F};
+    case spdlog::level::debug:
+      return {0.5F, 0.5F, 1.0F, 1.0F};
+    case spdlog::level::info:
+      return {0.3F, 1.0F, 0.3F, 1.0F};
+    case spdlog::level::warn:
+      return {1.0F, 1.0F, 0.2F, 1.0F};
+    case spdlog::level::err:
+      return {1.0F, 0.3F, 0.3F, 1.0F};
+    case spdlog::level::critical:
+      return {1.0F, 0.0F, 0.0F, 1.0F};
+    default:
+      std::unreachable();  // off / n_levels never reach the sink
   }
 }
 
@@ -115,16 +120,26 @@ inline std::string plot_overlay_text(const float fps, const float frame_ms) {
 /// Display name of one sprite render mode (inspector combo + tables).
 inline const char* render_mode_name(const App::Sprite::SpriteRenderMode mode) {
   switch (mode) {
-    case App::Sprite::SpriteRenderMode::k_default:         return "Default";
-    case App::Sprite::SpriteRenderMode::k_cutout:          return "Cutout";
-    case App::Sprite::SpriteRenderMode::k_alpha:           return "Alpha";
-    case App::Sprite::SpriteRenderMode::k_alpha_cutout:    return "Alpha+Cutout";
-    case App::Sprite::SpriteRenderMode::k_additive:        return "Additive";
-    case App::Sprite::SpriteRenderMode::k_additive_cutout: return "Additive+Cutout";
-    case App::Sprite::SpriteRenderMode::k_darken:          return "Darken";
-    case App::Sprite::SpriteRenderMode::k_darken_cutout:   return "Darken+Cutout";
-    case App::Sprite::SpriteRenderMode::k_alternate_cutout: return "AlternateCutout";
-    default:                                              return "Unknown";
+    case App::Sprite::SpriteRenderMode::k_default:
+      return "Default";
+    case App::Sprite::SpriteRenderMode::k_cutout:
+      return "Cutout";
+    case App::Sprite::SpriteRenderMode::k_alpha:
+      return "Alpha";
+    case App::Sprite::SpriteRenderMode::k_alpha_cutout:
+      return "Alpha+Cutout";
+    case App::Sprite::SpriteRenderMode::k_additive:
+      return "Additive";
+    case App::Sprite::SpriteRenderMode::k_additive_cutout:
+      return "Additive+Cutout";
+    case App::Sprite::SpriteRenderMode::k_darken:
+      return "Darken";
+    case App::Sprite::SpriteRenderMode::k_darken_cutout:
+      return "Darken+Cutout";
+    case App::Sprite::SpriteRenderMode::k_alternate_cutout:
+      return "AlternateCutout";
+    default:
+      return "Unknown";
   }
 }
 
@@ -134,9 +149,12 @@ inline constexpr ImVec4 K_WARNING_COLOR{1.0F, 0.55F, 0.1F, 1.0F};
 /// Display name of a world-scene residency state.
 inline const char* residency_name(const App::WorldSceneResidencyState state) {
   switch (state) {
-    case App::WorldSceneResidencyState::Free:          return "Free";
-    case App::WorldSceneResidencyState::LoadedInactive: return "LoadedInactive";
-    case App::WorldSceneResidencyState::LoadedActive:   return "LoadedActive";
+    case App::WorldSceneResidencyState::Free:
+      return "Free";
+    case App::WorldSceneResidencyState::LoadedInactive:
+      return "LoadedInactive";
+    case App::WorldSceneResidencyState::LoadedActive:
+      return "LoadedActive";
   }
   return "Unknown";
 }
@@ -153,20 +171,48 @@ DebugUI::DebugUI(SDL_Window* window) : m_window(window) {}
 // Toggles
 // ─────────────────────────────────────────────────────────────────────────────
 
-void DebugUI::toggle_performance() { m_show_performance = !m_show_performance; }
-void DebugUI::toggle_system_info() { m_show_system_info = !m_show_system_info; }
-void DebugUI::toggle_profiler() { m_show_profiler = !m_show_profiler; }
-void DebugUI::toggle_log() { m_show_log = !m_show_log; }
-void DebugUI::toggle_opengl_state() { m_show_opengl_state = !m_show_opengl_state; }
-void DebugUI::toggle_sprite_inspector() { m_show_sprite_inspector = !m_show_sprite_inspector; }
-void DebugUI::toggle_overlays() { m_show_overlays = !m_show_overlays; }
-void DebugUI::toggle_script_debugger() { m_show_script_debugger = !m_show_script_debugger; }
-void DebugUI::toggle_audio_inspector() { m_show_audio_inspector = !m_show_audio_inspector; }
-void DebugUI::toggle_scenarios() { m_show_scenarios = !m_show_scenarios; }
-void DebugUI::toggle_area_script() { m_show_area_script = !m_show_area_script; }
-void DebugUI::toggle_startup() { m_show_startup = !m_show_startup; }
-void DebugUI::toggle_interface() { m_show_interface = !m_show_interface; }
-void DebugUI::toggle_startup_trace() { m_show_startup_trace = !m_show_startup_trace; }
+void DebugUI::toggle_performance() {
+  m_show_performance = !m_show_performance;
+}
+void DebugUI::toggle_system_info() {
+  m_show_system_info = !m_show_system_info;
+}
+void DebugUI::toggle_profiler() {
+  m_show_profiler = !m_show_profiler;
+}
+void DebugUI::toggle_log() {
+  m_show_log = !m_show_log;
+}
+void DebugUI::toggle_opengl_state() {
+  m_show_opengl_state = !m_show_opengl_state;
+}
+void DebugUI::toggle_sprite_inspector() {
+  m_show_sprite_inspector = !m_show_sprite_inspector;
+}
+void DebugUI::toggle_overlays() {
+  m_show_overlays = !m_show_overlays;
+}
+void DebugUI::toggle_script_debugger() {
+  m_show_script_debugger = !m_show_script_debugger;
+}
+void DebugUI::toggle_audio_inspector() {
+  m_show_audio_inspector = !m_show_audio_inspector;
+}
+void DebugUI::toggle_scenarios() {
+  m_show_scenarios = !m_show_scenarios;
+}
+void DebugUI::toggle_area_script() {
+  m_show_area_script = !m_show_area_script;
+}
+void DebugUI::toggle_startup() {
+  m_show_startup = !m_show_startup;
+}
+void DebugUI::toggle_interface() {
+  m_show_interface = !m_show_interface;
+}
+void DebugUI::toggle_startup_trace() {
+  m_show_startup_trace = !m_show_startup_trace;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Main update
@@ -203,8 +249,8 @@ void DebugUI::update(const float delta_time) {
       if (display_id != 0) {
         const SDL_DisplayMode* current_mode = SDL_GetCurrentDisplayMode(display_id);
         if (current_mode != nullptr) {
-          metrics.set_window_info_entry("Refresh Rate",
-              fmt::format("{} Hz", current_mode->refresh_rate));
+          metrics.set_window_info_entry(
+              "Refresh Rate", fmt::format("{} Hz", current_mode->refresh_rate));
         }
       }
     }
@@ -298,11 +344,10 @@ void DebugUI::show_performance(float /*delta_time*/) {
   // The performance readout is an overlay, not a window: undecorated,
   // auto-sized, non-focusable and pinned just below the menu bar. A
   // semi-transparent background keeps the scene visible behind it.
-  constexpr ImGuiWindowFlags k_overlay_flags = ImGuiWindowFlags_NoDecoration |
-                                               ImGuiWindowFlags_AlwaysAutoResize |
-                                               ImGuiWindowFlags_NoSavedSettings |
-                                               ImGuiWindowFlags_NoFocusOnAppearing |
-                                               ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoMove;
+  constexpr ImGuiWindowFlags k_overlay_flags =
+      ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+      ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
+      ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoMove;
   const ImGuiViewport* viewport{ImGui::GetMainViewport()};
   ImGui::SetNextWindowPos(
       ImVec2{viewport->Pos.x + 10.0F, viewport->Pos.y + ImGui::GetFrameHeight() + 10.0F});
@@ -464,12 +509,10 @@ void DebugUI::show_profiler() {
     }
 
     // Sort by total time descending.
-    std::vector<std::pair<std::string, ScopeStats>> sorted(
-        aggregated.begin(), aggregated.end());
-    std::ranges::sort(sorted,
-        [](const auto& left, const auto& right) {
-          return left.second.total_time > right.second.total_time;
-        });
+    std::vector<std::pair<std::string, ScopeStats>> sorted(aggregated.begin(), aggregated.end());
+    std::ranges::sort(sorted, [](const auto& left, const auto& right) {
+      return left.second.total_time > right.second.total_time;
+    });
 
     // Limit to top 15 entries.
     const std::ptrdiff_t display_max{
@@ -534,8 +577,7 @@ void DebugUI::show_log() {
   ImGui::SetNextItemWidth(110.0F);
   std::array<const char*, k_log_category_count + 1> category_names{"All"};
   for (std::size_t index{0}; index < k_log_category_count; ++index) {
-    category_names.at(index + 1) =
-        log_category_name(k_all_log_categories.at(index)).data();
+    category_names.at(index + 1) = log_category_name(k_all_log_categories.at(index)).data();
   }
   ImGui::Combo("Category",
       &m_log_category_index,
@@ -563,8 +605,8 @@ void DebugUI::show_log() {
 
   // Reserve height for the log content area.
   const float footer_height = ImGui::GetStyle().ItemSpacing.y + ImGui::GetFrameHeightWithSpacing();
-  ImGui::BeginChild("LogScrollRegion", ImVec2(0, -footer_height), 0,
-      ImGuiWindowFlags_HorizontalScrollbar);
+  ImGui::BeginChild(
+      "LogScrollRegion", ImVec2(0, -footer_height), 0, ImGuiWindowFlags_HorizontalScrollbar);
 
   if (auto sink = Log::get_debug_sink()) {
     const auto entries = sink->get_entries();
@@ -606,8 +648,7 @@ void DebugUI::show_opengl_state() {
     glGetIntegerv(GL_VIEWPORT, viewport.data());
     ImGui::Indent();
     // NOLINTBEGIN(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
-    ImGui::Text("x: %d  y: %d  w: %d  h: %d",
-        viewport[0], viewport[1], viewport[2], viewport[3]);
+    ImGui::Text("x: %d  y: %d  w: %d  h: %d", viewport[0], viewport[1], viewport[2], viewport[3]);
     // NOLINTEND(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
     ImGui::Unindent();
   }
@@ -616,8 +657,8 @@ void DebugUI::show_opengl_state() {
     ImGui::Indent();
     const auto show_gl_bool = [](const char* label, GLenum cap) {
       const bool enabled = glIsEnabled(cap) != 0U;
-      const ImVec4 color = enabled ? ImVec4{0.2F, 1.0F, 0.2F, 1.0F}
-                                   : ImVec4{1.0F, 0.3F, 0.3F, 1.0F};
+      const ImVec4 color =
+          enabled ? ImVec4{0.2F, 1.0F, 0.2F, 1.0F} : ImVec4{1.0F, 0.3F, 0.3F, 1.0F};
       ImGui::Text("%s:", label);
       ImGui::SameLine(160.0F);
       ImGui::TextColored(color, "%s", enabled ? "Enabled" : "Disabled");
@@ -650,7 +691,8 @@ void DebugUI::show_opengl_state() {
     // NOLINTEND(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
     // Set the color edit to the clear color
     ImGui::SameLine();
-    ImGui::ColorEdit4("##ClearColorEdit", clear_color.data(),
+    ImGui::ColorEdit4("##ClearColorEdit",
+        clear_color.data(),
         ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
     ImGui::Unindent();
   }
@@ -664,15 +706,32 @@ void DebugUI::show_opengl_state() {
 
     const char* func_name = "Unknown";
     switch (depth_func) {
-      case GL_NEVER:    func_name = "Never";    break;
-      case GL_LESS:     func_name = "Less";     break;
-      case GL_EQUAL:    func_name = "Equal";    break;
-      case GL_LEQUAL:   func_name = "LEqual";   break;
-      case GL_GREATER:  func_name = "Greater";  break;
-      case GL_NOTEQUAL: func_name = "NotEqual"; break;
-      case GL_GEQUAL:   func_name = "GEqual";   break;
-      case GL_ALWAYS:   func_name = "Always";   break;
-      default: break;
+      case GL_NEVER:
+        func_name = "Never";
+        break;
+      case GL_LESS:
+        func_name = "Less";
+        break;
+      case GL_EQUAL:
+        func_name = "Equal";
+        break;
+      case GL_LEQUAL:
+        func_name = "LEqual";
+        break;
+      case GL_GREATER:
+        func_name = "Greater";
+        break;
+      case GL_NOTEQUAL:
+        func_name = "NotEqual";
+        break;
+      case GL_GEQUAL:
+        func_name = "GEqual";
+        break;
+      case GL_ALWAYS:
+        func_name = "Always";
+        break;
+      default:
+        break;
     }
     ImGui::Text("Function: %s", func_name);
     ImGui::Text("Write Mask: %s", (depth_mask != 0) ? "On" : "Off");
@@ -825,9 +884,8 @@ void DebugUI::show_sprite_resources_tab(ScenarioRuntime& runtime, ModelViewerSce
   }
 }
 
-void DebugUI::show_sprite_instances_tab(ScenarioRuntime& runtime,
-    ModelViewerScene* const scene,
-    const float delta_time) {
+void DebugUI::show_sprite_instances_tab(
+    ScenarioRuntime& runtime, ModelViewerScene* const scene, const float delta_time) {
   Sprite::SpritePool& pool{runtime.sprite_pool()};
 
   ImGui::Text("Pool: %lu live / %lu capacity / %lu attached",
@@ -837,7 +895,7 @@ void DebugUI::show_sprite_instances_tab(ScenarioRuntime& runtime,
 
   if (ImGui::BeginChild("##SpriteInstances", ImVec2(0.0F, 120.0F), ImGuiChildFlags_Borders)) {
     for (auto head{pool.render_list_head()}; head.has_value();
-         head = pool.render_list_next(*head)) {
+        head = pool.render_list_next(*head)) {
       const Sprite::SpriteInstance* instance{pool.find(*head)};
       if (instance == nullptr) {
         continue;
@@ -907,9 +965,8 @@ void DebugUI::show_sprite_instances_tab(ScenarioRuntime& runtime,
 
   // --- Frame selection ---
   const Sprite::SpriteResource* resource{runtime.sprite_resource(instance->resource_index)};
-  const std::size_t frame_count{resource == nullptr
-                                    ? std::size_t{0}
-                                    : resource->frame_count(instance->object_index)};
+  const std::size_t frame_count{
+      resource == nullptr ? std::size_t{0} : resource->frame_count(instance->object_index)};
   ImGui::Separator();
   ImGui::Text("Frame: %u / %zu", instance->frame_index, frame_count);
   const auto set_frame = [&](const std::uint16_t frame) {
@@ -924,8 +981,8 @@ void DebugUI::show_sprite_instances_tab(ScenarioRuntime& runtime,
     const int current{instance->frame_index == Sprite::SpriteInstance::k_invalid_frame
                           ? 0
                           : static_cast<int>(instance->frame_index)};
-    const int wrapped{(current + step + static_cast<int>(frame_count)) %
-                      static_cast<int>(frame_count)};
+    const int wrapped{
+        (current + step + static_cast<int>(frame_count)) % static_cast<int>(frame_count)};
     set_frame(static_cast<std::uint16_t>(wrapped));
   };
   if (ImGui::Button("Prev") && frame_count > 0) {
@@ -1070,8 +1127,8 @@ void DebugUI::show_sprite_frames_tab(ScenarioRuntime& runtime) {
         rectangle.uv.at(5));
   }
 
-  const Texture2D* texture{runtime.sprite_texture(instance->resource_index,
-      static_cast<std::size_t>(frame.texture_index))};
+  const Texture2D* texture{runtime.sprite_texture(
+      instance->resource_index, static_cast<std::size_t>(frame.texture_index))};
   if (texture != nullptr) {
     ImGui::Separator();
     ImGui::Text("Texture: %d x %d", texture->width(), texture->height());
@@ -1084,7 +1141,8 @@ void DebugUI::show_sprite_frames_tab(ScenarioRuntime& runtime) {
   }
 }
 
-void DebugUI::show_sprite_queue_tab(ModelViewerScene& scene) {  const Sprite::SpriteQueueStats& stats{scene.sprite_queue_stats()};
+void DebugUI::show_sprite_queue_tab(ModelViewerScene& scene) {
+  const Sprite::SpriteQueueStats& stats{scene.sprite_queue_stats()};
   ImGui::Text("Attached %lu | visible %lu | drawn %lu | culled %lu | invalid %lu",
       static_cast<unsigned long>(stats.attached),
       static_cast<unsigned long>(stats.visible),
@@ -1123,30 +1181,48 @@ namespace {
 /// Human-readable run-state label for the script debugger.
 const char* script_run_state_name(const Script::ScriptRunState state) {
   switch (state) {
-    case Script::ScriptRunState::k_running:            return "Running";
-    case Script::ScriptRunState::k_user_paused:        return "User-paused";
-    case Script::ScriptRunState::k_paused_on_unhandled: return "Paused on unhandled opcode";
-    case Script::ScriptRunState::k_paused_on_error:    return "Paused on error";
-    case Script::ScriptRunState::k_completed:          return "Completed";
-    default:                                           return "Unknown";
+    case Script::ScriptRunState::k_running:
+      return "Running";
+    case Script::ScriptRunState::k_user_paused:
+      return "User-paused";
+    case Script::ScriptRunState::k_paused_on_unhandled:
+      return "Paused on unhandled opcode";
+    case Script::ScriptRunState::k_paused_on_error:
+      return "Paused on error";
+    case Script::ScriptRunState::k_completed:
+      return "Completed";
+    default:
+      return "Unknown";
   }
 }
 
 /// Human-readable label of one semantic parameter type.
 const char* semantic_label(const std::uint16_t type) {
   switch (type) {
-    case Script::k_semantic_sprite:            return "sprite";
-    case Script::k_semantic_unknown_7:         return "unknown7";
-    case Script::k_semantic_unknown_8:         return "unknown8";
-    case Script::k_semantic_xyz_pointer:       return "xyz";
-    case Script::k_semantic_duration:          return "duration";
-    case Script::k_semantic_progress_elapsed:  return "elapsed";
-    case Script::k_semantic_initial_scale:     return "initial";
-    case Script::k_semantic_target_scale:      return "target";
-    case Script::k_semantic_initial_roll:      return "initial roll";
-    case Script::k_semantic_target_roll:       return "target roll";
-    case Script::k_semantic_frame:             return "frame";
-    default:                                   return nullptr;
+    case Script::k_semantic_sprite:
+      return "sprite";
+    case Script::k_semantic_unknown_7:
+      return "unknown7";
+    case Script::k_semantic_unknown_8:
+      return "unknown8";
+    case Script::k_semantic_xyz_pointer:
+      return "xyz";
+    case Script::k_semantic_duration:
+      return "duration";
+    case Script::k_semantic_progress_elapsed:
+      return "elapsed";
+    case Script::k_semantic_initial_scale:
+      return "initial";
+    case Script::k_semantic_target_scale:
+      return "target";
+    case Script::k_semantic_initial_roll:
+      return "initial roll";
+    case Script::k_semantic_target_roll:
+      return "target roll";
+    case Script::k_semantic_frame:
+      return "frame";
+    default:
+      return nullptr;
   }
 }
 
@@ -1168,7 +1244,8 @@ void DebugUI::show_script_command(Script::ScriptInstance& instance,
     const bool is_root) {
   const Script::OpcodeInfo* info{Script::opcode_info(command.opcode)};
   const char* name{info == nullptr ? nullptr : info->name.data()};
-  ImGui::Text("%s%s: %s (%#010x)", is_root ? "root " : "linked ",
+  ImGui::Text("%s%s: %s (%#010x)",
+      is_root ? "root " : "linked ",
       fmt::format("{}", command_index).c_str(),
       name == nullptr ? "unknown" : name,
       command.opcode);
@@ -1213,8 +1290,8 @@ void DebugUI::show_script_debugger() {
   ImGui::Begin("Script Debugger", &m_show_script_debugger);
 
   ScenarioRuntime* scenario_runtime{m_context.scenario_manager == nullptr
-                                       ? nullptr
-                                       : m_context.scenario_manager->gameplay_runtime()};
+                                        ? nullptr
+                                        : m_context.scenario_manager->gameplay_runtime()};
   if (scenario_runtime == nullptr) {
     ImGui::TextUnformatted("Scenario runtime not available.");
     ImGui::End();
@@ -1412,8 +1489,7 @@ void DebugUI::show_script_debugger() {
             ImGui::Text("  <invalid next %u>", *next);
             break;
           }
-          show_script_command(
-              *selected, selected->linked_commands.at(*next), *next, false);
+          show_script_command(*selected, selected->linked_commands.at(*next), *next, false);
           next = selected->linked_commands.at(*next).next_linked_command_index;
         }
         ImGui::Unindent();
@@ -1501,12 +1577,14 @@ void DebugUI::show_scenarios() {
       ImGui::Text("Cache index: %lu, generation: %u",
           static_cast<unsigned long>(index),
           context.generation);
-      const char* decor{context.decor_path.has_value() ? context.decor_path->c_str() : "(not associated yet)"};
+      const char* decor{
+          context.decor_path.has_value() ? context.decor_path->c_str() : "(not associated yet)"};
       ImGui::Text("Decor: %s", decor);
       if (!context.resolved_decor_path.empty()) {
         ImGui::Text("Resolved decor: %s", context.resolved_decor_path.c_str());
       }
-      ImGui::Text("Scenario: %s", context.scenario_path.empty() ? "(none)" : context.scenario_path.c_str());
+      ImGui::Text(
+          "Scenario: %s", context.scenario_path.empty() ? "(none)" : context.scenario_path.c_str());
       if (!context.resolved_scenario_path.empty()) {
         ImGui::Text("Resolved scenario: %s", context.resolved_scenario_path.c_str());
       }
@@ -1520,9 +1598,9 @@ void DebugUI::show_scenarios() {
             static_cast<unsigned long>(context.scx_data->sprites.size()),
             static_cast<unsigned long>(context.scx_data->models.size()),
             static_cast<unsigned long>(context.scx_data->shared_values.size()));
-        if (ImGui::CollapsingHeader(
-                fmt::format("Script templates##world{}", index).c_str())) {
-          for (std::size_t script_index{0}; script_index < context.scx_data->scripts.size(); ++script_index) {
+        if (ImGui::CollapsingHeader(fmt::format("Script templates##world{}", index).c_str())) {
+          for (std::size_t script_index{0}; script_index < context.scx_data->scripts.size();
+              ++script_index) {
             const Omikron::ScxScript& script{context.scx_data->scripts.at(script_index)};
             ImGui::Text("world:%lu '%s' id %u — inactive",
                 static_cast<unsigned long>(script_index),
@@ -1539,14 +1617,16 @@ void DebugUI::show_scenarios() {
       if (context.residency == WorldSceneResidencyState::LoadedInactive) {
         if (ImGui::Button(fmt::format("Activate##{}", index).c_str())) {
           if (auto result{manager->activate_world_context(scene_id)}; !result) {
-            App::Log::error(LogCategory::Debug, "activate context {} failed: {}", scene_id, result.error());
+            App::Log::error(
+                LogCategory::Debug, "activate context {} failed: {}", scene_id, result.error());
           }
         }
       }
       if (context.residency == WorldSceneResidencyState::LoadedActive) {
         if (ImGui::Button(fmt::format("Deactivate##{}", index).c_str())) {
           if (auto result{manager->deactivate_world_context(scene_id)}; !result) {
-            App::Log::error(LogCategory::Debug, "deactivate context {} failed: {}", scene_id, result.error());
+            App::Log::error(
+                LogCategory::Debug, "deactivate context {} failed: {}", scene_id, result.error());
           }
         }
       }
@@ -1556,7 +1636,8 @@ void DebugUI::show_scenarios() {
           if (context.residency == WorldSceneResidencyState::LoadedActive) {
             App::Log::warn(LogCategory::Debug, "deactivate context {} before unloading", scene_id);
           } else if (auto result{manager->unload_world_context(scene_id)}; !result) {
-            App::Log::error(LogCategory::Debug, "unload context {} failed: {}", scene_id, result.error());
+            App::Log::error(
+                LogCategory::Debug, "unload context {} failed: {}", scene_id, result.error());
           }
         }
       }
@@ -1567,7 +1648,8 @@ void DebugUI::show_scenarios() {
   ImGui::TextDisabled("Mode switches replace only the gameplay-mode slot.");
   if (ImGui::Button("Switch to FirstPersonShooting (shoot2.scx)")) {
     if (auto result{manager->set_gameplay_mode(GameplayMode::FirstPersonShooting)}; !result) {
-      App::Log::error(LogCategory::Debug, "switch to FirstPersonShooting failed: {}", result.error());
+      App::Log::error(
+          LogCategory::Debug, "switch to FirstPersonShooting failed: {}", result.error());
     }
   }
   ImGui::SameLine();
@@ -1663,8 +1745,8 @@ void DebugUI::show_audio_inspector() {
       static_cast<double>(snapshot.listener_right.at(0)),
       static_cast<double>(snapshot.listener_right.at(1)),
       static_cast<double>(snapshot.listener_right.at(2)));
-  ImGui::Text("Last audio update delta: %.6f s",
-      static_cast<double>(snapshot.last_update_delta_seconds));
+  ImGui::Text(
+      "Last audio update delta: %.6f s", static_cast<double>(snapshot.last_update_delta_seconds));
   if (snapshot.listener_degenerate) {
     ImGui::TextColored(K_WARNING_COLOR, "Degenerate listener transform (fallback basis used).");
   }
@@ -1701,10 +1783,18 @@ void DebugUI::show_audio_inspector() {
     for (const Audio::VoiceDebugInfo& voice : snapshot.voices) {
       const char* state_name{"Unknown"};
       switch (voice.state) {
-        case Audio::VoiceState::k_free:     state_name = "Free";     break;
-        case Audio::VoiceState::k_queued:   state_name = "Queued";   break;
-        case Audio::VoiceState::k_playing:  state_name = "Playing";  break;
-        case Audio::VoiceState::k_stopping: state_name = "Stopping"; break;
+        case Audio::VoiceState::k_free:
+          state_name = "Free";
+          break;
+        case Audio::VoiceState::k_queued:
+          state_name = "Queued";
+          break;
+        case Audio::VoiceState::k_playing:
+          state_name = "Playing";
+          break;
+        case Audio::VoiceState::k_stopping:
+          state_name = "Stopping";
+          break;
       }
       ImGui::Text("slot %u gen %u [%s] sound %u '%s' idx %u owner '%s'",
           voice.index,
@@ -1721,8 +1811,9 @@ void DebugUI::show_audio_inspector() {
               Audio::VoiceHandle{.index = voice.index, .generation = voice.generation}));
         }
         ImGui::Indent();
-        ImGui::Text("%s%s%s pos %.0f/%.0f ms dist %.1f prev %.1f gain %.2f pan %.2f l/r "
-                    "%.2f/%.2f freq %.0f ratio %.3f",
+        ImGui::Text(
+            "%s%s%s pos %.0f/%.0f ms dist %.1f prev %.1f gain %.2f pan %.2f l/r "
+            "%.2f/%.2f freq %.0f ratio %.3f",
             voice.looping ? "loop " : "once ",
             voice.nonspatial ? "nonspatial " : "spatial ",
             voice.unknown_flag ? "unknown-flag " : "",
@@ -1754,7 +1845,8 @@ void DebugUI::show_audio_inspector() {
   // --- Music ---
   ImGui::SeparatorText("Music");
   const Audio::MusicDebugInfo& music_info{snapshot.music};
-  ImGui::Text("Source: %s", music_info.source_name.empty() ? "(none)" : music_info.source_name.c_str());
+  ImGui::Text(
+      "Source: %s", music_info.source_name.empty() ? "(none)" : music_info.source_name.c_str());
   const char* music_state{"stopped"};
   if (music_info.playing) {
     music_state = music_info.paused ? "paused" : "playing";
@@ -1803,12 +1895,24 @@ void DebugUI::show_area_script() {
 
   const char* state_name{"Unknown"};
   switch (script->state()) {
-    case Script::AreaScriptState::k_ready:             state_name = "Ready"; break;
-    case Script::AreaScriptState::k_running:           state_name = "Running"; break;
-    case Script::AreaScriptState::k_waiting:           state_name = "Waiting"; break;
-    case Script::AreaScriptState::k_paused_unsupported: state_name = "Paused (unsupported opcode)"; break;
-    case Script::AreaScriptState::k_completed:         state_name = "Completed"; break;
-    case Script::AreaScriptState::k_failed:            state_name = "Failed"; break;
+    case Script::AreaScriptState::k_ready:
+      state_name = "Ready";
+      break;
+    case Script::AreaScriptState::k_running:
+      state_name = "Running";
+      break;
+    case Script::AreaScriptState::k_waiting:
+      state_name = "Waiting";
+      break;
+    case Script::AreaScriptState::k_paused_unsupported:
+      state_name = "Paused (unsupported opcode)";
+      break;
+    case Script::AreaScriptState::k_completed:
+      state_name = "Completed";
+      break;
+    case Script::AreaScriptState::k_failed:
+      state_name = "Failed";
+      break;
   }
 
   ImGui::Text("State: %s  active: %s  wait: %u",
@@ -1876,9 +1980,8 @@ void DebugUI::show_startup() {
   }
 
   ImGui::SeparatorText("IAM/START");
-  ImGui::Text("Initial area: %d  linked area: %d",
-      engine->initial_area_id(),
-      engine->linked_area_id());
+  ImGui::Text(
+      "Initial area: %d  linked area: %d", engine->initial_area_id(), engine->linked_area_id());
 
   ImGui::SeparatorText("Area mapping");
   const auto& mapping{engine->area_mapping_entries()};
@@ -1918,9 +2021,8 @@ void DebugUI::show_startup() {
 
   ImGui::SeparatorText("GRID dependencies");
   ImGui::Text("GRID.SCX: %s", engine->grid_scx_path().c_str());
-  ImGui::Text("GRID.3DO: %s (%s)",
-      engine->grid_3do_path().c_str(),
-      engine->grid_3do_state().c_str());
+  ImGui::Text(
+      "GRID.3DO: %s (%s)", engine->grid_3do_path().c_str(), engine->grid_3do_state().c_str());
   const Omikron::Model3DOData* grid{engine->grid_3do_model()};
   ImGui::Text("GRID.3DO parsed: %s", grid == nullptr ? "no" : "yes");
   if (grid != nullptr) {
@@ -1984,7 +2086,9 @@ void DebugUI::show_interface() {
   ImGui::Text("string table: %s (%zu entries)",
       fmt::format("{}", instance->descriptor->string_table_name).c_str(),
       instance->strings.size());
-  ImGui::Text("selected element: %zu", instance->selected_element);
+  ImGui::Text("selected element: %zu",
+      instance->current_state != nullptr ? instance->current_state->selected_element
+                                         : std::size_t{0});
 
   const Interface::I2DState* state{instance->current_state};
   const char* state_name{"none"};
@@ -2010,7 +2114,9 @@ void DebugUI::show_interface() {
               bitmap->destination.height,
               bitmap->runtime_flags);
         } else if (const auto* text{std::get_if<Interface::I2DTextElement>(&element.data)}) {
-          const bool selected{text->selectable() && selectable_ordinal == instance->selected_element};
+          const bool selected{
+              state != nullptr && text->selectable() &&
+              selectable_ordinal == state->selected_element};
           if (text->selectable()) {
             ++selectable_ordinal;
           }

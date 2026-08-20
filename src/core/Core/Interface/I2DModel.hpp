@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <optional>
@@ -172,6 +173,15 @@ struct I2DElement {
 struct I2DGroup {
   std::vector<I2DElement> elements;
   std::uint32_t runtime_flags{0};
+
+  /// Runtime normally presents every member of a text group at once. Some
+  /// selector groups instead place every choice at the same coordinates and
+  /// present only the currently selected member.
+  ///
+  /// The START MENU Quit confirmation is the first recovered example:
+  /// "Yes" and "No" both occupy (0,330,640,40), while the group's selected
+  /// index chooses which label is presented.
+  bool render_selected_only{false};
 };
 
 /// One interface state. States are distinct from groups and from elements;
@@ -186,6 +196,10 @@ struct I2DState {
   I2DState* parent{nullptr};
   std::vector<I2DGroup> groups;
   I2DBumpBackground* background{nullptr};
+  /// Selection belongs to the state, not the interface instance. Runtime
+  /// preserves the parent state's selection while a child state has its own
+  /// selection (notably Quit confirmation defaults to "No").
+  std::size_t selected_element{0};
   I2DStateEnterCallback on_enter;
 };
 

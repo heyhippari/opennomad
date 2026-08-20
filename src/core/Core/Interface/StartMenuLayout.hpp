@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstdint>
+#include <cstddef>
 
 #include "Core/Interface/I2DModel.hpp"
 
@@ -27,6 +28,26 @@ inline constexpr std::array<RecoveredTextEntry, 4> k_start_menu_root_entries{{
     {4, 'I', 0, 280, 640, 40},
     {5, 'I', 0, 360, 640, 40},
 }};
+
+/// Quit confirmation recovered from Runtime's static I2D structures.
+///
+/// The title element is mutated to IAM/Menu index 5 ("Quit") by
+/// Runtime @ 0x0047BBB0.
+inline constexpr RecoveredTextEntry k_start_menu_quit_title{
+    5, 'I', 0, 40, 640, 40};
+
+/// Runtime choice elements @ 0x004CEE78 / 0x004CEEC0.
+///
+/// Both deliberately occupy the same rectangle. Runtime treats this as an
+/// exclusive selector rather than drawing the two labels simultaneously.
+inline constexpr std::array<RecoveredTextEntry, 2> k_start_menu_quit_choices{{
+    {6, 'S', 0, 330, 640, 40},  // Yes
+    {7, 'S', 0, 330, 640, 40},  // No
+}};
+
+/// Runtime @ 0x0047BBC6 writes 1 to the choice group's selected index before
+/// entering the Quit state, so the safe/default answer is "No".
+inline constexpr std::size_t k_start_menu_quit_default_choice{1U};
 
 /// Recovered raw flag for the menu text group (0x80000010). The exact
 /// symbolic meaning of every bit is not yet established.

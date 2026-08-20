@@ -320,9 +320,18 @@ void I2DRenderer::render(const InterfaceInstance& instance,
             resolve_bitmap_blit_options(*bitmap));
         counters.quads += 1;
       } else if (const auto* text{std::get_if<I2DTextElement>(&element.data)}) {
-        const bool selected{text->selectable() && selectable_ordinal == instance.selected_element};
-        if (text->selectable()) {
+        const bool selectable_text{text->selectable()};
+        const bool selected{
+            selectable_text && selectable_ordinal == instance.current_state->selected_element};
+        if (selectable_text) {
           ++selectable_ordinal;
+        }
+
+        // Runtime selector groups can contain several alternatives occupying
+        // exactly the same rectangle. Only the selected alternative is
+        // presented (Quit confirmation: Yes/No).
+        if (group.render_selected_only && selectable_text && !selected) {
+          continue;
         }
 
         const std::string_view label{instance.strings.at(text->string_index)};
