@@ -11,6 +11,20 @@
 
 namespace App::Omikron {
 
+/// One 0x14-byte AREA table-0 character-placement record.
+///
+/// The record identifies a runtime character and provides its AREA-local
+/// transform. The final word at +0x12 participates in the character/body
+/// definition relationship, but its exact semantics are intentionally left
+/// unnamed until that relationship is implemented.
+struct IamAreaCharacterRecord {
+  std::int16_t field_00{0};                 ///< +0x00, observed -1 for area 118.
+  std::int16_t character_id{0};             ///< +0x02, CHARACTERS ID.
+  std::array<std::int32_t, 3> position{};   ///< +0x04..+0x0C, Runtime XYZ.
+  std::int16_t orientation_units{0};        ///< +0x10, Runtime angle units.
+  std::uint16_t field_12{0};                ///< +0x12, definition/reference field.
+};
+
 /// One 0x2C-byte AREA table-6 camera record.
 ///
 /// Runtime's camera selection handlers copy the first two 3-vectors into the
@@ -92,6 +106,10 @@ class IamAreaRecord {
   /// unresolved is a structured error rather than a guessed view.
   [[nodiscard]] std::expected<std::span<const std::byte>, std::string> table_view(
       std::size_t index) const;
+ 
+  /// Finds a table-0 character-placement record by its signed character ID.
+  [[nodiscard]] std::optional<IamAreaCharacterRecord> character_by_id(
+      std::int16_t character_id) const;
 
   /// Finds a table-6 camera by its signed camera ID.
   [[nodiscard]] std::optional<IamAreaCameraRecord> camera_by_id(std::int16_t camera_id) const;

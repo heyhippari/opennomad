@@ -60,6 +60,8 @@ std::string dependency_path(const std::string_view directory,
 bool is_provisional_trace_opcode(const std::uint32_t opcode) {
   switch (opcode) {
     case 0x38:
+    case 0x3B:
+    case 0x3C:
     case 0x4E:
     case 0x4F:
     case 0x68:
@@ -328,6 +330,51 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
     return std::expected<std::size_t, std::string>{std::unexpect,
         fmt::format("SCX script ID {} not found in active world", request.script_id)};
   });
+
+  // Phase 1 of explicit-character script support.
+  //
+  // Runtime 0x3B/0x3C first identifies a concrete character rather than
+  // launching a context-free SCX script like opcode 0x39. Resolve that
+  // character through AREA table 0 now, but deliberately stop at the typed
+  // launch boundary. Character materialization and concrete ScriptRuntime
+  // instance creation belong to the following phases.
+  area_script.set_character_script_sink(
+      [this](const Script::AreaCharacterScriptRequest& request)
+          -> std::expected<void, std::string> {
+        if (!m_area_slots.at(0).primary.has_value()) {
+          return std::expected<void, std::string>{
+              std::unexpect, "no active AREA record for character-script request"};
+        }
+
+        const Omikron::IamAreaRecord& area{*m_area_slots.at(0).primary};
+        if (!area.character_by_id(request.character_id).has_value()) {
+          return std::expected<void, std::string>{std::unexpect,
+              fmt::format(
+                  "character ID {} not found in active AREA table 0",
+                  request.character_id)};
+        }
+
+        const bool tracked{
+            request.mode == Script::AreaCharacterScriptLaunchMode::k_tracked};
+        const std::string_view mode{tracked ? "tracked" : "fire-and-forget"};
+
+        record("AreaScript.CharacterScriptRequested",
+            fmt::format("character={} script={} parameter={} mode={}",
+                request.character_id,
+                request.script_id,
+                request.parameter,
+                mode));
+
+        App::Log::debug(LogCategory::Script,
+            "AREA opcode {:#04x} — character={} script={} parameter={} "
+            "mode={} (launch deferred)",
+            tracked ? 0x3C : 0x3B,
+            request.character_id,
+            request.script_id,
+            request.parameter,
+            mode);
+        return {};
+      });
 
   area_script.set_presentation_sink([this](const Script::AreaPresentationRequest& request) {
     if (m_manager == nullptr) {

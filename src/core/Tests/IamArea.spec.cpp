@@ -102,6 +102,40 @@ TEST_SUITE("Core::Omikron::IamAreaRecord") {
     CHECK_EQ(IamAreaRecord::known_table_stride(7), std::optional<std::size_t>{0x08});
   }
 
+  TEST_CASE("AREA table 0 exposes recovered character records by signed ID") {
+    constexpr std::size_t k_character_offset{IamAreaRecord::k_header_size};
+    constexpr std::size_t k_character_stride{0x14};
+    std::vector<std::byte> data(k_character_offset + k_character_stride, std::byte{});
+
+    write_u32(data, IamAreaRecord::k_offset_script,
+        static_cast<std::uint32_t>(data.size()));
+    write_u32(data, IamAreaRecord::k_offset_table_offsets, k_character_offset);
+    write_u16(data, IamAreaRecord::k_offset_table_counts, 1);
+
+    // Retail area 118, table-0 character 310.
+    write_i16(data, k_character_offset + 0x00U, -1);
+    write_i16(data, k_character_offset + 0x02U, 310);
+    write_i32(data, k_character_offset + 0x04U, -2588);
+    write_i32(data, k_character_offset + 0x08U, -271);
+    write_i32(data, k_character_offset + 0x0CU, -816);
+    write_i16(data, k_character_offset + 0x10U, 4084);
+    write_u16(data, k_character_offset + 0x12U, 468);
+
+    const auto record{IamAreaRecord::load(data)};
+    REQUIRE(record.has_value());
+
+    const auto character{record->character_by_id(310)};
+    REQUIRE(character.has_value());
+    CHECK_EQ(character->field_00, -1);
+    CHECK_EQ(character->character_id, 310);
+    CHECK_EQ(character->position.at(0), -2588);
+    CHECK_EQ(character->position.at(1), -271);
+    CHECK_EQ(character->position.at(2), -816);
+    CHECK_EQ(character->orientation_units, 4084);
+    CHECK_EQ(character->field_12, 468U);
+    CHECK_FALSE(record->character_by_id(999).has_value());
+  }
+
   TEST_CASE("AREA table 6 exposes recovered camera records by signed ID") {
     constexpr std::size_t k_camera_offset{IamAreaRecord::k_header_size};
     std::vector<std::byte> data(k_camera_offset + 0x2CU, std::byte{});

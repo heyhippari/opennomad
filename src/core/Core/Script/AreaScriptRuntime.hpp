@@ -30,27 +30,49 @@ enum class AreaScriptState : std::uint8_t {
   k_failed,              ///< Structured decode/execution error.
 };
 
+/// AREA opcodes 0x3B and 0x3C use the same explicit-character script request,
+/// differing only in whether the parent AREA context tracks completion.
+enum class AreaCharacterScriptLaunchMode : std::uint8_t {
+  k_fire_and_forget,  ///< 0x3B: request the script and continue.
+  k_tracked,          ///< 0x3C: request the script and block in Runtime state 4.
+};
+
+/// Explicit-character SCX-script launch requested by AREA opcodes 0x3B/0x3C.
+///
+/// This is intentionally distinct from AreaScxScriptRequest (opcode 0x39):
+/// the first operand is a CHARACTERS/table-0 ID, not an SCX script ID.
+struct AreaCharacterScriptRequest {
+  std::int16_t character_id{0};
+  std::uint16_t script_id{0};
+  std::int16_t parameter{0};
+  AreaCharacterScriptLaunchMode mode{AreaCharacterScriptLaunchMode::k_fire_and_forget};
+};
+
 /// Typed reason an area context is waiting. The recovered legacy wait-state
 /// value is preserved separately for diagnostics.
 enum class AreaWaitKind : std::uint8_t {
   k_none,
   k_interface,
   k_scx_script,
+  k_character_script,
   k_camera,
 };
 
-/// Typed wait state: enough information to associate a completion with the
-/// correct interface instance (a bare interface ID is not sufficient because
-/// two instances of the same ID can exist across reopenings).
+/// Typed wait state for the currently suspended AREA context.
 struct AreaWaitState {
   AreaWaitKind kind{AreaWaitKind::k_none};
-  /// Recovered legacy wait-state value (6 for interfaces).
+  /// Recovered Runtime context state while blocked.
   std::uint16_t runtime_state{0};
   std::optional<App::InterfaceHandle> interface;
   /// Destination START/global variable for an interface result (opcode 0x46).
   std::optional<std::uint16_t> interface_result_variable;
   /// SCX ScriptRuntime instance spawned by opcode 0x39.
   std::optional<std::size_t> scx_script_instance;
+  /// Explicit-character request blocked by opcode 0x3C.
+  ///
+  /// Phase 1 tracks the logical request. Phase 3 will additionally associate
+  /// it with the concrete ScriptRuntime instance created for that character.
+  std::optional<AreaCharacterScriptRequest> character_script;
   /// Remaining 30 Hz scenario units for the timed camera wait used by 0x60.
   float remaining_scenario_frames{0.0F};
 };
@@ -139,6 +161,13 @@ class AreaScriptRuntime {
   using ScxScriptSink =
       std::function<std::expected<std::size_t, std::string>(const AreaScxScriptRequest&)>;
 
+  /// Bridge for explicit-character script requests from AREA 0x3B/0x3C.
+  ///
+  /// Phase 1 requires the bridge to resolve/validate the character but does
+  /// not yet require it to construct the concrete SCX ScriptRuntime instance.
+  using CharacterScriptSink =
+      std::function<std::expected<void, std::string>(const AreaCharacterScriptRequest&)>;
+
   /// Presentation bridge for 0x5F/0x60. The VM still owns AREA wait/yield
   /// semantics; the sink receives each command exactly once for rendering.
   using CameraSink = std::function<void(const AreaCameraRequest&)>;
@@ -179,6 +208,9 @@ class AreaScriptRuntime {
   /// Wires AREA opcode 0x39 to the active world's SCX ScriptRuntime.
   void set_scx_script_sink(ScxScriptSink sink);
 
+  /// Wires AREA opcodes 0x3B/0x3C to explicit-character script handling.
+  void set_character_script_sink(CharacterScriptSink sink);
+
   /// Wires AREA camera opcodes to the world presentation mailbox.
   void set_camera_sink(CameraSink sink);
 
@@ -199,18 +231,47 @@ class AreaScriptRuntime {
   /// must match the one returned by the bridge sink.
   [[nodiscard]] std::expected<void, std::string> complete_scx_script_wait(std::size_t instance_id);
 
+  /// Resumes a tracked explicit-character script wait.
+  ///
+  /// Phase 1 matches the logical request because concrete ScriptRuntime
+  /// instance ownership is deliberately deferred to Phase 3. Production
+  /// startup does not call this yet.
+  [[nodiscard]] std::expected<void, std::string> complete_character_script_wait(
+      std::int16_t character_id,
+      std::uint16_t script_id,
+      std::int16_t parameter);
+
   [[nodiscard]] AreaScriptState state() const {
     return m_state;
   }
+
   [[nodiscard]] bool active() const {
     return m_active;
   }
+
   /// The recovered legacy wait state (6 for interfaces); meaningful only
-  /// while Waiting.
+  /// while Waiting. Opcode 0x3C uses recovered state 4.
   [[nodiscard]] std::uint16_t wait_state() const {
     return m_wait_state;
   }
-  /// The typed wait state (kind + interface handle).
+  
+  /// Runtime-facing numeric scenario-context state.
+  ///
+  /// This deliberately exposes only states whose meaning is recovered:
+  /// Running maps to Runtime state 1; a typed wait exposes its recovered
+  /// state. Other OpenNomad lifecycle states have no asserted Runtime numeric
+  /// equivalent and report 0.
+  [[nodiscard]] std::uint16_t runtime_state() const {
+    if (m_state == AreaScriptState::k_running) {
+      return 1;
+    }
+    if (m_state == AreaScriptState::k_waiting) {
+      return m_wait.runtime_state;
+    }
+    return 0;
+  }
+
+  /// The typed wait state.
   [[nodiscard]] const AreaWaitState& wait_info() const {
     return m_wait;
   }
@@ -236,6 +297,10 @@ class AreaScriptRuntime {
   [[nodiscard]] const std::optional<AreaCharacterActivationRequest>&
   last_character_activation_request() const {
     return m_last_character_activation_request;
+  }
+  [[nodiscard]] const std::optional<AreaCharacterScriptRequest>&
+  last_character_script_request() const {
+    return m_last_character_script_request;
   }
   [[nodiscard]] const std::optional<AreaCameraRequest>& last_camera_request() const {
     return m_last_camera_request;
@@ -294,10 +359,12 @@ class AreaScriptRuntime {
   InterfaceSink m_interface_sink;
   MusicSink m_music_sink;
   ScxScriptSink m_scx_script_sink;
+  CharacterScriptSink m_character_script_sink;
   CameraSink m_camera_sink;
   PresentationSink m_presentation_sink;
   InstructionSink m_instruction_sink;
   std::optional<AreaCharacterActivationRequest> m_last_character_activation_request;
+  std::optional<AreaCharacterScriptRequest> m_last_character_script_request;
   std::optional<AreaCameraRequest> m_last_camera_request;
   std::optional<AreaPresentationRequest> m_last_presentation_request;
   bool m_cinematic_letterbox_requested{false};

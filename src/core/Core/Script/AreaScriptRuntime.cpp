@@ -37,6 +37,8 @@ constexpr std::uint32_t K_OP_SET_GLOBAL_VARIABLE{0x0E};
 constexpr std::uint32_t K_OP_EQUAL{0x19};
 constexpr std::uint32_t K_OP_CHARACTER_LOOKUP{0x38};
 constexpr std::uint32_t K_OP_START_SCX_SCRIPT{0x39};
+constexpr std::uint32_t K_OP_START_CHARACTER_SCRIPT{0x3B};
+constexpr std::uint32_t K_OP_START_CHARACTER_SCRIPT_TRACKED{0x3C};
 constexpr std::uint32_t K_OP_ACTIVATE_CHARACTER{0x4E};
 constexpr std::uint32_t K_OP_CHARACTER_SELECTION_RESET{0x4F};
 constexpr std::uint32_t K_OP_ACTIVATE_SUBSYSTEM{0x68};
@@ -53,6 +55,8 @@ constexpr std::uint32_t K_OP_END_CINEMATIC_LETTERBOX{0x85};
 
 /// Wait state assigned by the interface-open opcode (recovered value 6).
 constexpr std::uint16_t K_OPEN_INTERFACE_WAIT_STATE{6};
+/// Wait state assigned by tracked explicit-character script opcode 0x3C.
+constexpr std::uint16_t K_CHARACTER_SCRIPT_WAIT_STATE{4};
 /// Wait state assigned by camera opcode 0x60 when its duration is non-zero.
 constexpr std::uint16_t K_CAMERA_WAIT_STATE{7};
 /// Runtime's script/scenario time base (1.0 unit = 1/30 second).
@@ -78,7 +82,7 @@ constexpr std::array<AreaOperandWidth, 3> K_OPERANDS_67{
 constexpr std::array<AreaOperandWidth, 3> K_OPERANDS_PRESENTATION{
     AreaOperandWidth::k_int32, AreaOperandWidth::k_int16, AreaOperandWidth::k_int16};
 
-constexpr std::array<AreaOpcodeInfo, 23> K_AREA_OPCODE_TABLE{
+constexpr std::array<AreaOpcodeInfo, 25> K_AREA_OPCODE_TABLE{
     AreaOpcodeInfo{.opcode = K_OP_END_EVENT,
         .name = "EndEvent",
         .support = OpcodeSupport::k_supported,
@@ -147,6 +151,21 @@ constexpr std::array<AreaOpcodeInfo, 23> K_AREA_OPCODE_TABLE{
         .support = OpcodeSupport::k_supported,
         .provisional = false,
         .notes = "resolves operand 0 against active SCX script template +0x1A and waits",
+        .operands = K_OPERANDS_3X_I16.data(),
+        .operand_count = K_OPERANDS_3X_I16.size()},
+    AreaOpcodeInfo{.opcode = K_OP_START_CHARACTER_SCRIPT,
+        .name = "StartCharacterScript",
+        .support = OpcodeSupport::k_supported,
+        .provisional = true,
+        .notes = "requests an explicit-character script and continues without tracking it",
+        .operands = K_OPERANDS_3X_I16.data(),
+        .operand_count = K_OPERANDS_3X_I16.size()},
+    AreaOpcodeInfo{.opcode = K_OP_START_CHARACTER_SCRIPT_TRACKED,
+        .name = "StartCharacterScriptTracked",
+        .support = OpcodeSupport::k_supported,
+        .provisional = true,
+        .notes =
+            "requests an explicit-character script and blocks the AREA context in Runtime state 4",
         .operands = K_OPERANDS_3X_I16.data(),
         .operand_count = K_OPERANDS_3X_I16.size()},
     AreaOpcodeInfo{.opcode = K_OP_ACTIVATE_CHARACTER,
@@ -307,6 +326,10 @@ void AreaScriptRuntime::set_scx_script_sink(ScxScriptSink sink) {
   m_scx_script_sink = std::move(sink);
 }
 
+void AreaScriptRuntime::set_character_script_sink(CharacterScriptSink sink) {
+  m_character_script_sink = std::move(sink);
+}
+
 void AreaScriptRuntime::set_camera_sink(CameraSink sink) {
   m_camera_sink = std::move(sink);
 }
@@ -370,6 +393,43 @@ std::expected<void, std::string> AreaScriptRuntime::complete_scx_script_wait(
       "area script resumed after SCX script instance {} at +{:#x}",
       instance_id,
       m_ip);
+  return {};
+}
+
+std::expected<void, std::string> AreaScriptRuntime::complete_character_script_wait(
+    const std::int16_t character_id, const std::uint16_t script_id, const std::int16_t parameter) {
+  if (m_state != AreaScriptState::k_waiting) {
+    return std::expected<void, std::string>{std::unexpect, "area script is not waiting"};
+  }
+  if (m_wait.kind != AreaWaitKind::k_character_script) {
+    return std::expected<void, std::string>{
+        std::unexpect, "area script is not waiting on a character script"};
+  }
+  if (!m_wait.character_script.has_value()) {
+    return std::expected<void, std::string>{
+        std::unexpect, "character-script wait has no tracked request"};
+  }
+
+  const AreaCharacterScriptRequest& waiting{m_wait.character_script.value()};
+  if (waiting.mode != AreaCharacterScriptLaunchMode::k_tracked ||
+      waiting.character_id != character_id || waiting.script_id != script_id ||
+      waiting.parameter != parameter) {
+    return std::expected<void, std::string>{
+        std::unexpect, "character-script completion does not match the waiting request"};
+  }
+
+  m_wait = AreaWaitState{};
+  m_wait_state = 0;
+  m_state = AreaScriptState::k_running;
+
+  App::Log::debug(LogCategory::Script,
+      "area script resumed after character {} script {} parameter {} "
+      "(Runtime state 4 -> 1) at +{:#x}",
+      character_id,
+      script_id,
+      parameter,
+      m_ip);
+
   return {};
 }
 
@@ -654,10 +714,70 @@ void AreaScriptRuntime::execute_instruction() {
           .interface = std::nullopt,
           .interface_result_variable = std::nullopt,
           .scx_script_instance = instance.value(),
+          .character_script = std::nullopt,
           .remaining_scenario_frames = 0.0F};
       wait_after_instruction = true;
       entry.effect = fmt::format(
           "start SCX script {} as instance {} and wait", request.script_id, instance.value());
+      break;
+    }
+    case K_OP_START_CHARACTER_SCRIPT:
+    case K_OP_START_CHARACTER_SCRIPT_TRACKED: {
+      if (!m_character_script_sink) {
+        m_pause_info = AreaPauseInfo{.offset = instruction_offset,
+            .opcode = opcode,
+            .opcode_name = std::string{info->name},
+            .reason_text = "character-script bridge is not wired",
+            .nearby_bytes = nearby_bytes_hex(instruction_offset)};
+        m_state = AreaScriptState::k_failed;
+        return;
+      }
+
+      const bool tracked{opcode == K_OP_START_CHARACTER_SCRIPT_TRACKED};
+      const AreaCharacterScriptRequest request{
+          .character_id = static_cast<std::int16_t>(operands.at(0)),
+          .script_id = static_cast<std::uint16_t>(operands.at(1)),
+          .parameter = static_cast<std::int16_t>(operands.at(2)),
+          .mode = tracked ? AreaCharacterScriptLaunchMode::k_tracked
+                          : AreaCharacterScriptLaunchMode::k_fire_and_forget};
+
+      m_last_character_script_request = request;
+
+      auto accepted{m_character_script_sink(request)};
+      if (!accepted) {
+        m_pause_info = AreaPauseInfo{.offset = instruction_offset,
+            .opcode = opcode,
+            .opcode_name = std::string{info->name},
+            .reason_text = fmt::format("failed to request character {} script {}: {}",
+                request.character_id,
+                request.script_id,
+                accepted.error()),
+            .nearby_bytes = nearby_bytes_hex(instruction_offset)};
+        m_state = AreaScriptState::k_failed;
+        return;
+      }
+
+      if (tracked) {
+        m_wait_state = K_CHARACTER_SCRIPT_WAIT_STATE;
+        m_wait = AreaWaitState{.kind = AreaWaitKind::k_character_script,
+            .runtime_state = K_CHARACTER_SCRIPT_WAIT_STATE,
+            .interface = std::nullopt,
+            .interface_result_variable = std::nullopt,
+            .scx_script_instance = std::nullopt,
+            .character_script = request,
+            .remaining_scenario_frames = 0.0F};
+        wait_after_instruction = true;
+        entry.effect =
+            fmt::format("request character {} script {} parameter {} and wait in Runtime state 4",
+                request.character_id,
+                request.script_id,
+                request.parameter);
+      } else {
+        entry.effect = fmt::format("request character {} script {} parameter {} (fire-and-forget)",
+            request.character_id,
+            request.script_id,
+            request.parameter);
+      }
       break;
     }
     case K_OP_ACTIVATE_CHARACTER: {
@@ -730,6 +850,7 @@ void AreaScriptRuntime::execute_instruction() {
               operand_c >= 0 ? std::optional<std::uint16_t>{static_cast<std::uint16_t>(operand_c)}
                              : std::nullopt,
           .scx_script_instance = std::nullopt,
+          .character_script = std::nullopt,
           .remaining_scenario_frames = 0.0F};
       wait_after_instruction = true;
       entry.effect = fmt::format(
@@ -762,6 +883,7 @@ void AreaScriptRuntime::execute_instruction() {
             .interface = std::nullopt,
             .interface_result_variable = std::nullopt,
             .scx_script_instance = std::nullopt,
+            .character_script = std::nullopt,
             .remaining_scenario_frames = duration_frames};
         wait_after_instruction = true;
       }

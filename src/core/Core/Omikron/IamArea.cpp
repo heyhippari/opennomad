@@ -207,6 +207,37 @@ std::expected<std::span<const std::byte>, std::string> IamAreaRecord::table_view
   return std::span<const std::byte>{m_bytes}.subspan(offset, count * (*stride));
 }
 
+std::optional<IamAreaCharacterRecord> IamAreaRecord::character_by_id(
+    const std::int16_t character_id) const {
+  constexpr std::size_t k_character_table_index{0};
+  constexpr std::size_t k_character_stride{0x14};
+
+  auto table{table_view(k_character_table_index)};
+  if (!table) {
+    return std::nullopt;
+  }
+
+  for (std::size_t index{0}; index < table_count(k_character_table_index); ++index) {
+    const std::span<const std::byte> record{
+        table->subspan(index * k_character_stride, k_character_stride)};
+
+    IamAreaCharacterRecord character;
+    character.field_00 = read_i16_at(record, 0x00U);
+    character.character_id = read_i16_at(record, 0x02U);
+    character.position.at(0) = read_i32_at(record, 0x04U);
+    character.position.at(1) = read_i32_at(record, 0x08U);
+    character.position.at(2) = read_i32_at(record, 0x0CU);
+    character.orientation_units = read_i16_at(record, 0x10U);
+    character.field_12 = read_u16_at(record, 0x12U);
+
+    if (character.character_id == character_id) {
+      return character;
+    }
+  }
+
+  return std::nullopt;
+}
+
 std::optional<IamAreaCameraRecord> IamAreaRecord::camera_by_id(const std::int16_t camera_id) const {
   constexpr std::size_t k_camera_table_index{6};
   constexpr std::size_t k_camera_stride{0x2C};

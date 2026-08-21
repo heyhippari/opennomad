@@ -24,7 +24,8 @@ using App::InterfaceHandle;
 using App::InterfaceOpenRequest;
 using App::Audio::MusicTrackRequest;
 using App::Script::AreaCameraRequest;
-using App::Script::AreaCameraRequest;
+using App::Script::AreaCharacterScriptLaunchMode;
+using App::Script::AreaCharacterScriptRequest;
 using App::Script::AreaPresentationRequest;
 using App::Script::AreaScriptRuntime;
 using App::Script::AreaScriptState;
@@ -76,12 +77,11 @@ Buffer make_new_game_event_script() {
   bytes.u8(0x04).u16(0x00A6);  // +0x76 -> +0x11F
 
   // Retail branch at +0x79, selected when interface-29 result != 0.
-  bytes.u8(0x77).u32(0).u16(30).u16(0);          // +0x79
-  bytes.u8(0x5F).u16(2172).u16(0).u16(2);       // +0x82
-  bytes.u8(0x5F).u16(2148).u16(130).u16(2);     // +0x89
-  bytes.u8(0x4E).u16(310).u16(1);               // +0x90
-  bytes.u8(0x3C).u16(310).u16(1).u16(0);        // +0x95
-
+  bytes.u8(0x77).u32(0).u16(30).u16(0);      // +0x79
+  bytes.u8(0x5F).u16(2172).u16(0).u16(2);    // +0x82
+  bytes.u8(0x5F).u16(2148).u16(130).u16(2);  // +0x89
+  bytes.u8(0x4E).u16(310).u16(1);            // +0x90
+  bytes.u8(0x3C).u16(310).u16(1).u16(0);     // +0x95
 
   bytes.zeros(0x11FU - bytes.data().size());
   bytes.u8(0x03);  // +0x11F
@@ -291,6 +291,77 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
             .has_value());
   }
 
+  TEST_CASE("0x3B requests an explicit-character script without blocking") {
+    Buffer bytes;
+    bytes.u8(0x3B).u16(310).u16(1).u16(0);
+
+    AreaScriptRuntime runtime{bytes.data()};
+    std::optional<AreaCharacterScriptRequest> captured;
+    runtime.set_character_script_sink(
+        [&captured](const AreaCharacterScriptRequest& request) -> std::expected<void, std::string> {
+          captured = request;
+          return {};
+        });
+
+    runtime.queue_event(1);
+    runtime.activate();
+
+    CHECK(runtime.run() == AreaScriptState::k_completed);
+    CHECK_EQ(runtime.instruction_pointer(), 7U);
+    REQUIRE(captured.has_value());
+    CHECK_EQ(captured->character_id, 310);
+    CHECK_EQ(captured->script_id, 1U);
+    CHECK_EQ(captured->parameter, 0);
+    CHECK(captured->mode == AreaCharacterScriptLaunchMode::k_fire_and_forget);
+  }
+
+  TEST_CASE("0x3C blocks in Runtime state 4 on the explicit character-script request") {
+    Buffer bytes;
+    bytes.u8(0x3C).u16(310).u16(1).u16(0);
+
+    AreaScriptRuntime runtime{bytes.data()};
+    std::optional<AreaCharacterScriptRequest> captured;
+    runtime.set_character_script_sink(
+        [&captured](const AreaCharacterScriptRequest& request) -> std::expected<void, std::string> {
+          captured = request;
+          return {};
+        });
+
+    runtime.queue_event(1);
+    runtime.activate();
+
+    REQUIRE(runtime.run() == AreaScriptState::k_waiting);
+    CHECK_EQ(runtime.instruction_pointer(), 7U);
+    CHECK_EQ(runtime.wait_state(), 4U);
+    CHECK_EQ(runtime.runtime_state(), 4U);
+    CHECK(runtime.wait_info().kind == AreaWaitKind::k_character_script);
+
+    REQUIRE(captured.has_value());
+    CHECK_EQ(captured->character_id, 310);
+    CHECK_EQ(captured->script_id, 1U);
+    CHECK_EQ(captured->parameter, 0);
+    CHECK(captured->mode == AreaCharacterScriptLaunchMode::k_tracked);
+
+    REQUIRE(runtime.wait_info().character_script.has_value());
+    CHECK_EQ(runtime.wait_info().character_script->character_id, 310);
+    CHECK_EQ(runtime.wait_info().character_script->script_id, 1U);
+
+    // A stale/mismatched completion must not release state 4.
+    REQUIRE_FALSE(runtime.complete_character_script_wait(136, 1, 0).has_value());
+    CHECK(runtime.state() == AreaScriptState::k_waiting);
+    CHECK_EQ(runtime.runtime_state(), 4U);
+
+    // This explicitly exercises the recovered 4 -> 1 control-flow
+    // transition. Production startup does not synthesize this completion;
+    // Phase 3 will drive it from the concrete ScriptRuntime instance.
+    REQUIRE(runtime.complete_character_script_wait(310, 1, 0).has_value());
+    CHECK(runtime.state() == AreaScriptState::k_running);
+    CHECK_EQ(runtime.runtime_state(), 1U);
+
+    // Duplicate completion is rejected.
+    REQUIRE_FALSE(runtime.complete_character_script_wait(310, 1, 0).has_value());
+  }
+
   TEST_CASE("The result-zero AREA branch executes through its first event terminator") {
     const Buffer bytes{make_new_game_event_script()};
     AreaScriptRuntime runtime{bytes.data()};
@@ -360,7 +431,7 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     CHECK_EQ(runtime.evaluation_stack_depth(), 0U);
   }
 
-  TEST_CASE("Retail New Game result 3 reaches AREA character activation") {
+  TEST_CASE("Retail New Game result 3 reaches tracked character script 310/1 and blocks") {
     const Buffer bytes{make_new_game_event_script()};
     AreaScriptRuntime runtime{bytes.data()};
 
@@ -370,13 +441,20 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
           return menu_handle;
         });
 
+    std::optional<AreaCharacterScriptRequest> character_script;
+    runtime.set_character_script_sink(
+        [&character_script](
+            const AreaCharacterScriptRequest& request) -> std::expected<void, std::string> {
+          character_script = request;
+          return {};
+        });
+
     runtime.queue_event(1);
     runtime.activate();
     REQUIRE(runtime.run() == AreaScriptState::k_waiting);
 
-    REQUIRE(runtime.complete_interface_wait(
-                InterfaceCompletion{.handle = menu_handle, .result = 3})
-                .has_value());
+    REQUIRE(runtime.complete_interface_wait(InterfaceCompletion{.handle = menu_handle, .result = 3})
+            .has_value());
     CHECK_EQ(runtime.variable(19), std::optional<std::int32_t>{3});
 
     // global[19] != 0 makes opcode 0x06 branch to +0x79.
@@ -393,16 +471,24 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     REQUIRE(runtime.last_camera_request().has_value());
     CHECK_EQ(runtime.last_camera_request()->camera_id, 2148U);
 
-    // 0x4E does not yield. It records character 310 activation and execution
-    // immediately advances into the next, intentionally still-unsupported
-    // opcode 0x3C (StartCharacterScriptTracked).
-    REQUIRE(runtime.run() == AreaScriptState::k_paused_unsupported);
-    CHECK_EQ(runtime.pause_info().offset, 0x95U);
-    CHECK_EQ(runtime.pause_info().opcode, 0x3CU);
+    // 0x4E does not yield, so the same AREA tick continues into 0x3C.
+    // Phase 1 resolves the explicit character-script request and then stops
+    // naturally in recovered Runtime state 4.
+    REQUIRE(runtime.run() == AreaScriptState::k_waiting);
+    CHECK_EQ(runtime.instruction_pointer(), 0x9CU);
+    CHECK_EQ(runtime.wait_state(), 4U);
+    CHECK_EQ(runtime.runtime_state(), 4U);
+    CHECK(runtime.wait_info().kind == AreaWaitKind::k_character_script);
 
     REQUIRE(runtime.last_character_activation_request().has_value());
     CHECK_EQ(runtime.last_character_activation_request()->character_id, 310);
     CHECK(runtime.last_character_activation_request()->apply_area_transform);
+
+    REQUIRE(character_script.has_value());
+    CHECK_EQ(character_script->character_id, 310);
+    CHECK_EQ(character_script->script_id, 1U);
+    CHECK_EQ(character_script->parameter, 0);
+    CHECK(character_script->mode == AreaCharacterScriptLaunchMode::k_tracked);
   }
 
   TEST_CASE("The opcode registry knows the recovered New Game VM primitives") {
@@ -414,6 +500,8 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     CHECK(App::Script::area_opcode_name(0x0D) != nullptr);
     CHECK(App::Script::area_opcode_name(0x19) != nullptr);
     CHECK(App::Script::area_opcode_name(0x39) != nullptr);
+    CHECK(App::Script::area_opcode_name(0x3B) != nullptr);
+    CHECK(App::Script::area_opcode_name(0x3C) != nullptr);
     CHECK(App::Script::area_opcode_name(0x4E) != nullptr);
     CHECK(App::Script::area_opcode_name(0x46) != nullptr);
     CHECK(App::Script::area_opcode_name(0x5F) != nullptr);
