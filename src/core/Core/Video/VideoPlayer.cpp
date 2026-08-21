@@ -22,7 +22,6 @@ extern "C" {
 
 #include <SDL3/SDL_audio.h>
 #include <SDL3/SDL_timer.h>
-
 #include <fmt/format.h>
 
 #include <array>
@@ -33,6 +32,7 @@ extern "C" {
 #include <expected>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -67,7 +67,7 @@ class VideoPlayer::Impl {
   Impl(Impl&&) = delete;
   Impl& operator=(Impl&&) = delete;
 
-  std::expected<void, std::string> open(const std::string& path) {
+  std::expected<void, std::string> open(const std::string& path, const VideoOpenOptions& options) {
     close();
 
     const std::filesystem::path root_relative{Resources::game_data_path(path)};
@@ -89,16 +89,16 @@ class VideoPlayer::Impl {
           std::unexpect, fmt::format("cannot read stream info: {}", av_error_message(result))};
     }
 
-    m_video_stream_index = av_find_best_stream(
-        m_format, AVMEDIA_TYPE_VIDEO, -1, -1, &m_video_codec, 0);
+    m_video_stream_index =
+        av_find_best_stream(m_format, AVMEDIA_TYPE_VIDEO, -1, -1, &m_video_codec, 0);
     if (m_video_stream_index < 0) {
       close();
       return std::expected<void, std::string>{
           std::unexpect, fmt::format("no video stream in '{}'", path)};
     }
 
-    m_audio_stream_index = av_find_best_stream(
-        m_format, AVMEDIA_TYPE_AUDIO, -1, -1, &m_audio_codec, 0);
+    m_audio_stream_index =
+        av_find_best_stream(m_format, AVMEDIA_TYPE_AUDIO, -1, -1, &m_audio_codec, 0);
 
     if (!open_video_stream()) {
       close();
@@ -117,35 +117,83 @@ class VideoPlayer::Impl {
     if (m_packet == nullptr || m_video_frame == nullptr || m_audio_frame == nullptr ||
         m_rgba_frame == nullptr) {
       close();
-      return std::expected<void, std::string>{
-          std::unexpect, "cannot allocate decoder frames"};
+      return std::expected<void, std::string>{std::unexpect, "cannot allocate decoder frames"};
+    }
+
+    const auto output_result{configure_video_output(options)};
+    if (!output_result) {
+      const std::string& error{output_result.error()};
+      close();
+      return std::expected<void, std::string>{std::unexpect, error};
+    }
+
+    m_video_time_base = av_q2d(m_format->streams[m_video_stream_index]->time_base);
+    return {};
+  }
+
+  std::expected<void, std::string> configure_video_output(const VideoOpenOptions& options) {
+    m_output_width = m_video_ctx->width;
+    m_output_height = m_video_ctx->height;
+
+    if (options.crop.has_value()) {
+      const VideoCrop& crop{options.crop.value()};
+      const bool invalid_origin{crop.x < 0 || crop.y < 0};
+      const bool invalid_size{crop.width <= 0 || crop.height <= 0 ||
+                              crop.width > m_video_ctx->width || crop.height > m_video_ctx->height};
+      const bool outside_frame{!invalid_size && (crop.x > m_video_ctx->width - crop.width ||
+                                                    crop.y > m_video_ctx->height - crop.height)};
+      if (invalid_origin || invalid_size || outside_frame) {
+        return std::expected<void, std::string>{std::unexpect,
+            fmt::format("invalid crop {}x{}+{}+{} for {}x{} video",
+                crop.width,
+                crop.height,
+                crop.x,
+                crop.y,
+                m_video_ctx->width,
+                m_video_ctx->height)};
+      }
+      m_crop = crop;
+      m_output_width = crop.width;
+      m_output_height = crop.height;
     }
 
     m_rgba_frame->format = AV_PIX_FMT_RGBA;
-    m_rgba_frame->width = m_video_ctx->width;
-    m_rgba_frame->height = m_video_ctx->height;
+    m_rgba_frame->width = m_output_width;
+    m_rgba_frame->height = m_output_height;
     if (av_frame_get_buffer(m_rgba_frame, 0) < 0) {
-      close();
-      return std::expected<void, std::string>{
-          std::unexpect, "cannot allocate RGBA frame buffer"};
+      return std::expected<void, std::string>{std::unexpect, "cannot allocate RGBA frame buffer"};
     }
 
-    m_sws = sws_getContext(m_video_ctx->width,
-        m_video_ctx->height,
+    m_sws = sws_getContext(m_output_width,
+        m_output_height,
         m_video_ctx->pix_fmt,
-        m_video_ctx->width,
-        m_video_ctx->height,
+        m_output_width,
+        m_output_height,
         AV_PIX_FMT_RGBA,
         SWS_BILINEAR,
         nullptr,
         nullptr,
         nullptr);
     if (m_sws == nullptr) {
-      close();
       return std::expected<void, std::string>{std::unexpect, "cannot create scaler"};
     }
 
-    m_video_time_base = av_q2d(m_format->streams[m_video_stream_index]->time_base);
+    const int* coefficients{sws_getCoefficients(SWS_CS_ITU601)};
+    constexpr int k_limited_range{0};
+    constexpr int k_full_range{1};
+    constexpr int k_neutral_adjustment{1 << 16};
+    if (coefficients == nullptr || sws_setColorspaceDetails(m_sws,
+                                       coefficients,
+                                       k_limited_range,
+                                       coefficients,
+                                       k_full_range,
+                                       /*brightness=*/0,
+                                       /*contrast=*/k_neutral_adjustment,
+                                       /*saturation=*/k_neutral_adjustment) < 0) {
+      return std::expected<void, std::string>{
+          std::unexpect, "cannot configure BT.601 video color conversion"};
+    }
+
     return {};
   }
 
@@ -185,8 +233,8 @@ class VideoPlayer::Impl {
           // Flush the video decoder for any buffered frames.
           avcodec_send_packet(m_video_ctx, nullptr);
           if (avcodec_receive_frame(m_video_ctx, m_video_frame) == 0) {
-            convert_video_frame(m_video_frame, out);
-            return VideoDecodeStatus::k_frame;
+            return convert_video_frame(m_video_frame, out) ? VideoDecodeStatus::k_frame
+                                                           : VideoDecodeStatus::k_error;
           }
           return VideoDecodeStatus::k_eof;
         }
@@ -198,8 +246,8 @@ class VideoPlayer::Impl {
         av_packet_unref(m_packet);
         const int receive{avcodec_receive_frame(m_video_ctx, m_video_frame)};
         if (receive == 0) {
-          convert_video_frame(m_video_frame, out);
-          return VideoDecodeStatus::k_frame;
+          return convert_video_frame(m_video_frame, out) ? VideoDecodeStatus::k_frame
+                                                         : VideoDecodeStatus::k_error;
         }
         if (receive == AVERROR(EAGAIN)) {
           continue;
@@ -287,33 +335,54 @@ class VideoPlayer::Impl {
     return swr_init(m_swr) >= 0;
   }
 
-  void convert_video_frame(const AVFrame* source, VideoFrame& out) {
+  bool convert_video_frame(AVFrame* source, VideoFrame& out) {
     APP_PROFILE_SCOPE("VideoConvert");
 
-    sws_scale(m_sws,
+    if (m_crop.has_value()) {
+      const VideoCrop& crop{m_crop.value()};
+      if (crop.width > source->width || crop.height > source->height ||
+          crop.x > source->width - crop.width || crop.y > source->height - crop.height) {
+        return false;
+      }
+      source->crop_left = static_cast<std::size_t>(crop.x);
+      source->crop_top = static_cast<std::size_t>(crop.y);
+      source->crop_right = static_cast<std::size_t>(source->width - crop.x - crop.width);
+      source->crop_bottom = static_cast<std::size_t>(source->height - crop.y - crop.height);
+      if (av_frame_apply_cropping(source, 0) < 0) {
+        return false;
+      }
+    }
+
+    if (source->width != m_output_width || source->height != m_output_height) {
+      return false;
+    }
+
+    const int scaled_height{sws_scale(m_sws,
         source->data,
         source->linesize,
         0,
         source->height,
         m_rgba_frame->data,
-        m_rgba_frame->linesize);
+        m_rgba_frame->linesize)};
+    if (scaled_height != m_output_height) {
+      return false;
+    }
 
-    out.width = source->width;
-    out.height = source->height;
-    out.rgba.resize(static_cast<std::size_t>(source->width) *
-                    static_cast<std::size_t>(source->height) * 4U);
+    out.width = m_output_width;
+    out.height = m_output_height;
+    out.rgba.resize(
+        static_cast<std::size_t>(m_output_width) * static_cast<std::size_t>(m_output_height) * 4U);
 
     const int stride{m_rgba_frame->linesize[0]};
     const std::uint8_t* source_data{m_rgba_frame->data[0]};
     std::uint8_t* destination{out.rgba.data()};
-    const std::size_t row_bytes{static_cast<std::size_t>(source->width) * 4U};
+    const std::size_t row_bytes{static_cast<std::size_t>(m_output_width) * 4U};
     // sws_scale produces top-down rows; the codebase's texture convention is
     // bottom-up (row 0 = bottom, see BmpImageDecoder), so flip vertically.
-    for (int row{0}; row < source->height; ++row) {
-      const int source_row{source->height - row - 1};
+    for (int row{0}; row < m_output_height; ++row) {
+      const int source_row{m_output_height - row - 1};
       std::memcpy(destination + (static_cast<std::size_t>(row) * row_bytes),
-          source_data +
-              (static_cast<std::size_t>(source_row) * static_cast<std::size_t>(stride)),
+          source_data + (static_cast<std::size_t>(source_row) * static_cast<std::size_t>(stride)),
           row_bytes);
     }
 
@@ -325,6 +394,7 @@ class VideoPlayer::Impl {
       m_start_ticks = SDL_GetTicks();
       m_wall_clock_ready = true;
     }
+    return true;
   }
 
   void push_audio_frame(const AVFrame* frame) {
@@ -355,6 +425,7 @@ class VideoPlayer::Impl {
     stop_audio();
     swr_free(&m_swr);
     sws_freeContext(m_sws);
+    m_sws = nullptr;
     av_frame_free(&m_rgba_frame);
     av_frame_free(&m_video_frame);
     av_frame_free(&m_audio_frame);
@@ -366,6 +437,9 @@ class VideoPlayer::Impl {
     m_audio_codec = nullptr;
     m_video_stream_index = -1;
     m_audio_stream_index = -1;
+    m_crop.reset();
+    m_output_width = 0;
+    m_output_height = 0;
     m_wall_clock_ready = false;
     m_wall_origin_pts = 0.0;
     m_start_ticks = 0;
@@ -378,6 +452,9 @@ class VideoPlayer::Impl {
   AVCodecContext* m_audio_ctx{nullptr};
   int m_video_stream_index{-1};
   int m_audio_stream_index{-1};
+  std::optional<VideoCrop> m_crop;
+  int m_output_width{0};
+  int m_output_height{0};
   SwsContext* m_sws{nullptr};
   SwrContext* m_swr{nullptr};
   AVPacket* m_packet{nullptr};
@@ -397,8 +474,9 @@ VideoPlayer::VideoPlayer() : m_impl{std::make_unique<Impl>()} {}
 
 VideoPlayer::~VideoPlayer() = default;
 
-std::expected<void, std::string> VideoPlayer::open(const std::string& path) {
-  return m_impl->open(path);
+std::expected<void, std::string> VideoPlayer::open(
+    const std::string& path, const VideoOpenOptions& options) {
+  return m_impl->open(path, options);
 }
 
 void VideoPlayer::start_audio() {

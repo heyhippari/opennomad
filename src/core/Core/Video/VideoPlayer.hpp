@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <expected>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -14,6 +15,21 @@ struct VideoFrame {
   int width{0};
   int height{0};
   double pts_seconds{0.0};
+};
+
+/// Fixed source-frame rectangle selected before YUV-to-RGB conversion.
+struct VideoCrop {
+  int x{0};
+  int y{0};
+  int width{0};
+  int height{0};
+
+  bool operator==(const VideoCrop&) const = default;
+};
+
+/// Per-movie decoding and presentation hints.
+struct VideoOpenOptions {
+  std::optional<VideoCrop> crop;
 };
 
 /// Result of one video decode step.
@@ -41,7 +57,8 @@ class VideoPlayer {
 
   /// Opens and prepares the file. The path is resolved case-insensitively
   /// against the game-data root.
-  [[nodiscard]] std::expected<void, std::string> open(const std::string& path);
+  [[nodiscard]] std::expected<void, std::string> open(
+      const std::string& path, const VideoOpenOptions& options = {});
 
   /// Opens the SDL audio stream (no-op when the file has no audio stream).
   void start_audio();

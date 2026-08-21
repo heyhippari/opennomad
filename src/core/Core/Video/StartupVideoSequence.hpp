@@ -11,6 +11,9 @@
 
 namespace App::Video {
 
+/// Per-movie decode options for one startup-video slot.
+[[nodiscard]] VideoOpenOptions startup_video_open_options(Startup::StartupVideoSlot slot);
+
 /// Presentation hook driven by the application while a video plays.
 class VideoPresenter {
  public:

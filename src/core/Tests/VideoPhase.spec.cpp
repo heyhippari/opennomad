@@ -23,7 +23,9 @@ using App::Startup::StartupMediaPolicy;
 using App::Startup::StartupPhaseStatus;
 using App::Startup::StartupTraceRecorder;
 using App::Startup::StartupVideoSlot;
+using App::Video::startup_video_open_options;
 using App::Video::StartupVideoSequence;
+using App::Video::VideoCrop;
 using App::Video::VideoFrame;
 using App::Video::VideoPresenter;
 using App::Video::VideoScene;
@@ -53,6 +55,12 @@ TEST_SUITE("Core::Video::VideoScene") {
     CHECK_EQ(scale, std::array<float, 2>{1.0F, 1.0F});
   }
 
+  TEST_CASE("the cropped game intro keeps its active-picture aspect ratio") {
+    const auto scale{VideoScene::compute_contain_scale(320, 172, 1920, 1080)};
+    CHECK_EQ(scale.at(0), 1.0F);
+    CHECK(scale.at(1) == doctest::Approx(0.9555556F));
+  }
+
   TEST_CASE("degenerate dimensions fall back to the fullscreen scale") {
     const auto scale{VideoScene::compute_contain_scale(0, 0, 1920, 1080)};
     CHECK_EQ(scale, std::array<float, 2>{1.0F, 1.0F});
@@ -60,6 +68,17 @@ TEST_SUITE("Core::Video::VideoScene") {
 }
 
 TEST_SUITE("Core::Video::StartupVideoSequence") {
+  TEST_CASE("only the game intro has a fixed letterbox crop") {
+    const auto publisher{startup_video_open_options(StartupVideoSlot::k_publisher)};
+    const auto developer{startup_video_open_options(StartupVideoSlot::k_developer)};
+    const auto intro{startup_video_open_options(StartupVideoSlot::k_intro)};
+
+    CHECK_FALSE(publisher.crop.has_value());
+    CHECK_FALSE(developer.crop.has_value());
+    REQUIRE(intro.crop.has_value());
+    CHECK_EQ(intro.crop.value(), (VideoCrop{.x = 0, .y = 34, .width = 320, .height = 172}));
+  }
+
   TEST_CASE("a disabled media policy skips all three videos in order") {
     StartupTraceRecorder recorder;
     StartupMediaPolicy policy;

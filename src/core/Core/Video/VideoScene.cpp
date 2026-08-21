@@ -119,8 +119,15 @@ void VideoScene::present_frame(
   // main loop has ever cleared the depth buffer.
   const bool depth_test_was_enabled{glIsEnabled(GL_DEPTH_TEST) == GL_TRUE};
   const bool cull_face_was_enabled{glIsEnabled(GL_CULL_FACE) == GL_TRUE};
+  const bool framebuffer_srgb_was_enabled{glIsEnabled(GL_FRAMEBUFFER_SRGB) == GL_TRUE};
   glDisable(GL_DEPTH_TEST);
   glDisable(GL_CULL_FACE);
+  if (framebuffer_srgb_was_enabled) {
+    // FFmpeg produces display-referred RGB code values. A DirectDraw-style
+    // video blit passes those values through unchanged instead of treating
+    // them as linear light and applying the framebuffer's sRGB encoding.
+    glDisable(GL_FRAMEBUFFER_SRGB);
+  }
 
   glClearColor(0.0F, 0.0F, 0.0F, 1.0F);
   glClear(GL_COLOR_BUFFER_BIT);
@@ -135,6 +142,9 @@ void VideoScene::present_frame(
   Texture2D::unbind();
   Shader::unbind();
 
+  if (framebuffer_srgb_was_enabled) {
+    glEnable(GL_FRAMEBUFFER_SRGB);
+  }
   if (depth_test_was_enabled) {
     glEnable(GL_DEPTH_TEST);
   }

@@ -36,12 +36,24 @@ constexpr std::string_view startup_video_display_name(
 
 namespace App::Video {
 
+VideoOpenOptions startup_video_open_options(const Startup::StartupVideoSlot slot) {
+  // GAME.MPG is 320x240 with symmetrical 34-pixel encoded letterbox bars.
+  // Keep this fixed rectangle close to the per-slot policy so it is easy to
+  // adjust if comparison against the original asset exposes codec-edge noise.
+  static constexpr VideoCrop k_intro_crop{.x = 0, .y = 34, .width = 320, .height = 172};
+
+  if (slot == Startup::StartupVideoSlot::k_intro) {
+    return VideoOpenOptions{.crop = k_intro_crop};
+  }
+  return {};
+}
+
 StartupVideoSequence::StartupVideoSequence(
     Startup::StartupTraceRecorder& recorder, Startup::StartupMediaPolicy policy)
-    : m_recorder(recorder), m_policy(std::move(policy)) {}
+    : m_recorder(recorder),
+      m_policy(std::move(policy)) {}
 
-Startup::StartupPhaseStatus StartupVideoSequence::play_slot(
-    const Startup::StartupVideoSlot slot,
+Startup::StartupPhaseStatus StartupVideoSequence::play_slot(const Startup::StartupVideoSlot slot,
     VideoPresenter& presenter,
     const std::function<bool()>& should_stop) {
   APP_PROFILE_FUNCTION();
@@ -50,14 +62,13 @@ Startup::StartupPhaseStatus StartupVideoSequence::play_slot(
   const std::string_view display{startup_video_display_name(slot)};
 
   if (!m_policy.videos_enabled) {
-    App::Log::info(
-        LogCategory::Video, "{} startup video disabled by configuration", display);
+    App::Log::info(LogCategory::Video, "{} startup video disabled by configuration", display);
     m_recorder.record(fmt::format("{}.SkippedByConfiguration", base));
     return Startup::StartupPhaseStatus::k_skipped_by_configuration;
   }
 
   const std::string& path{m_policy.video_paths.at(static_cast<std::size_t>(slot))};
-  if (auto result{m_player.open(path)}; !result) {
+  if (auto result{m_player.open(path, startup_video_open_options(slot))}; !result) {
     App::Log::info(
         LogCategory::Video, "{} startup video unavailable — {}", display, result.error());
     m_recorder.record(fmt::format("{}.SkippedUnavailable", base));
