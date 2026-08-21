@@ -53,7 +53,7 @@ TEST_SUITE("Core::WorldCameraSystem") {
     const std::array<float, 3> converted{
         WorldCameraSystem::runtime_to_renderer({-3287, -159, -1701})};
     CHECK(converted.at(0) == doctest::Approx(-82.175F));
-    CHECK(converted.at(1) == doctest::Approx(-3.975F));
+    CHECK(converted.at(1) == doctest::Approx(3.975F));
     CHECK(converted.at(2) == doctest::Approx(42.525F));
   }
 
@@ -74,13 +74,20 @@ TEST_SUITE("Core::WorldCameraSystem") {
     camera.apply_command(camera_2148());
     REQUIRE(camera.transitioning());
 
-    const float half_duration{(130.0F / 30.0F) * 0.5F};
-    camera.update(half_duration);
     const std::array<float, 3> target_eye{
         WorldCameraSystem::runtime_to_renderer({-3178, -246, -1507})};
-    CHECK(camera.pose().eye.at(0) ==
-          doctest::Approx((start.eye.at(0) + target_eye.at(0)) * 0.5F));
 
+    // Runtime's first quarter of the transition has only reached 12.5%
+    // because the first half is quadratic ease-in: 2 * 0.25^2 = 0.125.
+    const float quarter_duration{(130.0F / 30.0F) * 0.25F};
+    camera.update(quarter_duration);
+    CHECK(camera.pose().eye.at(0) ==
+          doctest::Approx(start.eye.at(0) + ((target_eye.at(0) - start.eye.at(0)) * 0.125F)));
+
+    camera.update(quarter_duration);
+    CHECK(camera.pose().eye.at(0) == doctest::Approx((start.eye.at(0) + target_eye.at(0)) * 0.5F));
+
+    const float half_duration{(130.0F / 30.0F) * 0.5F};
     camera.update(half_duration);
     CHECK_FALSE(camera.transitioning());
     CHECK(camera.pose().eye.at(0) == doctest::Approx(target_eye.at(0)));

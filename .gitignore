@@ -21,3 +21,4 @@ CMakeUserPresets.json
 # Github agentic tools
 .github/prompts/
 .github/skills/
+.agents/

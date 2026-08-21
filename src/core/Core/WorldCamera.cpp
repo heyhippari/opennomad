@@ -32,7 +32,7 @@ void WorldCameraSystem::reset() {
 std::array<float, 3> WorldCameraSystem::runtime_to_renderer(
     const std::array<std::int32_t, 3>& value) {
   return {static_cast<float>(value.at(0)) * k_runtime_units_to_world,
-      static_cast<float>(value.at(1)) * k_runtime_units_to_world,
+      -static_cast<float>(value.at(1)) * k_runtime_units_to_world,
       -static_cast<float>(value.at(2)) * k_runtime_units_to_world};
 }
 
@@ -93,15 +93,24 @@ void WorldCameraSystem::update(const float delta_seconds) {
   }
 
   m_transition_elapsed += std::max(delta_seconds, 0.0F);
-  const float amount{std::clamp(m_transition_elapsed / m_transition_duration, 0.0F, 1.0F)};
+  const float linear_amount{
+      std::clamp(m_transition_elapsed / m_transition_duration, 0.0F, 1.0F)};
 
-  // Linear interpolation is intentionally isolated here. Runtime's exact
-  // camera easing curve has not yet been recovered; timing and endpoints are
-  // confirmed, and this can be replaced without touching AREA execution.
-  m_current = interpolate(m_transition_start, m_transition_target, amount);
+  // Runtime's camera transition is quadratic ease-in/ease-out. AREA timing
+  // remains in the original 30 Hz duration units, but this curve is sampled
+  // every display frame so high-refresh presentation stays smooth.
+  float eased_amount{0.0F};
+  if (linear_amount < 0.5F) {
+    eased_amount = 2.0F * linear_amount * linear_amount;
+  } else {
+    const float remaining{1.0F - linear_amount};
+    eased_amount = 1.0F - (2.0F * remaining * remaining);
+  }
+
+  m_current = interpolate(m_transition_start, m_transition_target, eased_amount);
   commit_pose();
 
-  if (amount >= 1.0F) {
+  if (linear_amount >= 1.0F) {
     m_current = m_transition_target;
     m_transition_elapsed = 0.0F;
     m_transition_duration = 0.0F;

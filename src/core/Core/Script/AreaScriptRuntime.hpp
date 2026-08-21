@@ -143,6 +143,10 @@ class AreaScriptRuntime {
   /// semantics; the sink receives each command exactly once for rendering.
   using CameraSink = std::function<void(const AreaCameraRequest&)>;
 
+  /// Presentation bridge for 0x76/0x77. The VM owns opcode/yield semantics;
+  /// the sink receives each presentation request exactly once.
+  using PresentationSink = std::function<void(const AreaPresentationRequest&)>;
+
   /// Sink invoked before each instruction executes, with the decoded opcode
   /// and operands. Used to emit ordered per-instruction startup trace events.
   using InstructionSink =
@@ -177,6 +181,9 @@ class AreaScriptRuntime {
 
   /// Wires AREA camera opcodes to the world presentation mailbox.
   void set_camera_sink(CameraSink sink);
+
+  /// Wires AREA presentation opcodes to the world presentation mailbox.
+  void set_presentation_sink(PresentationSink sink);
 
   /// Wires the pre-execution instruction sink (per-instruction diagnostics).
   void set_instruction_sink(InstructionSink sink);
@@ -288,6 +295,7 @@ class AreaScriptRuntime {
   MusicSink m_music_sink;
   ScxScriptSink m_scx_script_sink;
   CameraSink m_camera_sink;
+  PresentationSink m_presentation_sink;
   InstructionSink m_instruction_sink;
   std::optional<AreaCharacterActivationRequest> m_last_character_activation_request;
   std::optional<AreaCameraRequest> m_last_camera_request;

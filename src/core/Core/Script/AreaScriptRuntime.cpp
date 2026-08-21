@@ -311,6 +311,10 @@ void AreaScriptRuntime::set_camera_sink(CameraSink sink) {
   m_camera_sink = std::move(sink);
 }
 
+void AreaScriptRuntime::set_presentation_sink(PresentationSink sink) {
+  m_presentation_sink = std::move(sink);
+}
+
 void AreaScriptRuntime::set_instruction_sink(InstructionSink sink) {
   m_instruction_sink = std::move(sink);
 }
@@ -772,6 +776,9 @@ void AreaScriptRuntime::execute_instruction() {
           .color = static_cast<std::uint32_t>(operands.at(0)),
           .operand_b = static_cast<std::int16_t>(operands.at(1)),
           .operand_c = static_cast<std::int16_t>(operands.at(2))};
+      if (m_presentation_sink) {
+        m_presentation_sink(m_last_presentation_request.value());
+      }
       entry.effect = fmt::format("presentation mode={} color={:#010x} args=({}, {})",
           mode,
           m_last_presentation_request->color,

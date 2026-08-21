@@ -67,10 +67,10 @@ class WorldCameraSystem {
 
   /// Runtime logical XYZ -> OpenNomad renderer coordinates.
   ///
-  /// AREA cameras use Runtime's ordinary Y-up XYZ coordinates (the second
-  /// coordinate is the vertical component in the recovered intro records).
-  /// OpenNomad scales the world by 1/40 and flips Z to cross the original
-  /// left-handed/right-handed boundary.
+  /// Runtime world coordinates share the basis used by 3DO object placement.
+  /// OpenNomad's presentation basis is a 180-degree X rotation followed by
+  /// the 1/40 world scale: (x, y, z) -> (x, -y, -z) * 0.025. The implementation
+  /// lives here so AREA/scenario code remains renderer-independent.
   [[nodiscard]] static std::array<float, 3> runtime_to_renderer(
       const std::array<std::int32_t, 3>& value);
 

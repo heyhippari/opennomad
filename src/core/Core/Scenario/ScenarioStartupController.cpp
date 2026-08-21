@@ -329,6 +329,37 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
         fmt::format("SCX script ID {} not found in active world", request.script_id)};
   });
 
+  area_script.set_presentation_sink([this](const Script::AreaPresentationRequest& request) {
+    if (m_manager == nullptr) {
+      App::Log::warn(LogCategory::Scenario,
+          "AREA presentation mode {} requested without a scenario manager",
+          request.mode);
+      return;
+    }
+
+    const WorldSceneContext* context{m_manager->active_world_context()};
+    if (context == nullptr) {
+      App::Log::warn(LogCategory::Scenario,
+          "AREA presentation mode {} requested without an active world context",
+          request.mode);
+      return;
+    }
+
+    m_manager->world_presentation().enqueue_fade(WorldFadeCommand{.scene_id = context->scene_id,
+        .scene_generation = context->generation,
+        .mode = request.mode,
+        .color = request.color,
+        .duration_units = request.operand_b,
+        .operand_c = request.operand_c});
+
+    record("AreaScript.PresentationRequested",
+        fmt::format("mode={} color={:#010x} duration={} arg={}",
+            request.mode,
+            request.color,
+            request.operand_b,
+            request.operand_c));
+  });
+
   area_script.set_camera_sink([this](const Script::AreaCameraRequest& request) {
     if (m_manager == nullptr || !m_area_slots.at(0).primary.has_value()) {
       App::Log::warn(LogCategory::Scenario,

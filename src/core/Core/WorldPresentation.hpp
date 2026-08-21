@@ -39,6 +39,20 @@ struct WorldCameraCommand {
   std::array<std::uint16_t, 4> tail_fields{};
 };
 
+/// One AREA 0x76/0x77 presentation command resolved against the active world.
+///
+/// Runtime mode 2 (opcode 0x77) is a full-screen white-to-transparent fade.
+/// The retail New Game path uses duration_units=30, i.e. one second at the
+/// 30 Hz scenario clock. Other modes/fields remain preserved for later RE.
+struct WorldFadeCommand {
+  std::uint32_t scene_id{0};
+  std::uint32_t scene_generation{0};
+  std::uint8_t mode{0};
+  std::uint32_t color{0};
+  std::int16_t duration_units{0};
+  std::int16_t operand_c{0};
+};
+
 /// CPU-only mailbox from scenario execution to WorldScene.
 ///
 /// ScenarioManager owns this because AREA execution can emit presentation
@@ -51,6 +65,10 @@ class WorldPresentationState {
     m_camera_commands.push_back(std::move(command));
   }
 
+  void enqueue_fade(WorldFadeCommand command) {
+    m_fade_commands.push_back(std::move(command));
+  }
+
   [[nodiscard]] std::optional<WorldCameraCommand> take_camera() {
     if (m_camera_commands.empty()) {
       return std::nullopt;
@@ -60,16 +78,31 @@ class WorldPresentationState {
     return command;
   }
 
+  [[nodiscard]] std::optional<WorldFadeCommand> take_fade() {
+    if (m_fade_commands.empty()) {
+      return std::nullopt;
+    }
+    WorldFadeCommand command{std::move(m_fade_commands.front())};
+    m_fade_commands.pop_front();
+    return command;
+  }
+
   [[nodiscard]] std::size_t pending_camera_count() const {
     return m_camera_commands.size();
   }
 
+  [[nodiscard]] std::size_t pending_fade_count() const {
+    return m_fade_commands.size();
+  }
+
   void clear() {
     m_camera_commands.clear();
+    m_fade_commands.clear();
   }
 
  private:
   std::deque<WorldCameraCommand> m_camera_commands;
+  std::deque<WorldFadeCommand> m_fade_commands;
 };
 
 }  // namespace App

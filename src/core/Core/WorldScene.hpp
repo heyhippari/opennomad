@@ -11,6 +11,8 @@
 namespace App {
 
 class ScenarioManager;
+struct WorldSceneContext;
+class WorldFadeRenderer;
 class WorldRenderer;
 
 namespace Interface {
@@ -43,10 +45,17 @@ class WorldScene final : public Scene {
  private:
   WorldScene(ScenarioManager& scenarios, Interface::InterfaceManager& interfaces);
 
+  void consume_fade_commands(const WorldSceneContext* context);
+  void update_white_fade(float delta_time);
+
   ScenarioManager* m_scenarios{nullptr};
   Interface::InterfacePresenter m_interfaces;
   std::unique_ptr<WorldRenderer> m_world_renderer;
+  std::unique_ptr<WorldFadeRenderer> m_fade_renderer;
   WorldCameraSystem m_camera;
+  float m_white_fade_alpha{0.0F};
+  float m_white_fade_elapsed{0.0F};
+  float m_white_fade_duration{0.0F};
   int m_width{640};
   int m_height{480};
 
