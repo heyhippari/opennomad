@@ -376,7 +376,13 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
                 .complete_interface(App::InterfaceCompletion{
                     .handle = App::InterfaceHandle{.interface_id = 29, .generation = 1}, .result = 3})
                 .has_value());
-    REQUIRE(controller.tick().has_value());  // 0x77 yield.
+    REQUIRE(controller.tick().has_value());  // 0x84 intent, then 0x77 yield.
+    REQUIRE_EQ(manager.world_presentation().pending_letterbox_count(), 1U);
+    const auto letterbox{manager.world_presentation().take_letterbox()};
+    REQUIRE(letterbox.has_value());
+    CHECK_EQ(letterbox->scene_id, context->scene_id);
+    CHECK_EQ(letterbox->scene_generation, context->generation);
+    CHECK(letterbox->enabled);
     REQUIRE(controller.tick().has_value());  // Camera 2172 yield.
     REQUIRE(controller.tick().has_value());  // Camera 2148 yield.
     const auto launched{controller.tick()};  // 0x4E then tracked 0x3C.

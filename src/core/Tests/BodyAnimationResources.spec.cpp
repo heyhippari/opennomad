@@ -67,6 +67,63 @@ TEST_SUITE("Core::Omikron::BodyAnimationResources") {
     CHECK(animation->channel_by_id(9) == &child);
   }
 
+  TEST_CASE("3DA root translation integrates per-frame motion records") {
+    App::Omikron::Animation3DAChannel channel;
+    channel.translations = {
+        // Sample zero is the authored/root reference position and must never
+        // contribute to root-motion integration.
+        App::Runtime::Vec3{.x = 1000.0F, .y = -2000.0F, .z = 3000.0F},
+        App::Runtime::Vec3{.x = 1.0F, .y = 2.0F, .z = 3.0F},
+        App::Runtime::Vec3{.x = 4.0F, .y = 5.0F, .z = 6.0F},
+        App::Runtime::Vec3{.x = 7.0F, .y = 8.0F, .z = 9.0F},
+    };
+
+    const auto first{channel.integrate_translation(0.0F, 1.0F)};
+    REQUIRE(first.has_value());
+    const App::Runtime::Vec3 first_value{first.value_or(App::Runtime::Vec3{})};
+    CHECK_EQ(first_value.x, doctest::Approx(1.0F));
+    CHECK_EQ(first_value.y, doctest::Approx(2.0F));
+    CHECK_EQ(first_value.z, doctest::Approx(3.0F));
+
+    const auto whole{channel.integrate_translation(0.0F, 3.0F)};
+    REQUIRE(whole.has_value());
+    const App::Runtime::Vec3 whole_value{whole.value_or(App::Runtime::Vec3{})};
+    CHECK_EQ(whole_value.x, doctest::Approx(12.0F));
+    CHECK_EQ(whole_value.y, doctest::Approx(15.0F));
+    CHECK_EQ(whole_value.z, doctest::Approx(18.0F));
+  }
+
+  TEST_CASE("3DA root translation integrates fractional frame windows") {
+    App::Omikron::Animation3DAChannel channel;
+    channel.translations = {
+        App::Runtime::Vec3{.x = 500.0F, .y = 500.0F, .z = 500.0F},
+        App::Runtime::Vec3{.x = 2.0F, .y = 4.0F, .z = 6.0F},
+        App::Runtime::Vec3{.x = 8.0F, .y = 10.0F, .z = 12.0F},
+        App::Runtime::Vec3{.x = 14.0F, .y = 16.0F, .z = 18.0F},
+    };
+
+    // [0.5, 2.25] overlaps:
+    //   sample 1 by 0.5
+    //   sample 2 by 1.0
+    //   sample 3 by 0.25
+    const auto delta{channel.integrate_translation(0.5F, 2.25F)};
+    REQUIRE(delta.has_value());
+    const App::Runtime::Vec3 delta_value{delta.value_or(App::Runtime::Vec3{})};
+    CHECK_EQ(delta_value.x, doctest::Approx((2.0F * 0.5F) + 8.0F + (14.0F * 0.25F)));
+    CHECK_EQ(delta_value.y, doctest::Approx((4.0F * 0.5F) + 10.0F + (16.0F * 0.25F)));
+    CHECK_EQ(delta_value.z, doctest::Approx((6.0F * 0.5F) + 12.0F + (18.0F * 0.25F)));
+
+    const auto reversed{channel.integrate_translation(2.0F, 1.0F)};
+    REQUIRE(reversed.has_value());
+    const App::Runtime::Vec3 reversed_value{reversed.value_or(App::Runtime::Vec3{})};
+    CHECK_EQ(reversed_value.x, doctest::Approx(0.0F));
+    CHECK_EQ(reversed_value.y, doctest::Approx(0.0F));
+    CHECK_EQ(reversed_value.z, doctest::Approx(0.0F));
+
+    const App::Omikron::Animation3DAChannel missing{};
+    CHECK_FALSE(missing.integrate_translation(0.0F, 1.0F).has_value());
+  }
+
   TEST_CASE("3DA rejects out-of-bounds non-null streams") {
     Buffer payload;
     payload.u32(1).u32(1).u32(2).chars("Bad", 20).u32(2).u32(999).u32(0).u32(0);
@@ -91,10 +148,12 @@ TEST_SUITE("Core::Omikron::BodyAnimationResources") {
     CHECK_EQ(path->subpaths.at(0).points.at(1).key, 2U);
     const auto sample{path->subpaths.at(0).sample_mode_1(1.0F)};
     REQUIRE(sample.has_value());
-    CHECK_EQ(sample->position.x, doctest::Approx(5.0F));
-    CHECK_EQ(sample->position.y, doctest::Approx(7.0F));
-    CHECK_EQ(sample->position.z, doctest::Approx(9.0F));
-    CHECK_EQ(sample->quaternion.w, doctest::Approx(1.0F));
+    const App::Omikron::Path3DPSample sample_value{
+        sample.value_or(App::Omikron::Path3DPSample{})};
+    CHECK_EQ(sample_value.position.x, doctest::Approx(5.0F));
+    CHECK_EQ(sample_value.position.y, doctest::Approx(7.0F));
+    CHECK_EQ(sample_value.position.z, doctest::Approx(9.0F));
+    CHECK_EQ(sample_value.quaternion.w, doctest::Approx(1.0F));
   }
 
   TEST_CASE("3DP rejects malformed counts and truncated points") {

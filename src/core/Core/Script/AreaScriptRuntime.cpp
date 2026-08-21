@@ -250,14 +250,14 @@ constexpr std::array<AreaOpcodeInfo, 25> K_AREA_OPCODE_TABLE{
     AreaOpcodeInfo{.opcode = K_OP_BEGIN_CINEMATIC_LETTERBOX,
         .name = "BeginCinematicLetterbox",
         .support = OpcodeSupport::k_supported,
-        .provisional = true,
+        .provisional = false,
         .notes = "begins the recovered top/bottom cinematic mask transition",
         .operands = K_OPERANDS_NONE.data(),
         .operand_count = K_OPERANDS_NONE.size()},
     AreaOpcodeInfo{.opcode = K_OP_END_CINEMATIC_LETTERBOX,
         .name = "EndCinematicLetterbox",
         .support = OpcodeSupport::k_supported,
-        .provisional = true,
+        .provisional = false,
         .notes = "ends the recovered top/bottom cinematic mask transition",
         .operands = K_OPERANDS_NONE.data(),
         .operand_count = K_OPERANDS_NONE.size()},
@@ -340,6 +340,10 @@ void AreaScriptRuntime::set_camera_sink(CameraSink sink) {
 
 void AreaScriptRuntime::set_presentation_sink(PresentationSink sink) {
   m_presentation_sink = std::move(sink);
+}
+
+void AreaScriptRuntime::set_cinematic_letterbox_sink(CinematicLetterboxSink sink) {
+  m_cinematic_letterbox_sink = std::move(sink);
 }
 
 void AreaScriptRuntime::set_instruction_sink(InstructionSink sink) {
@@ -937,10 +941,16 @@ void AreaScriptRuntime::execute_instruction() {
     }
     case K_OP_BEGIN_CINEMATIC_LETTERBOX:
       m_cinematic_letterbox_requested = true;
+      if (m_cinematic_letterbox_sink) {
+        m_cinematic_letterbox_sink(AreaCinematicLetterboxRequest{.enabled = true});
+      }
       entry.effect = "begin cinematic top/bottom mask transition";
       break;
     case K_OP_END_CINEMATIC_LETTERBOX:
       m_cinematic_letterbox_requested = false;
+      if (m_cinematic_letterbox_sink) {
+        m_cinematic_letterbox_sink(AreaCinematicLetterboxRequest{.enabled = false});
+      }
       entry.effect = "end cinematic top/bottom mask transition";
       break;
     default:

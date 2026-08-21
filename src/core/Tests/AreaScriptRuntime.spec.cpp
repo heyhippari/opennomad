@@ -25,6 +25,7 @@ using App::InterfaceOpenRequest;
 using App::Audio::MusicTrackRequest;
 using App::Script::AreaCameraRequest;
 using App::Script::AreaCharacterActivationRequest;
+using App::Script::AreaCinematicLetterboxRequest;
 using App::Script::AreaCharacterScriptLaunchMode;
 using App::Script::AreaCharacterScriptRequest;
 using App::Script::AreaPresentationRequest;
@@ -102,6 +103,76 @@ auto recording_interface_sink(
 }  // namespace
 
 TEST_SUITE("Core::Script::AreaScriptRuntime") {
+  TEST_CASE("Opcodes 0x84 and 0x85 emit operand-less cinematic requests without waiting") {
+    const App::Script::AreaOpcodeInfo* begin_info{App::Script::area_opcode_info(0x84)};
+    const App::Script::AreaOpcodeInfo* end_info{App::Script::area_opcode_info(0x85)};
+    REQUIRE(begin_info != nullptr);
+    REQUIRE(end_info != nullptr);
+    CHECK_EQ(begin_info->operand_count, 0U);
+    CHECK_EQ(end_info->operand_count, 0U);
+
+    Buffer bytes;
+    bytes.u8(0x84).u8(0x85);
+    AreaScriptRuntime runtime{bytes.data()};
+    std::vector<bool> requests;
+    runtime.set_cinematic_letterbox_sink(
+        [&requests](const AreaCinematicLetterboxRequest& request) {
+          requests.push_back(request.enabled);
+        });
+
+    runtime.queue_event(1);
+    runtime.activate();
+    CHECK(runtime.run() == AreaScriptState::k_completed);
+    CHECK(runtime.wait_info().kind == AreaWaitKind::k_none);
+    CHECK_EQ(runtime.wait_state(), 0U);
+    REQUIRE_EQ(requests.size(), 2U);
+    CHECK(requests.at(0));
+    CHECK_FALSE(requests.at(1));
+    CHECK_FALSE(runtime.cinematic_letterbox_requested());
+  }
+
+  TEST_CASE("Opcode 0x84 emits exactly one enable request and keeps running") {
+    Buffer bytes;
+    bytes.u8(0x84);
+    AreaScriptRuntime runtime{bytes.data()};
+    std::size_t calls{0};
+    bool enabled{false};
+    runtime.set_cinematic_letterbox_sink(
+        [&calls, &enabled](const AreaCinematicLetterboxRequest& request) {
+          ++calls;
+          enabled = request.enabled;
+        });
+
+    runtime.queue_event(1);
+    runtime.activate();
+    CHECK(runtime.run() == AreaScriptState::k_completed);
+    CHECK(runtime.cinematic_letterbox_requested());
+    CHECK(enabled);
+    CHECK_EQ(calls, 1U);
+    CHECK(runtime.wait_info().kind == AreaWaitKind::k_none);
+  }
+
+  TEST_CASE("Opcode 0x85 emits exactly one disable request and keeps running") {
+    Buffer bytes;
+    bytes.u8(0x85);
+    AreaScriptRuntime runtime{bytes.data()};
+    std::size_t calls{0};
+    bool enabled{true};
+    runtime.set_cinematic_letterbox_sink(
+        [&calls, &enabled](const AreaCinematicLetterboxRequest& request) {
+          ++calls;
+          enabled = request.enabled;
+        });
+
+    runtime.queue_event(1);
+    runtime.activate();
+    CHECK(runtime.run() == AreaScriptState::k_completed);
+    CHECK_FALSE(runtime.cinematic_letterbox_requested());
+    CHECK_FALSE(enabled);
+    CHECK_EQ(calls, 1U);
+    CHECK(runtime.wait_info().kind == AreaWaitKind::k_none);
+  }
+
   TEST_CASE("Opcode 0x4E dispatches once and continues without yielding") {
     Buffer bytes;
     bytes.u8(0x4E).u16(310).u16(1);

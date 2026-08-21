@@ -110,7 +110,7 @@ TEST_SUITE("Core::Omikron::GameData3DOTextureIntegration") {
     // Confirmed serialized values of the original root structure.
     CHECK_EQ(model->header.frame_count, 0U);
     CHECK_EQ(model->header.texture_count, 0U);
-    CHECK_EQ(model->header.object_count, 0U);
+    CHECK_EQ(static_cast<std::size_t>(model->header.object_count), model->meshes.size());
     REQUIRE_EQ(model->materials.size(), std::size_t{20});
 
     const auto& first{model->materials.at(0)};

@@ -28,6 +28,10 @@ add_executable(WorldCameraTest WorldCamera.spec.cpp $<TARGET_OBJECTS:TestRunner>
 add_test(NAME WorldCameraTest COMMAND WorldCameraTest)
 target_link_libraries(WorldCameraTest PRIVATE doctest::doctest Core)
 
+add_executable(WorldLetterboxTest WorldLetterbox.spec.cpp $<TARGET_OBJECTS:TestRunner>)
+add_test(NAME WorldLetterboxTest COMMAND WorldLetterboxTest)
+target_link_libraries(WorldLetterboxTest PRIVATE doctest::doctest Core)
+
 add_executable(RuntimeMathTest RuntimeMath.spec.cpp $<TARGET_OBJECTS:TestRunner>)
 add_test(NAME RuntimeMathTest COMMAND RuntimeMathTest)
 target_link_libraries(RuntimeMathTest PRIVATE doctest::doctest Core)

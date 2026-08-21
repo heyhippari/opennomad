@@ -456,6 +456,30 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
             request.operand_c));
   });
 
+  area_script.set_cinematic_letterbox_sink(
+      [this](const Script::AreaCinematicLetterboxRequest& request) {
+        if (m_manager == nullptr) {
+          App::Log::warn(LogCategory::Scenario,
+              "AREA cinematic letterbox requested without a scenario manager");
+          return;
+        }
+
+        const WorldSceneContext* context{m_manager->active_world_context()};
+        if (context == nullptr) {
+          App::Log::warn(LogCategory::Scenario,
+              "AREA cinematic letterbox requested without an active world context");
+          return;
+        }
+
+        m_manager->world_presentation().enqueue_letterbox(
+            WorldLetterboxCommand{.scene_id = context->scene_id,
+                .scene_generation = context->generation,
+                .enabled = request.enabled});
+        App::Log::debug(LogCategory::Scenario,
+            "cinematic letterbox requested — enabled={}",
+            request.enabled);
+      });
+
   area_script.set_camera_sink([this](const Script::AreaCameraRequest& request) {
     if (m_manager == nullptr || !m_area_slots.at(0).primary.has_value()) {
       App::Log::warn(LogCategory::Scenario,

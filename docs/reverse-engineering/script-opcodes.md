@@ -2988,6 +2988,63 @@ step_index = clamp(step_index + index_table[nibble], 0, 88)
 Mono decodes high nibble first (sample 0) then low nibble (sample 1). Stereo
 decodes each byte as one frame: high nibble → channel 0, low nibble → channel 1.
 
+## 25.6 Opcodes `0x84` / `0x85`: cinematic top/bottom mask
+
+### Authoritative Runtime behavior
+
+The two instructions are operand-less presentation commands:
+
+```text
+0x84  BeginCinematicLetterbox
+      handler 0x00405A90
+          -> FUN_0041E1B0(1)
+
+0x85  EndCinematicLetterbox
+      handler 0x00405AB0
+          -> FUN_0041E1B0(0)
+```
+
+Runtime maintains an entering/leaving cinematic-mask state. Its transition
+timer starts at zero and runs for 60 scenario units. Presentation/scenario
+timing is 30 Hz, so the duration is 2.0 seconds. The opcodes do not wait for
+that transition and do not change AREA scheduling or yield behavior.
+
+Runtime's full target geometry is authoritative historical behavior:
+
+```text
+top bar height    = screenHeight * 2 / 15
+bottom bar height = screenHeight * 2 / 15
+```
+
+At 640x480 this produces `64 / 352 / 64`, with a visible image aspect of
+approximately `1.818:1`.
+
+### OpenNomad presentation modernization
+
+OpenNomad intentionally targets the standard `1.85:1` cinematic aspect rather
+than reproducing Runtime's slightly narrower target literally. For viewport
+width `W` and height `H`, each full-strength bar is:
+
+```text
+max(0, (H - W / 1.85) / 2)
+```
+
+The current pixel height is this live viewport result multiplied by the
+normalized transition amount. Consequently resize is handled without storing
+pixel geometry. Viewports at or wider than `1.85:1` get zero-height bars; the
+logical effect remains enabled so bars appear after a resize to a narrower
+aspect. OpenNomad does not pillarbox, crop horizontally, or alter the camera
+projection/FOV.
+
+At 640x480 the modernized bars are approximately `67.027 px` each; at
+1920x1080 they are approximately `21.081 px` each. This difference from
+Runtime's original 64-pixel 640x480 bars is intentional.
+
+Runtime confirms the endpoints, direction, and 60-unit duration, but its exact
+easing law remains unresolved. OpenNomad currently uses a localized linear
+interpolation as a provisional curve; this curve must not be described as
+Runtime-confirmed.
+
 ---
 
 # 26. Probable relationship between the two scripting layers

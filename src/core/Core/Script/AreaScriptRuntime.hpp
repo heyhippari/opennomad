@@ -118,6 +118,11 @@ struct AreaPresentationRequest {
   std::int16_t operand_c{0};
 };
 
+/// Presentation intent emitted by operand-less AREA opcodes 0x84/0x85.
+struct AreaCinematicLetterboxRequest {
+  bool enabled{false};
+};
+
 /// One decoded instruction boundary and its operands (sign-extended), kept
 /// for the trace window.
 struct AreaInstructionTrace {
@@ -176,6 +181,10 @@ class AreaScriptRuntime {
   /// the sink receives each presentation request exactly once.
   using PresentationSink = std::function<void(const AreaPresentationRequest&)>;
 
+  /// Presentation bridge for the cinematic top/bottom mask (0x84/0x85).
+  using CinematicLetterboxSink =
+      std::function<void(const AreaCinematicLetterboxRequest&)>;
+
   /// Sink invoked before each instruction executes, with the decoded opcode
   /// and operands. Used to emit ordered per-instruction startup trace events.
   using InstructionSink =
@@ -219,6 +228,9 @@ class AreaScriptRuntime {
 
   /// Wires AREA presentation opcodes to the world presentation mailbox.
   void set_presentation_sink(PresentationSink sink);
+
+  /// Wires AREA cinematic-mask opcodes to the world presentation mailbox.
+  void set_cinematic_letterbox_sink(CinematicLetterboxSink sink);
 
   /// Wires the pre-execution instruction sink (per-instruction diagnostics).
   void set_instruction_sink(InstructionSink sink);
@@ -307,8 +319,8 @@ class AreaScriptRuntime {
   [[nodiscard]] const std::optional<AreaPresentationRequest>& last_presentation_request() const {
     return m_last_presentation_request;
   }
-  /// True after 0x84 and false after 0x85. Rendering the recovered 60-unit
-  /// transition remains a presentation-layer responsibility.
+  /// True after 0x84 and false after 0x85. The presentation layer independently
+  /// animates the recovered 60-unit transition after receiving the typed intent.
   [[nodiscard]] bool cinematic_letterbox_requested() const {
     return m_cinematic_letterbox_requested;
   }
@@ -362,6 +374,7 @@ class AreaScriptRuntime {
   CharacterActivationSink m_character_activation_sink;
   CameraSink m_camera_sink;
   PresentationSink m_presentation_sink;
+  CinematicLetterboxSink m_cinematic_letterbox_sink;
   InstructionSink m_instruction_sink;
   std::optional<AreaCharacterActivationRequest> m_last_character_activation_request;
   std::optional<AreaCharacterScriptRequest> m_last_character_script_request;

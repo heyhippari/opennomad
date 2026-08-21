@@ -66,6 +66,52 @@ std::optional<Runtime::Vec3> Animation3DAChannel::sample_translation(const float
       .z = from.z + ((to.z - from.z) * amount)};
 }
 
+std::optional<Runtime::Vec3> Animation3DAChannel::integrate_translation(
+    const float previous, const float current) const {
+  if (translations.empty()) {
+    return std::nullopt;
+  }
+  if (translations.size() == 1U || current <= previous) {
+    return Runtime::Vec3{};
+  }
+
+  // Runtime 0x004711D0 treats translation records after sample zero as
+  // piecewise root-motion increments rather than absolute positions:
+  //
+  //   translations[1] -> interval (0, 1]
+  //   translations[2] -> interval (1, 2]
+  //   ...
+  //
+  // Clamp to the stream's valid motion domain. Sample zero is deliberately
+  // never accumulated: in retail INTRO1/UBassin it is the large authored
+  // reference position whose accidental subtraction caused Kay'l to be
+  // displaced ~158 inches vertically.
+  const float maximum{static_cast<float>(translations.size() - 1U)};
+  const float begin{std::clamp(previous, 0.0F, maximum)};
+  const float end{std::clamp(current, 0.0F, maximum)};
+  if (end <= begin) {
+    return Runtime::Vec3{};
+  }
+
+  Runtime::Vec3 result{};
+  const std::size_t first_interval{
+      std::max<std::size_t>(1U, static_cast<std::size_t>(std::floor(begin)) + 1U)};
+  const std::size_t last_interval{std::min<std::size_t>(
+      translations.size() - 1U, static_cast<std::size_t>(std::ceil(end)))};
+
+  for (std::size_t interval{first_interval}; interval <= last_interval; ++interval) {
+    const float interval_begin{static_cast<float>(interval - 1U)};
+    const float interval_end{static_cast<float>(interval)};
+    const float overlap{
+        std::max(0.0F, std::min(end, interval_end) - std::max(begin, interval_begin))};
+    const Runtime::Vec3& delta{translations.at(interval)};
+    result.x += delta.x * overlap;
+    result.y += delta.y * overlap;
+    result.z += delta.z * overlap;
+  }
+  return result;
+}
+
 std::optional<Runtime::Quaternion> Animation3DAChannel::sample_rotation(const float progress) const {
   if (rotations.empty()) {
     return std::nullopt;

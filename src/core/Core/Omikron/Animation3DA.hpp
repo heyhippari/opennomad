@@ -26,6 +26,15 @@ struct Animation3DAChannel {
   /// Samples a translation stream continuously. A serialized null stream
   /// remains absent even when its nominal count is nonzero.
   [[nodiscard]] std::optional<Runtime::Vec3> sample_translation(float progress) const;
+
+  /// Integrates Runtime root-motion translation over [previous, current].
+  ///
+  /// Translation sample 0 is the authored/root reference position. Samples
+  /// 1..N are per-frame motion vectors for intervals (0,1] .. (N-1,N].
+  /// Fractional progress scales only the overlapping part of each interval.
+  [[nodiscard]] std::optional<Runtime::Vec3> integrate_translation(
+      float previous, float current) const;
+
   /// Runtime body orientation selects the floor frame, clamped to frame 1.
   [[nodiscard]] std::optional<Runtime::Quaternion> sample_rotation(float progress) const;
 };

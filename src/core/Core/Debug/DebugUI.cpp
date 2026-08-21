@@ -611,15 +611,17 @@ void DebugUI::show_log() {
 
   if (auto sink = Log::get_debug_sink()) {
     const auto entries = sink->get_entries();
+    const auto visible_entries{entries | std::views::filter([this](const auto& entry) {
+                                 return m_log_filter.matches(
+                                     entry.level, entry.category, entry.line);
+                               }) |
+                               std::ranges::to<std::vector>()};
 
     ImGuiListClipper clipper;
-    clipper.Begin(static_cast<int>(entries.size()));
+    clipper.Begin(static_cast<int>(visible_entries.size()));
     while (clipper.Step()) {
       for (int line_idx = clipper.DisplayStart; line_idx < clipper.DisplayEnd; ++line_idx) {
-        const auto& entry = entries.at(static_cast<std::size_t>(line_idx));
-        if (!m_log_filter.matches(entry.level, entry.category, entry.line)) {
-          continue;
-        }
+        const auto& entry = visible_entries.at(static_cast<std::size_t>(line_idx));
         ImGui::TextColored(level_color(entry.level), "%s", entry.line.c_str());
       }
     }
@@ -1008,6 +1010,21 @@ void DebugUI::show_overlays() {
       }
       ImGui::Unindent();
     }
+
+    ImGui::Spacing();
+    ImGui::TextUnformatted("Cinematic presentation");
+    ImGui::Separator();
+    ImGui::Text("Letterbox requested: %s", world->letterbox_requested ? "yes" : "no");
+    ImGui::Text("Current amount: %.3f", static_cast<double>(world->letterbox_amount));
+    ImGui::Text("Transitioning: %s", world->letterbox_transitioning ? "yes" : "no");
+    ImGui::TextUnformatted("Target aspect: 1.85:1 (OpenNomad modernization)");
+    ImGui::TextUnformatted("Runtime original: 2/15 height per bar (~1.818:1 @ 640x480)");
+    ImGui::Text("Viewport: %d x %d", world->viewport_width, world->viewport_height);
+    ImGui::Text("Full target bar: %.2f px",
+        static_cast<double>(world->letterbox_target_bar_height));
+    ImGui::Text("Current bar: %.2f px",
+        static_cast<double>(world->letterbox_current_bar_height));
+    ImGui::TextUnformatted("Transition duration: 60 Runtime units / 2.0 s");
 
     ImGui::Spacing();
     ImGui::TextUnformatted("Camera");

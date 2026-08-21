@@ -121,6 +121,14 @@ struct WorldRenderDebugState {
   float camera_vertical_fov_4_3_degrees{0.0F};
   float camera_near_inches{0.0F};
   float camera_far_inches{0.0F};
+
+  bool letterbox_requested{false};
+  bool letterbox_transitioning{false};
+  float letterbox_amount{0.0F};
+  int viewport_width{0};
+  int viewport_height{0};
+  float letterbox_target_bar_height{0.0F};
+  float letterbox_current_bar_height{0.0F};
 };
 
 /// Optional debug capability implemented by scenes with 3D presentation

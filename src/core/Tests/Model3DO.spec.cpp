@@ -18,7 +18,7 @@
 namespace {
 
 constexpr std::size_t K_DIRECTORY_SIZE{0x2C};
-constexpr std::size_t K_ROOT_SIZE{0x174};
+constexpr std::size_t K_ROOT_SIZE{0x148};
 constexpr std::size_t K_MATERIAL_SIZE{80};
 constexpr std::size_t K_VERTEX_SIZE{32};
 constexpr std::size_t K_TRIANGLE_SIZE{28};
@@ -39,6 +39,12 @@ Buffer make_header(const std::uint32_t material_count,
     const std::uint32_t object_count = 0,
     const std::uint32_t root_mesh_id = 1,
     const std::uint32_t root_offset = K_DIRECTORY_SIZE) {
+  // These two legacy fixture arguments used to populate fields from the
+  // incorrect flat-header interpretation. Keep their positions temporarily
+  // so existing tests do not need unrelated call-site churn.
+  static_cast<void>(texture_count);
+  static_cast<void>(object_count);
+
   const std::size_t header_size{static_cast<std::size_t>(root_offset) + K_ROOT_SIZE};
   const std::size_t materials_offset{header_size};
   const std::size_t vertices_offset{
@@ -64,28 +70,23 @@ Buffer make_header(const std::uint32_t material_count,
       .u32(static_cast<std::uint32_t>(meshes_offset))
       .u32(0)
       .u32(0)
-      .u32(static_cast<std::uint32_t>(lights_offset))  // doors, cameras, lights.
+      .u32(static_cast<std::uint32_t>(lights_offset))  // relationships, cameras, lights.
       .zeros(root_offset - K_DIRECTORY_SIZE)
       .zeros(72)
       .u32(frame_count)
       .zeros(104)
       .u32(root_mesh_id)
-      .zeros(24)
-      .u32(texture_count)
-      .zeros(12)
-      .u32(object_count)
-      .u32(0)
-      .u32(triangle_count)
+      .f32(1.0F)  // +0xB8 global scalar; semantic remains unresolved.      .u32(triangle_count)
       .u32(rectangle_count)
       .u32(vertex_count)
       .u64(0)
       .u32(material_count)
       .u32(0)
       .u32(0)
-      .u32(0)
-      .u32(mesh_count)
-      .u32(0)
-      .u32(lights_unknown1 + lights_unknown2)  // light_count.
+      .u32(0)           // +0xDC camera count.
+      .u32(mesh_count)  // +0xE0 object count.
+      .u32(0)           // +0xE4 relationship count.
+      .u32(lights_unknown1 + lights_unknown2)  // +0xE8 serialized light count.
       .u32(lights_unknown1)
       .u32(lights_unknown2)
       .zeros(84);
@@ -180,6 +181,7 @@ TEST_SUITE("Core::Omikron::Model3DO") {
     CHECK_EQ(model->header.version_major, 4U);
     CHECK_EQ(model->header.root_offset, K_DIRECTORY_SIZE);
     CHECK_EQ(model->header.material_count, 0U);
+    CHECK_EQ(model->header.object_count, 0U);
     CHECK_EQ(model->header.mesh_count, 0U);
     CHECK(model->materials.empty());
     CHECK(model->meshes.empty());
@@ -187,15 +189,16 @@ TEST_SUITE("Core::Omikron::Model3DO") {
     CHECK(model->lights.empty());
   }
 
-  TEST_CASE("Preserves frame, texture and object counts") {
-    const Buffer file{make_header(0, 0, 0, 0, 0, 0, 0, 5, 7, 3)};
+  TEST_CASE("Preserves recovered root fields") {
+    const Buffer file{make_header(0, 0, 0, 0, 0, 0, 0, 5)};
 
     const auto model{App::Omikron::Model3DO::load(file.data())};
     REQUIRE(model.has_value());
 
     CHECK_EQ(model->header.frame_count, 5U);
-    CHECK_EQ(model->header.texture_count, 7U);
-    CHECK_EQ(model->header.object_count, 3U);
+    CHECK_EQ(model->header.material_count, 0U);
+    CHECK_EQ(model->header.object_count, 0U);
+    CHECK_EQ(model->header.texture_count, 0U);
   }
 
   TEST_CASE("Seeks a non-default serialized root offset") {
@@ -209,8 +212,22 @@ TEST_SUITE("Core::Omikron::Model3DO") {
     CHECK_EQ(model->header.root_mesh_id, 42U);
     CHECK_EQ(model->root_mesh_index, 0);
     CHECK_EQ(model->header.frame_count, 5U);
-    CHECK_EQ(model->header.texture_count, 7U);
-    CHECK_EQ(model->header.object_count, 3U);
+    CHECK_EQ(model->header.texture_count, 0U);
+    CHECK_EQ(model->header.object_count, 1U);
+    CHECK_EQ(model->header.mesh_count, 1U);
+  }
+
+  TEST_CASE("Does not read past the 0x148-byte serialized root") {
+    Buffer file{make_header(0, 0, 0, 0, 0)};
+    // Exact value observed as HO1_FNM's bogus mesh count when parsing ran
+    // beyond the real root into following data.
+    file.u32(0x416FB251U);
+
+    const auto model{App::Omikron::Model3DO::load(file.data())};
+    REQUIRE(model.has_value());
+    CHECK_EQ(model->header.object_count, 0U);
+    CHECK_EQ(model->header.mesh_count, 0U);
+    CHECK(model->meshes.empty());
   }
 
   TEST_CASE("Rejects an unresolved root object instead of using a parentless fallback") {

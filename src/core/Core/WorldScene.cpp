@@ -61,6 +61,42 @@ void main() {
 }
 )glsl"};
 
+constexpr std::string_view K_LETTERBOX_VERTEX_SHADER{R"glsl(
+#version 410 core
+
+void main() {
+  const vec2 positions[3] = vec2[3](
+      vec2(-1.0, -1.0),
+      vec2( 3.0, -1.0),
+      vec2(-1.0,  3.0));
+  gl_Position = vec4(positions[gl_VertexID], 0.0, 1.0);
+}
+)glsl"};
+
+constexpr std::string_view K_LETTERBOX_FRAGMENT_SHADER{R"glsl(
+#version 410 core
+
+uniform float u_bar_height;
+uniform float u_viewport_height;
+out vec4 frag_color;
+
+void main() {
+  if (gl_FragCoord.y >= u_bar_height &&
+      gl_FragCoord.y < u_viewport_height - u_bar_height) {
+    discard;
+  }
+  frag_color = vec4(0.0, 0.0, 0.0, 1.0);
+}
+)glsl"};
+
+void restore_capability(const GLenum capability, const bool enabled) {
+  if (enabled) {
+    glEnable(capability);
+  } else {
+    glDisable(capability);
+  }
+}
+
 }  // namespace
 
 /// Minimal full-screen presentation pass for Runtime's mode-2 white fade.
@@ -125,6 +161,86 @@ class WorldFadeRenderer {
   GLuint m_vertex_array{0};
 };
 
+/// Opaque, depth-independent presentation overlay for the cinematic mask.
+/// Timing and resolution-independent geometry remain owned by WorldScene.
+class WorldLetterboxRenderer {
+ public:
+  static std::expected<std::unique_ptr<WorldLetterboxRenderer>, std::string> create() {
+    auto shader{Shader::create(K_LETTERBOX_VERTEX_SHADER, K_LETTERBOX_FRAGMENT_SHADER)};
+    if (!shader) {
+      return std::expected<std::unique_ptr<WorldLetterboxRenderer>, std::string>{
+          std::unexpect, shader.error()};
+    }
+
+    auto renderer{std::make_unique<WorldLetterboxRenderer>()};
+    renderer->m_shader = std::make_unique<Shader>(std::move(shader).value());
+    glGenVertexArrays(1, &renderer->m_vertex_array);
+    if (renderer->m_vertex_array == 0U) {
+      return std::expected<std::unique_ptr<WorldLetterboxRenderer>, std::string>{
+          std::unexpect, "failed to create cinematic letterbox vertex array"};
+    }
+    return std::expected<std::unique_ptr<WorldLetterboxRenderer>, std::string>{
+        std::move(renderer)};
+  }
+
+  ~WorldLetterboxRenderer() {
+    if (m_vertex_array != 0U) {
+      glDeleteVertexArrays(1, &m_vertex_array);
+    }
+  }
+
+  WorldLetterboxRenderer() = default;
+  WorldLetterboxRenderer(const WorldLetterboxRenderer&) = delete;
+  WorldLetterboxRenderer(WorldLetterboxRenderer&&) = delete;
+  WorldLetterboxRenderer& operator=(const WorldLetterboxRenderer&) = delete;
+  WorldLetterboxRenderer& operator=(WorldLetterboxRenderer&&) = delete;
+
+  void render(const float bar_height, const float viewport_height) const {
+    if (m_shader == nullptr || m_vertex_array == 0U || bar_height <= 0.0F ||
+        viewport_height <= 0.0F) {
+      return;
+    }
+
+    const bool depth_test_enabled{glIsEnabled(GL_DEPTH_TEST) == GL_TRUE};
+    const bool blend_enabled{glIsEnabled(GL_BLEND) == GL_TRUE};
+    const bool cull_enabled{glIsEnabled(GL_CULL_FACE) == GL_TRUE};
+    const bool scissor_enabled{glIsEnabled(GL_SCISSOR_TEST) == GL_TRUE};
+    const bool stencil_enabled{glIsEnabled(GL_STENCIL_TEST) == GL_TRUE};
+    GLboolean depth_write_enabled{GL_TRUE};
+    GLint previous_program{0};
+    GLint previous_vertex_array{0};
+    glGetBooleanv(GL_DEPTH_WRITEMASK, &depth_write_enabled);
+    glGetIntegerv(GL_CURRENT_PROGRAM, &previous_program);
+    glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &previous_vertex_array);
+
+    glDisable(GL_DEPTH_TEST);
+    glDepthMask(GL_FALSE);
+    glDisable(GL_BLEND);
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_SCISSOR_TEST);
+    glDisable(GL_STENCIL_TEST);
+
+    m_shader->bind();
+    m_shader->set_uniform_float("u_bar_height", bar_height);
+    m_shader->set_uniform_float("u_viewport_height", viewport_height);
+    glBindVertexArray(m_vertex_array);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+
+    glBindVertexArray(static_cast<GLuint>(previous_vertex_array));
+    glUseProgram(static_cast<GLuint>(previous_program));
+    glDepthMask(depth_write_enabled);
+    restore_capability(GL_DEPTH_TEST, depth_test_enabled);
+    restore_capability(GL_BLEND, blend_enabled);
+    restore_capability(GL_CULL_FACE, cull_enabled);
+    restore_capability(GL_SCISSOR_TEST, scissor_enabled);
+    restore_capability(GL_STENCIL_TEST, stencil_enabled);
+  }
+
+ private:
+  std::unique_ptr<Shader> m_shader;
+  GLuint m_vertex_array{0};
+};
+
 std::expected<std::unique_ptr<WorldScene>, std::string> WorldScene::create(
     ScenarioManager& scenarios, Interface::InterfaceManager& interfaces) {
   // The constructor is private; only the factory may build a scene.
@@ -136,6 +252,12 @@ std::expected<std::unique_ptr<WorldScene>, std::string> WorldScene::create(
         std::unexpect, fade_renderer.error()};
   }
   scene->m_fade_renderer = std::move(fade_renderer).value();
+  auto letterbox_renderer{WorldLetterboxRenderer::create()};
+  if (!letterbox_renderer) {
+    return std::expected<std::unique_ptr<WorldScene>, std::string>{
+        std::unexpect, letterbox_renderer.error()};
+  }
+  scene->m_letterbox_renderer = std::move(letterbox_renderer).value();
   return std::expected<std::unique_ptr<WorldScene>, std::string>{std::move(scene)};
 }
 
@@ -310,6 +432,15 @@ std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state
   state.camera_scripted = m_camera.has_scripted_pose();
   state.camera_transitioning = m_camera.transitioning();
   state.camera_id = m_camera.active_camera_id();
+  state.letterbox_requested = m_letterbox.requested();
+  state.letterbox_amount = m_letterbox.amount();
+  state.letterbox_transitioning = m_letterbox.transitioning();
+  state.viewport_width = m_width;
+  state.viewport_height = m_height;
+  state.letterbox_target_bar_height = WorldLetterboxState::target_bar_height(
+      static_cast<float>(m_width), static_cast<float>(m_height));
+  state.letterbox_current_bar_height = m_letterbox.current_bar_height(
+      static_cast<float>(m_width), static_cast<float>(m_height));
 
   if (state.camera_has_pose) {
     const WorldCameraPose& pose{m_camera.pose()};
@@ -370,6 +501,28 @@ void WorldScene::consume_fade_commands(const WorldSceneContext* const context) {
   }
 }
 
+void WorldScene::consume_letterbox_commands(const WorldSceneContext* const context) {
+  // If the world changed after update(), leave commands queued until the next
+  // update resets presentation state and observes the new generation. This
+  // avoids accepting a valid new-world command and then erasing it one frame
+  // later during lifecycle synchronization.
+  if (m_scenarios == nullptr || context == nullptr || !m_world_observed ||
+      context->scene_id != m_observed_scene_id ||
+      context->generation != m_observed_generation) {
+    return;
+  }
+
+  while (std::optional<WorldLetterboxCommand> command{
+      m_scenarios->world_presentation().take_letterbox()}) {
+    if (!m_letterbox.apply_command(*command, context->scene_id, context->generation)) {
+      App::Log::debug(LogCategory::Renderer,
+          "WorldScene: discarded stale cinematic letterbox for scene={} generation={}",
+          command->scene_id,
+          command->scene_generation);
+    }
+  }
+}
+
 void WorldScene::update_white_fade(const float delta_time) {
   if (m_white_fade_alpha <= 0.0F) {
     return;
@@ -400,6 +553,7 @@ void WorldScene::update(const float delta_time, const Input::InputManager& input
             context->generation);
 
         m_camera.reset();
+        m_letterbox.reset();
         auto renderer{WorldRenderer::create(*context)};
         if (!renderer) {
           App::Log::error(LogCategory::Renderer,
@@ -424,6 +578,7 @@ void WorldScene::update(const float delta_time, const Input::InputManager& input
     } else if (m_world_observed) {
       m_world_renderer.reset();
       m_camera.reset();
+      m_letterbox.reset();
       m_world_observed = false;
     }
   }
@@ -455,7 +610,9 @@ void WorldScene::update(const float delta_time, const Input::InputManager& input
   }
 
   consume_fade_commands(context);
+  consume_letterbox_commands(context);
   update_white_fade(delta_time);
+  m_letterbox.update(delta_time);
 
   m_camera.update(delta_time);
 
@@ -486,11 +643,13 @@ void WorldScene::render() {
   APP_PROFILE_FUNCTION();
 
   // Scenario execution happens after WorldScene::update() in the frame, so
-  // consume newly-emitted fades again here. This lets opcode 0x77 cover the
-  // very first world frame at alpha 1 instead of exposing one dark frame.
+  // consume newly-emitted presentation commands again here. This lets opcode
+  // 0x77 cover the first world frame and 0x84/0x85 reverse without an extra
+  // display-frame delay. Render never advances either transition clock.
   const WorldSceneContext* context{
       m_scenarios != nullptr ? m_scenarios->active_world_context() : nullptr};
   consume_fade_commands(context);
+  consume_letterbox_commands(context);
 
   // A world context may be replaced between update and render; never
   // dereference a runtime cached by the renderer. If generation no longer
@@ -498,6 +657,12 @@ void WorldScene::render() {
   if (m_world_renderer != nullptr && context != nullptr && m_world_observed &&
       context->scene_id == m_observed_scene_id && context->generation == m_observed_generation) {
     m_world_renderer->render(m_camera.camera(), context->runtime.get());
+  }
+
+  if (m_letterbox_renderer != nullptr && m_letterbox.amount() > 0.0F) {
+    m_letterbox_renderer->render(
+        m_letterbox.current_bar_height(static_cast<float>(m_width), static_cast<float>(m_height)),
+        static_cast<float>(m_height));
   }
 
   if (m_fade_renderer != nullptr && m_white_fade_alpha > 0.0F) {

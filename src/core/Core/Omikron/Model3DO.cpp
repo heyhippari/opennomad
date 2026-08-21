@@ -620,32 +620,39 @@ void Model3DO::read_header(BinaryReader& reader, Header& header) {
   header.cameras_offset = reader.read_u32();
   header.lights_offset = reader.read_u32();
 
-  reader.seek(header.root_offset);
-  read_raw_array(reader, header.reserved_a);
-  header.frame_count = reader.read_u32();
-  read_raw_array(reader, header.reserved_b);
-  header.root_mesh_id = reader.read_u32();
-  read_raw_array(reader, header.reserved_b2);
-  header.texture_count = reader.read_u32();
-  read_raw_array(reader, header.reserved_c);
+  // Runtime treats the 0x2C core directory and the 0x148-byte root as
+  // separate structures. The old parser followed rootOffset and then still
+  // consumed the former 0x174-byte combined directory+root layout.
+  const std::size_t root{header.root_offset};
 
-  header.object_count = reader.read_u32();
-  header.unknown2 = reader.read_u32();
-  header.triangle_count = reader.read_u32();
-  header.rectangle_count = reader.read_u32();
-  header.vertex_count = reader.read_u32();
-  header.reserved2 = reader.read_u64();
-  header.material_count = reader.read_u32();
-  header.unknown3 = reader.read_u32();
-  header.reserved3 = reader.read_u32();
-  header.camera_count = reader.read_u32();
-  header.mesh_count = reader.read_u32();
-  header.door_count = reader.read_u32();
-  header.light_count = reader.read_u32();
-  header.lights_unknown1 = reader.read_u32();
-  header.lights_unknown2 = reader.read_u32();
+  reader.seek(root);
+  read_raw_array(reader, header.reserved_a);  // +0x00..+0x47
+  header.frame_count = reader.read_u32();     // +0x48
+  read_raw_array(reader, header.reserved_b);  // +0x4C..+0xB3
+  header.root_mesh_id = reader.read_u32();    // +0xB4
 
-  read_raw_array(reader, header.unknown4);
+  // +0xB8 is a Runtime scalar whose higher-level semantic is still unknown.
+  static_cast<void>(reader.read_f32());
+  header.triangle_count = reader.read_u32();   // +0xBC
+  header.rectangle_count = reader.read_u32();  // +0xC0
+  header.vertex_count = reader.read_u32();     // +0xC4
+  header.reserved2 = reader.read_u64();        // +0xC8
+  header.material_count = reader.read_u32();   // +0xD0
+  header.unknown3 = reader.read_u32();          // +0xD4
+  header.reserved3 = reader.read_u32();         // +0xD8
+  header.camera_count = reader.read_u32();      // +0xDC
+  header.object_count = reader.read_u32();      // +0xE0
+  header.unknown2 = reader.read_u32();           // +0xE4 relationship count
+  header.light_count = reader.read_u32();       // +0xE8 serialized light count
+  header.lights_unknown1 = reader.read_u32();   // +0xEC
+  header.lights_unknown2 = reader.read_u32();   // +0xF0 processed light count
+  read_raw_array(reader, header.unknown4);       // +0xF4..+0x147
+
+  // Compatibility aliases retained until Header is cleaned up separately.
+  // They are not additional serialized fields.
+  header.mesh_count = header.object_count;
+  header.texture_count = 0;
+  header.door_count = 0;
 }
 
 Material Model3DO::read_material(BinaryReader& reader) {

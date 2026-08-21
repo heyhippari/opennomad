@@ -598,12 +598,10 @@ ScenarioRuntime::select_relative_body_animation(
     if (root_pose.channel_index.has_value()) {
       const Omikron::Animation3DAChannel& root_channel{
           animation.channels.at(root_pose.channel_index.value())};
-      const std::optional<Runtime::Vec3> from{root_channel.sample_translation(previous)};
-      const std::optional<Runtime::Vec3> to{root_channel.sample_translation(current)};
-      if (from.has_value() && to.has_value()) {
-        root_delta = Runtime::Vec3{.x = to->x - from->x,
-            .y = to->y - from->y,
-            .z = to->z - from->z};
+      const std::optional<Runtime::Vec3> integrated{
+          root_channel.integrate_translation(previous, current)};
+      if (integrated.has_value()) {
+        root_delta = integrated.value();
         character->transform.translation.x += root_delta.x;
         character->transform.translation.y += root_delta.y;
         character->transform.translation.z += root_delta.z;
