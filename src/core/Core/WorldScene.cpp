@@ -15,6 +15,7 @@
 
 #include "Core/Audio/AudioSystem.hpp"
 #include "Core/Audio/AudioTypes.hpp"
+#include "Core/Character/CharacterRuntime.hpp"
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Debug/SceneDebugView.hpp"
 #include "Core/Interface/InterfaceManager.hpp"
@@ -195,6 +196,43 @@ std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state
           .runtime_local_matrix = object.local_matrix.values,
           .runtime_world_translation = vec3(object.world_translation),
           .runtime_world_matrix = object.world_matrix.values});
+    }
+  }
+
+  if (world_context != nullptr && world_context->runtime != nullptr) {
+    for (const Character::RuntimeCharacter& character :
+        world_context->runtime->character_runtime().characters()) {
+      const Runtime::Vec3 render_position{
+          Runtime::Presentation::to_gl(character.transform.translation)};
+      Runtime::Vec3 bounds_center{character.transform.translation};
+      std::size_t group_count{0};
+      float bounds_radius{0.0F};
+      if (character.model_resource != nullptr) {
+        bounds_center = Runtime::transform_point(
+            character.model_resource->bounds_center, character.transform);
+        group_count = character.model_resource->groups.size();
+        bounds_radius = character.model_resource->bounds_radius;
+      }
+      state.runtime_characters.push_back(Debug::RuntimeCharacterDebugState{
+          .instance_id = character.instance_id,
+          .character_id = character.character_id,
+          .area_id = character.area_id,
+          .active = character.active,
+          .area_present = character.area_present,
+          .loaded = character.loaded(),
+          .renderable = character.renderable(),
+          .serialized_position = character.serialized_area_position,
+          .runtime_position = {character.transform.translation.x,
+              character.transform.translation.y,
+              character.transform.translation.z},
+          .render_position = {render_position.x, render_position.y, render_position.z},
+          .serialized_orientation_units = character.serialized_orientation_units,
+          .runtime_orientation_degrees = character.runtime_orientation_degrees,
+          .definition_name = character.definition_name,
+          .model_resource = character.model_resource_name,
+          .model_group_count = group_count,
+          .runtime_bounds_center = {bounds_center.x, bounds_center.y, bounds_center.z},
+          .bounds_radius = bounds_radius});
     }
   }
 

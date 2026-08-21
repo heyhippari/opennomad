@@ -13,6 +13,8 @@ Core subsystems live under `src/core/Core/`: Omikron game-data parsers in `Core/
 The Runtime-style sprite system lives in `Core/Sprite/`: `SpriteInstance`/`SpritePool` (stable-handle
 instance pool), `SpriteFrame` (frame-descriptor resolution), `SpriteResource` (decoded embedded effects),
 `SpriteRenderMode` (mode → GL state table) and `SpriteRenderer` (CPU billboard queue + GPU drawing).
+Runtime character identity, AREA presence/transforms and shared CPU-side 3DO/3DT resources live in
+`Core/Character/CharacterRuntime`; `WorldRenderer` owns only their per-world GPU presentation cache.
 
 ## Architecture ownership
 
@@ -21,7 +23,8 @@ architectural mapping, not a claim that Runtime itself had C++ classes with thes
 
 - **Scenario state** is owned by `ScenarioManager` / `ScenarioRuntime`: one gameplay-mode SCX slot
   (`aventure.scx`) plus two world-context SCX slots (`GRID.SCX` in context 0). Each slot owns its own
-  parsed SCX, backing bytes, decor model (world contexts) and a mutable `ScenarioRuntime`.
+  parsed SCX, backing bytes, decor model (world contexts), runtime characters and a mutable
+  `ScenarioRuntime`.
 - **Simulation** is advanced by `ScenarioEngine` (the sole scheduler): the AREA/event runtime, then the
   gameplay-mode runtime, then every `LoadedActive` world runtime, each frame.
 - **World presentation** is performed by `WorldScene`, the stable post-splash runtime scene. It observes

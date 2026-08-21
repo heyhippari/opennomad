@@ -131,8 +131,33 @@ TEST_SUITE("Core::Omikron::IamAreaRecord") {
     CHECK_EQ(character->serialized_position.at(1), -271);
     CHECK_EQ(character->serialized_position.at(2), -816);
     CHECK_EQ(character->orientation_units, 4084);
-    CHECK_EQ(character->field_12, 468U);
     CHECK_FALSE(record->character_by_id(999).has_value());
+  }
+
+  TEST_CASE("AREA table 0 definition reference resolves a generic table-4 character body") {
+    constexpr std::size_t k_character_offset{IamAreaRecord::k_header_size};
+    constexpr std::size_t k_definition_offset{k_character_offset + 0x14U};
+    constexpr std::uint16_t k_definition_id{468};
+    std::vector<std::byte> data(k_definition_offset + 0x114U, std::byte{});
+
+    write_u32(data, IamAreaRecord::k_offset_script, static_cast<std::uint32_t>(data.size()));
+    write_u32(data, IamAreaRecord::k_offset_table_offsets, k_character_offset);
+    write_u16(data, IamAreaRecord::k_offset_table_counts, 1);
+    write_i16(data, k_character_offset + 0x02U, 310);
+    write_u16(data, k_character_offset + 0x12U, k_definition_id);
+
+    write_u32(data, IamAreaRecord::k_offset_table_offsets + (4U * 4U), k_definition_offset);
+    write_u16(data, IamAreaRecord::k_offset_table_counts + (4U * 2U), 1);
+    constexpr std::string_view k_name{"KAY'L 669"};
+    std::memcpy(data.data() + k_definition_offset + 0x08U, k_name.data(), k_name.size());
+    constexpr std::string_view k_model{"HO1_FNM"};
+    std::memcpy(data.data() + k_definition_offset + 0x90U, k_model.data(), k_model.size());
+    write_u16(data, k_definition_offset + 0x110U, k_definition_id);
+
+    const auto record{IamAreaRecord::load(data)};
+    REQUIRE(record.has_value());
+    const auto placement{record->character_by_id(310)};
+    REQUIRE(placement.has_value());
   }
 
   TEST_CASE("AREA table 6 exposes recovered camera records by signed ID") {

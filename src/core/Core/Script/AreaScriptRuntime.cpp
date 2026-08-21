@@ -330,6 +330,10 @@ void AreaScriptRuntime::set_character_script_sink(CharacterScriptSink sink) {
   m_character_script_sink = std::move(sink);
 }
 
+void AreaScriptRuntime::set_character_activation_sink(CharacterActivationSink sink) {
+  m_character_activation_sink = std::move(sink);
+}
+
 void AreaScriptRuntime::set_camera_sink(CameraSink sink) {
   m_camera_sink = std::move(sink);
 }
@@ -797,6 +801,21 @@ void AreaScriptRuntime::execute_instruction() {
           .character_id = static_cast<std::int16_t>(operands.at(0)),
           .apply_area_transform = operands.at(1) != 0};
       m_last_character_activation_request = request;
+
+      if (m_character_activation_sink) {
+        auto activated{m_character_activation_sink(request)};
+        if (!activated) {
+          m_pause_info = AreaPauseInfo{.offset = instruction_offset,
+              .opcode = opcode,
+              .opcode_name = std::string{info->name},
+              .reason_text = fmt::format("failed to activate character {}: {}",
+                  request.character_id,
+                  activated.error()),
+              .nearby_bytes = nearby_bytes_hex(instruction_offset)};
+          m_state = AreaScriptState::k_failed;
+          return;
+        }
+      }
       entry.effect = request.character_id == -1
                          ? "clear current-character runtime flag 0x2"
                          : fmt::format("activate character {}{}",
@@ -906,7 +925,13 @@ void AreaScriptRuntime::execute_instruction() {
           m_last_presentation_request->color,
           m_last_presentation_request->operand_b,
           m_last_presentation_request->operand_c);
-      m_yield_requested = true;
+      // Runtime's all-zero mode-1 bootstrap command is a no-op and continues
+      // immediately. Mode 2 and non-empty mode-1 effects set the central
+      // dispatcher-yield flag.
+      m_yield_requested = opcode == K_OP_PRESENTATION_EFFECT_ALT ||
+                          m_last_presentation_request->color != 0U ||
+                          m_last_presentation_request->operand_b != 0 ||
+                          m_last_presentation_request->operand_c != 0;
       break;
     }
     case K_OP_BEGIN_CINEMATIC_LETTERBOX:

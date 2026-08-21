@@ -24,6 +24,7 @@ using App::InterfaceHandle;
 using App::InterfaceOpenRequest;
 using App::Audio::MusicTrackRequest;
 using App::Script::AreaCameraRequest;
+using App::Script::AreaCharacterActivationRequest;
 using App::Script::AreaCharacterScriptLaunchMode;
 using App::Script::AreaCharacterScriptRequest;
 using App::Script::AreaPresentationRequest;
@@ -101,6 +102,66 @@ auto recording_interface_sink(
 }  // namespace
 
 TEST_SUITE("Core::Script::AreaScriptRuntime") {
+  TEST_CASE("Opcode 0x4E dispatches once and continues without yielding") {
+    Buffer bytes;
+    bytes.u8(0x4E).u16(310).u16(1);
+    AreaScriptRuntime runtime{bytes.data()};
+    std::optional<AreaCharacterActivationRequest> captured;
+    std::size_t calls{0};
+    runtime.set_character_activation_sink(
+        [&captured, &calls](const AreaCharacterActivationRequest& request)
+            -> std::expected<void, std::string> {
+          captured = request;
+          ++calls;
+          return {};
+        });
+
+    runtime.queue_event(1);
+    runtime.activate();
+    CHECK(runtime.run() == AreaScriptState::k_completed);
+    REQUIRE(captured.has_value());
+    CHECK_EQ(captured->character_id, 310);
+    CHECK(captured->apply_area_transform);
+    CHECK_EQ(calls, 1U);
+    CHECK_EQ(runtime.instruction_pointer(), bytes.data().size());
+  }
+
+  TEST_CASE("Opcode 0x4E sink failure becomes a structured AREA failure") {
+    Buffer bytes;
+    bytes.u8(0x4E).u16(310).u16(1).u8(0x03);
+    AreaScriptRuntime runtime{bytes.data()};
+    runtime.set_character_activation_sink(
+        [](const AreaCharacterActivationRequest&) -> std::expected<void, std::string> {
+          return std::expected<void, std::string>{std::unexpect, "model missing"};
+        });
+
+    runtime.queue_event(1);
+    runtime.activate();
+    CHECK(runtime.run() == AreaScriptState::k_failed);
+    CHECK_EQ(runtime.pause_info().opcode, 0x4EU);
+    CHECK(runtime.pause_info().reason_text.find("model missing") != std::string::npos);
+  }
+
+  TEST_CASE("Opcode 0x4E derives the transform flag from operand 1") {
+    Buffer bytes;
+    bytes.u8(0x4E).u16(12).u16(0).u8(0x4E).u16(13).u16(7);
+    AreaScriptRuntime runtime{bytes.data()};
+    std::vector<AreaCharacterActivationRequest> captured;
+    runtime.set_character_activation_sink(
+        [&captured](const AreaCharacterActivationRequest& request)
+            -> std::expected<void, std::string> {
+          captured.push_back(request);
+          return {};
+        });
+
+    runtime.queue_event(1);
+    runtime.activate();
+    CHECK(runtime.run() == AreaScriptState::k_completed);
+    REQUIRE_EQ(captured.size(), 2U);
+    CHECK_FALSE(captured.at(0).apply_area_transform);
+    CHECK(captured.at(1).apply_area_transform);
+  }
+
   TEST_CASE("Scripts remain inactive until an event is queued") {
     const Buffer bytes{make_startup_prefix()};
     AreaScriptRuntime runtime{bytes.data()};

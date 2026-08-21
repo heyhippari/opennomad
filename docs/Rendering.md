@@ -105,6 +105,11 @@ edge applies the shared unscaled basis `(x,y,z) -> (x,-y,-z)`; the model viewer 
 use the same adapter. See
 [Runtime coordinate and transform math](reverse-engineering/runtime-coordinate-math.md).
 
+AREA-activated characters follow the same boundary. Their logical instance, AREA presence and
+transform remain in canonical Runtime space under `ScenarioRuntime`; their model is decoded through
+the shared `Model3DO`/`Texture3DT` pipeline. `WorldRenderer` lazily caches the corresponding GPU
+meshes/textures and applies the character transform before the single Runtime-to-GL basis adapter.
+
 ## Model lights
 
 The `.3DO` header carries two light counts. The first (`lights_unknown1`, "mesh lights") has no

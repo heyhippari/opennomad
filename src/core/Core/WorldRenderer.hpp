@@ -6,8 +6,11 @@
 #include <deque>
 #include <expected>
 #include <memory>
+#include <string>
+#include <unordered_map>
 #include <vector>
 
+#include "Core/Character/CharacterRuntime.hpp"
 #include "Core/Mesh.hpp"
 #include "Core/Omikron/Model3DO.hpp"
 #include "Core/Shader.hpp"
@@ -64,6 +67,19 @@ class WorldRenderer {
   WorldRenderer() = default;
 
   void draw_group(std::size_t index);
+  void draw_character_group(const Character::RuntimeCharacter& character,
+      const Camera& camera,
+      std::size_t group_index);
+  void sync_character_models(const ScenarioRuntime& runtime);
+
+  struct CharacterGpuModel {
+    std::shared_ptr<const Character::ModelResource> resource;
+    std::deque<Mesh> meshes;
+    std::vector<std::int32_t> group_material_ids;
+    std::vector<std::uint32_t> group_flags;
+    std::vector<Omikron::BlendMode> group_modes;
+    std::vector<Texture2D> textures;
+  };
 
   std::unique_ptr<Shader> m_shader;
   std::deque<Mesh> m_meshes;
@@ -74,6 +90,8 @@ class WorldRenderer {
   std::vector<Texture2D> m_textures;
 
   Sprite::SpriteRenderer m_sprite_renderer;
+  std::unordered_map<std::string, std::unique_ptr<CharacterGpuModel>> m_character_models;
+  std::vector<std::string> m_failed_character_models;
 
   WorldBounds m_bounds{};
 };

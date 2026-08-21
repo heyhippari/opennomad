@@ -51,13 +51,14 @@ layout(location = 2) in vec2 a_uv;
 layout(location = 3) in vec4 a_color;
 
 uniform mat4 u_mvp;
+uniform mat4 u_model;
 
 out vec3 v_normal;
 out vec2 v_uv;
 out vec4 v_color;
 
 void main() {
-    v_normal = a_normal;
+    v_normal = mat3(u_model) * a_normal;
     v_uv = a_uv;
     v_color = a_color;
     gl_Position = u_mvp * vec4(a_position, 1.0);
@@ -334,6 +335,94 @@ void WorldRenderer::draw_group(const std::size_t index) {
   m_meshes.at(index).draw();
 }
 
+void WorldRenderer::sync_character_models(const ScenarioRuntime& runtime) {
+  for (const Character::RuntimeCharacter& character : runtime.character_runtime().characters()) {
+    if (!character.renderable() || character.model_resource == nullptr ||
+        m_character_models.contains(character.model_resource_name) ||
+        std::ranges::contains(m_failed_character_models, character.model_resource_name)) {
+      continue;
+    }
+
+    auto gpu{std::make_unique<CharacterGpuModel>()};
+    gpu->resource = character.model_resource;
+    bool failed{false};
+    for (const Omikron::Texture3DTImage& image : character.model_resource->images) {
+      auto texture{Texture2D::create(static_cast<int>(image.width),
+          static_cast<int>(image.height),
+          std::span<const std::uint8_t>{image.rgba8},
+          true)};
+      if (!texture) {
+        App::Log::warn(LogCategory::Renderer,
+            "Character model '{}' texture upload failed: {}",
+            character.model_resource_name,
+            texture.error());
+        failed = true;
+        break;
+      }
+      gpu->textures.push_back(std::move(texture).value());
+    }
+    if (failed) {
+      m_failed_character_models.push_back(character.model_resource_name);
+      continue;
+    }
+
+    for (const Omikron::MaterialGroup& group : character.model_resource->groups) {
+      std::vector<Vertex> presentation_vertices;
+      presentation_vertices.reserve(group.vertices.size());
+      for (const Vertex& vertex : group.vertices) {
+        presentation_vertices.push_back(Runtime::Presentation::to_gl(vertex));
+      }
+      gpu->meshes.emplace_back(presentation_vertices, group.indices);
+      gpu->group_material_ids.push_back(group.material_id);
+      gpu->group_flags.push_back(group.flags);
+      gpu->group_modes.push_back(Omikron::blend_mode(group.flags));
+    }
+
+    App::Log::debug(LogCategory::Renderer,
+        "Character renderer resource ready — model={} groups={} materials={}",
+        character.model_resource_name,
+        gpu->meshes.size(),
+        gpu->textures.size());
+    m_character_models.emplace(character.model_resource_name, std::move(gpu));
+  }
+}
+
+void WorldRenderer::draw_character_group(const Character::RuntimeCharacter& character,
+    const Camera& camera,
+    const std::size_t group_index) {
+  const auto found{m_character_models.find(character.model_resource_name)};
+  if (found == m_character_models.end()) {
+    return;
+  }
+  CharacterGpuModel& gpu{*found->second};
+  if (group_index >= gpu.meshes.size()) {
+    return;
+  }
+
+  const glm::mat4 view{glm::make_mat4(camera.get_view_matrix().data())};
+  const glm::mat4 projection{glm::make_mat4(camera.get_projection_matrix().data())};
+  const glm::mat4 model{Runtime::Presentation::to_gl(character.transform)};
+  const glm::mat4 mvp{projection * view * model};
+  m_shader->bind();
+  m_shader->set_uniform_mat4("u_mvp", std::span<const GLfloat, 16>{glm::value_ptr(mvp), 16});
+  m_shader->set_uniform_mat4("u_model", std::span<const GLfloat, 16>{glm::value_ptr(model), 16});
+
+  const Omikron::BlendMode mode{gpu.group_modes.at(group_index)};
+  const bool vertex_lit{
+      Omikron::has_flag(gpu.group_flags.at(group_index), Omikron::MeshFlags::k_vertex_lit)};
+  m_shader->set_uniform_float("u_vertex_color", vertex_lit ? 1.0F : 0.0F);
+  m_shader->set_uniform_float(
+      "u_alpha_test", mode == Omikron::BlendMode::k_alpha_test ? 1.0F : 0.0F);
+
+  const std::int32_t material_id{gpu.group_material_ids.at(group_index)};
+  if (material_id < 0 || static_cast<std::size_t>(material_id) >= gpu.textures.size()) {
+    return;
+  }
+  gpu.textures.at(static_cast<std::size_t>(material_id)).bind(0);
+  m_shader->set_uniform_int("u_texture0", 0);
+  gpu.meshes.at(group_index).draw();
+}
+
 void WorldRenderer::render(const Camera& camera, ScenarioRuntime* const runtime) {
   APP_PROFILE_FUNCTION();
 
@@ -344,6 +433,7 @@ void WorldRenderer::render(const Camera& camera, ScenarioRuntime* const runtime)
   const glm::mat4 view{glm::make_mat4(camera.get_view_matrix().data())};
   const glm::mat4 projection{glm::make_mat4(camera.get_projection_matrix().data())};
   const glm::mat4 mvp{projection * view};
+  const glm::mat4 identity{1.0F};
   const glm::vec3 eye{glm::make_vec3(camera.get_position().data())};
 
   if (runtime != nullptr && m_sprite_renderer.valid()) {
@@ -358,8 +448,14 @@ void WorldRenderer::render(const Camera& camera, ScenarioRuntime* const runtime)
         camera.get_far_plane());
   }
 
+  if (runtime != nullptr) {
+    sync_character_models(*runtime);
+  }
+
   m_shader->bind();
   m_shader->set_uniform_mat4("u_mvp", std::span<const GLfloat, 16>{glm::value_ptr(mvp), 16});
+  m_shader->set_uniform_mat4(
+      "u_model", std::span<const GLfloat, 16>{glm::value_ptr(identity), 16});
   m_shader->set_uniform_vec3("u_light_direction", std::span<const GLfloat, 3>{K_LIGHT_DIRECTION});
   m_shader->set_uniform_float("u_ambient", K_AMBIENT_STRENGTH);
 
@@ -369,6 +465,20 @@ void WorldRenderer::render(const Camera& camera, ScenarioRuntime* const runtime)
   for (std::size_t index{0}; index < m_meshes.size(); ++index) {
     if (!is_blended(m_group_modes.at(index))) {
       draw_group(index);
+    }
+  }
+  if (runtime != nullptr) {
+    for (const Character::RuntimeCharacter& character :
+        runtime->character_runtime().characters()) {
+      const auto found{m_character_models.find(character.model_resource_name)};
+      if (!character.renderable() || found == m_character_models.end()) {
+        continue;
+      }
+      for (std::size_t index{0}; index < found->second->meshes.size(); ++index) {
+        if (!is_blended(found->second->group_modes.at(index))) {
+          draw_character_group(character, camera, index);
+        }
+      }
     }
   }
   if (runtime != nullptr && m_sprite_renderer.valid()) {
@@ -393,6 +503,10 @@ void WorldRenderer::render(const Camera& camera, ScenarioRuntime* const runtime)
 
   glEnable(GL_BLEND);
   glDepthMask(GL_FALSE);
+  m_shader->bind();
+  m_shader->set_uniform_mat4("u_mvp", std::span<const GLfloat, 16>{glm::value_ptr(mvp), 16});
+  m_shader->set_uniform_mat4(
+      "u_model", std::span<const GLfloat, 16>{glm::value_ptr(identity), 16});
   for (const std::size_t index : blended) {
     switch (m_group_modes.at(index)) {
       case Omikron::BlendMode::k_additive:
@@ -409,6 +523,36 @@ void WorldRenderer::render(const Camera& camera, ScenarioRuntime* const runtime)
         break;
     }
     draw_group(index);
+  }
+  if (runtime != nullptr) {
+    for (const Character::RuntimeCharacter& character :
+        runtime->character_runtime().characters()) {
+      const auto found{m_character_models.find(character.model_resource_name)};
+      if (!character.renderable() || found == m_character_models.end()) {
+        continue;
+      }
+      for (std::size_t index{0}; index < found->second->meshes.size(); ++index) {
+        const Omikron::BlendMode mode{found->second->group_modes.at(index)};
+        if (!is_blended(mode)) {
+          continue;
+        }
+        switch (mode) {
+          case Omikron::BlendMode::k_additive:
+            glBlendFunc(GL_ONE, GL_ONE);
+            glBlendEquation(GL_FUNC_ADD);
+            break;
+          case Omikron::BlendMode::k_subtractive:
+            glBlendFunc(GL_ONE, GL_ONE);
+            glBlendEquation(GL_FUNC_REVERSE_SUBTRACT);
+            break;
+          default:
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            glBlendEquation(GL_FUNC_ADD);
+            break;
+        }
+        draw_character_group(character, camera, index);
+      }
+    }
   }
   if (runtime != nullptr && m_sprite_renderer.valid()) {
     m_sprite_renderer.draw_pass(

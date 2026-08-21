@@ -15,6 +15,7 @@
 #include "Core/Startup/StartupTraceRecorder.hpp"
 #include "Core/Video/StartupVideoSequence.hpp"
 #include "Core/Video/VideoPlayer.hpp"
+#include "Core/Video/VideoScene.hpp"
 
 namespace {
 
@@ -25,6 +26,7 @@ using App::Startup::StartupVideoSlot;
 using App::Video::StartupVideoSequence;
 using App::Video::VideoFrame;
 using App::Video::VideoPresenter;
+using App::Video::VideoScene;
 
 class StubPresenter final : public VideoPresenter {
  public:
@@ -32,6 +34,30 @@ class StubPresenter final : public VideoPresenter {
 };
 
 }  // namespace
+
+TEST_SUITE("Core::Video::VideoScene") {
+  TEST_CASE("a classic 4:3 video is centred with side bars in a 16:9 viewport") {
+    const auto scale{VideoScene::compute_contain_scale(640, 480, 1920, 1080)};
+    CHECK(scale.at(0) == doctest::Approx(0.75F));
+    CHECK_EQ(scale.at(1), 1.0F);
+  }
+
+  TEST_CASE("a wide video is centred with top and bottom bars in a narrow viewport") {
+    const auto scale{VideoScene::compute_contain_scale(1920, 1080, 1024, 768)};
+    CHECK_EQ(scale.at(0), 1.0F);
+    CHECK(scale.at(1) == doctest::Approx(0.75F));
+  }
+
+  TEST_CASE("matching aspect ratios fill the viewport") {
+    const auto scale{VideoScene::compute_contain_scale(1280, 720, 1920, 1080)};
+    CHECK_EQ(scale, std::array<float, 2>{1.0F, 1.0F});
+  }
+
+  TEST_CASE("degenerate dimensions fall back to the fullscreen scale") {
+    const auto scale{VideoScene::compute_contain_scale(0, 0, 1920, 1080)};
+    CHECK_EQ(scale, std::array<float, 2>{1.0F, 1.0F});
+  }
+}
 
 TEST_SUITE("Core::Video::StartupVideoSequence") {
   TEST_CASE("a disabled media policy skips all three videos in order") {

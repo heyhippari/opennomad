@@ -75,8 +75,10 @@ class StartupVideoPresenter final : public Video::VideoPresenter {
       : m_window(window), m_scene(scene), m_last_ticks{SDL_GetTicks()} {}
 
   void present(const Video::VideoFrame& frame) override {
-    glViewport(0, 0, m_window->get_pixel_width(), m_window->get_pixel_height());
-    m_scene->present_frame(frame);
+    const int pixel_width{m_window->get_pixel_width()};
+    const int pixel_height{m_window->get_pixel_height()};
+    glViewport(0, 0, pixel_width, pixel_height);
+    m_scene->present_frame(frame, pixel_width, pixel_height);
 
     // F12 releases the mouse during video playback. Once released, draw the
     // debug UI over the video so the menu bar (and any open debug windows)

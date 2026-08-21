@@ -96,9 +96,8 @@ struct AreaScxScriptRequest {
 /// character_id == -1 is Runtime's special current-character path; it clears
 /// model flag bit 0x2 instead of looking up a table-0 record.
 ///
-/// OpenNomad does not yet own a runtime character subsystem, so the AREA VM
-/// preserves this operation as a typed request rather than fabricating a
-/// character implementation here.
+/// The AREA VM preserves this operation as a typed request; the active world
+/// owns materialization, model resources and presentation state.
 struct AreaCharacterActivationRequest {
   std::int16_t character_id{0};
   bool apply_area_transform{false};
@@ -168,6 +167,10 @@ class AreaScriptRuntime {
   using CharacterScriptSink =
       std::function<std::expected<void, std::string>(const AreaCharacterScriptRequest&)>;
 
+  /// Bridge from opcode 0x4E to the active world's character runtime.
+  using CharacterActivationSink =
+      std::function<std::expected<void, std::string>(const AreaCharacterActivationRequest&)>;
+
   /// Presentation bridge for 0x5F/0x60. The VM still owns AREA wait/yield
   /// semantics; the sink receives each command exactly once for rendering.
   using CameraSink = std::function<void(const AreaCameraRequest&)>;
@@ -210,6 +213,9 @@ class AreaScriptRuntime {
 
   /// Wires AREA opcodes 0x3B/0x3C to explicit-character script handling.
   void set_character_script_sink(CharacterScriptSink sink);
+
+  /// Wires AREA opcode 0x4E to runtime-character activation.
+  void set_character_activation_sink(CharacterActivationSink sink);
 
   /// Wires AREA camera opcodes to the world presentation mailbox.
   void set_camera_sink(CameraSink sink);
@@ -360,6 +366,7 @@ class AreaScriptRuntime {
   MusicSink m_music_sink;
   ScxScriptSink m_scx_script_sink;
   CharacterScriptSink m_character_script_sink;
+  CharacterActivationSink m_character_activation_sink;
   CameraSink m_camera_sink;
   PresentationSink m_presentation_sink;
   InstructionSink m_instruction_sink;

@@ -28,6 +28,27 @@ struct WorldMeshHierarchyDebugState {
   std::array<float, 9> runtime_world_matrix{};
 };
 
+struct RuntimeCharacterDebugState {
+  std::size_t instance_id{0};
+  std::int16_t character_id{0};
+  std::int32_t area_id{0};
+  bool active{false};
+  bool area_present{false};
+  bool loaded{false};
+  bool renderable{false};
+  std::array<std::int32_t, 3> serialized_position{};
+  std::array<float, 3> runtime_position{};
+  std::array<float, 3> render_position{};
+  std::int16_t serialized_orientation_units{0};
+  std::int32_t runtime_orientation_degrees{0};
+  std::uint16_t definition_id{0};
+  std::string definition_name;
+  std::string model_resource;
+  std::size_t model_group_count{0};
+  std::array<float, 3> runtime_bounds_center{};
+  float bounds_radius{0.0F};
+};
+
 /// Presentation diagnostics exposed by a normal 3D world scene.
 ///
 /// This is debug-facing data only: the debug UI must not need to know which
@@ -48,6 +69,7 @@ struct WorldRenderDebugState {
   std::optional<std::uint32_t> root_mesh_id;
   std::optional<std::size_t> root_mesh_index;
   std::vector<WorldMeshHierarchyDebugState> mesh_hierarchy;
+  std::vector<RuntimeCharacterDebugState> runtime_characters;
 
   bool camera_has_pose{false};
   bool camera_scripted{false};

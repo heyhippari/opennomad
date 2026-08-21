@@ -2,6 +2,7 @@
 
 #include <glad/glad.h>
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <span>
@@ -34,8 +35,8 @@ std::vector<std::uint32_t> make_quad_indices() {
   return {0U, 1U, 2U, 0U, 2U, 3U};
 }
 
-/// Minimal textured-quad blit shader: no transforms, lighting, or tinting —
-/// the video is presented as a plain 2D image (mirrors ffplay's 2D blit).
+/// Minimal textured-quad blit shader: only the contain-fit scale is applied;
+/// the video otherwise remains a plain 2D image with no lighting or tinting.
 Shader make_blit_shader() {
   // clang-format off
   static constexpr std::string_view k_vertex_source = R"glsl(
@@ -44,11 +45,13 @@ Shader make_blit_shader() {
 layout(location = 0) in vec3 a_position;
 layout(location = 2) in vec2 a_uv;
 
+uniform vec2 u_scale;
+
 out vec2 v_uv;
 
 void main() {
     v_uv = a_uv;
-    gl_Position = vec4(a_position, 1.0);
+    gl_Position = vec4(a_position.xy * u_scale, a_position.z, 1.0);
 }
 )glsl";
 
@@ -87,7 +90,8 @@ std::unique_ptr<VideoScene> VideoScene::create() {
 VideoScene::VideoScene(Shader shader)
     : m_shader(std::move(shader)), m_quad(make_quad_vertices(), make_quad_indices()) {}
 
-void VideoScene::present_frame(const VideoFrame& frame) {
+void VideoScene::present_frame(
+    const VideoFrame& frame, const int viewport_width, const int viewport_height) {
   APP_PROFILE_FUNCTION();
 
   if (frame.width <= 0 || frame.height <= 0 || frame.rgba.empty()) {
@@ -121,7 +125,10 @@ void VideoScene::present_frame(const VideoFrame& frame) {
   glClearColor(0.0F, 0.0F, 0.0F, 1.0F);
   glClear(GL_COLOR_BUFFER_BIT);
 
+  const std::array<GLfloat, 2> scale{
+      compute_contain_scale(frame.width, frame.height, viewport_width, viewport_height)};
   m_shader.bind();
+  m_shader.set_uniform_vec2("u_scale", std::span<const GLfloat, 2>{scale});
   m_shader.set_uniform_int("u_texture0", 0);
   m_texture->bind(0);
   m_quad.draw();
@@ -134,6 +141,27 @@ void VideoScene::present_frame(const VideoFrame& frame) {
   if (cull_face_was_enabled) {
     glEnable(GL_CULL_FACE);
   }
+}
+
+std::array<float, 2> VideoScene::compute_contain_scale(const int frame_width,
+    const int frame_height,
+    const int viewport_width,
+    const int viewport_height) {
+  if (frame_width <= 0 || frame_height <= 0 || viewport_width <= 0 || viewport_height <= 0) {
+    return {1.0F, 1.0F};
+  }
+
+  const float frame_aspect{static_cast<float>(frame_width) / static_cast<float>(frame_height)};
+  const float viewport_aspect{
+      static_cast<float>(viewport_width) / static_cast<float>(viewport_height)};
+
+  if (frame_aspect > viewport_aspect) {
+    // The frame is wider than the viewport: keep its full width and letterbox.
+    return {1.0F, viewport_aspect / frame_aspect};
+  }
+
+  // The frame is taller or equal: keep its full height and pillarbox.
+  return {frame_aspect / viewport_aspect, 1.0F};
 }
 
 }  // namespace App::Video

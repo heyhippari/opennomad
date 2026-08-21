@@ -228,13 +228,39 @@ std::optional<IamAreaCharacterRecord> IamAreaRecord::character_by_id(
     character.serialized_position.at(1) = read_i32_at(record, 0x08U);
     character.serialized_position.at(2) = read_i32_at(record, 0x0CU);
     character.orientation_units = read_i16_at(record, 0x10U);
-    character.field_12 = read_u16_at(record, 0x12U);
+    character.state_bit_index = read_u16_at(record, 0x12U);
 
     if (character.character_id == character_id) {
       return character;
     }
   }
 
+  return std::nullopt;
+}
+
+std::optional<IamAreaCharacterDefinitionRecord> IamAreaRecord::character_definition_by_character_id(
+    const std::int16_t character_id) const {
+  constexpr std::size_t k_definition_table_index{4};
+  constexpr std::size_t k_definition_stride{0x114};
+
+  auto table{table_view(k_definition_table_index)};
+  if (!table) {
+    return std::nullopt;
+  }
+
+  for (std::size_t index{0}; index < table_count(k_definition_table_index); ++index) {
+    const std::span<const std::byte> record{
+        table->subspan(index * k_definition_stride, k_definition_stride)};
+    // +0x110 occupies the final dword of the 0x114-byte authored record.
+    if (read_i32_at(record, 0x110U) !=
+      static_cast<std::int32_t>(character_id)) {
+      continue;
+    }
+    return IamAreaCharacterDefinitionRecord{
+        .character_id = read_i32_at(record, 0x110U),
+        .name = fixed_string(record.subspan(0x008U, 32U)),
+        .model_resource = fixed_string(record.subspan(0x090U, 10U))};
+  }
   return std::nullopt;
 }
 

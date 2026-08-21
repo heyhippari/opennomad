@@ -22,7 +22,19 @@ struct IamAreaCharacterRecord {
   std::int16_t character_id{0};                       ///< +0x02, CHARACTERS ID.
   std::array<std::int32_t, 3> serialized_position{};  ///< +0x04..+0x0C raw integers.
   std::int16_t orientation_units{0};                  ///< +0x10, Runtime angle units.
-  std::uint16_t field_12{0};                          ///< +0x12, definition/reference field.
+  /// +0x12. Runtime opcode 0x4E passes this value to the persistent
+  /// one-bit state setter at 0x0040AF30. It is not the table-4 character ID.
+  std::uint16_t state_bit_index{0};
+};
+
+/// One authored 0x114-byte character/body definition from AREA table 4.
+///
+/// Retail AREA data pairs this record with table-0 characters by character
+/// identity: table-0 +0x02 equals table-4 +0x110.
+struct IamAreaCharacterDefinitionRecord {
+  std::int32_t character_id{0};    ///< +0x110, referenced by table 0 +0x12.
+  std::string name;                ///< +0x008, 32-byte NUL-terminated name.
+  std::string model_resource;      ///< +0x090, 10-byte NUL-terminated model name.
 };
 
 /// One 0x2C-byte AREA table-6 camera record.
@@ -109,6 +121,10 @@ class IamAreaRecord {
   /// Finds a table-0 character-placement record by its signed character ID.
   [[nodiscard]] std::optional<IamAreaCharacterRecord> character_by_id(
       std::int16_t character_id) const;
+
+  /// Finds the authored table-4 record belonging to a character ID.
+  [[nodiscard]] std::optional<IamAreaCharacterDefinitionRecord>
+  character_definition_by_character_id(std::int16_t character_id) const;
 
   /// Finds a table-6 camera by its signed camera ID.
   [[nodiscard]] std::optional<IamAreaCameraRecord> camera_by_id(std::int16_t camera_id) const;

@@ -881,6 +881,50 @@ void DebugUI::show_overlays() {
     }
 
     ImGui::Spacing();
+    ImGui::TextUnformatted("Runtime characters");
+    ImGui::Separator();
+    ImGui::Text("Count: %zu", world->runtime_characters.size());
+    for (const Debug::RuntimeCharacterDebugState& character : world->runtime_characters) {
+      const std::string label{fmt::format(
+          "Character {}##RuntimeCharacter{}", character.character_id, character.instance_id)};
+      if (!ImGui::CollapsingHeader(label.c_str())) {
+        continue;
+      }
+      ImGui::Indent();
+      ImGui::Text("Instance: %zu", character.instance_id);
+      ImGui::Text("AREA: %d", character.area_id);
+      ImGui::Text("Active: %s", character.active ? "yes" : "no");
+      ImGui::Text("AREA present: %s", character.area_present ? "yes" : "no");
+      ImGui::Text("Serialized AREA position: %d, %d, %d",
+          character.serialized_position.at(0),
+          character.serialized_position.at(1),
+          character.serialized_position.at(2));
+      ImGui::Text("Runtime position: %.3f, %.3f, %.3f",
+          static_cast<double>(character.runtime_position.at(0)),
+          static_cast<double>(character.runtime_position.at(1)),
+          static_cast<double>(character.runtime_position.at(2)));
+      ImGui::Text("Render position: %.3f, %.3f, %.3f",
+          static_cast<double>(character.render_position.at(0)),
+          static_cast<double>(character.render_position.at(1)),
+          static_cast<double>(character.render_position.at(2)));
+      ImGui::Text("Serialized orientation: %d", character.serialized_orientation_units);
+      ImGui::Text("Runtime orientation: %d deg", character.runtime_orientation_degrees);
+      ImGui::Text("Definition: %u %s",
+          static_cast<unsigned int>(character.definition_id),
+          character.definition_name.c_str());
+      ImGui::Text("Model resource: %s", character.model_resource.c_str());
+      ImGui::Text("Loaded: %s", character.loaded ? "yes" : "no");
+      ImGui::Text("Renderable: %s", character.renderable ? "yes" : "no");
+      ImGui::Text("Model groups: %zu", character.model_group_count);
+      ImGui::Text("Runtime bounds: center %.3f, %.3f, %.3f radius %.3f",
+          static_cast<double>(character.runtime_bounds_center.at(0)),
+          static_cast<double>(character.runtime_bounds_center.at(1)),
+          static_cast<double>(character.runtime_bounds_center.at(2)),
+          static_cast<double>(character.bounds_radius));
+      ImGui::Unindent();
+    }
+
+    ImGui::Spacing();
     ImGui::TextUnformatted("Camera");
     ImGui::Separator();
     ImGui::Text("Pose: %s", world->camera_has_pose ? "yes" : "no");

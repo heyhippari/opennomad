@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <memory>
 
@@ -10,11 +11,11 @@
 
 namespace App::Video {
 
-/// Fullscreen 2D video presenter. Presents decoded frames as a simple
-/// textured-quad blit (ffplay-style), with no scene/update/render lifecycle.
+/// Centred 2D video presenter. Presents decoded frames as a contain-fitted
+/// textured-quad blit, with no scene/update/render lifecycle.
 class VideoScene final {
  public:
-  /// Builds the fullscreen quad and its 2D blit shader. Cannot fail.
+  /// Builds the video quad and its 2D blit shader. Cannot fail.
   static std::unique_ptr<VideoScene> create();
 
   ~VideoScene() = default;
@@ -24,8 +25,15 @@ class VideoScene final {
   VideoScene& operator=(VideoScene other) = delete;
   VideoScene& operator=(VideoScene&& other) = delete;
 
-  /// Uploads and draws one decoded frame as a fullscreen textured quad.
-  void present_frame(const VideoFrame& frame);
+  /// Uploads and draws one decoded frame centred in the viewport while
+  /// preserving the frame's aspect ratio.
+  void present_frame(const VideoFrame& frame, int viewport_width, int viewport_height);
+
+  /// Contain-fit scale for a frame inside a viewport, in NDC. One component
+  /// remains 1 while the other shrinks to preserve the frame's aspect ratio.
+  /// Returns the fullscreen scale for non-positive dimensions.
+  [[nodiscard]] static std::array<float, 2> compute_contain_scale(
+      int frame_width, int frame_height, int viewport_width, int viewport_height);
 
  private:
   explicit VideoScene(Shader shader);

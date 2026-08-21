@@ -16,6 +16,7 @@
 
 #include "Core/Audio/AudioSystem.hpp"
 #include "Core/Audio/AudioTypes.hpp"
+#include "Core/Character/CharacterRuntime.hpp"
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/GameDataLoader.hpp"
 #include "Core/Interface/InterfaceDispatcher.hpp"
@@ -382,6 +383,42 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
         mode);
     return {};
   });
+
+  area_script.set_character_activation_sink(
+      [this](const Script::AreaCharacterActivationRequest& request)
+          -> std::expected<void, std::string> {
+        if (m_manager == nullptr || !m_area_slots.at(0).primary.has_value()) {
+          return std::expected<void, std::string>{
+              std::unexpect, "no active AREA/world owner for character activation"};
+        }
+        WorldSceneContext* context{m_manager->active_world_context()};
+        if (context == nullptr || context->runtime == nullptr) {
+          return std::expected<void, std::string>{
+              std::unexpect, "no active world character runtime"};
+        }
+
+        auto activated{context->runtime->activate_character(
+            m_area_slots.at(0).primary_area_id, *m_area_slots.at(0).primary, request)};
+        if (!activated) {
+          return activated;
+        }
+
+        const Character::RuntimeCharacter* character{
+            context->runtime->character_runtime().find(request.character_id)};
+        if (character != nullptr) {
+          record("AreaScript.CharacterActivated",
+              fmt::format("character={} model={} area={}",
+                  character->character_id,
+                  character->model_resource_name,
+                  character->area_id));
+          App::Log::info(LogCategory::Scenario,
+              "character activated — id={} model={} area={}",
+              character->character_id,
+              character->model_resource_name,
+              character->area_id);
+        }
+        return {};
+      });
 
   area_script.set_presentation_sink([this](const Script::AreaPresentationRequest& request) {
     if (m_manager == nullptr) {

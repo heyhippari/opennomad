@@ -11,6 +11,8 @@
 #include <vector>
 
 #include "Core/Audio/AudioTypes.hpp"
+#include "Core/Character/CharacterRuntime.hpp"
+#include "Core/Omikron/IamArea.hpp"
 #include "Core/Omikron/SCX.hpp"
 #include "Core/Script/ScriptRuntime.hpp"
 #include "Core/Sprite/SpritePool.hpp"
@@ -69,6 +71,15 @@ class ScenarioRuntime final : public Script::ScriptWorld {
       std::size_t source_script_index);
   /// Advances the script runtime with the real application delta in seconds.
   void tick(float real_delta_seconds);
+
+  // --- Runtime characters --------------------------------------------------
+
+  /// Resolves and materializes an AREA character activation in this world.
+  [[nodiscard]] std::expected<void, std::string> activate_character(std::int32_t area_id,
+      const Omikron::IamAreaRecord& area,
+      const Script::AreaCharacterActivationRequest& request);
+  [[nodiscard]] Character::Runtime& character_runtime();
+  [[nodiscard]] const Character::Runtime& character_runtime() const;
 
   // --- Sprite instances -----------------------------------------------------
 
@@ -151,6 +162,8 @@ class ScenarioRuntime final : public Script::ScriptWorld {
   Omikron::ScxData m_scx;
   std::string m_scenario_name;
   std::array<float, 3> m_world_anchor{0.0F, 0.0F, 0.0F};  ///< Runtime XYZ inches.
+
+  Character::Runtime m_character_runtime;
 
   Sprite::SpritePool m_sprite_pool;
   /// Decoded embedded effect resources, indexed like the SCX sprite table.

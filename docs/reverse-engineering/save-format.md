@@ -899,6 +899,11 @@ The current possessed body is stored as a `0x114`-byte authored character record
 
 Records of the same `0x114` shape are present in `IAM/AREA` and `IAM/SCENE`; possession/current-body handling copies an authored character record into START and then mutable fields evolve during play.
 
+In `IAM/AREA`, table-0 character placement `+0x12` resolves against the authored definition ID at
+table-4 record `+0x110`. The definition's fixed model field at `+0x090` supplies the character model
+resource identity used by AREA opcode `0x4E`; this is distinct from hard-coding a model by the
+table-0 character ID.
+
 Real saves contain different current bodies such as:
 
 ```text

@@ -16,13 +16,16 @@
 
 #include "Core/Audio/AudioSystem.hpp"
 #include "Core/Audio/AudioTypes.hpp"
+#include "Core/Character/CharacterRuntime.hpp"
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Log.hpp"
 #include "Core/LogCategory.hpp"
 #include "Core/Omikron/SCX.hpp"
+#include "Core/Omikron/IamArea.hpp"
 #include "Core/Omikron/Texture3DT.hpp"
 #include "Core/RuntimeMath.hpp"
 #include "Core/Script/ScriptRuntime.hpp"
+#include "Core/Script/AreaScriptRuntime.hpp"
 #include "Core/Sprite/SpriteInstance.hpp"
 #include "Core/Sprite/SpritePool.hpp"
 #include "Core/Sprite/SpriteRenderMode.hpp"
@@ -123,6 +126,20 @@ void ScenarioRuntime::tick(const float real_delta_seconds) {
   if (m_script_runtime != nullptr) {
     m_script_runtime->tick(real_delta_seconds);
   }
+}
+
+std::expected<void, std::string> ScenarioRuntime::activate_character(const std::int32_t area_id,
+    const Omikron::IamAreaRecord& area,
+    const Script::AreaCharacterActivationRequest& request) {
+  return m_character_runtime.activate(area_id, area, request);
+}
+
+Character::Runtime& ScenarioRuntime::character_runtime() {
+  return m_character_runtime;
+}
+
+const Character::Runtime& ScenarioRuntime::character_runtime() const {
+  return m_character_runtime;
 }
 
 Sprite::SpritePool& ScenarioRuntime::sprite_pool() {

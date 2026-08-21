@@ -21,6 +21,7 @@ add_library(${NAME} STATIC
   Core/Camera.cpp Core/Camera.hpp
   Core/RuntimeMath.hpp Core/RuntimeMath.cpp
   Core/RuntimePresentation.hpp Core/RuntimePresentation.cpp
+  Core/Character/CharacterRuntime.hpp Core/Character/CharacterRuntime.cpp
   Core/CameraController.cpp Core/CameraController.hpp
   Core/Input/InputAction.hpp
   Core/Input/InputSource.hpp
