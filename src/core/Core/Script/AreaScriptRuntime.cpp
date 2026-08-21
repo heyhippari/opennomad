@@ -401,7 +401,7 @@ std::expected<void, std::string> AreaScriptRuntime::complete_scx_script_wait(
 }
 
 std::expected<void, std::string> AreaScriptRuntime::complete_character_script_wait(
-    const std::int16_t character_id, const std::uint16_t script_id, const std::int16_t parameter) {
+    const std::size_t instance_id) {
   if (m_state != AreaScriptState::k_waiting) {
     return std::expected<void, std::string>{std::unexpect, "area script is not waiting"};
   }
@@ -409,17 +409,13 @@ std::expected<void, std::string> AreaScriptRuntime::complete_character_script_wa
     return std::expected<void, std::string>{
         std::unexpect, "area script is not waiting on a character script"};
   }
-  if (!m_wait.character_script.has_value()) {
+  if (!m_wait.character_script_instance.has_value()) {
     return std::expected<void, std::string>{
-        std::unexpect, "character-script wait has no tracked request"};
+        std::unexpect, "character-script wait has no tracked instance"};
   }
-
-  const AreaCharacterScriptRequest& waiting{m_wait.character_script.value()};
-  if (waiting.mode != AreaCharacterScriptLaunchMode::k_tracked ||
-      waiting.character_id != character_id || waiting.script_id != script_id ||
-      waiting.parameter != parameter) {
+  if (m_wait.character_script_instance.value() != instance_id) {
     return std::expected<void, std::string>{
-        std::unexpect, "character-script completion does not match the waiting request"};
+        std::unexpect, "character-script completion does not match the waiting instance"};
   }
 
   m_wait = AreaWaitState{};
@@ -427,11 +423,8 @@ std::expected<void, std::string> AreaScriptRuntime::complete_character_script_wa
   m_state = AreaScriptState::k_running;
 
   App::Log::debug(LogCategory::Script,
-      "area script resumed after character {} script {} parameter {} "
-      "(Runtime state 4 -> 1) at +{:#x}",
-      character_id,
-      script_id,
-      parameter,
+      "area script resumed after character-script instance {} (Runtime state 4 -> 1) at +{:#x}",
+      instance_id,
       m_ip);
 
   return {};
@@ -719,6 +712,7 @@ void AreaScriptRuntime::execute_instruction() {
           .interface_result_variable = std::nullopt,
           .scx_script_instance = instance.value(),
           .character_script = std::nullopt,
+          .character_script_instance = std::nullopt,
           .remaining_scenario_frames = 0.0F};
       wait_after_instruction = true;
       entry.effect = fmt::format(
@@ -747,15 +741,15 @@ void AreaScriptRuntime::execute_instruction() {
 
       m_last_character_script_request = request;
 
-      auto accepted{m_character_script_sink(request)};
-      if (!accepted) {
+      auto instance{m_character_script_sink(request)};
+      if (!instance) {
         m_pause_info = AreaPauseInfo{.offset = instruction_offset,
             .opcode = opcode,
             .opcode_name = std::string{info->name},
             .reason_text = fmt::format("failed to request character {} script {}: {}",
                 request.character_id,
                 request.script_id,
-                accepted.error()),
+                instance.error()),
             .nearby_bytes = nearby_bytes_hex(instruction_offset)};
         m_state = AreaScriptState::k_failed;
         return;
@@ -769,18 +763,23 @@ void AreaScriptRuntime::execute_instruction() {
             .interface_result_variable = std::nullopt,
             .scx_script_instance = std::nullopt,
             .character_script = request,
+            .character_script_instance = instance.value(),
             .remaining_scenario_frames = 0.0F};
         wait_after_instruction = true;
-        entry.effect =
-            fmt::format("request character {} script {} parameter {} and wait in Runtime state 4",
-                request.character_id,
-                request.script_id,
-                request.parameter);
-      } else {
-        entry.effect = fmt::format("request character {} script {} parameter {} (fire-and-forget)",
+        entry.effect = fmt::format(
+            "start character {} script {} parameter {} as instance {} and wait in "
+            "Runtime state 4",
             request.character_id,
             request.script_id,
-            request.parameter);
+            request.parameter,
+            instance.value());
+      } else {
+        entry.effect = fmt::format(
+            "start character {} script {} parameter {} as instance {} (fire-and-forget)",
+            request.character_id,
+            request.script_id,
+            request.parameter,
+            instance.value());
       }
       break;
     }
@@ -870,6 +869,7 @@ void AreaScriptRuntime::execute_instruction() {
                              : std::nullopt,
           .scx_script_instance = std::nullopt,
           .character_script = std::nullopt,
+          .character_script_instance = std::nullopt,
           .remaining_scenario_frames = 0.0F};
       wait_after_instruction = true;
       entry.effect = fmt::format(
@@ -903,6 +903,7 @@ void AreaScriptRuntime::execute_instruction() {
             .interface_result_variable = std::nullopt,
             .scx_script_instance = std::nullopt,
             .character_script = std::nullopt,
+            .character_script_instance = std::nullopt,
             .remaining_scenario_frames = duration_frames};
         wait_after_instruction = true;
       }

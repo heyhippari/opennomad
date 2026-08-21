@@ -68,11 +68,10 @@ struct AreaWaitState {
   std::optional<std::uint16_t> interface_result_variable;
   /// SCX ScriptRuntime instance spawned by opcode 0x39.
   std::optional<std::size_t> scx_script_instance;
-  /// Explicit-character request blocked by opcode 0x3C.
-  ///
-  /// Phase 1 tracks the logical request. Phase 3 will additionally associate
-  /// it with the concrete ScriptRuntime instance created for that character.
+  /// Explicit-character request blocked by opcode 0x3C (debug metadata).
   std::optional<AreaCharacterScriptRequest> character_script;
+  /// Exact ScriptRuntime instance spawned for a tracked 0x3C request.
+  std::optional<std::size_t> character_script_instance;
   /// Remaining 30 Hz scenario units for the timed camera wait used by 0x60.
   float remaining_scenario_frames{0.0F};
 };
@@ -162,10 +161,8 @@ class AreaScriptRuntime {
 
   /// Bridge for explicit-character script requests from AREA 0x3B/0x3C.
   ///
-  /// Phase 1 requires the bridge to resolve/validate the character but does
-  /// not yet require it to construct the concrete SCX ScriptRuntime instance.
   using CharacterScriptSink =
-      std::function<std::expected<void, std::string>(const AreaCharacterScriptRequest&)>;
+      std::function<std::expected<std::size_t, std::string>(const AreaCharacterScriptRequest&)>;
 
   /// Bridge from opcode 0x4E to the active world's character runtime.
   using CharacterActivationSink =
@@ -237,15 +234,10 @@ class AreaScriptRuntime {
   /// must match the one returned by the bridge sink.
   [[nodiscard]] std::expected<void, std::string> complete_scx_script_wait(std::size_t instance_id);
 
-  /// Resumes a tracked explicit-character script wait.
-  ///
-  /// Phase 1 matches the logical request because concrete ScriptRuntime
-  /// instance ownership is deliberately deferred to Phase 3. Production
-  /// startup does not call this yet.
+  /// Resumes a tracked explicit-character script wait. The instance ID must
+  /// exactly match the concrete child returned by the launch bridge.
   [[nodiscard]] std::expected<void, std::string> complete_character_script_wait(
-      std::int16_t character_id,
-      std::uint16_t script_id,
-      std::int16_t parameter);
+      std::size_t instance_id);
 
   [[nodiscard]] AreaScriptState state() const {
     return m_state;
@@ -260,7 +252,8 @@ class AreaScriptRuntime {
   [[nodiscard]] std::uint16_t wait_state() const {
     return m_wait_state;
   }
-  
+
+
   /// Runtime-facing numeric scenario-context state.
   ///
   /// This deliberately exposes only states whose meaning is recovered:

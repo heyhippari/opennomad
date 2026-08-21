@@ -220,7 +220,13 @@ semantic parameter map, sprite-ownership, support status, notes); it drives disp
 ImGui debugger. `ScriptRuntime` separates immutable parsed definitions (`Omikron::ScxScript`,
 `Omikron::ScriptValue`) from mutable runtime state (`ScriptInstance`: deep-copied value pool,
 root/linked commands with execution counters, current group index, instance-local
-source-sprite → runtime-sprite remap, pause/trace state).
+source-sprite → runtime-sprite remap, typed launch context, pause/trace state). AREA opcode
+`0x39` creates an unbound world instance. Opcodes `0x3B`/`0x3C` resolve the authored SCX
+`scriptId` against the active world, require an already-active runtime character, and preserve
+the explicit character ID plus the otherwise-uninterpreted third operand as launch metadata.
+`0x3B` is fire-and-forget; `0x3C` blocks the AREA context in recovered Runtime state 4 on the
+exact returned instance ID. A child paused on a known unsupported opcode remains a stable
+debugger breakpoint and does not release or fail the parent wait.
 
 Supported opcodes and argument schemas:
 

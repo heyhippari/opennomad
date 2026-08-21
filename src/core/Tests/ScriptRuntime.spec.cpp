@@ -23,6 +23,7 @@
 namespace {
 
 constexpr std::uint32_t K_SET_SPRITE_TYPE{0x0400000CU};
+constexpr std::uint32_t K_UNKNOWN_CHARACTER_2A{0x0200002AU};
 constexpr std::uint32_t K_SCALE_X{0x0400001BU};
 constexpr std::uint32_t K_SCALE_Y{0x0400001CU};
 constexpr std::uint32_t K_ROLL{0x0400001DU};
@@ -200,6 +201,11 @@ std::vector<App::Omikron::ScriptValue> make_values(
 
 TEST_SUITE("Core::Script::ScriptRuntime") {
   TEST_CASE("Opcode registry resolves confirmed opcodes") {
+    REQUIRE_NE(App::Script::opcode_info(K_UNKNOWN_CHARACTER_2A), nullptr);
+    CHECK_EQ(std::string{App::Script::opcode_name(K_UNKNOWN_CHARACTER_2A)},
+        "UnknownCharacterOpcode0x0200002A");
+    CHECK(App::Script::opcode_info(K_UNKNOWN_CHARACTER_2A)->support ==
+          App::Script::OpcodeSupport::k_unsupported);
     CHECK_NE(App::Script::opcode_info(K_SET_SPRITE_TYPE), nullptr);
     CHECK_EQ(std::string{App::Script::opcode_name(K_SET_SPRITE_TYPE)}, "SetSpriteType");
     CHECK_NE(App::Script::opcode_info(K_SET_FRAME), nullptr);
@@ -217,6 +223,29 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
     CHECK_FALSE(App::Script::opcode_owns_sprite(K_PLAY_SOUND));
     CHECK_EQ(std::string{App::Script::opcode_name(K_WAIT)}, "Wait");
     CHECK_FALSE(App::Script::opcode_owns_sprite(K_WAIT));
+  }
+
+  TEST_CASE("Launch context distinguishes world and explicit-character instances") {
+    RuntimeFixture fixture{
+        {single_root_script(command(K_SET_FRAME, 0, 2))}, make_values(2, {0, 1})};
+
+    const std::size_t world_id{fixture.runtime->create_instance(0).value()};
+    const std::size_t character_id{fixture.runtime
+            ->create_instance(
+                0, App::Script::ScriptLaunchContext{.character_id = 310, .parameter = -7})
+            .value()};
+    REQUIRE_NE(world_id, character_id);
+    const App::Script::ScriptInstance* world{fixture.runtime->instance(world_id)};
+    const App::Script::ScriptInstance* character{fixture.runtime->instance(character_id)};
+    REQUIRE(world != nullptr);
+    REQUIRE(character != nullptr);
+    CHECK_FALSE(world->launch_context.character_id.has_value());
+    CHECK_EQ(world->launch_context.parameter, 0);
+    CHECK_EQ(character->launch_context.character_id, std::optional<std::int16_t>{310});
+    CHECK_EQ(character->launch_context.parameter, -7);
+
+    fixture.runtime->instances().at(1).value_pool.at(1).set_unsigned(99U);
+    CHECK_EQ(fixture.runtime->instances().at(0).value_pool.at(1).as_unsigned(), 1U);
   }
 
   TEST_CASE("Wait advances mutable elapsed time in 30 Hz script-frame units") {

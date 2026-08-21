@@ -90,6 +90,10 @@ struct ScriptPauseInfo {
   std::size_t script_index{0};
   std::string script_name;
   std::size_t instance_id{0};
+  /// Explicit character owner captured from the instance launch context.
+  std::optional<std::int16_t> character_id;
+  /// Preserved AREA operand 3 for a character launch (semantics unresolved).
+  std::int16_t launch_parameter{0};
   std::size_t current_group_index{0};
   std::size_t chain_position{0};
   bool is_root_command{true};
@@ -119,6 +123,14 @@ struct RuntimeScriptCommand {
   std::size_t source_file_offset{0};
 };
 
+/// Typed metadata describing how a mutable script instance was launched.
+/// World scripts have no explicit character owner; AREA 0x3B/0x3C launches
+/// retain their character ID and otherwise-uninterpreted third operand.
+struct ScriptLaunchContext {
+  std::optional<std::int16_t> character_id;
+  std::int16_t parameter{0};
+};
+
 /// One runtime script instance: a deep copy of a parsed script definition
 /// with mutable argument storage, counters and an instance-local sprite
 /// source-to-runtime remap.
@@ -126,6 +138,7 @@ struct ScriptInstance {
   std::size_t instance_id{0};
   std::size_t source_script_index{0};
   std::string script_name;
+  ScriptLaunchContext launch_context;
   std::vector<Omikron::ScriptValue> value_pool;
   std::vector<RuntimeScriptCommand> root_commands;
   std::vector<RuntimeScriptCommand> linked_commands;
@@ -243,6 +256,11 @@ class ScriptRuntime {
   /// and reinitialises mutable command arguments. Returns the instance id.
   [[nodiscard]] std::expected<std::size_t, std::string> create_instance(
       std::size_t source_script_index);
+
+  /// Creates a runtime instance with explicit launch metadata. The context is
+  /// retained for ownership/debugging and does not alter the SCX value pool.
+  [[nodiscard]] std::expected<std::size_t, std::string> create_instance(
+      std::size_t source_script_index, ScriptLaunchContext launch_context);
 
   /// Advances every non-completed instance by one scheduler tick with the
   /// real application delta in seconds (converted to script frames here).

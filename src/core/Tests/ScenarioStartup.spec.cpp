@@ -33,6 +33,7 @@
 namespace {
 
 constexpr std::uint32_t K_SCX_MAGIC{0x00DEAD00U};
+constexpr std::uint32_t K_SCRIPTS_TAG{0xDEAD0002U};
 constexpr std::uint32_t K_END_TAG{0xDEADFFFFU};
 
 using App::WorldSceneResidencyState;
@@ -154,7 +155,7 @@ std::vector<std::byte> make_area_archive() {
   write_u16(data, k_record_offset + k_placement_offset + 0x10U, 4084);
   write_u16(data, k_record_offset + k_placement_offset + 0x12U, 468);
 
-  // The placement's definition reference resolves generically through table 4.
+  // The authored body resolves by the character identity stored at +0x110.
   write_u32(data, k_record_offset + 0x28U + (4U * 4U), k_definition_offset);
   write_u16(data, k_record_offset + 0x48U + (4U * 2U), 1);
   constexpr std::string_view k_character_name{"KAY'L 669"};
@@ -165,7 +166,7 @@ std::vector<std::byte> make_area_archive() {
   std::memcpy(data.data() + k_record_offset + k_definition_offset + 0x90U,
       k_model_name.data(),
       k_model_name.size());
-  write_u16(data, k_record_offset + k_definition_offset + 0x110U, 468);
+  write_u16(data, k_record_offset + k_definition_offset + 0x110U, 310);
 
   std::memcpy(data.data() + k_record_offset + 0x3FC, script.data(), script.size());
   return data;
@@ -175,6 +176,31 @@ std::vector<std::byte> make_area_archive() {
 std::vector<std::byte> make_minimal_scx() {
   Buffer bytes;
   bytes.u32(K_SCX_MAGIC).u32(5).u32(8).u32(4).u32(K_END_TAG);
+  return bytes.data();
+}
+
+/// Minimal SCX with source index 0 carrying authored script ID 1. Its first
+/// root command is the intentional New Game reverse-engineering breakpoint.
+std::vector<std::byte> make_kayl_arrives_scx() {
+  Buffer descriptor;
+  descriptor.u32(K_SCRIPTS_TAG).u32(1);
+  descriptor.u32(0).chars("1KaylArrives", 22).u16(1).u16(0).u16(0);
+  descriptor.u32(1).u32(0).u32(0);           // One root, current index, root placeholder.
+  descriptor.u32(0).u32(0);                  // No linked commands, linked placeholder.
+  descriptor.u32(0).u32(0);                  // field34 and runtime field38.
+  descriptor.zeros(3U * 4U).zeros(3U * 4U);  // Binding-table header fields.
+  descriptor.u32(0).u32(0).zeros(8);         // Related/runtime placeholders and tail.
+  descriptor.u32(0);                         // Empty shared value pool.
+  descriptor.u8(0);                          // No related script.
+  descriptor.u32(0x0200002AU).u32(0).u32(0).u32(0xFFFFFFFFU).u32(1).u32(0);
+  descriptor.u32(0).u32(0);  // Empty binding tables A and B.
+  descriptor.u32(K_END_TAG);
+
+  Buffer bytes;
+  bytes.u32(K_SCX_MAGIC).u32(5).u32(8).u32(static_cast<std::uint32_t>(descriptor.data().size()));
+  for (const std::byte value : descriptor.data()) {
+    bytes.u8(std::to_integer<std::uint8_t>(value));
+  }
   return bytes.data();
 }
 
@@ -320,6 +346,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
   TEST_CASE("New Game materializes character 310 before tracked script state 4") {
     const TempDirectory temp;
     write_boot_fixtures(temp);
+    write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_kayl_arrives_scx());
     const ScopedGameDataRoot root{temp.root()};
 
     App::ScenarioManager manager;
@@ -351,7 +378,10 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(controller.tick().has_value());  // 0x77 yield.
     REQUIRE(controller.tick().has_value());  // Camera 2172 yield.
     REQUIRE(controller.tick().has_value());  // Camera 2148 yield.
-    REQUIRE(controller.tick().has_value());  // 0x4E then tracked 0x3C.
+    const auto launched{controller.tick()};  // 0x4E then tracked 0x3C.
+    const std::string launch_error{launched ? std::string{} : launched.error()};
+    CAPTURE(launch_error);
+    REQUIRE(launched.has_value());
 
     const App::Script::AreaScriptRuntime* area_script{controller.area_script()};
     REQUIRE(area_script != nullptr);
@@ -359,6 +389,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK_EQ(area_script->runtime_state(), 4U);
     CHECK_EQ(area_script->instruction_pointer(), 0x9CU);
     CHECK(area_script->wait_info().kind == App::Script::AreaWaitKind::k_character_script);
+    REQUIRE(area_script->wait_info().character_script_instance.has_value());
 
     const App::Character::RuntimeCharacter* character{
         context->runtime->character_runtime().find(310)};
@@ -369,6 +400,35 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK_EQ(character->transform.translation.x, -399.0F);
     CHECK_EQ(character->transform.translation.y, -42.0F);
     CHECK_EQ(character->transform.translation.z, -126.0F);
+
+    App::Script::ScriptRuntime* script_runtime{context->runtime->script_runtime()};
+    REQUIRE(script_runtime != nullptr);
+    REQUIRE_EQ(script_runtime->instances().size(), 1U);
+    const std::size_t instance_id{area_script->wait_info().character_script_instance.value()};
+    const App::Script::ScriptInstance* instance{script_runtime->instance(instance_id)};
+    REQUIRE(instance != nullptr);
+    CHECK_EQ(instance->script_name, "1KaylArrives");
+    CHECK_EQ(instance->launch_context.character_id, std::optional<std::int16_t>{310});
+    CHECK_EQ(instance->launch_context.parameter, 0);
+
+    context->runtime->tick(1.0F / 30.0F);
+    instance = script_runtime->instance(instance_id);
+    REQUIRE(instance != nullptr);
+    CHECK(instance->paused);
+    CHECK_FALSE(instance->completed);
+    CHECK_EQ(instance->pause_info.opcode, 0x0200002AU);
+    CHECK_EQ(instance->pause_info.opcode_name, "UnknownCharacterOpcode0x0200002A");
+    CHECK_EQ(instance->pause_info.character_id, std::optional<std::int16_t>{310});
+
+    // The structured unsupported pause is stable across parent ticks: AREA
+    // remains on the exact child and no duplicate launch is created.
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+    CHECK_EQ(area_script->runtime_state(), 4U);
+    CHECK_EQ(area_script->instruction_pointer(), 0x9CU);
+    CHECK_EQ(area_script->wait_info().character_script_instance,
+        std::optional<std::size_t>{instance_id});
+    CHECK_EQ(script_runtime->instances().size(), 1U);
   }
 }
 

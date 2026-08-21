@@ -359,9 +359,10 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     AreaScriptRuntime runtime{bytes.data()};
     std::optional<AreaCharacterScriptRequest> captured;
     runtime.set_character_script_sink(
-        [&captured](const AreaCharacterScriptRequest& request) -> std::expected<void, std::string> {
+        [&captured](
+            const AreaCharacterScriptRequest& request) -> std::expected<std::size_t, std::string> {
           captured = request;
-          return {};
+          return 42U;
         });
 
     runtime.queue_event(1);
@@ -374,6 +375,7 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     CHECK_EQ(captured->script_id, 1U);
     CHECK_EQ(captured->parameter, 0);
     CHECK(captured->mode == AreaCharacterScriptLaunchMode::k_fire_and_forget);
+    CHECK(runtime.wait_info().kind == AreaWaitKind::k_none);
   }
 
   TEST_CASE("0x3C blocks in Runtime state 4 on the explicit character-script request") {
@@ -383,9 +385,10 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     AreaScriptRuntime runtime{bytes.data()};
     std::optional<AreaCharacterScriptRequest> captured;
     runtime.set_character_script_sink(
-        [&captured](const AreaCharacterScriptRequest& request) -> std::expected<void, std::string> {
+        [&captured](
+            const AreaCharacterScriptRequest& request) -> std::expected<std::size_t, std::string> {
           captured = request;
-          return {};
+          return 77U;
         });
 
     runtime.queue_event(1);
@@ -406,21 +409,21 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     REQUIRE(runtime.wait_info().character_script.has_value());
     CHECK_EQ(runtime.wait_info().character_script->character_id, 310);
     CHECK_EQ(runtime.wait_info().character_script->script_id, 1U);
+    CHECK_EQ(runtime.wait_info().character_script_instance, std::optional<std::size_t>{77U});
 
     // A stale/mismatched completion must not release state 4.
-    REQUIRE_FALSE(runtime.complete_character_script_wait(136, 1, 0).has_value());
+    REQUIRE_FALSE(runtime.complete_character_script_wait(76U).has_value());
     CHECK(runtime.state() == AreaScriptState::k_waiting);
     CHECK_EQ(runtime.runtime_state(), 4U);
 
-    // This explicitly exercises the recovered 4 -> 1 control-flow
-    // transition. Production startup does not synthesize this completion;
-    // Phase 3 will drive it from the concrete ScriptRuntime instance.
-    REQUIRE(runtime.complete_character_script_wait(310, 1, 0).has_value());
+    // The exact concrete child instance drives the recovered 4 -> 1
+    // control-flow transition.
+    REQUIRE(runtime.complete_character_script_wait(77U).has_value());
     CHECK(runtime.state() == AreaScriptState::k_running);
     CHECK_EQ(runtime.runtime_state(), 1U);
 
     // Duplicate completion is rejected.
-    REQUIRE_FALSE(runtime.complete_character_script_wait(310, 1, 0).has_value());
+    REQUIRE_FALSE(runtime.complete_character_script_wait(77U).has_value());
   }
 
   TEST_CASE("The result-zero AREA branch executes through its first event terminator") {
@@ -505,9 +508,9 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     std::optional<AreaCharacterScriptRequest> character_script;
     runtime.set_character_script_sink(
         [&character_script](
-            const AreaCharacterScriptRequest& request) -> std::expected<void, std::string> {
+            const AreaCharacterScriptRequest& request) -> std::expected<std::size_t, std::string> {
           character_script = request;
-          return {};
+          return 77U;
         });
 
     runtime.queue_event(1);
@@ -532,9 +535,8 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     REQUIRE(runtime.last_camera_request().has_value());
     CHECK_EQ(runtime.last_camera_request()->camera_id, 2148U);
 
-    // 0x4E does not yield, so the same AREA tick continues into 0x3C.
-    // Phase 1 resolves the explicit character-script request and then stops
-    // naturally in recovered Runtime state 4.
+    // 0x4E does not yield, so the same AREA tick continues into 0x3C and
+    // stores the concrete child before stopping in recovered Runtime state 4.
     REQUIRE(runtime.run() == AreaScriptState::k_waiting);
     CHECK_EQ(runtime.instruction_pointer(), 0x9CU);
     CHECK_EQ(runtime.wait_state(), 4U);
@@ -550,6 +552,31 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     CHECK_EQ(character_script->script_id, 1U);
     CHECK_EQ(character_script->parameter, 0);
     CHECK(character_script->mode == AreaCharacterScriptLaunchMode::k_tracked);
+    CHECK_EQ(runtime.wait_info().character_script_instance, std::optional<std::size_t>{77U});
+  }
+
+  TEST_CASE("A failed character-script launch enters structured failure once") {
+    Buffer bytes;
+    bytes.u8(0x3C).u16(310).u16(1).u16(0);
+
+    AreaScriptRuntime runtime{bytes.data()};
+    std::size_t calls{0};
+    runtime.set_character_script_sink(
+        [&calls](const AreaCharacterScriptRequest&) -> std::expected<std::size_t, std::string> {
+          ++calls;
+          return std::expected<std::size_t, std::string>{
+              std::unexpect, "runtime character 310 does not exist"};
+        });
+    runtime.queue_event(1);
+    runtime.activate();
+
+    CHECK(runtime.run() == AreaScriptState::k_failed);
+    CHECK_EQ(calls, 1U);
+    CHECK(runtime.pause_info().reason_text.find("runtime character 310 does not exist") !=
+          std::string::npos);
+    CHECK_FALSE(runtime.wait_info().character_script_instance.has_value());
+    CHECK(runtime.run() == AreaScriptState::k_failed);
+    CHECK_EQ(calls, 1U);
   }
 
   TEST_CASE("The opcode registry knows the recovered New Game VM primitives") {

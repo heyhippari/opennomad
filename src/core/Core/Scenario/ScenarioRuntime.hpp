@@ -69,6 +69,9 @@ class ScenarioRuntime final : public Script::ScriptWorld {
   /// Creates a runtime instance for one parsed source script.
   [[nodiscard]] std::expected<std::size_t, std::string> spawn_script_instance(
       std::size_t source_script_index);
+  /// Creates an SCX instance explicitly bound to an existing active character.
+  [[nodiscard]] std::expected<std::size_t, std::string> spawn_character_script_instance(
+      std::size_t source_script_index, std::int16_t character_id, std::int16_t parameter);
   /// Advances the script runtime with the real application delta in seconds.
   void tick(float real_delta_seconds);
 

@@ -2,11 +2,13 @@
 
 // NOLINTBEGIN(misc-use-anonymous-namespace, cppcoreguidelines-avoid-do-while, cert-err33-c,
 // misc-include-cleaner, cppcoreguidelines-pro-bounds-constant-array-index,
-// cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
+// cppcoreguidelines-pro-bounds-avoid-unchecked-container-access,
+// cppcoreguidelines-pro-bounds-pointer-arithmetic)
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <expected>
 #include <memory>
 #include <optional>
@@ -15,8 +17,11 @@
 #include <string_view>
 #include <vector>
 
+#include "Core/Omikron/IamArea.hpp"
+#include "Core/Omikron/Model3DO.hpp"
 #include "Core/Omikron/SCX.hpp"
 #include "Core/Scenario/ScenarioRuntime.hpp"
+#include "Core/Script/AreaScriptRuntime.hpp"
 #include "Core/Script/ScriptRuntime.hpp"
 #include "Core/Sprite/SpriteInstance.hpp"
 
@@ -44,6 +49,40 @@ App::Omikron::ScxScript make_script(const std::string_view name,
     script.root_commands.push_back(make_command());
   }
   return script;
+}
+
+void write_i16(std::vector<std::byte>& data, const std::size_t offset, const std::int16_t value) {
+  std::memcpy(data.data() + offset, &value, sizeof(value));
+}
+
+void write_u16(std::vector<std::byte>& data, const std::size_t offset, const std::uint16_t value) {
+  std::memcpy(data.data() + offset, &value, sizeof(value));
+}
+
+void write_u32(std::vector<std::byte>& data, const std::size_t offset, const std::uint32_t value) {
+  std::memcpy(data.data() + offset, &value, sizeof(value));
+}
+
+App::Omikron::IamAreaRecord make_character_area() {
+  constexpr std::size_t k_placement_offset{App::Omikron::IamAreaRecord::k_header_size};
+  constexpr std::size_t k_definition_offset{k_placement_offset + 0x14U};
+  std::vector<std::byte> data(k_definition_offset + 0x114U, std::byte{});
+  write_u32(
+      data, App::Omikron::IamAreaRecord::k_offset_script, static_cast<std::uint32_t>(data.size()));
+  write_u32(data, App::Omikron::IamAreaRecord::k_offset_table_offsets, k_placement_offset);
+  write_u16(data, App::Omikron::IamAreaRecord::k_offset_table_counts, 1);
+  write_i16(data, k_placement_offset, -1);
+  write_i16(data, k_placement_offset + 0x02U, 310);
+  write_u16(data, k_placement_offset + 0x12U, 468);
+  write_u32(
+      data, App::Omikron::IamAreaRecord::k_offset_table_offsets + (4U * 4U), k_definition_offset);
+  write_u16(data, App::Omikron::IamAreaRecord::k_offset_table_counts + (4U * 2U), 1);
+  constexpr std::string_view k_name{"KAY'L 669"};
+  std::memcpy(data.data() + k_definition_offset + 0x08U, k_name.data(), k_name.size());
+  constexpr std::string_view k_model{"HO1_FNM"};
+  std::memcpy(data.data() + k_definition_offset + 0x90U, k_model.data(), k_model.size());
+  write_u16(data, k_definition_offset + 0x110U, 310);
+  return App::Omikron::IamAreaRecord::load(data).value();
 }
 
 }  // namespace
@@ -105,6 +144,48 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
     CHECK_EQ(runtime.script_runtime()->instances().at(0).script_name, "a");
   }
 
+  TEST_CASE("Spawns a character-bound script only for an active runtime character") {
+    App::Omikron::ScxData scx;
+    scx.scripts.push_back(make_script("unrelated", 1));
+    scx.scripts.push_back(make_script("1KaylArrives", 1));
+    scx.scripts.at(0).script_id = 99;
+    scx.scripts.at(1).script_id = 1;
+    App::ScenarioRuntime runtime;
+    REQUIRE(runtime.initialize(scx, std::span<const std::byte>{}, "character", nullptr, false)
+            .has_value());
+
+    auto missing{runtime.spawn_character_script_instance(1, 310, 0)};
+    REQUIRE_FALSE(missing.has_value());
+    CHECK(missing.error().find("does not exist") != std::string::npos);
+
+    runtime.character_runtime().set_model_loader(
+        [](const std::string_view name)
+            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
+          auto resource{std::make_shared<App::Character::ModelResource>()};
+          resource->name = name;
+          resource->groups.push_back(App::Omikron::MaterialGroup{});
+          return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
+        });
+    const App::Omikron::IamAreaRecord area{make_character_area()};
+    const auto activated{runtime.activate_character(118,
+        area,
+        App::Script::AreaCharacterActivationRequest{
+            .character_id = 310, .apply_area_transform = true})};
+    const std::string activation_error{activated ? std::string{} : activated.error()};
+    CAPTURE(activation_error);
+    REQUIRE(activated.has_value());
+
+    const auto created{runtime.spawn_character_script_instance(1, 310, -5)};
+    REQUIRE(created.has_value());
+    const App::Script::ScriptInstance* instance{
+        runtime.script_runtime()->instance(created.value())};
+    REQUIRE(instance != nullptr);
+    CHECK_EQ(instance->source_script_index, 1U);
+    CHECK_EQ(instance->script_name, "1KaylArrives");
+    CHECK_EQ(instance->launch_context.character_id, std::optional<std::int16_t>{310});
+    CHECK_EQ(instance->launch_context.parameter, -5);
+  }
+
   TEST_CASE("Sprite pool lifecycle works through the runtime") {
     App::Omikron::ScxData scx;
     App::ScenarioRuntime runtime;
@@ -142,4 +223,5 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
 
 // NOLINTEND(misc-use-anonymous-namespace, cppcoreguidelines-avoid-do-while, cert-err33-c,
 // misc-include-cleaner, cppcoreguidelines-pro-bounds-constant-array-index,
-// cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
+// cppcoreguidelines-pro-bounds-avoid-unchecked-container-access,
+// cppcoreguidelines-pro-bounds-pointer-arithmetic)

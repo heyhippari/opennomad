@@ -34,6 +34,10 @@ constexpr std::uint32_t K_SET_SPRITE_ROLLING{0x0400001DU};
 constexpr std::uint32_t K_UNKNOWN_20{0x04000020U};
 constexpr std::uint32_t K_DISPLAY_3D_SPRITE{0x04000028U};
 constexpr std::uint32_t K_SET_SPRITE_FRAME{0x04000029U};
+// First root opcode of GRID script ID 1 ("1KaylArrives"). Its semantics are
+// intentionally not implemented; retaining it in the registry gives the
+// debugger a stable structured name at the reverse-engineering breakpoint.
+constexpr std::uint32_t K_UNKNOWN_CHARACTER_2A{0x0200002AU};
 
 // Audio opcodes (recovered from Runtime.exe).
 constexpr std::uint32_t K_PLAY_SOUND{0x05000014U};
@@ -102,7 +106,15 @@ constexpr std::array<OpcodeSemanticParam, 2> K_WAIT_PARAMS{
     OpcodeSemanticParam{.semantic_type = k_semantic_progress_elapsed, .argument_index = 1},
 };
 
-constexpr std::array<OpcodeInfo, 12> K_OPCODE_TABLE{
+constexpr std::array<OpcodeInfo, 13> K_OPCODE_TABLE{
+    OpcodeInfo{.opcode = K_UNKNOWN_CHARACTER_2A,
+        .name = "UnknownCharacterOpcode0x0200002A",
+        .expected_argument_count = 0,
+        .semantic_params = nullptr,
+        .semantic_param_count = 0,
+        .owns_sprite = false,
+        .support = OpcodeSupport::k_unsupported,
+        .notes = "Character-script opcode semantics are not yet established."},
     OpcodeInfo{.opcode = K_SET_SPRITE_TYPE,
         .name = "SetSpriteType",
         .expected_argument_count = 2,
@@ -329,6 +341,11 @@ std::expected<std::unique_ptr<ScriptRuntime>, std::string> ScriptRuntime::create
 
 std::expected<std::size_t, std::string> ScriptRuntime::create_instance(
     const std::size_t source_script_index) {
+  return create_instance(source_script_index, ScriptLaunchContext{});
+}
+
+std::expected<std::size_t, std::string> ScriptRuntime::create_instance(
+    const std::size_t source_script_index, ScriptLaunchContext launch_context) {
   APP_PROFILE_FUNCTION();
 
   if (m_scx == nullptr) {
@@ -348,6 +365,7 @@ std::expected<std::size_t, std::string> ScriptRuntime::create_instance(
   instance.instance_id = m_next_instance_id++;
   instance.source_script_index = source_script_index;
   instance.script_name = source.name;
+  instance.launch_context = launch_context;
   instance.value_pool = m_scx->shared_values;  // Deep copy: runtime owns mutable args.
   instance.execution_context_field_34 = source.execution_context_field_34;
 
@@ -696,6 +714,8 @@ void ScriptRuntime::pause(ScriptInstance& instance,
   info.script_index = instance.source_script_index;
   info.script_name = instance.script_name;
   info.instance_id = instance.instance_id;
+  info.character_id = instance.launch_context.character_id;
+  info.launch_parameter = instance.launch_context.parameter;
   info.current_group_index = group_index;
   info.chain_position = chain_position;
   info.is_root_command = is_root;

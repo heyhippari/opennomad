@@ -1670,6 +1670,11 @@ void DebugUI::show_script_debugger() {
         static_cast<unsigned long>(info.instance_id),
         static_cast<unsigned long>(info.current_group_index),
         static_cast<unsigned long>(info.chain_position));
+    if (info.character_id.has_value()) {
+      ImGui::Text("Launch: Character  Character: %d  Parameter: %d",
+          info.character_id.value(),
+          info.launch_parameter);
+    }
     ImGui::Text("Command %s %lu, opcode %#010x (%s), file offset %#lx",
         info.is_root_command ? "root" : "linked",
         static_cast<unsigned long>(info.command_index),
@@ -1712,6 +1717,11 @@ void DebugUI::show_script_debugger() {
       for (std::size_t arg{0}; arg < info.arguments.size(); ++arg) {
         text += fmt::format("  arg {}: {}\n", arg, argument_text(info.arguments.at(arg).raw));
       }
+      if (info.character_id.has_value()) {
+        text += fmt::format("launch: character {} parameter {}\n",
+            info.character_id.value(),
+            info.launch_parameter);
+      }
       ImGui::SetClipboardText(text.c_str());
     }
   }
@@ -1743,10 +1753,20 @@ void DebugUI::show_script_debugger() {
   }
   if (selected != nullptr) {
     ImGui::SeparatorText("Selected instance");
-    ImGui::Text("Source script %lu, field34 %d, sprite remaps %lu",
+    const Omikron::ScxScript& source_script{
+        runtime->scx().scripts.at(selected->source_script_index)};
+    ImGui::Text("Source script %lu, ID %u, field34 %d, sprite remaps %lu",
         static_cast<unsigned long>(selected->source_script_index),
+        source_script.script_id,
         selected->execution_context_field_34,
         static_cast<unsigned long>(selected->sprite_remap.size()));
+    if (selected->launch_context.character_id.has_value()) {
+      ImGui::Text("Launch: Character  Character: %d  Parameter: %d",
+          selected->launch_context.character_id.value(),
+          selected->launch_context.parameter);
+    } else {
+      ImGui::TextUnformatted("Launch: World");
+    }
     for (const auto& [source, handle] : selected->sprite_remap) {
       ImGui::Text("  source sprite %u -> runtime %u:%u", source, handle.index, handle.generation);
     }
@@ -2203,6 +2223,20 @@ void DebugUI::show_area_script() {
     ImGui::Text("Wait interface: id=%u gen=%u",
         static_cast<unsigned int>(script->wait_info().interface->interface_id),
         script->wait_info().interface->generation);
+  }
+  if (script->wait_info().kind == Script::AreaWaitKind::k_character_script) {
+    if (script->wait_info().character_script_instance.has_value()) {
+      ImGui::Text("Waiting on character script instance %zu",
+          script->wait_info().character_script_instance.value());
+    }
+    if (script->wait_info().character_script.has_value()) {
+      const Script::AreaCharacterScriptRequest& request{
+          script->wait_info().character_script.value()};
+      ImGui::Text("Character: %d  Script ID: %u  Parameter: %d  Tracked: yes",
+          request.character_id,
+          request.script_id,
+          request.parameter);
+    }
   }
   ImGui::Text("Instruction pointer: %zu  executed: %zu",
       script->instruction_pointer(),

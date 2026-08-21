@@ -20,12 +20,12 @@
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Log.hpp"
 #include "Core/LogCategory.hpp"
-#include "Core/Omikron/SCX.hpp"
 #include "Core/Omikron/IamArea.hpp"
+#include "Core/Omikron/SCX.hpp"
 #include "Core/Omikron/Texture3DT.hpp"
 #include "Core/RuntimeMath.hpp"
-#include "Core/Script/ScriptRuntime.hpp"
 #include "Core/Script/AreaScriptRuntime.hpp"
+#include "Core/Script/ScriptRuntime.hpp"
 #include "Core/Sprite/SpriteInstance.hpp"
 #include "Core/Sprite/SpritePool.hpp"
 #include "Core/Sprite/SpriteRenderMode.hpp"
@@ -120,6 +120,27 @@ std::expected<std::size_t, std::string> ScenarioRuntime::spawn_script_instance(
         std::unexpect, "script runtime is not initialised"};
   }
   return m_script_runtime->create_instance(source_script_index);
+}
+
+std::expected<std::size_t, std::string> ScenarioRuntime::spawn_character_script_instance(
+    const std::size_t source_script_index,
+    const std::int16_t character_id,
+    const std::int16_t parameter) {
+  if (m_script_runtime == nullptr) {
+    return std::expected<std::size_t, std::string>{
+        std::unexpect, "script runtime is not initialised"};
+  }
+  const Character::RuntimeCharacter* character{m_character_runtime.find(character_id)};
+  if (character == nullptr) {
+    return std::expected<std::size_t, std::string>{
+        std::unexpect, fmt::format("runtime character {} does not exist", character_id)};
+  }
+  if (!character->active || !character->area_present) {
+    return std::expected<std::size_t, std::string>{std::unexpect,
+        fmt::format("runtime character {} is not active in the current AREA", character_id)};
+  }
+  return m_script_runtime->create_instance(source_script_index,
+      Script::ScriptLaunchContext{.character_id = character_id, .parameter = parameter});
 }
 
 void ScenarioRuntime::tick(const float real_delta_seconds) {

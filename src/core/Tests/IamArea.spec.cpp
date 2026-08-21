@@ -134,7 +134,7 @@ TEST_SUITE("Core::Omikron::IamAreaRecord") {
     CHECK_FALSE(record->character_by_id(999).has_value());
   }
 
-  TEST_CASE("AREA table 0 definition reference resolves a generic table-4 character body") {
+  TEST_CASE("AREA character identity resolves a generic table-4 character body") {
     constexpr std::size_t k_character_offset{IamAreaRecord::k_header_size};
     constexpr std::size_t k_definition_offset{k_character_offset + 0x14U};
     constexpr std::uint16_t k_definition_id{468};
@@ -152,12 +152,16 @@ TEST_SUITE("Core::Omikron::IamAreaRecord") {
     std::memcpy(data.data() + k_definition_offset + 0x08U, k_name.data(), k_name.size());
     constexpr std::string_view k_model{"HO1_FNM"};
     std::memcpy(data.data() + k_definition_offset + 0x90U, k_model.data(), k_model.size());
-    write_u16(data, k_definition_offset + 0x110U, k_definition_id);
+    write_u16(data, k_definition_offset + 0x110U, 310);
 
     const auto record{IamAreaRecord::load(data)};
     REQUIRE(record.has_value());
     const auto placement{record->character_by_id(310)};
     REQUIRE(placement.has_value());
+    const auto definition{record->character_definition_by_character_id(310)};
+    REQUIRE(definition.has_value());
+    CHECK_EQ(definition->name, "KAY'L 669");
+    CHECK_EQ(definition->model_resource, "HO1_FNM");
   }
 
   TEST_CASE("AREA table 6 exposes recovered camera records by signed ID") {

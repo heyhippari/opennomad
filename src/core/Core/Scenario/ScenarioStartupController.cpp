@@ -24,6 +24,7 @@
 #include "Core/LogCategory.hpp"
 #include "Core/Omikron/IamArea.hpp"
 #include "Core/Omikron/IamStart.hpp"
+#include "Core/Omikron/SCX.hpp"
 #include "Core/RuntimeMath.hpp"
 #include "Core/Scenario/ScenarioManager.hpp"
 #include "Core/Scenario/ScenarioRuntime.hpp"
@@ -330,58 +331,62 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
         fmt::format("SCX script ID {} not found in active world", request.script_id)};
   });
 
-  // Phase 1 of explicit-character script support.
-  //
-  // Runtime 0x3B/0x3C first identifies a concrete character rather than
-  // launching a context-free SCX script like opcode 0x39. Resolve that
-  // character through AREA table 0 now, but deliberately stop at the typed
-  // launch boundary. Character materialization and concrete ScriptRuntime
-  // instance creation belong to the following phases.
+  // Runtime 0x3B/0x3C launches an SCX script against an already-materialized
+  // character. Resolve the authored script ID generically, then let the
+  // world-owned ScenarioRuntime validate the character and create the bound
+  // ScriptRuntime instance.
   area_script.set_character_script_sink([this](const Script::AreaCharacterScriptRequest& request)
-                                            -> std::expected<void, std::string> {
-    if (!m_area_slots.at(0).primary.has_value()) {
-      return std::expected<void, std::string>{
-          std::unexpect, "no active AREA record for character-script request"};
+                                            -> std::expected<std::size_t, std::string> {
+    if (m_manager == nullptr) {
+      return std::expected<std::size_t, std::string>{
+          std::unexpect, "scenario manager is not available"};
+    }
+    WorldSceneContext* context{m_manager->active_world_context()};
+    if (context == nullptr || !context->scx_data.has_value() || context->runtime == nullptr) {
+      return std::expected<std::size_t, std::string>{
+          std::unexpect, "no active world SCX/character runtime"};
     }
 
-    const Omikron::IamAreaRecord& area{*m_area_slots.at(0).primary};
-    const auto character{area.character_by_id(request.character_id)};
-    if (!character.has_value()) {
-      return std::expected<void, std::string>{std::unexpect,
-          fmt::format("character ID {} not found in active AREA table 0", request.character_id)};
+    const auto& scripts{context->scx_data->scripts};
+    std::optional<std::size_t> source_script_index;
+    for (std::size_t index{0}; index < scripts.size(); ++index) {
+      if (scripts.at(index).script_id == request.script_id) {
+        source_script_index = index;
+        break;
+      }
+    }
+    if (!source_script_index.has_value()) {
+      return std::expected<std::size_t, std::string>{std::unexpect,
+          fmt::format("SCX script ID {} not found in active world", request.script_id)};
+    }
+
+    auto created{context->runtime->spawn_character_script_instance(
+        source_script_index.value(), request.character_id, request.parameter)};
+    if (!created) {
+      return created;
     }
 
     const bool tracked{request.mode == Script::AreaCharacterScriptLaunchMode::k_tracked};
     const std::string_view mode{tracked ? "tracked" : "fire-and-forget"};
-    const Runtime::Vec3 runtime_position{
-        Runtime::area_position_to_inches(character->serialized_position)};
-    const std::int32_t orientation_degrees{
-        Runtime::area_angle_to_degrees(character->orientation_units)};
-
-    record("AreaScript.CharacterScriptRequested",
-        fmt::format("character={} script={} parameter={} mode={} "
-                    "serialized=({},{},{}) runtime=({},{},{}) orientation={}deg",
+    const Omikron::ScxScript& script{scripts.at(source_script_index.value())};
+    record("AreaScript.CharacterScriptStarted",
+        fmt::format("character={} script={} name='{}' parameter={} mode={} instance={}",
             request.character_id,
             request.script_id,
+            script.name,
             request.parameter,
             mode,
-            character->serialized_position.at(0),
-            character->serialized_position.at(1),
-            character->serialized_position.at(2),
-            runtime_position.x,
-            runtime_position.y,
-            runtime_position.z,
-            orientation_degrees));
+            created.value()));
 
     App::Log::debug(LogCategory::Script,
-        "AREA opcode {:#04x} — character={} script={} parameter={} "
-        "mode={} (launch deferred)",
+        "AREA opcode {:#04x} — started character {} script {} '{}' as instance {}, {}",
         tracked ? 0x3C : 0x3B,
         request.character_id,
         request.script_id,
-        request.parameter,
+        script.name,
+        created.value(),
         mode);
-    return {};
+    return created;
   });
 
   area_script.set_character_activation_sink(
@@ -630,6 +635,47 @@ std::expected<void, std::string> ScenarioStartupController::tick(const float del
         return std::expected<void, std::string>{std::unexpect, m_last_error};
       }
       record("AreaScript.ScxScriptCompleted", fmt::format("instance={}", instance_id));
+    }
+  }
+
+  // Opcode 0x3C waits on the exact character-bound child returned by its
+  // launch bridge. An unsupported-opcode pause is an intentional debugger
+  // breakpoint: keep AREA in Runtime state 4 and let rendering continue.
+  if (area_script.state() == Script::AreaScriptState::k_waiting &&
+      area_script.wait_info().kind == Script::AreaWaitKind::k_character_script) {
+    if (m_manager == nullptr || !area_script.wait_info().character_script_instance.has_value()) {
+      m_last_error = "AREA character-script wait has no scenario owner or instance ID";
+      return std::expected<void, std::string>{std::unexpect, m_last_error};
+    }
+    const WorldSceneContext* context{m_manager->active_world_context()};
+    if (context == nullptr || context->runtime == nullptr ||
+        context->runtime->script_runtime() == nullptr) {
+      m_last_error = "AREA is waiting on a character script but no active world runtime exists";
+      return std::expected<void, std::string>{std::unexpect, m_last_error};
+    }
+
+    const Script::ScriptRuntime* script_runtime{context->runtime->script_runtime()};
+    const std::size_t instance_id{area_script.wait_info().character_script_instance.value()};
+    const Script::ScriptInstance* instance{script_runtime->instance(instance_id)};
+    if (instance == nullptr) {
+      m_last_error =
+          fmt::format("AREA is waiting on missing character-script instance {}", instance_id);
+      return std::expected<void, std::string>{std::unexpect, m_last_error};
+    }
+    if (instance->paused &&
+        instance->pause_info.reason != Script::ScriptPauseReason::k_unhandled_opcode) {
+      m_last_error = fmt::format("character-script instance {} '{}' paused with an error: {}",
+          instance_id,
+          instance->script_name,
+          instance->pause_info.reason_text);
+      return std::expected<void, std::string>{std::unexpect, m_last_error};
+    }
+    if (instance->completed) {
+      if (auto completed{area_script.complete_character_script_wait(instance_id)}; !completed) {
+        m_last_error = completed.error();
+        return std::expected<void, std::string>{std::unexpect, m_last_error};
+      }
+      record("AreaScript.CharacterScriptCompleted", fmt::format("instance={}", instance_id));
     }
   }
 
