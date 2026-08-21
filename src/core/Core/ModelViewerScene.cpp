@@ -274,50 +274,6 @@ void main() {
 }
 )glsl"};
 
-/// Skybox vertex shader: the view's translation is stripped on the CPU, so
-/// the geometry follows the camera. The clip distance is constant (skyboxes
-/// are never clipped, including in the mirror pass) and z is pinned to the
-/// far plane so the scene always draws in front of it.
-constexpr std::string_view K_SKYBOX_VERTEX_SHADER_SOURCE{R"glsl(
-#version 410 core
-layout(location = 0) in vec3 a_position;
-layout(location = 1) in vec3 a_normal;
-layout(location = 2) in vec2 a_uv;
-layout(location = 3) in vec4 a_color;
-
-uniform mat4 u_mvp;
-
-out vec2 v_uv;
-out vec4 v_color;
-out float gl_ClipDistance[1];
-
-void main() {
-    v_uv = a_uv;
-    v_color = a_color;
-    gl_ClipDistance[0] = 1.0;
-    gl_Position = u_mvp * vec4(a_position, 1.0);
-    gl_Position.z = gl_Position.w;  // Pin the skybox to the far plane.
-}
-)glsl"};
-
-/// Unlit skybox fragment shader: the texture times the baked vertex colour.
-constexpr std::string_view K_SKYBOX_FRAGMENT_SHADER_SOURCE{R"glsl(
-#version 410 core
-in vec2 v_uv;
-in vec4 v_color;
-
-uniform sampler2D u_texture0;
-uniform float u_vertex_color;  // 1.0 for pre-lit meshes, 0.0 otherwise.
-
-out vec4 frag_colour;
-
-void main() {
-    vec4 texel = texture(u_texture0, v_uv);
-    vec3 colour = texel.rgb * mix(vec3(1.0), v_color.rgb, u_vertex_color);
-    frag_colour = vec4(colour, 1.0);
-}
-)glsl"};
-
 /// Mirrors share the main vertex shader; the fragment stage composites the
 /// surface texture with the reflection buffer via screen-space UVs.
 constexpr std::string_view K_MIRROR_FRAGMENT_SHADER_SOURCE{R"glsl(
@@ -838,11 +794,6 @@ std::expected<std::unique_ptr<ModelViewerScene>, std::string> ModelViewerScene::
     return std::expected<std::unique_ptr<ModelViewerScene>, std::string>{
         std::unexpect, std::move(env_shader).error()};
   }
-  auto skybox_shader{Shader::create(K_SKYBOX_VERTEX_SHADER_SOURCE, K_SKYBOX_FRAGMENT_SHADER_SOURCE)};
-  if (!skybox_shader) {
-    return std::expected<std::unique_ptr<ModelViewerScene>, std::string>{
-        std::unexpect, std::move(skybox_shader).error()};
-  }
   auto overlay_shader{
       Shader::create(K_OVERLAY_VERTEX_SHADER_SOURCE, K_OVERLAY_FRAGMENT_SHADER_SOURCE)};
   if (!overlay_shader) {
@@ -1008,7 +959,6 @@ std::expected<std::unique_ptr<ModelViewerScene>, std::string> ModelViewerScene::
       std::move(shader).value(),
       std::move(mirror_shader).value(),
       std::move(env_shader).value(),
-      std::move(skybox_shader).value(),
       std::move(overlay_shader).value(),
       std::move(mirror_framebuffer).value(),
       std::move(sky_cubemap).value(),
@@ -1025,7 +975,6 @@ ModelViewerScene::ModelViewerScene(const std::vector<Omikron::MaterialGroup>& gr
     Shader shader,
     Shader mirror_shader,
     Shader env_shader,
-    Shader skybox_shader,
     Shader overlay_shader,
     Framebuffer mirror_framebuffer,
     TextureCube sky_cubemap,
@@ -1038,7 +987,6 @@ ModelViewerScene::ModelViewerScene(const std::vector<Omikron::MaterialGroup>& gr
     : m_shader(std::move(shader)),
       m_mirror_shader(std::move(mirror_shader)),
       m_env_shader(std::move(env_shader)),
-      m_skybox_shader(std::move(skybox_shader)),
       m_overlay_shader(std::move(overlay_shader)),
       m_mirror_framebuffer(std::move(mirror_framebuffer)),
       m_sky_cubemap(std::move(sky_cubemap)),
@@ -1121,12 +1069,6 @@ ModelViewerScene::ModelViewerScene(const std::vector<Omikron::MaterialGroup>& gr
       m_mirrors.push_back(MirrorSurface{.plane = plane_storage});
     }
 
-    // Skybox meshes are drawn by their own camera-following pass instead of
-    // the regular opaque/blended passes.
-    if (Omikron::has_flag(group.flags, Omikron::MeshFlags::k_skybox)) {
-      m_skybox_group_indices.push_back(index);
-    }
-
     // Bounding-box centre of the group's vertices; blended meshes are
     // sorted by their distance from the eye along this point.
     std::array<float, 3> min{std::numeric_limits<float>::max(),
@@ -1149,8 +1091,7 @@ ModelViewerScene::ModelViewerScene(const std::vector<Omikron::MaterialGroup>& gr
     }
     m_group_centers.push_back(center);
   }
-  App::Log::debug(LogCategory::Renderer, "Skybox groups: {}", m_skybox_group_indices.size());
-
+  
   // The camera sits in front of the model's centre and looks at its torso.
   m_camera.set_position(m_model_center.at(0),
       m_model_center.at(1) + k_camera_height,
@@ -1247,48 +1188,6 @@ void ModelViewerScene::draw_env_group(const std::size_t index,
   m_env_shader.set_uniform_int("u_texture_cube", 1);
 
   m_meshes.at(index).draw();
-}
-
-void ModelViewerScene::draw_skybox_group(const std::size_t index) {
-  m_skybox_shader.bind();
-
-  const std::size_t material_index{static_cast<std::size_t>(m_group_material_ids.at(index))};
-  const bool vertex_lit{
-      Omikron::has_flag(m_group_flags.at(index), Omikron::MeshFlags::k_vertex_lit)};
-  m_skybox_shader.set_uniform_float("u_vertex_color", vertex_lit ? 1.0F : 0.0F);
-
-  const Texture2D& texture{m_textures.at(material_index)};
-  texture.bind(0);
-  m_skybox_shader.set_uniform_int("u_texture0", 0);
-  m_meshes.at(index).draw();
-}
-
-void ModelViewerScene::render_skybox(const glm::mat4& view, const glm::mat4& projection) {
-  if (m_skybox_group_indices.empty()) {
-    return;
-  }
-
-  // The skybox surrounds the camera: strip the view translation so the
-  // geometry follows the eye and appears infinitely far away.
-  const glm::mat4 sky_view{skybox_view_matrix(view)};
-  const glm::mat4 mvp{projection * sky_view};
-
-  m_skybox_shader.bind();
-  m_skybox_shader.set_uniform_mat4(
-      "u_mvp", std::span<const GLfloat, 16>{glm::value_ptr(mvp), 16});
-
-  // Drawn first with no depth writes, so everything else overdraws it; the
-  // far-plane clamp plus LEQUAL keeps the fragments behind the scene. Faces
-  // are seen from the inside and their winding is unknown, so cull nothing.
-  glDepthMask(GL_FALSE);
-  glDepthFunc(GL_LEQUAL);
-  glDisable(GL_CULL_FACE);
-  for (const std::size_t index : m_skybox_group_indices) {
-    draw_skybox_group(index);
-  }
-  glEnable(GL_CULL_FACE);
-  glDepthFunc(GL_LESS);
-  glDepthMask(GL_TRUE);
 }
 
 void ModelViewerScene::update(const float delta_time, const Input::InputManager& input) {
@@ -1523,9 +1422,6 @@ void ModelViewerScene::render_scene(const glm::mat4& view,
     const glm::vec3& eye,
     const glm::vec4& clip_plane,
     const bool draw_mirrors) {
-  // Skybox first: far-plane clamped and depth-non-writing, everything else
-  // draws over it. Runs for the reflected view too, so mirrors show sky.
-  render_skybox(view, projection);
 
   // Build the sprite queue for the main pass only; mirror reflections skip
   // sprites this milestone (the reflection pass passes draw_mirrors=false).
@@ -1560,9 +1456,6 @@ void ModelViewerScene::render_scene(const glm::mat4& view,
   glDepthMask(GL_TRUE);
   for (std::size_t index{0}; index < m_meshes.size(); ++index) {
     const std::uint32_t flags{m_group_flags.at(index)};
-    if (Omikron::has_flag(flags, Omikron::MeshFlags::k_skybox)) {
-      continue;  // Drawn by render_skybox, never by the regular passes.
-    }
     const bool mirror{Omikron::has_flag(flags, Omikron::MeshFlags::k_mirror)};
     if (mirror) {
       // Mirrors are composited in the main pass only; the reflection pass
@@ -1591,9 +1484,6 @@ void ModelViewerScene::render_scene(const glm::mat4& view,
   std::vector<float> distance_squared(m_meshes.size(), 0.0F);
   std::vector<std::size_t> blended_order;
   for (std::size_t index{0}; index < m_meshes.size(); ++index) {
-    if (Omikron::has_flag(m_group_flags.at(index), Omikron::MeshFlags::k_skybox)) {
-      continue;  // Drawn by render_skybox, never by the regular passes.
-    }
     const bool mirror{Omikron::has_flag(m_group_flags.at(index), Omikron::MeshFlags::k_mirror)};
     if (mirror && !draw_mirrors) {
       continue;

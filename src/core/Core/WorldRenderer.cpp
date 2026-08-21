@@ -227,17 +227,14 @@ std::expected<std::unique_ptr<WorldRenderer>, std::string> WorldRenderer::create
     std::array<float, 3> group_max{std::numeric_limits<float>::lowest(),
         std::numeric_limits<float>::lowest(),
         std::numeric_limits<float>::lowest()};
-    const bool contributes_to_fallback_bounds{
-        !Omikron::has_flag(group.flags, Omikron::MeshFlags::k_skybox)};
+    
     for (const Vertex& vertex : group.vertices) {
-      has_vertices = has_vertices || contributes_to_fallback_bounds;
+      has_vertices = true;
       for (std::size_t axis{0}; axis < 3U; ++axis) {
         group_min.at(axis) = std::min(group_min.at(axis), vertex.position.at(axis));
         group_max.at(axis) = std::max(group_max.at(axis), vertex.position.at(axis));
-        if (contributes_to_fallback_bounds) {
-          bounds_min.at(axis) = std::min(bounds_min.at(axis), vertex.position.at(axis));
-          bounds_max.at(axis) = std::max(bounds_max.at(axis), vertex.position.at(axis));
-        }
+        bounds_min.at(axis) = std::min(bounds_min.at(axis), vertex.position.at(axis));
+        bounds_max.at(axis) = std::max(bounds_max.at(axis), vertex.position.at(axis));
       }
     }
     std::array<float, 3> center{};
@@ -248,10 +245,10 @@ std::expected<std::unique_ptr<WorldRenderer>, std::string> WorldRenderer::create
     }
     renderer->m_group_centers.push_back(center);
 
-    special_flags_seen = special_flags_seen ||
-                         Omikron::has_flag(group.flags, Omikron::MeshFlags::k_mirror) ||
-                         Omikron::has_flag(group.flags, Omikron::MeshFlags::k_skybox) ||
-                         Omikron::has_flag(group.flags, Omikron::MeshFlags::k_environment_mapped);
+    special_flags_seen =
+        special_flags_seen ||
+        Omikron::has_flag(group.flags, Omikron::MeshFlags::k_mirror) ||
+        Omikron::has_flag(group.flags, Omikron::MeshFlags::k_environment_mapped);
   }
 
   if (has_vertices) {
@@ -269,7 +266,7 @@ std::expected<std::unique_ptr<WorldRenderer>, std::string> WorldRenderer::create
 
   if (special_flags_seen) {
     App::Log::debug(LogCategory::Renderer,
-        "WorldRenderer: mirror/skybox/environment flags currently use the base textured pass; "
+        "WorldRenderer: mirror/environment flags currently use the base textured pass; "
         "specialized ModelViewer passes remain to be extracted into the shared renderer");
   }
 
@@ -289,6 +286,34 @@ std::expected<std::unique_ptr<WorldRenderer>, std::string> WorldRenderer::create
       renderer->m_meshes.size(),
       renderer->m_textures.size());
   return renderer;
+}
+
+std::size_t WorldRenderer::mirror_group_count() const {
+  return static_cast<std::size_t>(
+      std::ranges::count_if(m_group_flags, [](const std::uint32_t flags) {
+        return Omikron::has_flag(flags, Omikron::MeshFlags::k_mirror);
+      }));
+}
+
+std::size_t WorldRenderer::uv_scroll_u_group_count() const {
+  return static_cast<std::size_t>(
+      std::ranges::count_if(m_group_flags, [](const std::uint32_t flags) {
+        return Omikron::has_flag(flags, Omikron::MeshFlags::k_uv_scroll_u);
+      }));
+}
+
+std::size_t WorldRenderer::uv_scroll_v_group_count() const {
+  return static_cast<std::size_t>(
+      std::ranges::count_if(m_group_flags, [](const std::uint32_t flags) {
+        return Omikron::has_flag(flags, Omikron::MeshFlags::k_uv_scroll_v);
+       }));
+}
+
+std::size_t WorldRenderer::environment_group_count() const {
+  return static_cast<std::size_t>(
+      std::ranges::count_if(m_group_flags, [](const std::uint32_t flags) {
+        return Omikron::has_flag(flags, Omikron::MeshFlags::k_environment_mapped);
+      }));
 }
 
 void WorldRenderer::draw_group(const std::size_t index) {

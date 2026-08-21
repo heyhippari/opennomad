@@ -47,6 +47,19 @@ class WorldRenderer {
     return m_bounds;
   }
 
+  [[nodiscard]] std::size_t group_count() const {
+    return m_meshes.size();
+  }
+
+  [[nodiscard]] std::size_t material_count() const {
+    return m_textures.size();
+  }
+
+  [[nodiscard]] std::size_t mirror_group_count() const;
+  [[nodiscard]] std::size_t uv_scroll_u_group_count() const;
+  [[nodiscard]] std::size_t uv_scroll_v_group_count() const;
+  [[nodiscard]] std::size_t environment_group_count() const;
+
  private:
   WorldRenderer() = default;
 

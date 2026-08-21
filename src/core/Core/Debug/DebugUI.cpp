@@ -27,6 +27,7 @@
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Debug/LogFilter.hpp"
 #include "Core/Debug/Metrics.hpp"
+#include "Core/Debug/SceneDebugView.hpp"
 #include "Core/Interface/I2DModel.hpp"
 #include "Core/Interface/InterfaceDispatcher.hpp"
 #include "Core/Interface/InterfaceManager.hpp"
@@ -773,28 +774,111 @@ void DebugUI::show_opengl_state() {
 void DebugUI::show_overlays() {
   ImGui::Begin("Overlays", &m_show_overlays);
 
-  auto* scene{dynamic_cast<ModelViewerScene*>(m_context.scene)};
-  if (scene == nullptr) {
-    ImGui::TextUnformatted("Requires a 3D model scene.");
+  auto* view{dynamic_cast<Debug::SceneDebugView*>(m_context.scene)};
+  if (view == nullptr) {
+    ImGui::TextUnformatted("The active scene exposes no 3D debug information.");
     ImGui::End();
     return;
   }
 
-  ImGui::TextUnformatted("World-space debug overlays drawn on top of the scene.");
+  if (const auto world{view->world_render_debug_state()}; world.has_value()) {
+    ImGui::TextUnformatted("World renderer");
+    ImGui::Separator();
 
-  bool lights{scene->light_overlay_enabled()};
-  if (ImGui::Checkbox("Lights", &lights)) {
-    scene->set_light_overlay_enabled(lights);
-  }
-  ImGui::SameLine();
-  ImGui::TextDisabled("markers, spot lines, attenuation spheres");
+    ImGui::Text("Renderer: %s", world->renderer_ready ? "ready" : "not ready");
+    ImGui::Text("Groups: %zu", world->group_count);
+    ImGui::Text("Materials: %zu", world->material_count);
 
-  bool sprites{scene->sprite_overlay_enabled()};
-  if (ImGui::Checkbox("Sprites", &sprites)) {
-    scene->set_sprite_overlay_enabled(sprites);
+    ImGui::Text("Bounds center: %.3f, %.3f, %.3f",
+        static_cast<double>(world->bounds_center.at(0)),
+        static_cast<double>(world->bounds_center.at(1)),
+        static_cast<double>(world->bounds_center.at(2)));
+    ImGui::Text(
+        "Bounds radius: %.3f", static_cast<double>(world->bounds_radius));
+
+    ImGui::Spacing();
+    ImGui::TextUnformatted("Mesh flags");
+    ImGui::Text("Mirror: %zu", world->mirror_group_count);
+    ImGui::Text("UV scroll U: %zu", world->uv_scroll_u_group_count);
+    ImGui::Text("UV scroll V: %zu", world->uv_scroll_v_group_count);
+    ImGui::Text("Environment mapped: %zu", world->environment_group_count);
+
+    const std::size_t unsupported_special_groups{
+        world->mirror_group_count +
+        world->environment_group_count};
+
+    if (unsupported_special_groups != 0U) {
+      ImGui::TextColored(K_WARNING_COLOR,
+          "%zu group(s) currently use WorldRenderer's fallback base pass.",
+          unsupported_special_groups);
+    }
+
+    const std::size_t uv_scroll_groups{
+        world->uv_scroll_u_group_count + world->uv_scroll_v_group_count};
+    if (uv_scroll_groups != 0U) {
+      ImGui::TextColored(K_WARNING_COLOR,
+          "%zu UV-scroll flag occurrence(s); Runtime UV phase is not yet applied.",
+          uv_scroll_groups);
+    }
+
+    ImGui::Spacing();
+    ImGui::TextUnformatted("Camera");
+    ImGui::Separator();
+
+    ImGui::Text("Pose: %s", world->camera_has_pose ? "yes" : "no");
+    ImGui::Text("Source: %s", world->camera_scripted ? "scripted" : "fallback");
+    ImGui::Text("Transitioning: %s", world->camera_transitioning ? "yes" : "no");
+
+    if (world->camera_id.has_value()) {
+      ImGui::Text("AREA camera: %u",
+          static_cast<unsigned int>(world->camera_id.value()));
+    } else {
+      ImGui::TextUnformatted("AREA camera: none");
+    }
+
+    if (world->camera_has_pose) {
+      ImGui::Text("Eye: %.3f, %.3f, %.3f",
+          static_cast<double>(world->camera_eye.at(0)),
+          static_cast<double>(world->camera_eye.at(1)),
+          static_cast<double>(world->camera_eye.at(2)));
+
+      ImGui::Text("Target: %.3f, %.3f, %.3f",
+          static_cast<double>(world->camera_target.at(0)),
+          static_cast<double>(world->camera_target.at(1)),
+          static_cast<double>(world->camera_target.at(2)));
+    }
+
+    ImGui::Spacing();
   }
-  ImGui::SameLine();
-  ImGui::TextDisabled("billboard outlines, colour-coded by render mode");
+
+  const bool has_light_overlay{view->light_overlay_supported()};
+  const bool has_sprite_overlay{view->sprite_overlay_supported()};
+
+  if (has_light_overlay || has_sprite_overlay) {
+    ImGui::TextUnformatted("Draw overlays");
+    ImGui::Separator();
+
+    if (has_light_overlay) {
+      bool lights{view->light_overlay_enabled()};
+      if (ImGui::Checkbox("Lights", &lights)) {
+        view->set_light_overlay_enabled(lights);
+      }
+      ImGui::SameLine();
+      ImGui::TextDisabled("markers, spot lines, attenuation spheres");
+    }
+
+    if (has_sprite_overlay) {
+      bool sprites{view->sprite_overlay_enabled()};
+      if (ImGui::Checkbox("Sprites", &sprites)) {
+        view->set_sprite_overlay_enabled(sprites);
+      }
+      ImGui::SameLine();
+      ImGui::TextDisabled("billboard outlines, colour-coded by render mode");
+    }
+  } else {
+    ImGui::TextDisabled(
+        "World-space drawing overlays have not yet been extracted into WorldRenderer.");
+  }
 
   ImGui::End();
 }
@@ -2079,7 +2163,7 @@ void DebugUI::show_startup() {
     ImGui::Text("MPT: %s", record->map_mpt_name().c_str());
     ImGui::Text("OPT: %s", record->options_opt_name().c_str());
     ImGui::Text("ANI: %s", record->animation_ani_name().c_str());
-    ImGui::Text("Secondary 3DO: %s", record->secondary_3do_name().c_str());
+    ImGui::Text("Sky: %s", record->sky_3do_name().c_str());
     if (ImGui::CollapsingHeader("Tables")) {
       for (std::size_t index{0}; index < Omikron::IamAreaRecord::k_table_count; ++index) {
         const std::optional<std::size_t> stride{Omikron::IamAreaRecord::known_table_stride(index)};

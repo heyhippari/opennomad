@@ -142,31 +142,6 @@ TEST_SUITE("Core::Rendering") {
     CHECK_EQ(projected[2], doctest::Approx(-std::sqrt(20.0F)));
   }
 
-  TEST_CASE("Skybox view keeps rotation and drops translation") {
-    const glm::mat4 view{glm::lookAt(glm::vec3{3.0F, 2.0F, 4.0F},
-                                     glm::vec3{0.0F, 1.0F, 0.0F},
-                                     glm::vec3{0.0F, 1.0F, 0.0F})};
-
-    const glm::mat4 sky_view{App::skybox_view_matrix(view)};
-
-    // The rotation block is preserved...
-    const glm::mat3 rotation{glm::mat3{view}};
-    const glm::mat3 sky_rotation{glm::mat3{sky_view}};
-    for (int column{0}; column < 3; ++column) {
-      for (int row{0}; row < 3; ++row) {
-        CHECK_EQ(sky_rotation[column][row], doctest::Approx(rotation[column][row]));
-      }
-    }
-
-    // ...while the translation column is zeroed, so the skybox camera sits
-    // at the world origin.
-    CHECK_EQ(sky_view[3][0], doctest::Approx(0.0F));
-    CHECK_EQ(sky_view[3][1], doctest::Approx(0.0F));
-    CHECK_EQ(sky_view[3][2], doctest::Approx(0.0F));
-    const glm::mat4 inverse{glm::inverse(sky_view)};
-    CHECK_EQ(glm::length(glm::vec3{inverse[3]}), doctest::Approx(0.0F));
-  }
-
   TEST_CASE("Sky cubemap fades from bright zenith to dark nadir") {
     const auto faces{App::generate_sky_cubemap(8)};
     REQUIRE_EQ(faces.size(), std::size_t{6});

@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "Core/Buffers.hpp"
+#include "Core/Debug/SceneDebugView.hpp"
 #include "Core/Audio/AudioTypes.hpp"
 #include "Core/Camera.hpp"
 #include "Core/CameraController.hpp"
@@ -52,7 +53,7 @@ class AudioSystem;
 /// Renders an Omikron 3D model, explorable with a free-flying camera
 /// driven by the input system (WASD + Space/LeftShift movement, mouse look).
 /// Also hosts the SCX script runtime and serves as its sprite world service.
-class ModelViewerScene final : public Scene {
+class ModelViewerScene final : public Scene, public Debug::SceneDebugView {
  public:
   /// Loads a standalone model (MESHES/DECORS/Anekbah.3DO with its .3DT
   /// texture sidecar) relative to the executable and builds the
@@ -150,12 +151,18 @@ class ModelViewerScene final : public Scene {
 
   /// Light debug overlay visibility (markers, spot lines, attenuation
   /// spheres). Toggled from the Overlays debug window.
-  [[nodiscard]] bool light_overlay_enabled() const;
-  void set_light_overlay_enabled(bool enabled);
+  [[nodiscard]] bool light_overlay_enabled() const override;
+  void set_light_overlay_enabled(bool enabled) override;
+  [[nodiscard]] bool light_overlay_supported() const override {
+    return true;
+  }
   /// Sprite overlay visibility: one outline per drawn billboard,
   /// colour-coded by render mode. Toggled from the Overlays debug window.
-  [[nodiscard]] bool sprite_overlay_enabled() const;
-  void set_sprite_overlay_enabled(bool enabled);
+  [[nodiscard]] bool sprite_overlay_enabled() const override;
+  void set_sprite_overlay_enabled(bool enabled) override;
+  [[nodiscard]] bool sprite_overlay_supported() const override {
+    return true;
+  }
 
  private:
   /// A k_mirror mesh and its world-space reflection plane.
@@ -191,7 +198,6 @@ class ModelViewerScene final : public Scene {
              Shader shader,
              Shader mirror_shader,
              Shader env_shader,
-             Shader skybox_shader,
              Shader overlay_shader,
              Framebuffer mirror_framebuffer,
              TextureCube sky_cubemap,
@@ -225,11 +231,6 @@ class ModelViewerScene final : public Scene {
                       const glm::mat4& view,
                       const glm::mat4& projection,
                       const glm::mat4& model);
-  /// Draws a k_skybox group with the unlit skybox shader.
-  void draw_skybox_group(std::size_t index);
-  /// Draws all k_skybox groups: camera-following view, far-plane clamped,
-  /// no depth writes, so the flagged geometry wraps the scene.
-  void render_skybox(const glm::mat4& view, const glm::mat4& projection);
   /// Runs the opaque and blended passes for one camera pose.
   void render_scene(const glm::mat4& view,
                     const glm::mat4& projection,
@@ -272,7 +273,6 @@ class ModelViewerScene final : public Scene {
   Shader m_shader;
   Shader m_mirror_shader;
   Shader m_env_shader;
-  Shader m_skybox_shader;
   Shader m_overlay_shader;
   Framebuffer m_mirror_framebuffer;
   TextureCube m_sky_cubemap;
@@ -311,9 +311,7 @@ class ModelViewerScene final : public Scene {
   CameraController m_camera_controller{m_camera};
   /// One entry per k_mirror mesh, discovered at load time.
   std::vector<MirrorSurface> m_mirrors;
-  /// Indices of k_skybox meshes into m_meshes (and its parallel vectors),
-  /// discovered at load time.
-  std::vector<std::size_t> m_skybox_group_indices;
+
   int m_viewport_width{1};
   int m_viewport_height{1};
 

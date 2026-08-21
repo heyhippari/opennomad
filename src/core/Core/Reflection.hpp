@@ -72,13 +72,4 @@ struct ViewBasis {
                      reflect_direction(up, plane));
 }
 
-/// Builds the view matrix of a camera fixed at the world origin.
-///
-/// Zeroes the translation column while keeping the rotation, so geometry
-/// drawn with this view (a skybox) follows the camera and appears
-/// infinitely far away.
-[[nodiscard]] inline glm::mat4 skybox_view_matrix(const glm::mat4 view) {
-  return glm::mat4{glm::mat3{view}};
-}
-
 }  // namespace App

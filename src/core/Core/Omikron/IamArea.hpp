@@ -66,7 +66,7 @@ class IamAreaRecord {
   static constexpr std::size_t k_offset_map_mpt_name{0x6A};
   static constexpr std::size_t k_offset_options_opt_name{0x73};
   static constexpr std::size_t k_offset_animation_ani_name{0x7C};
-  static constexpr std::size_t k_offset_secondary_3do_name{0x85};
+  static constexpr std::size_t k_offset_sky_3do_name{0x85};
 
   /// Parses an area record, validating the fixed header, the script offset
   /// and every known table span. The record owns its byte copy.
@@ -91,7 +91,7 @@ class IamAreaRecord {
   [[nodiscard]] std::string map_mpt_name() const;
   [[nodiscard]] std::string options_opt_name() const;
   [[nodiscard]] std::string animation_ani_name() const;
-  [[nodiscard]] std::string secondary_3do_name() const;
+  [[nodiscard]] std::string sky_3do_name() const;
 
   /// The startup script bytes: `[scriptOffset, record end)`.
   [[nodiscard]] std::span<const std::byte> script_bytes() const;

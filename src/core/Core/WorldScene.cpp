@@ -13,6 +13,7 @@
 
 #include "Core/Audio/AudioSystem.hpp"
 #include "Core/Audio/AudioTypes.hpp"
+#include "Core/Debug/SceneDebugView.hpp"
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Interface/InterfaceManager.hpp"
 #include "Core/Log.hpp"
@@ -136,6 +137,35 @@ WorldScene::WorldScene(ScenarioManager& scenarios, Interface::InterfaceManager& 
       m_interfaces(interfaces) {}
 
 WorldScene::~WorldScene() = default;
+
+std::optional<Debug::WorldRenderDebugState>
+WorldScene::world_render_debug_state() const {
+  Debug::WorldRenderDebugState state;
+
+  state.renderer_ready = m_world_renderer != nullptr;
+  if (m_world_renderer != nullptr) {
+    state.group_count = m_world_renderer->group_count();
+    state.material_count = m_world_renderer->material_count();
+    state.mirror_group_count = m_world_renderer->mirror_group_count();
+    state.uv_scroll_u_group_count = m_world_renderer->uv_scroll_u_group_count();
+    state.uv_scroll_v_group_count = m_world_renderer->uv_scroll_v_group_count();
+    state.environment_group_count = m_world_renderer->environment_group_count();
+    state.bounds_center = m_world_renderer->bounds().center;
+    state.bounds_radius = m_world_renderer->bounds().radius;
+  }
+
+  state.camera_has_pose = m_camera.has_pose();
+  state.camera_scripted = m_camera.has_scripted_pose();
+  state.camera_transitioning = m_camera.transitioning();
+  state.camera_id = m_camera.active_camera_id();
+
+  if (state.camera_has_pose) {
+    state.camera_eye = m_camera.pose().eye;
+    state.camera_target = m_camera.pose().target;
+  }
+
+  return state;
+}
 
 void WorldScene::consume_fade_commands(const WorldSceneContext* const context) {
   if (m_scenarios == nullptr) {

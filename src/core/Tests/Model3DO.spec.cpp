@@ -353,10 +353,11 @@ TEST_SUITE("Core::Omikron::Model3DO") {
     CHECK_FALSE(groups.has_value());
   }
 
-  TEST_CASE("Skybox flag survives static geometry") {
+  TEST_CASE("UV-scroll-U flag survives static geometry") {
     Buffer file{make_header(1, 1, 1, 1, 0)};
 
-    file.chars("SKY", 20).chars("", 20).chars("", 20).u32(0).u64(0).u32(0).u16(32).u16(32);
+    file.chars("SCROLL", 20).chars("", 20).chars("", 20)
+        .u32(0).u64(0).u32(0).u16(32).u16(32);
     file.f32(0.0F).f32(0.0F).f32(0.0F).f32(0.0F).f32(0.0F).f32(1.0F).u32(0).u8(0).u8(0).u8(0).u8(255);
     file.u16(0).u16(0).u16(0).u8(0).u8(0).u8(0).u8(0).u8(0).u8(0).i32(0).i32(0).i32(0).i32(0);
     append_mesh(file, 1U << 24, 1, -1, 1, 1, 0, 0.0F);
@@ -369,8 +370,9 @@ TEST_SUITE("Core::Omikron::Model3DO") {
     REQUIRE_EQ(groups->size(), std::size_t{1});
 
     const auto& group{groups->at(0)};
-    CHECK(App::Omikron::has_flag(group.flags, App::Omikron::MeshFlags::k_skybox));
-    // The flag does not change the blend mode: skybox meshes stay opaque.
+    CHECK(App::Omikron::has_flag(
+        group.flags, App::Omikron::MeshFlags::k_uv_scroll_u));
+    // UV scrolling is orthogonal to framebuffer blend selection.
     CHECK_EQ(App::Omikron::blend_mode(group.flags), App::Omikron::BlendMode::k_opaque);
   }
 

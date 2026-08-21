@@ -28,7 +28,20 @@ enum MeshFlags : std::uint32_t {
   k_fps_arm = 1U << 21,
   k_face_morph = 1U << 22,
   k_invisible = 1U << 23,
-  k_skybox = 1U << 24,
+  /// Runtime polygon submission adds the global cyclic U phase
+  /// (Runtime.exe 0x00907304) to every polygon U coordinate when this bit is
+  /// set. Confirmed in the triangle and quad submission paths at 0x004955A9,
+  /// 0x00495A33 and 0x0049749C.
+  k_uv_scroll_u = 1U << 24,
+
+  /// Runtime polygon submission adds the global cyclic V phase
+  /// (Runtime.exe 0x00907300) to every polygon V coordinate when this bit is
+  /// set. This is independent of the U-scroll bit.
+  k_uv_scroll_v = 1U << 25,
+
+  // Importer-derived name; Runtime behavior still requires independent
+  // verification before treating this as a modern environment-map shader
+  // selector.
   k_environment_mapped = 1U << 26,
   k_underwater = 1U << 27,
   k_water_surface = 1U << 29,

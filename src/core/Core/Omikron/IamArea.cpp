@@ -146,8 +146,8 @@ std::string IamAreaRecord::options_opt_name() const {
 std::string IamAreaRecord::animation_ani_name() const {
   return name_at(k_offset_animation_ani_name);
 }
-std::string IamAreaRecord::secondary_3do_name() const {
-  return name_at(k_offset_secondary_3do_name);
+std::string IamAreaRecord::sky_3do_name() const {
+  return name_at(k_offset_sky_3do_name);
 }
 
 std::span<const std::byte> IamAreaRecord::script_bytes() const {

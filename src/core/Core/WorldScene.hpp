@@ -3,7 +3,9 @@
 #include <cstdint>
 #include <expected>
 #include <memory>
+#include <optional>
 
+#include "Core/Debug/SceneDebugView.hpp"
 #include "Core/Interface/InterfacePresenter.hpp"
 #include "Core/Scene.hpp"
 #include "Core/WorldCamera.hpp"
@@ -26,7 +28,7 @@ class InterfaceManager;
 /// WorldScene observes runtime state owned by ScenarioManager and
 /// InterfaceManager. It does NOT own a ScenarioRuntime, does NOT execute
 /// scripts, and does NOT update AudioSystem.
-class WorldScene final : public Scene {
+class WorldScene final : public Scene, public Debug::SceneDebugView {
  public:
   static std::expected<std::unique_ptr<WorldScene>, std::string> create(
       ScenarioManager& scenarios, Interface::InterfaceManager& interfaces);
@@ -42,7 +44,10 @@ class WorldScene final : public Scene {
   void render() override;
   void resize(int width, int height) override;
 
- private:
+  [[nodiscard]] std::optional<Debug::WorldRenderDebugState>
+  world_render_debug_state() const override;
+
+  private:
   WorldScene(ScenarioManager& scenarios, Interface::InterfaceManager& interfaces);
 
   void consume_fade_commands(const WorldSceneContext* context);
