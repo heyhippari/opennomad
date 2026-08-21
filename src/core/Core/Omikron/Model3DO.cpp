@@ -9,6 +9,8 @@
 #include <expected>
 #include <flat_map>
 #include <flat_set>
+#include <functional>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -148,13 +150,12 @@ std::expected<Model3DOData, std::string> Model3DO::load(const std::span<const st
         model.header.lights_unknown1);
   }
   if (model.header.lights_unknown2 > K_MAX_LIGHT_COUNT) {
-    return std::expected<Model3DOData, std::string>{std::unexpect,
-        fmt::format("implausible light count {}", model.header.lights_unknown2)};
+    return std::expected<Model3DOData, std::string>{
+        std::unexpect, fmt::format("implausible light count {}", model.header.lights_unknown2)};
   }
   if (model.header.lights_unknown2 > 0U && model.header.lights_offset == 0U) {
     return std::expected<Model3DOData, std::string>{std::unexpect,
-        fmt::format("lights: {} records but the lights offset is 0",
-            model.header.lights_unknown2)};
+        fmt::format("lights: {} records but the lights offset is 0", model.header.lights_unknown2)};
   }
   reader.seek(model.header.lights_offset);
   model.lights.reserve(model.header.lights_unknown2);
@@ -166,28 +167,87 @@ std::expected<Model3DOData, std::string> Model3DO::load(const std::span<const st
         std::unexpect, fmt::format("lights: {}", reader.error())};
   }
 
-  // Map mesh IDs to descriptor indices for the hierarchy tables.
+  // Runtime converts the serialized mesh IDs into object pointers while
+  // loading a 3DO. Keep the equivalent descriptor-index relationships here.
   std::flat_map<std::uint32_t, std::size_t> id_to_index;
   for (std::size_t index{0}; index < model.meshes.size(); ++index) {
-    id_to_index.try_emplace(model.meshes.at(index).mesh_id, index);
+    const MeshDescriptor& mesh{model.meshes.at(index)};
+    const auto [unused, inserted]{id_to_index.try_emplace(mesh.mesh_id, index)};
+    if (!inserted) {
+      return std::expected<Model3DOData, std::string>{
+          std::unexpect, fmt::format("duplicate mesh ID {} ('{}')", mesh.mesh_id, mesh.name)};
+    }
   }
 
-  model.hierarchy_parent_index.reserve(model.meshes.size());
-  for (const MeshDescriptor& mesh : model.meshes) {
-    std::int32_t parent_index{-1};
-    if (mesh.parent_id != -1) {
-      const auto found{id_to_index.find(static_cast<std::uint32_t>(mesh.parent_id))};
-      if (found != id_to_index.end()) {
-        parent_index = static_cast<std::int32_t>(found->second);
-      } else {
-        App::Log::warn(LogCategory::Renderer,
-            "mesh '{}' (id {}) references unknown parent {}",
-            mesh.name,
-            mesh.mesh_id,
-            mesh.parent_id);
-      }
+  const auto resolve_link = [&id_to_index](const std::int32_t id,
+                                const std::string_view relation,
+                                const MeshDescriptor& owner) -> std::int32_t {
+    if (id == -1) {
+      return -1;
     }
-    model.hierarchy_parent_index.push_back(parent_index);
+
+    const auto found{id_to_index.find(static_cast<std::uint32_t>(id))};
+    if (found == id_to_index.end()) {
+      App::Log::warn(LogCategory::Renderer,
+          "mesh '{}' (id {}) references unknown {} mesh {}",
+          owner.name,
+          owner.mesh_id,
+          relation,
+          id);
+      return -1;
+    }
+    return static_cast<std::int32_t>(found->second);
+  };
+
+  model.hierarchy_parent_index.reserve(model.meshes.size());
+  model.hierarchy_first_child_index.reserve(model.meshes.size());
+  model.hierarchy_next_sibling_index.reserve(model.meshes.size());
+  for (const MeshDescriptor& mesh : model.meshes) {
+    model.hierarchy_parent_index.push_back(resolve_link(mesh.parent_id, "parent", mesh));
+    model.hierarchy_first_child_index.push_back(
+        resolve_link(mesh.first_child_id, "first-child", mesh));
+    model.hierarchy_next_sibling_index.push_back(
+        resolve_link(mesh.next_sibling_id, "next-sibling", mesh));
+  }
+
+  // Runtime resolves Serialized3DORootV4+0xB4 to one runtime object and
+  // begins model traversal from that object.
+  if (!model.meshes.empty()) {
+    const auto root{id_to_index.find(model.header.root_mesh_id)};
+    if (root != id_to_index.end()) {
+      model.root_mesh_index = static_cast<std::int32_t>(root->second);
+    } else {
+      // Some synthetic/legacy fixtures predate recovery of root_mesh_id.
+      // Keep a conservative fallback when there is exactly one parentless
+      // object; real retail models with a valid +0xB4 take the path above.
+      std::int32_t sole_parentless{-1};
+      bool multiple_parentless{false};
+      for (std::size_t index{0}; index < model.meshes.size(); ++index) {
+        if (model.hierarchy_parent_index.at(index) != -1) {
+          continue;
+        }
+        if (sole_parentless != -1) {
+          multiple_parentless = true;
+          break;
+        }
+        sole_parentless = static_cast<std::int32_t>(index);
+      }
+
+      if (sole_parentless == -1 || multiple_parentless) {
+        return std::expected<Model3DOData, std::string>{std::unexpect,
+            fmt::format("3DO root mesh ID {} does not resolve and no unique "
+                        "parentless fallback exists",
+                model.header.root_mesh_id)};
+      }
+
+      model.root_mesh_index = sole_parentless;
+      App::Log::warn(LogCategory::Renderer,
+          "3DO root mesh ID {} does not resolve; using sole parentless mesh "
+          "'{}' (id {})",
+          model.header.root_mesh_id,
+          model.meshes.at(static_cast<std::size_t>(sole_parentless)).name,
+          model.meshes.at(static_cast<std::size_t>(sole_parentless)).mesh_id);
+    }
   }
 
   // Skin parents skip joint-only meshes on the way up.
@@ -204,6 +264,117 @@ std::expected<Model3DOData, std::string> Model3DO::load(const std::span<const st
       skin_parent = candidate;
     }
     model.skin_parent_index.push_back(skin_parent);
+  }
+
+  // Recover Runtime's bind-pose object traversal. 0x0048D3B0 starts at the
+  // model root and recursively follows first-child / next-sibling links.
+  //
+  // In the unanimated bind pose:
+  //   root origin  = root.position
+  //   child origin = parent origin + child.bone_position
+  //
+  // Rotation/animation matrices will later extend this same hierarchy;
+  // keeping the derived origin separate from serialized fields avoids
+  // baking presentation state back into the decoded data.
+  model.hierarchy_reachable.assign(model.meshes.size(), std::uint8_t{0});
+  model.bind_pose_world_origin.assign(model.meshes.size(), Vec3{});
+
+  if (model.root_mesh_index != -1) {
+    std::vector<std::uint8_t> visit_state(model.meshes.size(), std::uint8_t{0});
+    std::function<std::expected<void, std::string>(std::size_t)> visit;
+    visit = [&](const std::size_t index) -> std::expected<void, std::string> {
+      if (index >= model.meshes.size()) {
+        return std::expected<void, std::string>{
+            std::unexpect, "3DO hierarchy index is outside the mesh table"};
+      }
+
+      if (visit_state.at(index) == 1U) {
+        return std::expected<void, std::string>{std::unexpect,
+            fmt::format("cycle in 3DO hierarchy at mesh '{}' (id {})",
+                model.meshes.at(index).name,
+                model.meshes.at(index).mesh_id)};
+      }
+      if (visit_state.at(index) == 2U) {
+        return {};
+      }
+
+      visit_state.at(index) = 1U;
+      model.hierarchy_reachable.at(index) = 1U;
+
+      const MeshDescriptor& mesh{model.meshes.at(index)};
+      Vec3& origin{model.bind_pose_world_origin.at(index)};
+
+      if (std::cmp_equal(index, model.root_mesh_index)) {
+        origin = mesh.position;
+      } else {
+        const std::int32_t parent_index{model.hierarchy_parent_index.at(index)};
+        if (parent_index < 0) {
+          return std::expected<void, std::string>{std::unexpect,
+              fmt::format(
+                  "reachable non-root mesh '{}' (id {}) has no parent", mesh.name, mesh.mesh_id)};
+        }
+
+        const Vec3& parent_origin{
+            model.bind_pose_world_origin.at(static_cast<std::size_t>(parent_index))};
+        origin = Vec3{.x = parent_origin.x + mesh.bone_position.x,
+            .y = parent_origin.y + mesh.bone_position.y,
+            .z = parent_origin.z + mesh.bone_position.z};
+      }
+
+      std::int32_t child_index{model.hierarchy_first_child_index.at(index)};
+      std::size_t sibling_steps{0};
+      while (child_index != -1) {
+        // A malformed sibling loop must not hang model loading.
+        ++sibling_steps;
+        if (sibling_steps > model.meshes.size()) {
+          return std::expected<void, std::string>{std::unexpect,
+              fmt::format(
+                  "cycle in child/sibling chain below mesh '{}' (id {})", mesh.name, mesh.mesh_id)};
+        }
+
+        const std::size_t child{static_cast<std::size_t>(child_index)};
+        if (child >= model.meshes.size()) {
+          return std::expected<void, std::string>{
+              std::unexpect, "3DO child descriptor index is out of range"};
+        }
+
+        if (std::cmp_not_equal(model.hierarchy_parent_index.at(child), index)) {
+          return std::expected<void, std::string>{std::unexpect,
+              fmt::format("inconsistent 3DO hierarchy: '{}' (id {}) lists '{}' "
+                          "(id {}) as a child, but that mesh names parent {}",
+                  mesh.name,
+                  mesh.mesh_id,
+                  model.meshes.at(child).name,
+                  model.meshes.at(child).mesh_id,
+                  model.meshes.at(child).parent_id)};
+        }
+
+        if (auto result{visit(child)}; !result) {
+          return result;
+        }
+
+        child_index = model.hierarchy_next_sibling_index.at(child);
+      }
+
+      visit_state.at(index) = 2U;
+      return {};
+    };
+
+    if (auto result{visit(static_cast<std::size_t>(model.root_mesh_index))}; !result) {
+      return std::expected<Model3DOData, std::string>{std::unexpect, std::move(result).error()};
+    }
+
+    std::size_t reachable_count{0};
+    for (const std::uint8_t reachable : model.hierarchy_reachable) {
+      reachable_count += reachable != 0U ? 1U : 0U;
+    }
+
+    App::Log::debug(LogCategory::Renderer,
+        "3DO hierarchy — root={} index={} reachable={}/{}",
+        model.header.root_mesh_id,
+        model.root_mesh_index,
+        reachable_count,
+        model.meshes.size());
   }
 
   return model;
@@ -255,10 +426,12 @@ std::expected<std::vector<MaterialGroup>, std::string> Model3DO::build_static_ge
 
   const auto emit_corner = [&](MaterialGroup& group,
                                const Material& material,
-                               const MeshDescriptor& vertex_owner,
+                               const std::size_t vertex_owner_index,
                                const std::size_t vertex_index,
                                const std::uint8_t texture_u,
                                const std::uint8_t texture_v) -> std::expected<void, std::string> {
+    const MeshDescriptor& vertex_owner{model.meshes.at(vertex_owner_index)};
+
     if (vertex_index >= vertex_owner.vertex_count) {
       return std::expected<void, std::string>{std::unexpect,
           fmt::format("vertex index {} out of range for mesh '{}' ({} vertices)",
@@ -274,11 +447,14 @@ std::expected<std::vector<MaterialGroup>, std::string> Model3DO::build_static_ge
               "vertex index {} out of range ({} vertices)", global_index, model.vertices.size())};
     }
     const RawVertex& raw{model.vertices.at(global_index)};
+    const Vec3 bind_origin{vertex_owner_index < model.bind_pose_world_origin.size()
+                               ? model.bind_pose_world_origin.at(vertex_owner_index)
+                               : Vec3{}};
 
     Vertex vertex{};
-    vertex.position = {(raw.position.x + vertex_owner.position.x),
-        (raw.position.y + vertex_owner.position.y),
-        (raw.position.z + vertex_owner.position.z)};
+    vertex.position = {raw.position.x + bind_origin.x,
+        raw.position.y + bind_origin.y,
+        raw.position.z + bind_origin.z};
     vertex.normal = {raw.normal.x, raw.normal.y, raw.normal.z};
     constexpr float byte_to_float{1.0F / 255.0F};
     vertex.color = {
@@ -298,6 +474,14 @@ std::expected<std::vector<MaterialGroup>, std::string> Model3DO::build_static_ge
 
   for (std::size_t mesh_index{0}; mesh_index < model.meshes.size(); ++mesh_index) {
     const MeshDescriptor& mesh{model.meshes.at(mesh_index)};
+
+    // Runtime traverses the object hierarchy beginning at root_mesh_id;
+    // disconnected serialized descriptors are not submitted.
+    if (mesh_index >= model.hierarchy_reachable.size() ||
+        model.hierarchy_reachable.at(mesh_index) == 0U) {
+      continue;
+    }
+
     if (has_flag(mesh.flags, MeshFlags::k_invisible) ||
         has_flag(mesh.flags, MeshFlags::k_joint_only)) {
       continue;
@@ -306,9 +490,10 @@ std::expected<std::vector<MaterialGroup>, std::string> Model3DO::build_static_ge
 
     // Triangles of skinned meshes may reference the nearest non-joint
     // parent's vertex block (the bind pose).
-    const MeshDescriptor* skin_parent_mesh{nullptr};
+    std::optional<std::size_t> skin_parent_mesh_index;
+
     if (const std::int32_t skin_parent{model.skin_parent_index.at(mesh_index)}; skin_parent >= 0) {
-      skin_parent_mesh = &model.meshes.at(static_cast<std::size_t>(skin_parent));
+      skin_parent_mesh_index = static_cast<std::size_t>(skin_parent);
     }
 
     for (const Triangle& triangle : polygons.triangles) {
@@ -317,15 +502,16 @@ std::expected<std::vector<MaterialGroup>, std::string> Model3DO::build_static_ge
       MaterialGroup& group{group_for_material(material_id, static_cast<std::uint32_t>(mesh.flags))};
       for (std::size_t corner{0}; corner < triangle.vertices.size(); ++corner) {
         const TriangleVertexRef& reference{triangle.vertices.at(corner)};
-        if (reference.parented && skin_parent_mesh == nullptr) {
+        if (reference.parented && !skin_parent_mesh_index.has_value()) {
           return std::expected<std::vector<MaterialGroup>, std::string>{std::unexpect,
               fmt::format("mesh '{}' contains a parented triangle vertex but has no skin parent",
                   mesh.name)};
         }
-        const MeshDescriptor& vertex_owner{reference.parented ? *skin_parent_mesh : mesh};
+        const std::size_t vertex_owner_index{
+            reference.parented ? skin_parent_mesh_index.value() : mesh_index};
         const auto result{emit_corner(group,
             material,
-            vertex_owner,
+            vertex_owner_index,
             reference.index,
             triangle.uv.at(corner * 2U),
             triangle.uv.at((corner * 2U) + 1U))};
@@ -345,7 +531,7 @@ std::expected<std::vector<MaterialGroup>, std::string> Model3DO::build_static_ge
       const auto emit = [&](const std::uint16_t vertex_index,
                             const std::uint8_t texture_u,
                             const std::uint8_t texture_v) -> std::expected<void, std::string> {
-        return emit_corner(group, material, mesh, vertex_index, texture_u, texture_v);
+        return emit_corner(group, material, mesh_index, vertex_index, texture_u, texture_v);
       };
       const auto first{emit(rectangle.vertices.at(0), rectangle.uv.at(0), rectangle.uv.at(1))};
       if (!first) {
@@ -400,6 +586,8 @@ void Model3DO::read_header(BinaryReader& reader, Header& header) {
   read_raw_array(reader, header.reserved_a);
   header.frame_count = reader.read_u32();
   read_raw_array(reader, header.reserved_b);
+  header.root_mesh_id = reader.read_u32();
+  read_raw_array(reader, header.reserved_b2);
   header.texture_count = reader.read_u32();
   read_raw_array(reader, header.reserved_c);
 
@@ -544,8 +732,7 @@ Vec3 Light::direction() const {
   const float delta_x{target.x - position.x};
   const float delta_y{target.y - position.y};
   const float delta_z{target.z - position.z};
-  const float length{
-      std::sqrt((delta_x * delta_x) + (delta_y * delta_y) + (delta_z * delta_z))};
+  const float length{std::sqrt((delta_x * delta_x) + (delta_y * delta_y) + (delta_z * delta_z))};
   if (length <= 0.0F) {
     return Vec3{};
   }

@@ -1,3 +1,5 @@
+#include "Core/Omikron/Model3DO.hpp"
+
 #include <doctest/doctest.h>
 
 #include <array>
@@ -7,7 +9,6 @@
 #include <string_view>
 #include <vector>
 
-#include "Core/Omikron/Model3DO.hpp"
 #include "OmikronTestBuffer.hpp"
 
 // NOLINTBEGIN(misc-use-anonymous-namespace, cppcoreguidelines-avoid-do-while, cert-err33-c)
@@ -24,15 +25,15 @@ constexpr std::size_t K_LIGHT_SIZE{304};
 /// Builds a header whose sections immediately follow it in the order
 /// materials, vertices, triangles, rectangles, meshes, lights.
 Buffer make_header(const std::uint32_t material_count,
-                   const std::uint32_t mesh_count,
-                   const std::uint32_t vertex_count,
-                   const std::uint32_t triangle_count,
-                   const std::uint32_t rectangle_count,
-                   const std::uint32_t lights_unknown1 = 0,
-                   const std::uint32_t lights_unknown2 = 0,
-                   const std::uint32_t frame_count = 0,
-                   const std::uint32_t texture_count = 0,
-                   const std::uint32_t object_count = 0) {
+    const std::uint32_t mesh_count,
+    const std::uint32_t vertex_count,
+    const std::uint32_t triangle_count,
+    const std::uint32_t rectangle_count,
+    const std::uint32_t lights_unknown1 = 0,
+    const std::uint32_t lights_unknown2 = 0,
+    const std::uint32_t frame_count = 0,
+    const std::uint32_t texture_count = 0,
+    const std::uint32_t object_count = 0) {
   const std::size_t materials_offset{K_HEADER_SIZE};
   const std::size_t vertices_offset{
       materials_offset + (static_cast<std::size_t>(material_count) * K_MATERIAL_SIZE)};
@@ -48,63 +49,107 @@ Buffer make_header(const std::uint32_t material_count,
   Buffer buffer;
   // Real files start with the OD3X signature and version 4.
   buffer.chars("OD3X", 4)
-      .u32(4).u32(0)
+      .u32(4)
+      .u32(0)
       .u32(static_cast<std::uint32_t>(materials_offset))
       .u32(static_cast<std::uint32_t>(vertices_offset))
       .u32(static_cast<std::uint32_t>(triangles_offset))
       .u32(static_cast<std::uint32_t>(rectangles_offset))
       .u32(static_cast<std::uint32_t>(meshes_offset))
-      .u32(0).u32(0).u32(static_cast<std::uint32_t>(lights_offset))  // doors, cameras, lights.
-      .zeros(28).u32(frame_count)
-      .zeros(132).u32(texture_count)
+      .u32(0)
+      .u32(0)
+      .u32(static_cast<std::uint32_t>(lights_offset))  // doors, cameras, lights.
+      .zeros(28)
+      .u32(frame_count)
+      .zeros(132)
+      .u32(texture_count)
       .zeros(12)
-      .u32(object_count).u32(0)
-      .u32(triangle_count).u32(rectangle_count).u32(vertex_count)
+      .u32(object_count)
+      .u32(0)
+      .u32(triangle_count)
+      .u32(rectangle_count)
+      .u32(vertex_count)
       .u64(0)
-      .u32(material_count).u32(0).u32(0)
-      .u32(0).u32(mesh_count).u32(0)
+      .u32(material_count)
+      .u32(0)
+      .u32(0)
+      .u32(0)
+      .u32(mesh_count)
+      .u32(0)
       .u32(lights_unknown1 + lights_unknown2)  // light_count.
-      .u32(lights_unknown1).u32(lights_unknown2)
+      .u32(lights_unknown1)
+      .u32(lights_unknown2)
       .zeros(84);
   return buffer;
 }
 
 /// Appends a minimal mesh descriptor (one float position on X).
 void append_mesh(Buffer& buffer,
-                 const std::uint32_t flags,
-                 const std::uint32_t mesh_id,
-                 const std::int32_t parent_id,
-                 const std::uint32_t vertex_count,
-                 const std::uint32_t triangle_count,
-                 const std::uint32_t rectangle_count,
-                 const float position_x) {
-  buffer.u32(flags).u32(0).u32(mesh_id).u32(0)
+    const std::uint32_t flags,
+    const std::uint32_t mesh_id,
+    const std::int32_t parent_id,
+    const std::uint32_t vertex_count,
+    const std::uint32_t triangle_count,
+    const std::uint32_t rectangle_count,
+    const float position_x,
+    const std::int32_t first_child_id = -1,
+    const std::int32_t next_sibling_id = -1,
+    const float bone_position_x = 0.0F) {
+  buffer.u32(flags)
+      .u32(0)
+      .u32(mesh_id)
+      .u32(0)
       .chars("MESH", 20)
-      .f32(position_x).f32(0.0F).f32(0.0F)
-      .i32(parent_id).i32(-1).i32(-1)
-      .u32(0).u32(vertex_count).u32(triangle_count).u32(rectangle_count)
-      .f32(0.0F).f32(0.0F).f32(0.0F).f32(0.0F)
-      .f32(1.0F).f32(1.0F).f32(1.0F)
-      .f32(2.0F).f32(2.0F).f32(2.0F)
-      .f32(0.0F).f32(0.0F).f32(0.0F)
-      .f32(0.0F).f32(0.0F).f32(0.0F);
+      .f32(position_x)
+      .f32(0.0F)
+      .f32(0.0F)
+      .i32(parent_id)
+      .i32(first_child_id)
+      .i32(next_sibling_id)
+      .u32(0)
+      .u32(vertex_count)
+      .u32(triangle_count)
+      .u32(rectangle_count)
+      .f32(0.0F)
+      .f32(0.0F)
+      .f32(0.0F)
+      .f32(0.0F)
+      .f32(1.0F)
+      .f32(1.0F)
+      .f32(1.0F)
+      .f32(2.0F)
+      .f32(2.0F)
+      .f32(2.0F)
+      .f32(0.0F)
+      .f32(0.0F)
+      .f32(0.0F)
+      .f32(bone_position_x)
+      .f32(0.0F)
+      .f32(0.0F);
 }
 
 /// Appends one 304-byte light record. Position and target are given in file
 /// space (x, z, y); the remaining four point slots are zero.
 void append_light(Buffer& buffer,
-                  const std::uint32_t flags,
-                  const std::string_view name,
-                  const float attenuation_end,
-                  const float attenuation_start,
-                  const float intensity,
-                  const std::array<std::uint8_t, 4> color_bgra,
-                  const std::array<float, 3> position,
-                  const std::array<float, 3> target) {
-  buffer.u32(flags).chars(name, 20)
-      .f32(attenuation_end).f32(attenuation_start).f32(intensity)
-      .f32(0.0F).f32(0.0F)
-      .u8(color_bgra.at(0)).u8(color_bgra.at(1)).u8(color_bgra.at(2)).u8(color_bgra.at(3));
+    const std::uint32_t flags,
+    const std::string_view name,
+    const float attenuation_end,
+    const float attenuation_start,
+    const float intensity,
+    const std::array<std::uint8_t, 4> color_bgra,
+    const std::array<float, 3> position,
+    const std::array<float, 3> target) {
+  buffer.u32(flags)
+      .chars(name, 20)
+      .f32(attenuation_end)
+      .f32(attenuation_start)
+      .f32(intensity)
+      .f32(0.0F)
+      .f32(0.0F)
+      .u8(color_bgra.at(0))
+      .u8(color_bgra.at(1))
+      .u8(color_bgra.at(2))
+      .u8(color_bgra.at(3));
   buffer.f32(position.at(0)).f32(position.at(1)).f32(position.at(2)).zeros(20);
   buffer.f32(target.at(0)).f32(target.at(1)).f32(target.at(2)).zeros(20);
   for (std::size_t slot{0}; slot < 4U; ++slot) {
@@ -122,8 +167,8 @@ TEST_SUITE("Core::Omikron::Model3DO") {
     const auto model{App::Omikron::Model3DO::load(file.data())};
     REQUIRE(model.has_value());
 
-    CHECK_EQ(std::string_view{model->header.signature.data(), model->header.signature.size()},
-             "OD3X");
+    CHECK_EQ(
+        std::string_view{model->header.signature.data(), model->header.signature.size()}, "OD3X");
     CHECK_EQ(model->header.version_major, 4U);
     CHECK_EQ(model->header.version_minor, 0U);
     CHECK_EQ(model->header.material_count, 0U);
@@ -149,18 +194,33 @@ TEST_SUITE("Core::Omikron::Model3DO") {
     Buffer file{make_header(1, 1, 1, 1, 0)};
 
     // Material.
-    file.chars("SKIN", 20).chars("skin.bmp", 20).chars("skin.tga", 20)
-        .u32(99).u16(0xFFFF).u16(0xFFFF).u16(0xFFFF).u16(0xFFFF)
-        .u16(8).u8(3).u8(5).u16(64).u16(64);
+    file.chars("SKIN", 20)
+        .chars("skin.bmp", 20)
+        .chars("skin.tga", 20)
+        .u32(99)
+        .u16(0xFFFF)
+        .u16(0xFFFF)
+        .u16(0xFFFF)
+        .u16(0xFFFF)
+        .u16(8)
+        .u8(3)
+        .u8(5)
+        .u16(64)
+        .u16(64);
     // Vertex: position (10, 20, 30), normal (0, 1, 0), colour BGRA.
-    file.f32(10.0F).f32(20.0F).f32(30.0F)
-        .f32(0.0F).f32(1.0F).f32(0.0F)
+    file.f32(10.0F)
+        .f32(20.0F)
+        .f32(30.0F)
+        .f32(0.0F)
+        .f32(1.0F)
+        .f32(0.0F)
         .u32(42)
-        .u8(0x11).u8(0x22).u8(0x33).u8(0x44);
+        .u8(0x11)
+        .u8(0x22)
+        .u8(0x33)
+        .u8(0x44);
     // Triangle.
-    file.u16(0).u16(0).u16(0)
-        .u8(1).u8(2).u8(3).u8(4).u8(5).u8(6)
-        .i32(0).i32(0).i32(0).i32(0);
+    file.u16(0).u16(0).u16(0).u8(1).u8(2).u8(3).u8(4).u8(5).u8(6).i32(0).i32(0).i32(0).i32(0);
     // Mesh descriptor.
     append_mesh(file, 0, 7, -1, 1, 1, 0, 0.0F);
 
@@ -208,9 +268,19 @@ TEST_SUITE("Core::Omikron::Model3DO") {
   TEST_CASE("Triangle references decode the parented flag and index mask") {
     Buffer file{make_header(0, 1, 0, 1, 0)};
 
-    file.u16(0x8005).u16(7).u16(0x8FFF)
-        .u8(0).u8(0).u8(0).u8(0).u8(0).u8(0)
-        .i32(-1).i32(0).i32(0).i32(0);
+    file.u16(0x8005)
+        .u16(7)
+        .u16(0x8FFF)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .i32(-1)
+        .i32(0)
+        .i32(0)
+        .i32(0);
     append_mesh(file, 0, 1, -1, 0, 1, 0, 0.0F);
 
     const auto model{App::Omikron::Model3DO::load(file.data())};
@@ -229,9 +299,9 @@ TEST_SUITE("Core::Omikron::Model3DO") {
   TEST_CASE("Skin parents skip joint-only meshes") {
     Buffer file{make_header(0, 3, 0, 0, 0)};
 
-    append_mesh(file, 0, 10, -1, 0, 0, 0, 0.0F);                                  // Root.
+    append_mesh(file, 0, 10, -1, 0, 0, 0, 0.0F);  // Root.
     append_mesh(file, 1, 11, 10, 0, 0, 0, 0.0F);  // Joint-only (flag bit 0).
-    append_mesh(file, 0, 12, 11, 0, 0, 0, 0.0F);                                  // Child.
+    append_mesh(file, 0, 12, 11, 0, 0, 0, 0.0F);  // Child.
 
     const auto model{App::Omikron::Model3DO::load(file.data())};
     REQUIRE(model.has_value());
@@ -246,14 +316,16 @@ TEST_SUITE("Core::Omikron::Model3DO") {
     // Material 64x64.
     file.chars("SKIN", 20).chars("", 20).chars("", 20).u32(0).u64(0).u32(0).u16(64).u16(64);
     // Vertex 0 (own block of mesh 0) and vertex 1 (own block of mesh 1).
-    file.f32(0.0F).f32(0.0F).f32(0.0F).f32(0.0F).f32(0.0F).f32(1.0F).u32(0).u8(0).u8(0).u8(0).u8(255);
-    file.f32(40.0F).f32(0.0F).f32(0.0F).f32(0.0F).f32(0.0F).f32(1.0F).u32(0).u8(0).u8(0).u8(0).u8(255);
+    file.f32(0.0F).f32(0.0F).f32(0.0F).f32(0.0F).f32(0.0F).f32(1.0F).u32(0).u8(0).u8(0).u8(0).u8(
+        255);
+    file.f32(40.0F).f32(0.0F).f32(0.0F).f32(0.0F).f32(0.0F).f32(1.0F).u32(0).u8(0).u8(0).u8(0).u8(
+        255);
     // Triangle: corner 0 parented, corners 1-2 own.
-    file.u16(0x8000).u16(0).u16(0)
-        .u8(32).u8(64).u8(0).u8(0).u8(16).u8(32)
-        .i32(0).i32(0).i32(0).i32(0);
-    append_mesh(file, 0, 10, -1, 1, 0, 0, 0.0F);   // Position (0, 0, 0).
-    append_mesh(file, 0, 11, 10, 1, 1, 0, 40.0F);  // Position (1, 0, 0).
+    file.u16(0x8000).u16(0).u16(0).u8(32).u8(64).u8(0).u8(0).u8(16).u8(32).i32(0).i32(0).i32(0).i32(
+        0);
+    append_mesh(file, 0, 10, -1, 1, 0, 0, 0.0F, 11);  // Root origin (0, 0, 0).
+    append_mesh(file, 0, 11, 10, 1, 1, 0, 40.0F, -1, -1, 40.0F);
+    // Child bind origin is its parent's origin plus bone position (1, 0, 0).
 
     const auto model{App::Omikron::Model3DO::load(file.data())};
     REQUIRE(model.has_value());
@@ -267,7 +339,7 @@ TEST_SUITE("Core::Omikron::Model3DO") {
     REQUIRE_EQ(group.vertices.size(), std::size_t{3});
     CHECK_EQ(group.indices, std::vector<std::uint32_t>{0U, 1U, 2U});
 
-    // Block-local positions plus the owning mesh position, no model centring.
+    // Block-local positions plus the owning mesh's bind-pose world origin.
     CHECK_EQ(group.vertices.at(0).position.at(0), doctest::Approx(0.0F));
     CHECK_EQ(group.vertices.at(0).position.at(1), doctest::Approx(0.0F));
     CHECK_EQ(group.vertices.at(1).position.at(0), doctest::Approx(2.0F));
@@ -285,14 +357,31 @@ TEST_SUITE("Core::Omikron::Model3DO") {
 
     file.chars("SKIN", 20).chars("", 20).chars("", 20).u32(0).u64(0).u32(0).u16(64).u16(32);
     // Four vertices in a unit quad (file order is x, z, y).
-    file.f32(0.0F).f32(0.0F).f32(0.0F).f32(0.0F).f32(0.0F).f32(1.0F).u32(0).u8(0).u8(0).u8(0).u8(255);
-    file.f32(40.0F).f32(0.0F).f32(0.0F).f32(0.0F).f32(0.0F).f32(1.0F).u32(0).u8(0).u8(0).u8(0).u8(255);
-    file.f32(40.0F).f32(0.0F).f32(40.0F).f32(0.0F).f32(0.0F).f32(1.0F).u32(0).u8(0).u8(0).u8(0).u8(255);
-    file.f32(0.0F).f32(0.0F).f32(40.0F).f32(0.0F).f32(0.0F).f32(1.0F).u32(0).u8(0).u8(0).u8(0).u8(255);
+    file.f32(0.0F).f32(0.0F).f32(0.0F).f32(0.0F).f32(0.0F).f32(1.0F).u32(0).u8(0).u8(0).u8(0).u8(
+        255);
+    file.f32(40.0F).f32(0.0F).f32(0.0F).f32(0.0F).f32(0.0F).f32(1.0F).u32(0).u8(0).u8(0).u8(0).u8(
+        255);
+    file.f32(40.0F).f32(0.0F).f32(40.0F).f32(0.0F).f32(0.0F).f32(1.0F).u32(0).u8(0).u8(0).u8(0).u8(
+        255);
+    file.f32(0.0F).f32(0.0F).f32(40.0F).f32(0.0F).f32(0.0F).f32(1.0F).u32(0).u8(0).u8(0).u8(0).u8(
+        255);
     // Rectangle (0, 1, 2, 3) with UV bytes 0..7.
-    file.u16(0).u16(1).u16(2).u16(3)
-        .u8(0).u8(1).u8(2).u8(3).u8(4).u8(5).u8(6).u8(7)
-        .i32(0).i32(0).i32(0).i32(0);
+    file.u16(0)
+        .u16(1)
+        .u16(2)
+        .u16(3)
+        .u8(0)
+        .u8(1)
+        .u8(2)
+        .u8(3)
+        .u8(4)
+        .u8(5)
+        .u8(6)
+        .u8(7)
+        .i32(0)
+        .i32(0)
+        .i32(0)
+        .i32(0);
     append_mesh(file, 0, 1, -1, 4, 0, 1, 0.0F);
 
     const auto model{App::Omikron::Model3DO::load(file.data())};
@@ -320,7 +409,8 @@ TEST_SUITE("Core::Omikron::Model3DO") {
     Buffer file{make_header(1, 1, 1, 1, 0)};
 
     file.chars("SKIN", 20).chars("", 20).chars("", 20).u32(0).u64(0).u32(0).u16(32).u16(32);
-    file.f32(0.0F).f32(0.0F).f32(0.0F).f32(0.0F).f32(0.0F).f32(1.0F).u32(0).u8(0).u8(0).u8(0).u8(255);
+    file.f32(0.0F).f32(0.0F).f32(0.0F).f32(0.0F).f32(0.0F).f32(1.0F).u32(0).u8(0).u8(0).u8(0).u8(
+        255);
     file.u16(0).u16(0).u16(0).u8(0).u8(0).u8(0).u8(0).u8(0).u8(0).i32(-1).i32(0).i32(0).i32(0);
     append_mesh(file, 0, 1, -1, 1, 1, 0, 0.0F);
 
@@ -356,9 +446,9 @@ TEST_SUITE("Core::Omikron::Model3DO") {
   TEST_CASE("UV-scroll-U flag survives static geometry") {
     Buffer file{make_header(1, 1, 1, 1, 0)};
 
-    file.chars("SCROLL", 20).chars("", 20).chars("", 20)
-        .u32(0).u64(0).u32(0).u16(32).u16(32);
-    file.f32(0.0F).f32(0.0F).f32(0.0F).f32(0.0F).f32(0.0F).f32(1.0F).u32(0).u8(0).u8(0).u8(0).u8(255);
+    file.chars("SCROLL", 20).chars("", 20).chars("", 20).u32(0).u64(0).u32(0).u16(32).u16(32);
+    file.f32(0.0F).f32(0.0F).f32(0.0F).f32(0.0F).f32(0.0F).f32(1.0F).u32(0).u8(0).u8(0).u8(0).u8(
+        255);
     file.u16(0).u16(0).u16(0).u8(0).u8(0).u8(0).u8(0).u8(0).u8(0).i32(0).i32(0).i32(0).i32(0);
     append_mesh(file, 1U << 24, 1, -1, 1, 1, 0, 0.0F);
 
@@ -370,8 +460,7 @@ TEST_SUITE("Core::Omikron::Model3DO") {
     REQUIRE_EQ(groups->size(), std::size_t{1});
 
     const auto& group{groups->at(0)};
-    CHECK(App::Omikron::has_flag(
-        group.flags, App::Omikron::MeshFlags::k_uv_scroll_u));
+    CHECK(App::Omikron::has_flag(group.flags, App::Omikron::MeshFlags::k_uv_scroll_u));
     // UV scrolling is orthogonal to framebuffer blend selection.
     CHECK_EQ(App::Omikron::blend_mode(group.flags), App::Omikron::BlendMode::k_opaque);
   }
@@ -381,7 +470,12 @@ TEST_SUITE("Core::Omikron::Model3DO") {
 
     // Position (40, 80, 0) and target (40, 80, 40) in file space convert to
     // (1, -2, 0) and (1, -2, -1) in world space.
-    append_light(file, 0x00040002U, "CEILING", 120.0F, 30.0F, 2.5F,
+    append_light(file,
+        0x00040002U,
+        "CEILING",
+        120.0F,
+        30.0F,
+        2.5F,
         std::array<std::uint8_t, 4>{0x11, 0x22, 0x33, 0x44},
         std::array<float, 3>{40.0F, 80.0F, 0.0F},
         std::array<float, 3>{40.0F, 80.0F, 40.0F});
@@ -468,8 +562,8 @@ TEST_SUITE("Core::Omikron::Model3DO") {
     CHECK_EQ(App::Omikron::blend_mode((1U << 12) | (1U << 13)), BlendMode::k_additive);
     CHECK_EQ(App::Omikron::blend_mode((1U << 12) | (1U << 14)), BlendMode::k_subtractive);
     // Subtractive wins when both modifiers are set.
-    CHECK_EQ(App::Omikron::blend_mode((1U << 12) | (1U << 13) | (1U << 14)),
-             BlendMode::k_subtractive);
+    CHECK_EQ(
+        App::Omikron::blend_mode((1U << 12) | (1U << 13) | (1U << 14)), BlendMode::k_subtractive);
     // The modifiers are inert without alpha blending, as in the reference importer.
     CHECK_EQ(App::Omikron::blend_mode(1U << 13), BlendMode::k_opaque);
     CHECK_EQ(App::Omikron::blend_mode(1U << 14), BlendMode::k_opaque);
@@ -477,7 +571,7 @@ TEST_SUITE("Core::Omikron::Model3DO") {
     CHECK_EQ(App::Omikron::blend_mode((1U << 11) | (1U << 12)), BlendMode::k_alpha_blend);
     // Unrelated flags do not change the outcome.
     CHECK_EQ(App::Omikron::blend_mode((1U << 12) | (1U << 20) | (1U << 26) | (1U << 27)),
-             BlendMode::k_alpha_blend);
+        BlendMode::k_alpha_blend);
     // The skybox flag drives a render pass, not a blend mode.
     CHECK_EQ(App::Omikron::blend_mode(1U << 24), BlendMode::k_opaque);
   }

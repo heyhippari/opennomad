@@ -784,17 +784,62 @@ void DebugUI::show_overlays() {
   if (const auto world{view->world_render_debug_state()}; world.has_value()) {
     ImGui::TextUnformatted("World renderer");
     ImGui::Separator();
-
     ImGui::Text("Renderer: %s", world->renderer_ready ? "ready" : "not ready");
     ImGui::Text("Groups: %zu", world->group_count);
     ImGui::Text("Materials: %zu", world->material_count);
-
     ImGui::Text("Bounds center: %.3f, %.3f, %.3f",
         static_cast<double>(world->bounds_center.at(0)),
         static_cast<double>(world->bounds_center.at(1)),
         static_cast<double>(world->bounds_center.at(2)));
-    ImGui::Text(
-        "Bounds radius: %.3f", static_cast<double>(world->bounds_radius));
+    ImGui::Text("Bounds radius: %.3f", static_cast<double>(world->bounds_radius));
+
+    constexpr ImGuiTableFlags k_hierarchy_flags{ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                                                ImGuiTableFlags_ScrollY |
+                                                ImGuiTableFlags_SizingFixedFit};
+    if (ImGui::CollapsingHeader("3DO hierarchy") &&
+        ImGui::BeginTable("##3DOHierarchy", 7, k_hierarchy_flags, ImVec2{0.0F, 220.0F})) {
+      ImGui::TableSetupColumn("ID");
+      ImGui::TableSetupColumn("Name");
+      ImGui::TableSetupColumn("Parent");
+      ImGui::TableSetupColumn("Child");
+      ImGui::TableSetupColumn("Sibling");
+      ImGui::TableSetupColumn("Live");
+      ImGui::TableSetupColumn("Bind origin");
+      ImGui::TableHeadersRow();
+      for (const Debug::WorldMeshHierarchyDebugState& mesh : world->mesh_hierarchy) {
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::Text(mesh.root ? "%u *" : "%u", mesh.mesh_id);
+        ImGui::TableSetColumnIndex(1);
+        ImGui::TextUnformatted(mesh.name.c_str());
+        ImGui::TableSetColumnIndex(2);
+        ImGui::Text("%d", mesh.parent_id);
+        ImGui::TableSetColumnIndex(3);
+        ImGui::Text("%d", mesh.first_child_id);
+        ImGui::TableSetColumnIndex(4);
+        ImGui::Text("%d", mesh.next_sibling_id);
+        ImGui::TableSetColumnIndex(5);
+        ImGui::TextUnformatted(mesh.reachable ? "yes" : "no");
+        ImGui::TableSetColumnIndex(6);
+        ImGui::Text("%.3f, %.3f, %.3f",
+            static_cast<double>(mesh.bind_origin.at(0)),
+            static_cast<double>(mesh.bind_origin.at(1)),
+            static_cast<double>(mesh.bind_origin.at(2)));
+        if (ImGui::IsItemHovered()) {
+          ImGui::BeginTooltip();
+          ImGui::Text("Serialized position: %.3f, %.3f, %.3f",
+              static_cast<double>(mesh.position.at(0)),
+              static_cast<double>(mesh.position.at(1)),
+              static_cast<double>(mesh.position.at(2)));
+          ImGui::Text("Bone position: %.3f, %.3f, %.3f",
+              static_cast<double>(mesh.bone_position.at(0)),
+              static_cast<double>(mesh.bone_position.at(1)),
+              static_cast<double>(mesh.bone_position.at(2)));
+          ImGui::EndTooltip();
+        }
+      }
+      ImGui::EndTable();
+    }
 
     ImGui::Spacing();
     ImGui::TextUnformatted("Mesh flags");
@@ -802,17 +847,13 @@ void DebugUI::show_overlays() {
     ImGui::Text("UV scroll U: %zu", world->uv_scroll_u_group_count);
     ImGui::Text("UV scroll V: %zu", world->uv_scroll_v_group_count);
     ImGui::Text("Environment mapped: %zu", world->environment_group_count);
-
     const std::size_t unsupported_special_groups{
-        world->mirror_group_count +
-        world->environment_group_count};
-
+        world->mirror_group_count + world->environment_group_count};
     if (unsupported_special_groups != 0U) {
       ImGui::TextColored(K_WARNING_COLOR,
           "%zu group(s) currently use WorldRenderer's fallback base pass.",
           unsupported_special_groups);
     }
-
     const std::size_t uv_scroll_groups{
         world->uv_scroll_u_group_count + world->uv_scroll_v_group_count};
     if (uv_scroll_groups != 0U) {
@@ -824,36 +865,29 @@ void DebugUI::show_overlays() {
     ImGui::Spacing();
     ImGui::TextUnformatted("Camera");
     ImGui::Separator();
-
     ImGui::Text("Pose: %s", world->camera_has_pose ? "yes" : "no");
     ImGui::Text("Source: %s", world->camera_scripted ? "scripted" : "fallback");
     ImGui::Text("Transitioning: %s", world->camera_transitioning ? "yes" : "no");
-
     if (world->camera_id.has_value()) {
-      ImGui::Text("AREA camera: %u",
-          static_cast<unsigned int>(world->camera_id.value()));
+      ImGui::Text("AREA camera: %u", static_cast<unsigned int>(world->camera_id.value()));
     } else {
       ImGui::TextUnformatted("AREA camera: none");
     }
-
     if (world->camera_has_pose) {
       ImGui::Text("Eye: %.3f, %.3f, %.3f",
           static_cast<double>(world->camera_eye.at(0)),
           static_cast<double>(world->camera_eye.at(1)),
           static_cast<double>(world->camera_eye.at(2)));
-
       ImGui::Text("Target: %.3f, %.3f, %.3f",
           static_cast<double>(world->camera_target.at(0)),
           static_cast<double>(world->camera_target.at(1)),
           static_cast<double>(world->camera_target.at(2)));
     }
-
     ImGui::Spacing();
   }
 
   const bool has_light_overlay{view->light_overlay_supported()};
   const bool has_sprite_overlay{view->sprite_overlay_supported()};
-
   if (has_light_overlay || has_sprite_overlay) {
     ImGui::TextUnformatted("Draw overlays");
     ImGui::Separator();

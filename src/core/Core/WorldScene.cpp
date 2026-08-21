@@ -3,7 +3,9 @@
 #include <glad/glad.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstddef>
 #include <expected>
 #include <memory>
 #include <optional>
@@ -13,11 +15,12 @@
 
 #include "Core/Audio/AudioSystem.hpp"
 #include "Core/Audio/AudioTypes.hpp"
-#include "Core/Debug/SceneDebugView.hpp"
 #include "Core/Debug/Instrumentor.hpp"
+#include "Core/Debug/SceneDebugView.hpp"
 #include "Core/Interface/InterfaceManager.hpp"
 #include "Core/Log.hpp"
 #include "Core/LogCategory.hpp"
+#include "Core/Omikron/Model3DO.hpp"
 #include "Core/Scenario/ScenarioManager.hpp"
 #include "Core/Scenario/ScenarioRuntime.hpp"
 #include "Core/Shader.hpp"
@@ -138,8 +141,7 @@ WorldScene::WorldScene(ScenarioManager& scenarios, Interface::InterfaceManager& 
 
 WorldScene::~WorldScene() = default;
 
-std::optional<Debug::WorldRenderDebugState>
-WorldScene::world_render_debug_state() const {
+std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state() const {
   Debug::WorldRenderDebugState state;
 
   state.renderer_ready = m_world_renderer != nullptr;
@@ -152,6 +154,43 @@ WorldScene::world_render_debug_state() const {
     state.environment_group_count = m_world_renderer->environment_group_count();
     state.bounds_center = m_world_renderer->bounds().center;
     state.bounds_radius = m_world_renderer->bounds().radius;
+  }
+
+  const WorldSceneContext* world_context{
+      m_scenarios != nullptr ? m_scenarios->active_world_context() : nullptr};
+  if (world_context != nullptr && world_context->decor_model.has_value()) {
+    const Omikron::Model3DOData& model{world_context->decor_model.value()};
+
+    state.root_mesh_id = model.header.root_mesh_id;
+    if (model.root_mesh_index >= 0) {
+      state.root_mesh_index = static_cast<std::size_t>(model.root_mesh_index);
+    }
+
+    state.mesh_hierarchy.reserve(model.meshes.size());
+    for (std::size_t index{0}; index < model.meshes.size(); ++index) {
+      const Omikron::MeshDescriptor& mesh{model.meshes.at(index)};
+
+      const auto vec3 = [](const Omikron::Vec3& value) {
+        return std::array<float, 3>{value.x, value.y, value.z};
+      };
+
+      const bool reachable{
+          index < model.hierarchy_reachable.size() && model.hierarchy_reachable.at(index) != 0U};
+      const Omikron::Vec3 bind_origin{index < model.bind_pose_world_origin.size()
+                                          ? model.bind_pose_world_origin.at(index)
+                                          : Omikron::Vec3{}};
+
+      state.mesh_hierarchy.push_back(Debug::WorldMeshHierarchyDebugState{.mesh_id = mesh.mesh_id,
+          .name = mesh.name,
+          .parent_id = mesh.parent_id,
+          .first_child_id = mesh.first_child_id,
+          .next_sibling_id = mesh.next_sibling_id,
+          .reachable = reachable,
+          .root = std::cmp_equal(model.root_mesh_index, index),
+          .position = vec3(mesh.position),
+          .bone_position = vec3(mesh.bone_position),
+          .bind_origin = vec3(bind_origin)});
+    }
   }
 
   state.camera_has_pose = m_camera.has_pose();

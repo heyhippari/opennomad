@@ -16,8 +16,8 @@ class BinaryReader;
 
 /// Bit flags carried by mesh descriptors.
 enum MeshFlags : std::uint32_t {
-  k_joint_only = 1U << 0,           ///< Joint-only mesh: no displayed geometry.
-  k_vertex_lit = 1U << 2,           ///< Pre-baked vertex lighting.
+  k_joint_only = 1U << 0,  ///< Joint-only mesh: no displayed geometry.
+  k_vertex_lit = 1U << 2,  ///< Pre-baked vertex lighting.
   k_has_parent = 1U << 4,
   k_has_children = 1U << 5,
   k_alpha_testing = 1U << 11,
@@ -59,11 +59,11 @@ enum MeshFlags : std::uint32_t {
 /// over alpha testing, and the additive/subtractive modifiers only take
 /// effect together with alpha blending.
 enum class BlendMode : std::uint8_t {
-  k_opaque,      ///< Depth-tested, writes depth, no blending.
-  k_alpha_test,  ///< Cutout: fragments below the alpha threshold are discarded.
-  k_alpha_blend, ///< Standard source-alpha blending.
-  k_additive,    ///< Adds the source colour to the framebuffer.
-  k_subtractive, ///< Subtracts the source colour from the framebuffer.
+  k_opaque,       ///< Depth-tested, writes depth, no blending.
+  k_alpha_test,   ///< Cutout: fragments below the alpha threshold are discarded.
+  k_alpha_blend,  ///< Standard source-alpha blending.
+  k_additive,     ///< Adds the source colour to the framebuffer.
+  k_subtractive,  ///< Subtracts the source colour from the framebuffer.
 };
 
 /// Derives the blend mode a mesh's flag word maps to.
@@ -110,8 +110,12 @@ struct Header {
   /// files. The frame-descriptor table has not been located yet, so the
   /// count is preserved for documentation only.
   std::uint32_t frame_count{0};
-  /// Unparsed bytes 0x4C..0xCF.
-  std::array<std::byte, 132> reserved_b{};
+  /// Unparsed bytes 0x4C..0xB3.
+  std::array<std::byte, 104> reserved_b{};
+  /// Root runtime object ID (Serialized3DORootV4+0xB4).
+  std::uint32_t root_mesh_id{0};
+  /// Unparsed bytes 0xB8..0xCF.
+  std::array<std::byte, 24> reserved_b2{};
   /// Texture count used by the original runtime (Serialized3DORootV4+0xD0);
   /// serialized as 0 in observed files. Preserved for documentation only.
   std::uint32_t texture_count{0};
@@ -255,11 +259,11 @@ struct MeshPolygons {
 struct Light {
   std::uint32_t flags{0};  ///< Two 16-bit flag words; meaning unresolved.
   std::string name;
-  float attenuation_end{0.0F};    ///< Far-attenuation end, world units.
-  float attenuation_start{0.0F};  ///< Far-attenuation start, world units.
-  float intensity{0.0F};          ///< Raw intensity multiplier.
-  float unknown4{0.0F};           ///< Unresolved secondary value.
-  float unknown5{0.0F};           ///< Unresolved secondary value.
+  float attenuation_end{0.0F};               ///< Far-attenuation end, world units.
+  float attenuation_start{0.0F};             ///< Far-attenuation start, world units.
+  float intensity{0.0F};                     ///< Raw intensity multiplier.
+  float unknown4{0.0F};                      ///< Unresolved secondary value.
+  float unknown5{0.0F};                      ///< Unresolved secondary value.
   std::array<std::uint8_t, 4> color_bgra{};  ///< File order: B, G, R, A.
   std::array<Vec3, 6> points{};              ///< Slot 0 = position, 1 = target.
 
@@ -279,8 +283,27 @@ struct Model3DOData {
   std::vector<RawVertex> vertices;     ///< Global vertex list.
   std::vector<Light> lights;           ///< Explicit light records.
 
+  /// Descriptor selected by Serialized3DORootV4+0xB4, or -1 for a model
+  /// without meshes. Runtime begins object traversal from this object.
+  std::int32_t root_mesh_index{-1};
+
   /// Descriptor index of each mesh's hierarchy parent, or -1.
   std::vector<std::int32_t> hierarchy_parent_index;
+
+  /// Descriptor index of each mesh's first child, or -1.
+  std::vector<std::int32_t> hierarchy_first_child_index;
+  /// Descriptor index of each mesh's next sibling, or -1.
+  std::vector<std::int32_t> hierarchy_next_sibling_index;
+
+  /// Whether the descriptor is reachable by Runtime's root -> child ->
+  /// sibling traversal. Parallel to meshes.
+  std::vector<std::uint8_t> hierarchy_reachable;
+
+  /// Bind-pose world origin of each runtime object after resolving the
+  /// hierarchy. Root uses MeshDescriptor::position; descendants accumulate
+  /// MeshDescriptor::bone_position from their parent.
+  std::vector<Vec3> bind_pose_world_origin;
+
   /// Descriptor index of each mesh's nearest non-joint parent, or -1.
   std::vector<std::int32_t> skin_parent_index;
 };

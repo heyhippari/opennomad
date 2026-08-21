@@ -4,8 +4,26 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <string>
+#include <vector>
 
 namespace App::Debug {
+
+struct WorldMeshHierarchyDebugState {
+  std::uint32_t mesh_id{0};
+  std::string name;
+
+  std::int32_t parent_id{-1};
+  std::int32_t first_child_id{-1};
+  std::int32_t next_sibling_id{-1};
+
+  bool reachable{false};
+  bool root{false};
+
+  std::array<float, 3> position{};
+  std::array<float, 3> bone_position{};
+  std::array<float, 3> bind_origin{};
+};
 
 /// Presentation diagnostics exposed by a normal 3D world scene.
 ///
@@ -16,13 +34,17 @@ struct WorldRenderDebugState {
 
   std::size_t group_count{0};
   std::size_t material_count{0};
-  std::size_t mirror_group_count{0};  
+  std::size_t mirror_group_count{0};
   std::size_t uv_scroll_u_group_count{0};
   std::size_t uv_scroll_v_group_count{0};
   std::size_t environment_group_count{0};
 
   std::array<float, 3> bounds_center{};
   float bounds_radius{0.0F};
+
+  std::optional<std::uint32_t> root_mesh_id;
+  std::optional<std::size_t> root_mesh_index;
+  std::vector<WorldMeshHierarchyDebugState> mesh_hierarchy;
 
   bool camera_has_pose{false};
   bool camera_scripted{false};
@@ -38,8 +60,7 @@ class SceneDebugView {
  public:
   virtual ~SceneDebugView() = default;
 
-  [[nodiscard]] virtual std::optional<WorldRenderDebugState>
-  world_render_debug_state() const {
+  [[nodiscard]] virtual std::optional<WorldRenderDebugState> world_render_debug_state() const {
     return std::nullopt;
   }
 
