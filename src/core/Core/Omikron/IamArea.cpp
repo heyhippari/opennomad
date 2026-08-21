@@ -224,9 +224,9 @@ std::optional<IamAreaCharacterRecord> IamAreaRecord::character_by_id(
     IamAreaCharacterRecord character;
     character.field_00 = read_i16_at(record, 0x00U);
     character.character_id = read_i16_at(record, 0x02U);
-    character.position.at(0) = read_i32_at(record, 0x04U);
-    character.position.at(1) = read_i32_at(record, 0x08U);
-    character.position.at(2) = read_i32_at(record, 0x0CU);
+    character.serialized_position.at(0) = read_i32_at(record, 0x04U);
+    character.serialized_position.at(1) = read_i32_at(record, 0x08U);
+    character.serialized_position.at(2) = read_i32_at(record, 0x0CU);
     character.orientation_units = read_i16_at(record, 0x10U);
     character.field_12 = read_u16_at(record, 0x12U);
 
@@ -252,13 +252,13 @@ std::optional<IamAreaCameraRecord> IamAreaRecord::camera_by_id(const std::int16_
         table->subspan(index * k_camera_stride, k_camera_stride)};
     IamAreaCameraRecord camera;
     for (std::size_t axis{0}; axis < 3U; ++axis) {
-      camera.eye.at(axis) = read_i32_at(record, axis * 4U);
-      camera.target.at(axis) = read_i32_at(record, 0x0CU + (axis * 4U));
+      camera.serialized_eye.at(axis) = read_i32_at(record, axis * 4U);
+      camera.serialized_target.at(axis) = read_i32_at(record, 0x0CU + (axis * 4U));
     }
     camera.camera_id = read_i16_at(record, 0x18U);
     camera.camera_type = read_u16_at(record, 0x1AU);
-    camera.angle_units = read_i16_at(record, 0x1CU);
-    camera.focal_parameter = read_i16_at(record, 0x1EU);
+    camera.roll_units = read_i16_at(record, 0x1CU);
+    camera.horizontal_fov_units = read_i16_at(record, 0x1EU);
     camera.field_20 = read_i16_at(record, 0x20U);
     camera.field_22 = read_i16_at(record, 0x22U);
     for (std::size_t slot{0}; slot < camera.tail_fields.size(); ++slot) {

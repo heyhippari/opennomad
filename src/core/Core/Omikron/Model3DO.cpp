@@ -21,6 +21,7 @@
 #include "Core/Log.hpp"
 #include "Core/LogCategory.hpp"
 #include "Core/Omikron/BinaryReader.hpp"
+#include "Core/RuntimeMath.hpp"
 #include "Core/Vertex.hpp"
 
 namespace App::Omikron {
@@ -266,18 +267,39 @@ std::expected<Model3DOData, std::string> Model3DO::load(const std::span<const st
     model.skin_parent_index.push_back(skin_parent);
   }
 
-  // Recover Runtime's bind-pose object traversal. 0x0048D3B0 starts at the
-  // model root and recursively follows first-child / next-sibling links.
-  //
-  // In the unanimated bind pose:
-  //   root origin  = root.position
-  //   child origin = parent origin + child.bone_position
-  //
-  // Rotation/animation matrices will later extend this same hierarchy;
-  // keeping the derived origin separate from serialized fields avoids
-  // baking presentation state back into the decoded data.
+  // Initialize mutable Runtime object state without modifying serialized
+  // descriptors. Runtime's serialized object stride is 0x8C; its expanded
+  // runtime object is 0xB8 and begins with identity orientation/unit scale.
   model.hierarchy_reachable.assign(model.meshes.size(), std::uint8_t{0});
-  model.bind_pose_world_origin.assign(model.meshes.size(), Vec3{});
+  model.runtime_objects.reserve(model.meshes.size());
+  for (std::size_t index{0}; index < model.meshes.size(); ++index) {
+    const MeshDescriptor& mesh{model.meshes.at(index)};
+    const bool root{std::cmp_equal(model.root_mesh_index, index)};
+    model.runtime_objects.push_back(
+        Model3DOData::RuntimeObjectState{.local_offset = root ? mesh.position : mesh.bone_position,
+            .local_matrix = Runtime::Matrix3::identity(),
+            .animation_matrix = std::nullopt,
+            .scale = {.x = 1.0F, .y = 1.0F, .z = 1.0F},
+            .world_matrix = Runtime::Matrix3::identity(),
+            .world_translation = {}});
+  }
+
+  if (auto resolved{resolve_runtime_transforms(model)}; !resolved) {
+    return std::expected<Model3DOData, std::string>{std::unexpect, std::move(resolved).error()};
+  }
+
+  return model;
+}
+
+std::expected<void, std::string> Model3DO::resolve_runtime_transforms(Model3DOData& model) {
+  if (model.runtime_objects.size() != model.meshes.size()) {
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format("3DO runtime object count {} does not match mesh count {}",
+            model.runtime_objects.size(),
+            model.meshes.size())};
+  }
+
+  model.hierarchy_reachable.assign(model.meshes.size(), std::uint8_t{0});
 
   if (model.root_mesh_index != -1) {
     std::vector<std::uint8_t> visit_state(model.meshes.size(), std::uint8_t{0});
@@ -302,10 +324,15 @@ std::expected<Model3DOData, std::string> Model3DO::load(const std::span<const st
       model.hierarchy_reachable.at(index) = 1U;
 
       const MeshDescriptor& mesh{model.meshes.at(index)};
-      Vec3& origin{model.bind_pose_world_origin.at(index)};
+      Model3DOData::RuntimeObjectState& object{model.runtime_objects.at(index)};
+      Runtime::Matrix3 effective_local{object.local_matrix};
+      if (object.animation_matrix.has_value()) {
+        effective_local = Runtime::multiply(effective_local, object.animation_matrix.value());
+      }
 
       if (std::cmp_equal(index, model.root_mesh_index)) {
-        origin = mesh.position;
+        object.world_matrix = effective_local;
+        object.world_translation = object.local_offset;
       } else {
         const std::int32_t parent_index{model.hierarchy_parent_index.at(index)};
         if (parent_index < 0) {
@@ -314,11 +341,17 @@ std::expected<Model3DOData, std::string> Model3DO::load(const std::span<const st
                   "reachable non-root mesh '{}' (id {}) has no parent", mesh.name, mesh.mesh_id)};
         }
 
-        const Vec3& parent_origin{
-            model.bind_pose_world_origin.at(static_cast<std::size_t>(parent_index))};
-        origin = Vec3{.x = parent_origin.x + mesh.bone_position.x,
-            .y = parent_origin.y + mesh.bone_position.y,
-            .z = parent_origin.z + mesh.bone_position.z};
+        const Model3DOData::RuntimeObjectState& parent{
+            model.runtime_objects.at(static_cast<std::size_t>(parent_index))};
+        const Runtime::Transform composed{
+            Runtime::compose(Runtime::Transform{.matrix = effective_local,
+                                 .translation = object.local_offset,
+                                 .scale = object.scale},
+                Runtime::Transform{.matrix = parent.world_matrix,
+                    .translation = parent.world_translation,
+                    .scale = parent.scale})};
+        object.world_matrix = composed.matrix;
+        object.world_translation = composed.translation;
       }
 
       std::int32_t child_index{model.hierarchy_first_child_index.at(index)};
@@ -361,7 +394,7 @@ std::expected<Model3DOData, std::string> Model3DO::load(const std::span<const st
     };
 
     if (auto result{visit(static_cast<std::size_t>(model.root_mesh_index))}; !result) {
-      return std::expected<Model3DOData, std::string>{std::unexpect, std::move(result).error()};
+      return std::expected<void, std::string>{std::unexpect, std::move(result).error()};
     }
 
     std::size_t reachable_count{0};
@@ -377,7 +410,7 @@ std::expected<Model3DOData, std::string> Model3DO::load(const std::span<const st
         model.meshes.size());
   }
 
-  return model;
+  return {};
 }
 
 std::expected<std::vector<MaterialGroup>, std::string> Model3DO::build_static_geometry(
@@ -447,15 +480,20 @@ std::expected<std::vector<MaterialGroup>, std::string> Model3DO::build_static_ge
               "vertex index {} out of range ({} vertices)", global_index, model.vertices.size())};
     }
     const RawVertex& raw{model.vertices.at(global_index)};
-    const Vec3 bind_origin{vertex_owner_index < model.bind_pose_world_origin.size()
-                               ? model.bind_pose_world_origin.at(vertex_owner_index)
-                               : Vec3{}};
+    if (vertex_owner_index >= model.runtime_objects.size()) {
+      return std::expected<void, std::string>{
+          std::unexpect, "3DO vertex owner has no Runtime object transform"};
+    }
+    const Model3DOData::RuntimeObjectState& object{model.runtime_objects.at(vertex_owner_index)};
+    const Runtime::Transform transform{.matrix = object.world_matrix,
+        .translation = object.world_translation,
+        .scale = object.scale};
+    const Vec3 position{Runtime::transform_point(raw.position, transform)};
+    const Vec3 normal{Runtime::transform_vector(raw.normal, object.world_matrix)};
 
     Vertex vertex{};
-    vertex.position = {raw.position.x + bind_origin.x,
-        raw.position.y + bind_origin.y,
-        raw.position.z + bind_origin.z};
-    vertex.normal = {raw.normal.x, raw.normal.y, raw.normal.z};
+    vertex.position = {position.x, position.y, position.z};
+    vertex.normal = {normal.x, normal.y, normal.z};
     constexpr float byte_to_float{1.0F / 255.0F};
     vertex.color = {
         static_cast<float>(raw.color_bgra.at(2)) * byte_to_float,
@@ -635,7 +673,7 @@ MeshDescriptor Model3DO::read_mesh_descriptor(BinaryReader& reader) {
   mesh.mesh_id = reader.read_u32();
   mesh.script_id = reader.read_u32();
   mesh.name = read_fixed_string(reader, 20);
-  mesh.position = read_vec3(reader, k_scale_factor);
+  mesh.position = read_vec3(reader);
   mesh.parent_id = reader.read_i32();
   mesh.first_child_id = reader.read_i32();
   mesh.next_sibling_id = reader.read_i32();
@@ -647,19 +685,19 @@ MeshDescriptor Model3DO::read_mesh_descriptor(BinaryReader& reader) {
   mesh.unknown09 = reader.read_f32();
   mesh.unknown10 = reader.read_f32();
   mesh.unknown11 = reader.read_f32();
-  mesh.box_extent_neg = read_vec3(reader, k_scale_factor);
-  mesh.box_extent_pos = read_vec3(reader, k_scale_factor);
+  mesh.box_extent_neg = read_vec3(reader);
+  mesh.box_extent_pos = read_vec3(reader);
   mesh.unknown18 = reader.read_f32();
   mesh.unknown19 = reader.read_f32();
   mesh.unknown20 = reader.read_f32();
-  mesh.bone_position = read_vec3(reader, k_scale_factor);
+  mesh.bone_position = read_vec3(reader);
   return mesh;
 }
 
 RawVertex Model3DO::read_raw_vertex(BinaryReader& reader) {
   RawVertex vertex;
-  vertex.position = read_vec3(reader, k_scale_factor);
-  vertex.normal = read_vec3(reader, 1.0F);
+  vertex.position = read_vec3(reader);
+  vertex.normal = read_vec3(reader);
   vertex.unknown_t1 = reader.read_u32();
   // Colour is stored B, G, R, A (kept in file order; renderers convert).
   for (std::size_t channel{0}; channel < vertex.color_bgra.size(); ++channel) {
@@ -706,8 +744,8 @@ Light Model3DO::read_light(BinaryReader& reader) {
   Light light;
   light.flags = reader.read_u32();
   light.name = read_fixed_string(reader, 20);
-  light.attenuation_end = reader.read_f32() * k_scale_factor;
-  light.attenuation_start = reader.read_f32() * k_scale_factor;
+  light.attenuation_end = reader.read_f32();
+  light.attenuation_start = reader.read_f32();
   light.intensity = reader.read_f32();
   light.unknown4 = reader.read_f32();
   light.unknown5 = reader.read_f32();
@@ -719,7 +757,7 @@ Light Model3DO::read_light(BinaryReader& reader) {
   // The 20 bytes after each point and the 64 trailing bytes are unresolved
   // (zero in practice) and are skipped.
   for (std::size_t slot{0}; slot < light.points.size(); ++slot) {
-    light.points.at(slot) = read_vec3(reader, k_scale_factor);
+    light.points.at(slot) = read_vec3(reader);
     reader.skip(20);
   }
   reader.skip(64);
@@ -761,16 +799,10 @@ std::string Model3DO::read_fixed_string(BinaryReader& reader, const std::size_t 
   return result;
 }
 
-Vec3 Model3DO::read_vec3(BinaryReader& reader, const float scale) {
-  // The file stores (x, z, y) in a left-handed frame (the second float is
-  // the file's Z axis and the third is its Y axis). The reference importer
-  // converts this to right-handed Z-up game space as (x, y, -z); turning
-  // that into the renderer's right-handed Y-up frame via (x, z, -y) yields
-  // the combined mapping (x, -z, -y).
-  const float file_x{reader.read_f32()};
-  const float file_z{reader.read_f32()};
-  const float file_y{reader.read_f32()};
-  return Vec3{.x = file_x * scale, .y = -(file_z * scale), .z = -(file_y * scale)};
+Vec3 Model3DO::read_vec3(BinaryReader& reader) {
+  // Runtime consumes serialized 3DO vectors as ordinary native XYZ floats.
+  // Presentation basis conversion belongs exclusively at the renderer edge.
+  return Vec3{.x = reader.read_f32(), .y = reader.read_f32(), .z = reader.read_f32()};
 }
 
 }  // namespace App::Omikron

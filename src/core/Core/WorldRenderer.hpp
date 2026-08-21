@@ -21,7 +21,7 @@ class ScenarioRuntime;
 struct WorldSceneContext;
 
 struct WorldBounds {
-  std::array<float, 3> center{};
+  std::array<float, 3> center{};  ///< Unscaled GL presentation-space center.
   float radius{1.0F};
 };
 

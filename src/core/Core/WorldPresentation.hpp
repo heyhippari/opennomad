@@ -7,33 +7,38 @@
 #include <optional>
 #include <utility>
 
+#include "Core/RuntimeMath.hpp"
+
 namespace App {
 
 /// One resolved Runtime AREA camera command waiting to be consumed by the
 /// presentation layer.
 ///
-/// Coordinates deliberately remain in Runtime's logical XYZ units here.
-/// WorldCameraSystem owns the engine->renderer coordinate conversion and the
-/// interpolation policy, so scenario code never depends on GL/view-space
-/// conventions.
+/// Serialized AREA integers are retained for diagnostics alongside normalized
+/// Runtime-native positions. Scenario code never depends on GL conventions.
 struct WorldCameraCommand {
   std::uint32_t scene_id{0};
   std::uint32_t scene_generation{0};
   std::uint16_t camera_id{0};
 
-  std::array<std::int32_t, 3> runtime_eye{};
-  std::array<std::int32_t, 3> runtime_target{};
+  std::array<std::int32_t, 3> serialized_eye{};
+  std::array<std::int32_t, 3> serialized_target{};
+  Runtime::Vec3 runtime_eye{};
+  Runtime::Vec3 runtime_target{};
 
   /// Original AREA duration in 30 Hz scenario units.
   std::int16_t duration_units{0};
   std::int16_t flags{0};
   bool wait_for_completion{false};
 
-  /// IAM camera metadata retained verbatim until its remaining projection /
-  /// attachment semantics are fully recovered.
+  /// Confirmed camera metadata, preserving both serialized units and
+  /// normalized integer degrees.
   std::uint16_t camera_type{0};
-  std::int16_t angle_units{0};
-  std::int16_t focal_parameter{0};
+  std::int16_t roll_units{0};
+  std::int16_t horizontal_fov_units{0};
+  std::int32_t roll_degrees{0};
+  std::int32_t horizontal_fov_degrees{0};
+  /// Attachment-related fields remain unresolved.
   std::int16_t field_20{0};
   std::int16_t field_22{0};
   std::array<std::uint16_t, 4> tail_fields{};

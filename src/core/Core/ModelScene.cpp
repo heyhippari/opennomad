@@ -48,6 +48,8 @@
 #include "Core/Omikron/Texture3DT.hpp"
 #include "Core/Reflection.hpp"
 #include "Core/Resources.hpp"
+#include "Core/RuntimeMath.hpp"
+#include "Core/RuntimePresentation.hpp"
 #include "Core/Scenario/ScenarioManager.hpp"
 #include "Core/Scenario/ScenarioRuntime.hpp"
 #include "Core/Script/ScriptRuntime.hpp"
@@ -523,13 +525,12 @@ std::expected<ModelScene::DecodedModel, std::string> ModelScene::load_decoded_mo
 std::expected<std::unique_ptr<ModelScene>, std::string> ModelScene::create() {
   APP_PROFILE_FUNCTION();
 
-  //const std::filesystem::path model_path{Resources::game_data_path("MESHES/PERSOS/HO1_FN.3DO")};
+  // const std::filesystem::path model_path{Resources::game_data_path("MESHES/PERSOS/HO1_FN.3DO")};
   const std::filesystem::path model_path{Resources::game_data_path("MESHES/DECORS/Anekbah.3DO")};
 
   auto decoded{load_decoded_model(model_path)};
   if (!decoded) {
-    return std::expected<std::unique_ptr<ModelScene>, std::string>{
-        std::unexpect, decoded.error()};
+    return std::expected<std::unique_ptr<ModelScene>, std::string>{std::unexpect, decoded.error()};
   }
 
   auto scene{create_from_geometry(
@@ -612,7 +613,7 @@ std::expected<std::unique_ptr<ModelScene>, std::string> ModelScene::create_from_
     return std::expected<std::unique_ptr<ModelScene>, std::string>{
         std::unexpect, std::move(result).error()};
   }
-  runtime->set_world_anchor(scene_ref.m_model_center);
+  runtime->set_world_anchor(Runtime::Presentation::to_gl(scene_ref.m_model_center));
   scene_ref.m_owned_runtime = std::move(runtime);
   scene_ref.m_runtime = scene_ref.m_owned_runtime.get();
 
@@ -666,7 +667,7 @@ std::expected<std::unique_ptr<ModelScene>, std::string> ModelScene::create_from_
     return std::expected<std::unique_ptr<ModelScene>, std::string>{
         std::unexpect, std::move(result).error()};
   }
-  runtime->set_world_anchor(scene_ref.m_model_center);
+  runtime->set_world_anchor(Runtime::Presentation::to_gl(scene_ref.m_model_center));
   scene_ref.m_runtime = runtime;
 
   return scene;
@@ -681,6 +682,15 @@ std::expected<std::unique_ptr<ModelScene>, std::string> ModelScene::create_from_
 
   App::Log::debug(LogCategory::Renderer, "Building render-ready scene for '{}'", display_name);
 
+  // Model3DO geometry is authoritative Runtime-native data. This legacy
+  // source mirror uses the same presentation adapter as the active viewer.
+  std::vector<Omikron::MaterialGroup> presentation_groups{groups};
+  for (Omikron::MaterialGroup& group : presentation_groups) {
+    for (Vertex& vertex : group.vertices) {
+      vertex = Runtime::Presentation::to_gl(vertex);
+    }
+  }
+
   std::size_t vertex_count{0};
   float min_x{std::numeric_limits<float>::max()};
   float min_y{std::numeric_limits<float>::max()};
@@ -688,7 +698,7 @@ std::expected<std::unique_ptr<ModelScene>, std::string> ModelScene::create_from_
   float max_x{std::numeric_limits<float>::lowest()};
   float max_y{std::numeric_limits<float>::lowest()};
   float max_z{std::numeric_limits<float>::lowest()};
-  for (const Omikron::MaterialGroup& group : groups) {
+  for (const Omikron::MaterialGroup& group : presentation_groups) {
     vertex_count += group.vertices.size();
     for (const Vertex& vertex : group.vertices) {
       min_x = std::min(min_x, vertex.position.at(0));
@@ -723,7 +733,7 @@ std::expected<std::unique_ptr<ModelScene>, std::string> ModelScene::create_from_
   // of the emitted triangles (dot(cross(e1, e2), normal) > 0).
   std::size_t face_count{0};
   std::size_t normal_mismatches{0};
-  for (const Omikron::MaterialGroup& group : groups) {
+  for (const Omikron::MaterialGroup& group : presentation_groups) {
     for (std::size_t index{0}; index + 2U < group.indices.size(); index += 3U) {
       const std::array<float, 3>& first{group.vertices.at(group.indices.at(index)).position};
       const std::array<float, 3>& second{group.vertices.at(group.indices.at(index + 1U)).position};
@@ -832,86 +842,78 @@ std::expected<std::unique_ptr<ModelScene>, std::string> ModelScene::create_from_
   std::size_t overlay_line_count{0};
   std::size_t overlay_sphere_count{0};
 
-  const auto append_overlay_vertex =
-      [&overlay_vertices](
-          const std::array<float, 3>& position, const std::array<float, 4>& color) {
-        overlay_vertices.push_back(OverlayVertex{.position = position, .color = color});
-      };
+  const auto append_overlay_vertex = [&overlay_vertices](const std::array<float, 3>& position,
+                                         const std::array<float, 4>& color) {
+    overlay_vertices.push_back(OverlayVertex{.position = position, .color = color});
+  };
 
   // Appends a wireframe sphere of line segments centred on `center`.
-  const auto append_attenuation_sphere =
-      [&overlay_sphere_count, &append_overlay_vertex](
-          const std::array<float, 3>& center,
-          const float radius,
-          const std::array<float, 4>& color) {
-        if (radius <= 0.0F) {
-          return;
-        }
-        constexpr int k_ring_count{4};
-        constexpr int k_segment_count{12};
-        constexpr int k_meridian_count{6};
-        constexpr float k_two_pi{6.2831853F};
+  const auto append_attenuation_sphere = [&overlay_sphere_count, &append_overlay_vertex](
+                                             const std::array<float, 3>& center,
+                                             const float radius,
+                                             const std::array<float, 4>& color) {
+    if (radius <= 0.0F) {
+      return;
+    }
+    constexpr int k_ring_count{4};
+    constexpr int k_segment_count{12};
+    constexpr int k_meridian_count{6};
+    constexpr float k_two_pi{6.2831853F};
 
-        // Latitude rings (the poles are degenerate and skipped).
-        for (int ring_index{1}; ring_index < k_ring_count; ++ring_index) {
-          const float latitude{std::numbers::pi_v<float> * static_cast<float>(ring_index) /
-                               static_cast<float>(k_ring_count)};
-          const float ring_y{radius * std::cos(latitude)};
-          const float ring_radius{radius * std::sin(latitude)};
-          for (int segment_index{0}; segment_index < k_segment_count; ++segment_index) {
-            const float angle0{k_two_pi * static_cast<float>(segment_index) /
-                               static_cast<float>(k_segment_count)};
-            const float angle1{k_two_pi * static_cast<float>(segment_index + 1) /
-                               static_cast<float>(k_segment_count)};
-            append_overlay_vertex(
-                {center.at(0) + (ring_radius * std::cos(angle0)),
-                    center.at(1) + ring_y,
-                    center.at(2) + (ring_radius * std::sin(angle0))},
-                color);
-            append_overlay_vertex(
-                {center.at(0) + (ring_radius * std::cos(angle1)),
-                    center.at(1) + ring_y,
-                    center.at(2) + (ring_radius * std::sin(angle1))},
-                color);
-            overlay_sphere_count += 2U;
-          }
-        }
-        // Meridians from pole to pole.
-        for (int meridian_index{0}; meridian_index < k_meridian_count; ++meridian_index) {
-          const float angle{k_two_pi * static_cast<float>(meridian_index) /
-                            static_cast<float>(k_meridian_count)};
-          const float cos_angle{std::cos(angle)};
-          const float sin_angle{std::sin(angle)};
-          for (int segment_index{0}; segment_index < k_segment_count; ++segment_index) {
-            const float latitude0{std::numbers::pi_v<float> * static_cast<float>(segment_index) /
-                                  static_cast<float>(k_segment_count)};
-            const float latitude1{std::numbers::pi_v<float> *
-                                  static_cast<float>(segment_index + 1) /
-                                  static_cast<float>(k_segment_count)};
-            append_overlay_vertex(
-                {center.at(0) + (radius * std::sin(latitude0) * cos_angle),
-                    center.at(1) + (radius * std::cos(latitude0)),
-                    center.at(2) + (radius * std::sin(latitude0) * sin_angle)},
-                color);
-            append_overlay_vertex(
-                {center.at(0) + (radius * std::sin(latitude1) * cos_angle),
-                    center.at(1) + (radius * std::cos(latitude1)),
-                    center.at(2) + (radius * std::sin(latitude1) * sin_angle)},
-                color);
-            overlay_sphere_count += 2U;
-          }
-        }
-      };
+    // Latitude rings (the poles are degenerate and skipped).
+    for (int ring_index{1}; ring_index < k_ring_count; ++ring_index) {
+      const float latitude{std::numbers::pi_v<float> * static_cast<float>(ring_index) /
+                           static_cast<float>(k_ring_count)};
+      const float ring_y{radius * std::cos(latitude)};
+      const float ring_radius{radius * std::sin(latitude)};
+      for (int segment_index{0}; segment_index < k_segment_count; ++segment_index) {
+        const float angle0{
+            k_two_pi * static_cast<float>(segment_index) / static_cast<float>(k_segment_count)};
+        const float angle1{
+            k_two_pi * static_cast<float>(segment_index + 1) / static_cast<float>(k_segment_count)};
+        append_overlay_vertex({center.at(0) + (ring_radius * std::cos(angle0)),
+                                  center.at(1) + ring_y,
+                                  center.at(2) + (ring_radius * std::sin(angle0))},
+            color);
+        append_overlay_vertex({center.at(0) + (ring_radius * std::cos(angle1)),
+                                  center.at(1) + ring_y,
+                                  center.at(2) + (ring_radius * std::sin(angle1))},
+            color);
+        overlay_sphere_count += 2U;
+      }
+    }
+    // Meridians from pole to pole.
+    for (int meridian_index{0}; meridian_index < k_meridian_count; ++meridian_index) {
+      const float angle{
+          k_two_pi * static_cast<float>(meridian_index) / static_cast<float>(k_meridian_count)};
+      const float cos_angle{std::cos(angle)};
+      const float sin_angle{std::sin(angle)};
+      for (int segment_index{0}; segment_index < k_segment_count; ++segment_index) {
+        const float latitude0{std::numbers::pi_v<float> * static_cast<float>(segment_index) /
+                              static_cast<float>(k_segment_count)};
+        const float latitude1{std::numbers::pi_v<float> * static_cast<float>(segment_index + 1) /
+                              static_cast<float>(k_segment_count)};
+        append_overlay_vertex({center.at(0) + (radius * std::sin(latitude0) * cos_angle),
+                                  center.at(1) + (radius * std::cos(latitude0)),
+                                  center.at(2) + (radius * std::sin(latitude0) * sin_angle)},
+            color);
+        append_overlay_vertex({center.at(0) + (radius * std::sin(latitude1) * cos_angle),
+                                  center.at(1) + (radius * std::cos(latitude1)),
+                                  center.at(2) + (radius * std::sin(latitude1) * sin_angle)},
+            color);
+        overlay_sphere_count += 2U;
+      }
+    }
+  };
 
   for (std::size_t index{0}; index < light_count; ++index) {
     const Omikron::Light& light{model.lights.at(index)};
-    const Omikron::Vec3 direction{light.direction()};
+    const Omikron::Vec3 direction{Runtime::Presentation::to_gl(light.direction())};
+    const Omikron::Vec3 position_gl{Runtime::Presentation::to_gl(light.points.at(0))};
+    const Omikron::Vec3 target_gl{Runtime::Presentation::to_gl(light.points.at(1))};
     const std::array<float, 4> color{light.color_rgba()};
     RenderLight& gpu{light_block.lights.at(index)};
-    gpu.position = {light.points.at(0).x,
-        light.points.at(0).y,
-        light.points.at(0).z,
-        light.attenuation_start};
+    gpu.position = {position_gl.x, position_gl.y, position_gl.z, light.attenuation_start};
     gpu.direction = {direction.x, direction.y, direction.z, light.attenuation_end};
     gpu.color = {color.at(0) * light.intensity * k_light_intensity_scale,
         color.at(1) * light.intensity * k_light_intensity_scale,
@@ -923,14 +925,12 @@ std::expected<std::unique_ptr<ModelScene>, std::string> ModelScene::create_from_
 
     // Debug overlay: a marker at the light, a line to the spot target and
     // wireframe spheres at the attenuation radii.
-    const std::array<float, 3> position{
-        light.points.at(0).x, light.points.at(0).y, light.points.at(0).z};
+    const std::array<float, 3> position{position_gl.x, position_gl.y, position_gl.z};
     const std::array<float, 4> marker_color{color.at(0), color.at(1), color.at(2), 1.0F};
     append_overlay_vertex(position, marker_color);
     overlay_marker_count += 1U;
     if (has_direction) {
-      const std::array<float, 3> target{
-          light.points.at(1).x, light.points.at(1).y, light.points.at(1).z};
+      const std::array<float, 3> target{target_gl.x, target_gl.y, target_gl.z};
       append_overlay_vertex(position, marker_color);
       append_overlay_vertex(target, marker_color);
       overlay_line_count += 2U;
@@ -954,7 +954,7 @@ std::expected<std::unique_ptr<ModelScene>, std::string> ModelScene::create_from_
 
   // The constructor is private; only the factory may build a scene.
   // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
-  return std::unique_ptr<ModelScene>{new ModelScene(groups,
+  return std::unique_ptr<ModelScene>{new ModelScene(presentation_groups,
       std::move(textures),
       std::move(shader).value(),
       std::move(mirror_shader).value(),
@@ -1215,10 +1215,18 @@ void ModelScene::update(const float delta_time, const Input::InputManager& input
     // view matrix, so columns are world-space basis vectors).
     Audio::AudioListenerState listener;
     // NOLINTBEGIN(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
-    listener.position = Audio::Vec3{eye[0], eye[1], eye[2]};
+    const std::array<float, 3> runtime_eye{
+        Runtime::Presentation::to_gl(std::array<float, 3>{eye[0], eye[1], eye[2]})};
+    const std::array<float, 3> runtime_forward{
+        Runtime::Presentation::to_gl(std::array<float, 3>{-view[8], -view[9], -view[10]})};
+    const std::array<float, 3> runtime_up{
+        Runtime::Presentation::to_gl(std::array<float, 3>{view[4], view[5], view[6]})};
+    listener.position = Audio::Vec3{Runtime::inches_to_metres(runtime_eye.at(0)),
+        Runtime::inches_to_metres(runtime_eye.at(1)),
+        Runtime::inches_to_metres(runtime_eye.at(2))};
     listener.velocity = Audio::Vec3{0.0F, 0.0F, 0.0F};  // No camera velocity yet.
-    listener.forward = Audio::Vec3{-view[8], -view[9], -view[10]};
-    listener.up = Audio::Vec3{view[4], view[5], view[6]};
+    listener.forward = runtime_forward;
+    listener.up = runtime_up;
     // NOLINTEND(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
     audio->set_listener(listener);
   }
@@ -1302,16 +1310,14 @@ void ModelScene::render_reflection(const MirrorSurface& mirror,
 void ModelScene::render_light_overlay(const glm::mat4& view, const glm::mat4& projection) {
   APP_PROFILE_FUNCTION();
 
-  if (m_overlay_marker_count == 0U && m_overlay_line_count == 0U &&
-      m_overlay_sphere_count == 0U) {
+  if (m_overlay_marker_count == 0U && m_overlay_line_count == 0U && m_overlay_sphere_count == 0U) {
     return;
   }
 
   const glm::mat4 mvp{projection * view};
 
   m_overlay_shader.bind();
-  m_overlay_shader.set_uniform_mat4(
-      "u_mvp", std::span<const GLfloat, 16>{glm::value_ptr(mvp), 16});
+  m_overlay_shader.set_uniform_mat4("u_mvp", std::span<const GLfloat, 16>{glm::value_ptr(mvp), 16});
   m_overlay_array.bind();
 
   // Depth-tested but depth-non-writing: markers respect the geometry in
@@ -1351,16 +1357,26 @@ namespace {
 /// distinct hues so the modes stay visually separable at a glance.
 std::array<float, 4> sprite_overlay_color(const Sprite::SpriteRenderMode mode) {
   switch (mode) {
-    case Sprite::SpriteRenderMode::k_default:           return {0.90F, 0.90F, 0.90F, 1.0F};
-    case Sprite::SpriteRenderMode::k_cutout:            return {0.20F, 0.90F, 1.00F, 1.0F};
-    case Sprite::SpriteRenderMode::k_alpha:             return {0.35F, 0.60F, 1.00F, 1.0F};
-    case Sprite::SpriteRenderMode::k_alpha_cutout:      return {0.55F, 0.35F, 1.00F, 1.0F};
-    case Sprite::SpriteRenderMode::k_additive:          return {1.00F, 0.75F, 0.10F, 1.0F};
-    case Sprite::SpriteRenderMode::k_additive_cutout:   return {1.00F, 0.45F, 0.10F, 1.0F};
-    case Sprite::SpriteRenderMode::k_darken:            return {0.15F, 0.15F, 0.50F, 1.0F};
-    case Sprite::SpriteRenderMode::k_darken_cutout:     return {0.10F, 0.40F, 0.25F, 1.0F};
-    case Sprite::SpriteRenderMode::k_alternate_cutout:  return {0.85F, 0.30F, 0.80F, 1.0F};
-    default:                                            return {0.90F, 0.90F, 0.90F, 1.0F};
+    case Sprite::SpriteRenderMode::k_default:
+      return {0.90F, 0.90F, 0.90F, 1.0F};
+    case Sprite::SpriteRenderMode::k_cutout:
+      return {0.20F, 0.90F, 1.00F, 1.0F};
+    case Sprite::SpriteRenderMode::k_alpha:
+      return {0.35F, 0.60F, 1.00F, 1.0F};
+    case Sprite::SpriteRenderMode::k_alpha_cutout:
+      return {0.55F, 0.35F, 1.00F, 1.0F};
+    case Sprite::SpriteRenderMode::k_additive:
+      return {1.00F, 0.75F, 0.10F, 1.0F};
+    case Sprite::SpriteRenderMode::k_additive_cutout:
+      return {1.00F, 0.45F, 0.10F, 1.0F};
+    case Sprite::SpriteRenderMode::k_darken:
+      return {0.15F, 0.15F, 0.50F, 1.0F};
+    case Sprite::SpriteRenderMode::k_darken_cutout:
+      return {0.10F, 0.40F, 0.25F, 1.0F};
+    case Sprite::SpriteRenderMode::k_alternate_cutout:
+      return {0.85F, 0.30F, 0.80F, 1.0F};
+    default:
+      return {0.90F, 0.90F, 0.90F, 1.0F};
   }
 }
 
@@ -1398,8 +1414,7 @@ void ModelScene::render_sprite_overlay(const glm::mat4& view, const glm::mat4& p
   const glm::mat4 mvp{projection * view};
 
   m_overlay_shader.bind();
-  m_overlay_shader.set_uniform_mat4(
-      "u_mvp", std::span<const GLfloat, 16>{glm::value_ptr(mvp), 16});
+  m_overlay_shader.set_uniform_mat4("u_mvp", std::span<const GLfloat, 16>{glm::value_ptr(mvp), 16});
   m_overlay_shader.set_uniform_float("u_point_mode", 0.0F);
   m_sprite_overlay_array.bind();
 
@@ -1564,8 +1579,8 @@ std::expected<void, std::string> ModelScene::initialize_sprite_renderer() {
   APP_PROFILE_FUNCTION();
 
   if (auto result{m_sprite_renderer.initialize()}; !result) {
-    return std::expected<void, std::string>{std::unexpect,
-        fmt::format("Failed to initialise the sprite renderer: {}", result.error())};
+    return std::expected<void, std::string>{
+        std::unexpect, fmt::format("Failed to initialise the sprite renderer: {}", result.error())};
   }
   return {};
 }
@@ -1605,13 +1620,13 @@ const Audio::AudioSystem* ModelScene::audio_system() const {
   return m_runtime == nullptr ? nullptr : m_runtime->audio_system();
 }
 
+Sprite::SpritePool& ModelScene::sprite_pool() {
+  return m_runtime->sprite_pool();
+}
 
-
-
-
-Sprite::SpritePool& ModelScene::sprite_pool() { return m_runtime->sprite_pool(); }
-
-const Sprite::SpritePool& ModelScene::sprite_pool() const { return m_runtime->sprite_pool(); }
+const Sprite::SpritePool& ModelScene::sprite_pool() const {
+  return m_runtime->sprite_pool();
+}
 
 const Sprite::SpriteQueueStats& ModelScene::sprite_queue_stats() const {
   return m_sprite_renderer.queue_stats();
@@ -1633,8 +1648,8 @@ const Sprite::SpriteResource* ModelScene::sprite_resource(const std::size_t reso
   return m_runtime->sprite_resource(resource_index);
 }
 
-const Texture2D* ModelScene::sprite_texture(const std::size_t resource_index,
-    const std::size_t material_index) const {
+const Texture2D* ModelScene::sprite_texture(
+    const std::size_t resource_index, const std::size_t material_index) const {
   return m_runtime->sprite_texture(resource_index, material_index);
 }
 
@@ -1698,9 +1713,8 @@ void ModelScene::set_sprite_tint(
   m_runtime->sprite_pool().set_tint(handle, tint);
 }
 
-void ModelScene::set_sprite_texture_offset(const Sprite::SpriteHandle handle,
-    const float offset_u,
-    const float offset_v) {
+void ModelScene::set_sprite_texture_offset(
+    const Sprite::SpriteHandle handle, const float offset_u, const float offset_v) {
   m_runtime->sprite_pool().set_texture_offset(handle, offset_u, offset_v);
 }
 
@@ -1719,7 +1733,7 @@ std::array<float, 3> ModelScene::camera_focus_position() const {
   const glm::vec3 target{position + (forward * K_SPRITE_CAMERA_FOCUS_DISTANCE)};
   std::array<float, 3> target_storage{};
   std::copy_n(glm::value_ptr(target), 3, target_storage.begin());
-  return target_storage;
+  return Runtime::Presentation::to_gl(target_storage);
 }
 
 void ModelScene::place_sprite_at_camera_focus(const Sprite::SpriteHandle handle) {
@@ -1731,15 +1745,21 @@ void ModelScene::set_sprite_grayscale(const bool enabled) {
   m_sprite_grayscale_enabled = enabled;
 }
 
-bool ModelScene::sprite_grayscale() const { return m_sprite_grayscale_enabled; }
+bool ModelScene::sprite_grayscale() const {
+  return m_sprite_grayscale_enabled;
+}
 
-bool ModelScene::light_overlay_enabled() const { return m_light_overlay_enabled; }
+bool ModelScene::light_overlay_enabled() const {
+  return m_light_overlay_enabled;
+}
 
 void ModelScene::set_light_overlay_enabled(const bool enabled) {
   m_light_overlay_enabled = enabled;
 }
 
-bool ModelScene::sprite_overlay_enabled() const { return m_sprite_overlay_enabled; }
+bool ModelScene::sprite_overlay_enabled() const {
+  return m_sprite_overlay_enabled;
+}
 
 void ModelScene::set_sprite_overlay_enabled(const bool enabled) {
   m_sprite_overlay_enabled = enabled;

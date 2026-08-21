@@ -24,6 +24,7 @@
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Log.hpp"
 #include "Core/LogCategory.hpp"
+#include "Core/RuntimePresentation.hpp"
 
 namespace App::Sprite {
 
@@ -267,7 +268,11 @@ void SpriteRenderer::build_queue(const SpritePool& pool,
       continue;
     }
 
-    const glm::vec3 position{glm::make_vec3(instance->position.data())};
+    // Sprite instances remain Runtime-native through gameplay. Convert their
+    // anchor exactly once at the GL billboard construction boundary.
+    const std::array<float, 3> presentation_position{
+        Runtime::Presentation::to_gl(instance->position)};
+    const glm::vec3 position{glm::make_vec3(presentation_position.data())};
     const glm::vec3 offset{position - eye};
     const float depth{glm::dot(offset, forward)};
     if (depth <= 0.0F) {

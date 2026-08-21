@@ -21,6 +21,7 @@
 #include "Core/LogCategory.hpp"
 #include "Core/Omikron/SCX.hpp"
 #include "Core/Omikron/Texture3DT.hpp"
+#include "Core/RuntimeMath.hpp"
 #include "Core/Script/ScriptRuntime.hpp"
 #include "Core/Sprite/SpriteInstance.hpp"
 #include "Core/Sprite/SpritePool.hpp"
@@ -30,8 +31,7 @@
 
 namespace App {
 
-std::expected<void, std::string> ScenarioRuntime::initialize(
-    const Omikron::ScxData& scx,
+std::expected<void, std::string> ScenarioRuntime::initialize(const Omikron::ScxData& scx,
     const std::span<const std::byte> scx_bytes,
     const std::string_view scenario_name,
     Audio::AudioSystem* const audio,
@@ -52,8 +52,8 @@ std::expected<void, std::string> ScenarioRuntime::initialize(
 
   auto runtime{Script::ScriptRuntime::create(m_scx, *this, m_scenario_name)};
   if (!runtime) {
-    return std::expected<void, std::string>{std::unexpect,
-        fmt::format("Failed to initialise the script runtime: {}", runtime.error())};
+    return std::expected<void, std::string>{
+        std::unexpect, fmt::format("Failed to initialise the script runtime: {}", runtime.error())};
   }
   m_script_runtime = std::move(runtime).value();
 
@@ -84,10 +84,12 @@ std::expected<void, std::string> ScenarioRuntime::initialize(
         m_scx.scripts.size());
   } else {
     // Boot configuration: all script templates are loaded but inactive.
-    App::Log::debug(LogCategory::Scenario, "loaded {} script templates (all inactive)", m_scx.scripts.size());
+    App::Log::debug(
+        LogCategory::Scenario, "loaded {} script templates (all inactive)", m_scx.scripts.size());
   }
 
-  App::Log::debug(LogCategory::Scenario, "sprite system ready: {} embedded effect resources", count);
+  App::Log::debug(
+      LogCategory::Scenario, "sprite system ready: {} embedded effect resources", count);
   m_initialized = true;
   return {};
 }
@@ -132,8 +134,8 @@ const Sprite::SpritePool& ScenarioRuntime::sprite_pool() const {
 }
 
 std::span<const Sprite::SpriteResource* const> ScenarioRuntime::sprite_resource_ptrs() const {
-  return std::span<const Sprite::SpriteResource* const>{m_sprite_resource_ptrs.data(),
-      m_sprite_resource_ptrs.size()};
+  return std::span<const Sprite::SpriteResource* const>{
+      m_sprite_resource_ptrs.data(), m_sprite_resource_ptrs.size()};
 }
 
 std::size_t ScenarioRuntime::sprite_resource_count() const {
@@ -155,8 +157,8 @@ const Sprite::SpriteResource* ScenarioRuntime::sprite_resource(
   return m_sprite_resources.at(resource_index).get();
 }
 
-const Texture2D* ScenarioRuntime::sprite_texture(const std::size_t resource_index,
-    const std::size_t material_index) const {
+const Texture2D* ScenarioRuntime::sprite_texture(
+    const std::size_t resource_index, const std::size_t material_index) const {
   if (resource_index >= m_sprite_textures.size() ||
       material_index >= m_sprite_textures.at(resource_index).size()) {
     return nullptr;
@@ -199,9 +201,8 @@ std::expected<void, std::string> ScenarioRuntime::ensure_sprite_resource_loaded(
         true)};
     if (!texture) {
       return std::expected<void, std::string>{std::unexpect,
-          fmt::format("Failed to upload sprite resource {} texture: {}",
-              resource_index,
-              texture.error())};
+          fmt::format(
+              "Failed to upload sprite resource {} texture: {}", resource_index, texture.error())};
     }
     textures.push_back(std::move(texture).value());
   }
@@ -238,20 +239,19 @@ std::expected<Sprite::SpriteHandle, std::string> ScenarioRuntime::spawn_sprite(
   if (auto attached{m_sprite_pool.attach(handle.value())}; !attached) {
     // Best-effort rollback; the handle was never exposed to the caller.
     if (auto destroyed{m_sprite_pool.destroy(handle.value())}; !destroyed) {
-      App::Log::warn(LogCategory::Scenario, "Failed to roll back a failed spawn: {}", destroyed.error());
+      App::Log::warn(
+          LogCategory::Scenario, "Failed to roll back a failed spawn: {}", destroyed.error());
     }
     return std::expected<Sprite::SpriteHandle, std::string>{std::unexpect, attached.error()};
   }
   return handle;
 }
 
-std::expected<void, std::string> ScenarioRuntime::attach_sprite(
-    const Sprite::SpriteHandle handle) {
+std::expected<void, std::string> ScenarioRuntime::attach_sprite(const Sprite::SpriteHandle handle) {
   return m_sprite_pool.attach(handle);
 }
 
-std::expected<void, std::string> ScenarioRuntime::detach_sprite(
-    const Sprite::SpriteHandle handle) {
+std::expected<void, std::string> ScenarioRuntime::detach_sprite(const Sprite::SpriteHandle handle) {
   return m_sprite_pool.detach(handle);
 }
 
@@ -270,8 +270,7 @@ void ScenarioRuntime::set_sprite_render_mode(
   m_sprite_pool.set_render_mode(handle, mode);
 }
 
-void ScenarioRuntime::set_sprite_type(
-    const Sprite::SpriteHandle handle, const std::uint16_t type) {
+void ScenarioRuntime::set_sprite_type(const Sprite::SpriteHandle handle, const std::uint16_t type) {
   m_sprite_pool.set_type(handle, type);
 }
 
@@ -285,18 +284,15 @@ void ScenarioRuntime::set_sprite_scale(
   m_sprite_pool.set_scale(handle, scale_x, scale_y);
 }
 
-void ScenarioRuntime::set_sprite_scale_x(
-    const Sprite::SpriteHandle handle, const float scale_x) {
+void ScenarioRuntime::set_sprite_scale_x(const Sprite::SpriteHandle handle, const float scale_x) {
   m_sprite_pool.set_scale_x(handle, scale_x);
 }
 
-void ScenarioRuntime::set_sprite_scale_y(
-    const Sprite::SpriteHandle handle, const float scale_y) {
+void ScenarioRuntime::set_sprite_scale_y(const Sprite::SpriteHandle handle, const float scale_y) {
   m_sprite_pool.set_scale_y(handle, scale_y);
 }
 
-void ScenarioRuntime::set_sprite_rotation(
-    const Sprite::SpriteHandle handle, const float rotation) {
+void ScenarioRuntime::set_sprite_rotation(const Sprite::SpriteHandle handle, const float rotation) {
   m_sprite_pool.set_rotation(handle, rotation);
 }
 
@@ -305,14 +301,12 @@ void ScenarioRuntime::set_sprite_tint(
   m_sprite_pool.set_tint(handle, tint);
 }
 
-void ScenarioRuntime::set_sprite_texture_offset(const Sprite::SpriteHandle handle,
-    const float offset_u,
-    const float offset_v) {
+void ScenarioRuntime::set_sprite_texture_offset(
+    const Sprite::SpriteHandle handle, const float offset_u, const float offset_v) {
   m_sprite_pool.set_texture_offset(handle, offset_u, offset_v);
 }
 
-void ScenarioRuntime::set_sprite_unknown_24(
-    const Sprite::SpriteHandle handle, const float value) {
+void ScenarioRuntime::set_sprite_unknown_24(const Sprite::SpriteHandle handle, const float value) {
   m_sprite_pool.set_unknown_24(handle, value);
 }
 
@@ -374,7 +368,9 @@ void ScenarioRuntime::set_audio_system(Audio::AudioSystem* const audio) {
     if (sprite == nullptr) {
       return std::optional<Audio::Vec3>{std::nullopt};
     }
-    return std::optional<Audio::Vec3>{sprite->position};
+    return std::optional<Audio::Vec3>{Audio::Vec3{Runtime::inches_to_metres(sprite->position.at(0)),
+        Runtime::inches_to_metres(sprite->position.at(1)),
+        Runtime::inches_to_metres(sprite->position.at(2))}};
   });
 }
 
@@ -400,8 +396,7 @@ std::expected<Audio::SoundDescriptor, std::string> ScenarioRuntime::resolve_soun
   }
 
   const Omikron::ScxSoundRecord& record{m_scx.sounds.at(sound_table_index)};
-  Audio::SoundDescriptor descriptor{
-      .resource = m_sound_resources.at(sound_table_index),
+  Audio::SoundDescriptor descriptor{.resource = m_sound_resources.at(sound_table_index),
       .name = record.name,
       .h_id = record.h_id,
       .loaded = false};
@@ -431,12 +426,8 @@ std::expected<Audio::SoundDescriptor, std::string> ScenarioRuntime::resolve_soun
 
   const std::string canonical_key{
       m_scenario_name + '#' + std::to_string(sound_table_index) + '#' + record.name};
-  auto loaded{m_audio->load_sound(canonical_key,
-      m_scenario_name,
-      sound_table_index,
-      record.name,
-      record.h_id,
-      wav_bytes)};
+  auto loaded{m_audio->load_sound(
+      canonical_key, m_scenario_name, sound_table_index, record.name, record.h_id, wav_bytes)};
   if (!loaded) {
     App::Log::warn(LogCategory::Audio,
         "scenario sound {} '{}' failed to load: {}",
@@ -461,8 +452,8 @@ std::expected<Audio::AudioOwnerToken, std::string> ScenarioRuntime::resolve_audi
     return Audio::AudioOwnerToken{};  // Null owner (nonspatial playback).
   }
   if (object_index < 0) {
-    return std::expected<Audio::AudioOwnerToken, std::string>{std::unexpect,
-        fmt::format("negative object index {}", object_index)};
+    return std::expected<Audio::AudioOwnerToken, std::string>{
+        std::unexpect, fmt::format("negative object index {}", object_index)};
   }
   const std::uint32_t source_index{static_cast<std::uint32_t>(object_index)};
   auto sprite{ensure_sprite(source_index)};
@@ -493,7 +484,17 @@ std::expected<Audio::VoiceHandle, std::string> ScenarioRuntime::play_sound(
     return std::expected<Audio::VoiceHandle, std::string>{
         std::unexpect, "audio subsystem unavailable"};
   }
-  const std::optional<Audio::VoiceHandle> handle{m_audio->play_sound(request)};
+  Audio::SoundPlayRequest audio_request{request};
+  if (audio_request.emitter.has_value()) {
+    Audio::SoundEmitterState& emitter{audio_request.emitter.value()};
+    for (std::size_t axis{0}; axis < 3U; ++axis) {
+      emitter.position.at(axis) = Runtime::inches_to_metres(emitter.position.at(axis));
+      emitter.velocity.at(axis) = Runtime::inches_to_metres(emitter.velocity.at(axis));
+    }
+    emitter.minimum_distance = Runtime::inches_to_metres(emitter.minimum_distance);
+    emitter.maximum_distance = Runtime::inches_to_metres(emitter.maximum_distance);
+  }
+  const std::optional<Audio::VoiceHandle> handle{m_audio->play_sound(audio_request)};
   if (!handle.has_value()) {
     return std::expected<Audio::VoiceHandle, std::string>{
         std::unexpect, "voice allocation/queue failed"};

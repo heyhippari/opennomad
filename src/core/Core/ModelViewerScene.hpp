@@ -1,23 +1,22 @@
 #pragma once
 
 // NOLINTNEXTLINE(misc-include-cleaner) — glm umbrella include, see Camera.cpp.
-#include <glm/glm.hpp>
-
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
 #include <expected>
+#include <glm/glm.hpp>
 #include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
 
-#include "Core/Buffers.hpp"
-#include "Core/Debug/SceneDebugView.hpp"
 #include "Core/Audio/AudioTypes.hpp"
+#include "Core/Buffers.hpp"
 #include "Core/Camera.hpp"
 #include "Core/CameraController.hpp"
+#include "Core/Debug/SceneDebugView.hpp"
 #include "Core/Framebuffer.hpp"
 #include "Core/Input/InputManager.hpp"
 #include "Core/Mesh.hpp"
@@ -28,7 +27,9 @@
 namespace App {
 class ScenarioManager;
 class ScenarioRuntime;
-}
+}  // namespace App
+#include <filesystem>
+
 #include "Core/Scene.hpp"
 #include "Core/Script/ScriptRuntime.hpp"
 #include "Core/Shader.hpp"
@@ -39,8 +40,6 @@ class ScenarioRuntime;
 #include "Core/TextureCube.hpp"
 #include "Core/UniformBuffer.hpp"
 #include "Core/VertexArray.hpp"
-
-#include <filesystem>
 
 namespace App {
 
@@ -194,19 +193,19 @@ class ModelViewerScene final : public Scene, public Debug::SceneDebugView {
   };
 
   ModelViewerScene(const std::vector<Omikron::MaterialGroup>& groups,
-             std::vector<Texture2D> textures,
-             Shader shader,
-             Shader mirror_shader,
-             Shader env_shader,
-             Shader overlay_shader,
-             Framebuffer mirror_framebuffer,
-             TextureCube sky_cubemap,
-             UniformBuffer light_buffer,
-             std::vector<OverlayVertex> overlay_vertices,
-             std::size_t overlay_marker_count,
-             std::size_t overlay_line_count,
-             std::size_t overlay_sphere_count,
-             std::array<float, 3> model_center);
+      std::vector<Texture2D> textures,
+      Shader shader,
+      Shader mirror_shader,
+      Shader env_shader,
+      Shader overlay_shader,
+      Framebuffer mirror_framebuffer,
+      TextureCube sky_cubemap,
+      UniformBuffer light_buffer,
+      std::vector<OverlayVertex> overlay_vertices,
+      std::size_t overlay_marker_count,
+      std::size_t overlay_line_count,
+      std::size_t overlay_sphere_count,
+      std::array<float, 3> model_center);
 
   /// Builds the render-ready scene from decoded geometry, material
   /// descriptors and textures: GPU uploads, shaders, light block and the
@@ -221,29 +220,29 @@ class ModelViewerScene final : public Scene, public Debug::SceneDebugView {
   void draw_group(std::size_t index);
   /// Draws a k_mirror group compositing the reflection buffer.
   void draw_mirror_group(std::size_t index,
-                         const glm::mat4& view,
-                         const glm::mat4& projection,
-                         const glm::mat4& model);
+      const glm::mat4& view,
+      const glm::mat4& projection,
+      const glm::mat4& model);
   /// Draws a k_environment_mapped group with the cube map.
   void draw_env_group(std::size_t index,
-                      const glm::vec3& eye,
-                      const glm::vec4& clip_plane,
-                      const glm::mat4& view,
-                      const glm::mat4& projection,
-                      const glm::mat4& model);
+      const glm::vec3& eye,
+      const glm::vec4& clip_plane,
+      const glm::mat4& view,
+      const glm::mat4& projection,
+      const glm::mat4& model);
   /// Runs the opaque and blended passes for one camera pose.
   void render_scene(const glm::mat4& view,
-                    const glm::mat4& projection,
-                    const glm::mat4& model,
-                    const glm::vec3& eye,
-                    const glm::vec4& clip_plane,
-                    bool draw_mirrors);
+      const glm::mat4& projection,
+      const glm::mat4& model,
+      const glm::vec3& eye,
+      const glm::vec4& clip_plane,
+      bool draw_mirrors);
   /// Renders the scene through a mirror plane into the reflection buffer.
   void render_reflection(const MirrorSurface& mirror,
-                         const glm::mat4& view,
-                         const glm::mat4& projection,
-                         const glm::mat4& model,
-                         const glm::vec3& eye);
+      const glm::mat4& view,
+      const glm::mat4& projection,
+      const glm::mat4& model,
+      const glm::vec3& eye);
   /// Draws the light debug overlay (markers, spot lines, attenuation
   /// spheres) on top of the scene; respects depth, writes no depth.
   void render_light_overlay(const glm::mat4& view, const glm::mat4& projection);
@@ -267,8 +266,6 @@ class ModelViewerScene final : public Scene, public Debug::SceneDebugView {
   static constexpr int k_sky_cubemap_size{64};
   /// Backdrop of the reflection pass; matches the renderer clear colour.
   static constexpr std::array<float, 4> k_mirror_clear_color{0.5F, 0.5F, 0.5F, 1.0F};
-  static constexpr float k_camera_distance{3.0F};
-  static constexpr float k_camera_height{0.5F};
 
   Shader m_shader;
   Shader m_mirror_shader;
@@ -304,6 +301,7 @@ class ModelViewerScene final : public Scene, public Debug::SceneDebugView {
   std::vector<Omikron::BlendMode> m_group_modes;
   /// World-space bounding-box centre of each mesh, parallel to m_meshes.
   std::vector<std::array<float, 3>> m_group_centers;
+  float m_model_radius{1.0F};
   /// Uploaded textures, aligned with the model's material table.
   std::vector<Texture2D> m_textures;
   Camera m_camera{60.0F, 1.0F, 0.1F, 1000.0F};
@@ -315,7 +313,7 @@ class ModelViewerScene final : public Scene, public Debug::SceneDebugView {
   int m_viewport_width{1};
   int m_viewport_height{1};
 
-  /// Bounding-box centre of the model in world space; the camera frames it
+  /// Bounding-box centre in GL presentation space; the camera frames it
   /// at startup.
   std::array<float, 3> m_model_center{};
 

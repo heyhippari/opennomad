@@ -804,7 +804,7 @@ void DebugUI::show_overlays() {
       ImGui::TableSetupColumn("Child");
       ImGui::TableSetupColumn("Sibling");
       ImGui::TableSetupColumn("Live");
-      ImGui::TableSetupColumn("Bind origin");
+      ImGui::TableSetupColumn("Runtime world T");
       ImGui::TableHeadersRow();
       for (const Debug::WorldMeshHierarchyDebugState& mesh : world->mesh_hierarchy) {
         ImGui::TableNextRow();
@@ -822,9 +822,9 @@ void DebugUI::show_overlays() {
         ImGui::TextUnformatted(mesh.reachable ? "yes" : "no");
         ImGui::TableSetColumnIndex(6);
         ImGui::Text("%.3f, %.3f, %.3f",
-            static_cast<double>(mesh.bind_origin.at(0)),
-            static_cast<double>(mesh.bind_origin.at(1)),
-            static_cast<double>(mesh.bind_origin.at(2)));
+            static_cast<double>(mesh.runtime_world_translation.at(0)),
+            static_cast<double>(mesh.runtime_world_translation.at(1)),
+            static_cast<double>(mesh.runtime_world_translation.at(2)));
         if (ImGui::IsItemHovered()) {
           ImGui::BeginTooltip();
           ImGui::Text("Serialized position: %.3f, %.3f, %.3f",
@@ -835,6 +835,24 @@ void DebugUI::show_overlays() {
               static_cast<double>(mesh.bone_position.at(0)),
               static_cast<double>(mesh.bone_position.at(1)),
               static_cast<double>(mesh.bone_position.at(2)));
+          ImGui::Text("Runtime local offset: %.3f, %.3f, %.3f",
+              static_cast<double>(mesh.runtime_local_offset.at(0)),
+              static_cast<double>(mesh.runtime_local_offset.at(1)),
+              static_cast<double>(mesh.runtime_local_offset.at(2)));
+          ImGui::TextUnformatted("Runtime local matrix (rows):");
+          for (std::size_t row{0}; row < 3U; ++row) {
+            ImGui::Text("  %.3f %.3f %.3f",
+                static_cast<double>(mesh.runtime_local_matrix.at(row * 3U)),
+                static_cast<double>(mesh.runtime_local_matrix.at((row * 3U) + 1U)),
+                static_cast<double>(mesh.runtime_local_matrix.at((row * 3U) + 2U)));
+          }
+          ImGui::TextUnformatted("Runtime world matrix (rows):");
+          for (std::size_t row{0}; row < 3U; ++row) {
+            ImGui::Text("  %.3f %.3f %.3f",
+                static_cast<double>(mesh.runtime_world_matrix.at(row * 3U)),
+                static_cast<double>(mesh.runtime_world_matrix.at((row * 3U) + 1U)),
+                static_cast<double>(mesh.runtime_world_matrix.at((row * 3U) + 2U)));
+          }
           ImGui::EndTooltip();
         }
       }
@@ -874,14 +892,41 @@ void DebugUI::show_overlays() {
       ImGui::TextUnformatted("AREA camera: none");
     }
     if (world->camera_has_pose) {
-      ImGui::Text("Eye: %.3f, %.3f, %.3f",
-          static_cast<double>(world->camera_eye.at(0)),
-          static_cast<double>(world->camera_eye.at(1)),
-          static_cast<double>(world->camera_eye.at(2)));
-      ImGui::Text("Target: %.3f, %.3f, %.3f",
-          static_cast<double>(world->camera_target.at(0)),
-          static_cast<double>(world->camera_target.at(1)),
-          static_cast<double>(world->camera_target.at(2)));
+      if (world->camera_scripted) {
+        ImGui::Text("Serialized eye: %d, %d, %d",
+            world->camera_serialized_eye.at(0),
+            world->camera_serialized_eye.at(1),
+            world->camera_serialized_eye.at(2));
+        ImGui::Text("Serialized target: %d, %d, %d",
+            world->camera_serialized_target.at(0),
+            world->camera_serialized_target.at(1),
+            world->camera_serialized_target.at(2));
+      }
+      ImGui::Text("Runtime eye (in): %.3f, %.3f, %.3f",
+          static_cast<double>(world->camera_runtime_eye.at(0)),
+          static_cast<double>(world->camera_runtime_eye.at(1)),
+          static_cast<double>(world->camera_runtime_eye.at(2)));
+      ImGui::Text("Runtime target (in): %.3f, %.3f, %.3f",
+          static_cast<double>(world->camera_runtime_target.at(0)),
+          static_cast<double>(world->camera_runtime_target.at(1)),
+          static_cast<double>(world->camera_runtime_target.at(2)));
+      ImGui::Text("Render eye: %.3f, %.3f, %.3f",
+          static_cast<double>(world->camera_render_eye.at(0)),
+          static_cast<double>(world->camera_render_eye.at(1)),
+          static_cast<double>(world->camera_render_eye.at(2)));
+      ImGui::Text("Render target: %.3f, %.3f, %.3f",
+          static_cast<double>(world->camera_render_target.at(0)),
+          static_cast<double>(world->camera_render_target.at(1)),
+          static_cast<double>(world->camera_render_target.at(2)));
+      ImGui::Text("Roll: %.1f deg", static_cast<double>(world->camera_roll_degrees));
+      ImGui::Text(
+          "Horizontal FOV: %.1f deg", static_cast<double>(world->camera_horizontal_fov_degrees));
+      ImGui::Text("Derived 4:3 vertical FOV: %.3f deg",
+          static_cast<double>(world->camera_vertical_fov_4_3_degrees));
+      ImGui::Text("Clip: %.3f .. %.3f in (far %.3f m)",
+          static_cast<double>(world->camera_near_inches),
+          static_cast<double>(world->camera_far_inches),
+          static_cast<double>(world->camera_far_inches * 0.0254F));
     }
     ImGui::Spacing();
   }

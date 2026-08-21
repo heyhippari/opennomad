@@ -196,9 +196,7 @@ Blender Z = -file Y
 position *= 0.025
 ```
 
-That is a conversion into Blender's coordinate convention, not evidence that the serialized structure stores coordinates in that rearranged order. The file contains three ordinary floats in native engine space.
-
-Likewise, `0.025` (`1/40`) should currently be considered a useful importer scale rather than a confirmed physical unit definition. Runtime itself uses a scale-related constant of approximately `39.37007874015748` in the model initialization path, but the exact relationship between native 3DO units and physical units has not yet been completely characterized.
+That is a conversion into Blender's coordinate convention, not evidence that the serialized structure stores coordinates in that rearranged order. Runtime consumes the three floats as ordinary native XYZ values and native distance units are inches. Authoritative parsing must not apply the importer conversion or `0.025` scale. OpenNomad keeps these values unchanged until its centralized Runtime-to-OpenGL presentation boundary; see [Runtime coordinate and transform math](runtime-coordinate-math.md).
 
 ## Triangle stream — `0x1C` bytes per triangle
 
@@ -329,6 +327,19 @@ For reverse-engineering context, Runtime creates a `0xB8`-byte runtime object fo
 
 These runtime pointers are **not fields in the `.3DO` file**; they are listed because they directly establish the semantics of several serialized IDs and counts.
 
+Runtime initializes local orientation to identity and scale to `(1,1,1)`. The
+root transform uses its serialized native position. A child's offset comes from
+serialized object `+0x80/+0x84/+0x88` and composes through its parent:
+
+```text
+child.translation = child.localOffset * parent.matrix + parent.translation
+child.matrix      = child.localMatrix * parent.matrix
+```
+
+If an animation matrix is active, Runtime first forms
+`localMatrix * animationMatrix`. OpenNomad keeps the serialized descriptor
+immutable and stores local/resolved Runtime transform state separately.
+
 ## Relationship records — `0x1C` bytes each, plus ID arrays
 
 Older tooling and field names sometimes describe the section at directory offset `0x20` as “doors”. Runtime behavior observed so far establishes a relationship between records and object IDs, but does not yet justify naming every record a door.
@@ -401,7 +412,8 @@ The Blender importer provides the following useful flag names. They should not a
 | 21 | `0x00200000` | `FPSarm` | **Tentative.** |
 | 22 | `0x00400000` | `faceMorph` | **Tentative.** |
 | 23 | `0x00800000` | `invisible` | **Tentative / strongly plausible.** |
-| 24 | `0x01000000` | `skybox` | **Tentative.** |
+| 24 | `0x01000000` | importer: `skybox`; Runtime: U scroll | **Confirmed — Runtime polygon submission.** Adds the global cyclic U phase to polygon U coordinates. It is not an ordinary-3DO skybox selector. |
+| 25 | `0x02000000` | previously unnamed | **Confirmed — Runtime polygon submission.** Adds the independent global cyclic V phase to polygon V coordinates. |
 | 26 | `0x04000000` | `environmentMapped` | **Tentative / plausible.** |
 | 27 | `0x08000000` | `underwater` | **Tentative.** |
 | 29 | `0x20000000` | `WaterSurface` | **Partially confirmed — Runtime.** Parser applies special behavior: sets an alpha-like runtime value to approximately `0.7`, sets bit `0x1000`, and clears other flag bits. This strongly supports a special transparent-surface interpretation, but the final semantic name should still be verified in the renderer. |
@@ -541,7 +553,7 @@ Chevluh's importer remains an extremely valuable reference, but OpenNomad should
 5. **Only the low byte at material `+0x48` is the serialized bit-depth value used by Runtime.** Nearby bytes become runtime scratch during texture allocation.
 6. **Runtime processes the light count from root `+0xF0`.** It copies that value over root `+0xE8` before iterating `0x130`-byte lights; the importer's three light-count fields should not yet be given final semantic names.
 7. **Triangle reference masking remains an open issue.** The importer's `0x8000` parent flag / `& 0x03FF` scheme should not be elevated to authoritative specification until the corresponding Runtime primitive path is fully traced.
-8. **The Blender axis swap, sign flip, and `0.025` scale are consumer conversions.** They are not fields or transformations encoded in the serialized `.3DO` data.
+8. **The Blender axis swap, sign flip, and `0.025` scale are importer-only conversions.** Runtime consumes native XYZ floats in inches; OpenNomad applies only its centralized unscaled `(x,-y,-z)` GL presentation basis.
 9. **Black-palette-entry transparency is an importer heuristic.** Runtime rendering state determines original transparency behavior.
 10. **The compression algorithm itself is now corroborated by Runtime, but malformed-input behavior differs.** Runtime expects valid history references rather than the importer's zero-fill fallback.
 11. **“Doors” is not yet an authoritative name for the relationship section.** Runtime proves it contains records referencing lists of object IDs, but the higher-level purpose of every record still needs to be established.
@@ -686,11 +698,10 @@ The following areas are intentionally unresolved and should be revisited as Runt
 - full mesh flag map and interactions between flag bits;
 - exact encoded triangle vertex-reference bit layout, particularly bits `10..14`;
 - whether quads can carry equivalent parent/alternate-owner vertex references;
-- exact transform rules for parent-referenced/skinned triangle vertices;
+- exact animated/skinned behavior for parent-referenced triangle vertices beyond the recovered object transform composition;
 - semantic meaning of vertex field `+0x18`;
 - exact interpretation of object floats `+0x4C..+0x58` and `+0x74..+0x7C`;
 - exact intended text encoding/code page;
-- native coordinate units and the precise relationship between Runtime's scale initialization and the Blender importer's `1/40` conversion;
 - exact original renderer UV convention, including texture-page/atlas placement;
 - exact serialized meaning, if any, of material bytes `+0x40..+0x47` before Runtime repurposes them;
 - how sprite `frameCount`, quad ordering, scripts, and animated texture resources relate across all sprite asset types.

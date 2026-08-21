@@ -21,7 +21,7 @@ scenes and the splash's GL resources are released with it.
 The scene (`ModelViewerScene`) loads the effect model `EFFECTS2_SMOKE2.3DO` embedded in the scenario
 package `SCPTDATA/aventure.SCX` (indexed by the `Core::Omikron::SCX` reader and decoded through
 the same `Model3DO` / `Texture3DT` pipeline) and renders it with a free-flying camera
-(WASD + mouse look), exercising mirrors, environment-mapped meshes and skyboxes when the model
+(WASD + mouse look), exercising mirrors and environment-mapped meshes when the model
 carries those flags. Standalone loading (`ModelViewerScene::create()`) still reads
 `MESHES/DECORS/Anekbah.3DO` with its `.3DT` sidecar.
 
@@ -91,14 +91,19 @@ it to a `BlendMode` that drives the draw state:
 | `environment_mapped` | Chrome-like shading: fresnel blend of the surface colour with a procedural sky cube map (`TextureCube`). |
 | `vertex_lit` | Multiplies the texture by the per-vertex colour. |
 | `invisible`, `joint_only` | Mesh produces no geometry. |
-| `skybox` | Unlit skybox pass: drawn before the scene with the camera translation stripped from the view matrix, depth clamped to the far plane, no depth writes (depth test `LEQUAL`) and face culling off, so the flagged mesh wraps the camera as the scene's skybox. Included in mirror reflections; unaffected by scene lights. |
+| `uv_scroll_u`, `uv_scroll_v` | Runtime-confirmed independent cyclic U/V phases. Parsed and diagnosed; phase animation is not rendered yet. These bits are not ordinary-3DO skybox semantics. |
 | `underwater`, `water_surface`, `water_unknown`, `fps_arm`, `face_morph`, `has_parent`, `has_children` | Parsed but not rendered yet. |
 
 Rendering runs two passes per camera pose: opaque (and cutout) groups first with depth writes,
-then blended groups far-to-near with depth writes off. A skybox pass runs before both when the
-model has `skybox`-flagged meshes. Mirrors are one-bounce: the reflection pass draws everything
-except mirror surfaces and includes the skybox. The sky cube map used for environment mapping is
-generated procedurally (`generate_sky_cubemap`) until real environment assets are available.
+then blended groups far-to-near with depth writes off. Mirrors are one-bounce: the reflection pass
+draws everything except mirror surfaces. The cube map used for the still-tentative environment-map
+presentation is generated procedurally (`generate_sky_cubemap`) until its Runtime behavior and
+assets are fully recovered.
+
+3DO decoding, scenario state, scripted cameras, and sprites stay in Runtime-native inches. The GL
+edge applies the shared unscaled basis `(x,y,z) -> (x,-y,-z)`; the model viewer and world renderer
+use the same adapter. See
+[Runtime coordinate and transform math](reverse-engineering/runtime-coordinate-math.md).
 
 ## Model lights
 
@@ -111,7 +116,7 @@ decodes into `Omikron::Light` entries:
 |---|---|
 | flags (2×16-bit) | Unresolved runtime flags; stored raw, not interpreted. |
 | name | 20-byte NUL-padded name. |
-| float 1 / float 2 | Far-attenuation end / start (scaled to world units). |
+| float 1 / float 2 | Native far-attenuation end / start in inches. |
 | intensity | Raw intensity multiplier. |
 | BGRA colour | Source colour bytes. |
 | six points | Slot 0 = light position, slot 1 = target (spot direction); slots 2–5 are cone/frustum shape data and unused. |

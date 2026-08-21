@@ -107,8 +107,7 @@ TEST_SUITE("Core::Omikron::IamAreaRecord") {
     constexpr std::size_t k_character_stride{0x14};
     std::vector<std::byte> data(k_character_offset + k_character_stride, std::byte{});
 
-    write_u32(data, IamAreaRecord::k_offset_script,
-        static_cast<std::uint32_t>(data.size()));
+    write_u32(data, IamAreaRecord::k_offset_script, static_cast<std::uint32_t>(data.size()));
     write_u32(data, IamAreaRecord::k_offset_table_offsets, k_character_offset);
     write_u16(data, IamAreaRecord::k_offset_table_counts, 1);
 
@@ -128,9 +127,9 @@ TEST_SUITE("Core::Omikron::IamAreaRecord") {
     REQUIRE(character.has_value());
     CHECK_EQ(character->field_00, -1);
     CHECK_EQ(character->character_id, 310);
-    CHECK_EQ(character->position.at(0), -2588);
-    CHECK_EQ(character->position.at(1), -271);
-    CHECK_EQ(character->position.at(2), -816);
+    CHECK_EQ(character->serialized_position.at(0), -2588);
+    CHECK_EQ(character->serialized_position.at(1), -271);
+    CHECK_EQ(character->serialized_position.at(2), -816);
     CHECK_EQ(character->orientation_units, 4084);
     CHECK_EQ(character->field_12, 468U);
     CHECK_FALSE(record->character_by_id(999).has_value());
@@ -160,12 +159,12 @@ TEST_SUITE("Core::Omikron::IamAreaRecord") {
     REQUIRE(record.has_value());
     const auto camera{record->camera_by_id(2172)};
     REQUIRE(camera.has_value());
-    CHECK_EQ(camera->eye.at(0), -3287);
-    CHECK_EQ(camera->eye.at(1), -159);
-    CHECK_EQ(camera->eye.at(2), -1701);
-    CHECK_EQ(camera->target.at(2), -944);
+    CHECK_EQ(camera->serialized_eye.at(0), -3287);
+    CHECK_EQ(camera->serialized_eye.at(1), -159);
+    CHECK_EQ(camera->serialized_eye.at(2), -1701);
+    CHECK_EQ(camera->serialized_target.at(2), -944);
     CHECK_EQ(camera->camera_type, 12U);
-    CHECK_EQ(camera->focal_parameter, 853);
+    CHECK_EQ(camera->horizontal_fov_units, 853);
     CHECK_FALSE(record->camera_by_id(999).has_value());
   }
 }

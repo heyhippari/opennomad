@@ -5,10 +5,12 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <numbers>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include "Core/RuntimeMath.hpp"
 #include "OmikronTestBuffer.hpp"
 
 // NOLINTBEGIN(misc-use-anonymous-namespace, cppcoreguidelines-avoid-do-while, cert-err33-c)
@@ -128,8 +130,7 @@ void append_mesh(Buffer& buffer,
       .f32(0.0F);
 }
 
-/// Appends one 304-byte light record. Position and target are given in file
-/// space (x, z, y); the remaining four point slots are zero.
+/// Appends one 304-byte light record in serialized native XYZ order.
 void append_light(Buffer& buffer,
     const std::uint32_t flags,
     const std::string_view name,
@@ -207,10 +208,10 @@ TEST_SUITE("Core::Omikron::Model3DO") {
         .u8(5)
         .u16(64)
         .u16(64);
-    // Vertex: position (10, 20, 30), normal (0, 1, 0), colour BGRA.
-    file.f32(10.0F)
-        .f32(20.0F)
-        .f32(30.0F)
+    // Vertex: native position (1, 2, 3), normal (0, 1, 0), colour BGRA.
+    file.f32(1.0F)
+        .f32(2.0F)
+        .f32(3.0F)
         .f32(0.0F)
         .f32(1.0F)
         .f32(0.0F)
@@ -248,12 +249,12 @@ TEST_SUITE("Core::Omikron::Model3DO") {
     CHECK_EQ(model->meshes.at(0).triangle_byte_offset, std::size_t{0});
 
     REQUIRE_EQ(model->vertices.size(), std::size_t{1});
-    // File order (x, z, y) -> renderer (x, -z, -y), scaled by 1/40.
-    CHECK_EQ(model->vertices.at(0).position.x, doctest::Approx(0.25F));
-    CHECK_EQ(model->vertices.at(0).position.y, doctest::Approx(-0.5F));
-    CHECK_EQ(model->vertices.at(0).position.z, doctest::Approx(-0.75F));
+    // Authoritative parsing preserves ordinary serialized native XYZ.
+    CHECK_EQ(model->vertices.at(0).position.x, doctest::Approx(1.0F));
+    CHECK_EQ(model->vertices.at(0).position.y, doctest::Approx(2.0F));
+    CHECK_EQ(model->vertices.at(0).position.z, doctest::Approx(3.0F));
     CHECK_EQ(model->vertices.at(0).normal.x, doctest::Approx(0.0F));
-    CHECK_EQ(model->vertices.at(0).normal.y, doctest::Approx(-1.0F));
+    CHECK_EQ(model->vertices.at(0).normal.y, doctest::Approx(1.0F));
     CHECK_EQ(model->vertices.at(0).normal.z, doctest::Approx(0.0F));
     CHECK_EQ(model->vertices.at(0).unknown_t1, 42U);
     CHECK_EQ(model->vertices.at(0).color_bgra, std::array<std::uint8_t, 4>{0x11, 0x22, 0x33, 0x44});
@@ -325,7 +326,7 @@ TEST_SUITE("Core::Omikron::Model3DO") {
         0);
     append_mesh(file, 0, 10, -1, 1, 0, 0, 0.0F, 11);  // Root origin (0, 0, 0).
     append_mesh(file, 0, 11, 10, 1, 1, 0, 40.0F, -1, -1, 40.0F);
-    // Child bind origin is its parent's origin plus bone position (1, 0, 0).
+    // Child Runtime origin is its parent's origin plus native offset (40, 0, 0).
 
     const auto model{App::Omikron::Model3DO::load(file.data())};
     REQUIRE(model.has_value());
@@ -342,8 +343,8 @@ TEST_SUITE("Core::Omikron::Model3DO") {
     // Block-local positions plus the owning mesh's bind-pose world origin.
     CHECK_EQ(group.vertices.at(0).position.at(0), doctest::Approx(0.0F));
     CHECK_EQ(group.vertices.at(0).position.at(1), doctest::Approx(0.0F));
-    CHECK_EQ(group.vertices.at(1).position.at(0), doctest::Approx(2.0F));
-    CHECK_EQ(group.vertices.at(2).position.at(0), doctest::Approx(2.0F));
+    CHECK_EQ(group.vertices.at(1).position.at(0), doctest::Approx(80.0F));
+    CHECK_EQ(group.vertices.at(2).position.at(0), doctest::Approx(80.0F));
 
     // UVs are pixel coordinates divided by the texture size.
     CHECK_EQ(group.vertices.at(0).uv.at(0), doctest::Approx(0.5F));
@@ -352,11 +353,32 @@ TEST_SUITE("Core::Omikron::Model3DO") {
     CHECK_EQ(group.vertices.at(2).uv.at(1), doctest::Approx(0.5F));
   }
 
+  TEST_CASE("Runtime hierarchy composes child offsets through parent rotation") {
+    Buffer file{make_header(0, 2, 0, 0, 0)};
+    append_mesh(file, 0, 10, -1, 0, 0, 0, 5.0F, 11);
+    append_mesh(file, 0, 11, 10, 0, 0, 0, 0.0F, -1, -1, 10.0F);
+
+    auto model{App::Omikron::Model3DO::load(file.data())};
+    REQUIRE(model.has_value());
+    model->runtime_objects.at(0).local_matrix =
+        App::Runtime::rotation_z(std::numbers::pi_v<float> * 0.5F);
+    const auto resolved{App::Omikron::Model3DO::resolve_runtime_transforms(model.value())};
+    REQUIRE(resolved.has_value());
+
+    const auto& root{model->runtime_objects.at(0)};
+    CHECK(root.world_translation.x == doctest::Approx(5.0F));
+    CHECK(root.world_translation.y == doctest::Approx(0.0F));
+    const auto& child{model->runtime_objects.at(1)};
+    CHECK(child.world_translation.x == doctest::Approx(5.0F));
+    CHECK(child.world_translation.y == doctest::Approx(-10.0F));
+    CHECK(child.world_translation.z == doctest::Approx(0.0F));
+  }
+
   TEST_CASE("Rectangles are split into two triangles") {
     Buffer file{make_header(1, 1, 4, 0, 1)};
 
     file.chars("SKIN", 20).chars("", 20).chars("", 20).u32(0).u64(0).u32(0).u16(64).u16(32);
-    // Four vertices in a unit quad (file order is x, z, y).
+    // Four vertices in a native 40-by-40 quad.
     file.f32(0.0F).f32(0.0F).f32(0.0F).f32(0.0F).f32(0.0F).f32(1.0F).u32(0).u8(0).u8(0).u8(0).u8(
         255);
     file.f32(40.0F).f32(0.0F).f32(0.0F).f32(0.0F).f32(0.0F).f32(1.0F).u32(0).u8(0).u8(0).u8(0).u8(
@@ -396,10 +418,10 @@ TEST_SUITE("Core::Omikron::Model3DO") {
     CHECK_EQ(group.indices, std::vector<std::uint32_t>{0U, 1U, 2U, 3U, 4U, 5U});
     // First triangle reuses corners 0, 1, 2; the second uses 0, 2, 3.
     CHECK_EQ(group.vertices.at(0).position.at(0), doctest::Approx(0.0F));
-    CHECK_EQ(group.vertices.at(2).position.at(0), doctest::Approx(1.0F));
+    CHECK_EQ(group.vertices.at(2).position.at(0), doctest::Approx(40.0F));
     CHECK_EQ(group.vertices.at(3).position.at(0), doctest::Approx(0.0F));
-    CHECK_EQ(group.vertices.at(4).position.at(2), doctest::Approx(-1.0F));
-    CHECK_EQ(group.vertices.at(5).position.at(2), doctest::Approx(-1.0F));
+    CHECK_EQ(group.vertices.at(4).position.at(2), doctest::Approx(40.0F));
+    CHECK_EQ(group.vertices.at(5).position.at(2), doctest::Approx(40.0F));
     // The last corner carries UV bytes 6, 7 of the rectangle.
     CHECK_EQ(group.vertices.at(5).uv.at(0), doctest::Approx(6.0F / 64.0F));
     CHECK_EQ(group.vertices.at(5).uv.at(1), doctest::Approx(7.0F / 32.0F));
@@ -487,24 +509,24 @@ TEST_SUITE("Core::Omikron::Model3DO") {
     const App::Omikron::Light& light{model->lights.at(0)};
     CHECK_EQ(light.flags, 0x00040002U);
     CHECK_EQ(light.name, "CEILING");
-    CHECK_EQ(light.attenuation_end, doctest::Approx(120.0F * 0.025F));
-    CHECK_EQ(light.attenuation_start, doctest::Approx(30.0F * 0.025F));
+    CHECK_EQ(light.attenuation_end, doctest::Approx(120.0F));
+    CHECK_EQ(light.attenuation_start, doctest::Approx(30.0F));
     CHECK_EQ(light.intensity, doctest::Approx(2.5F));
     CHECK_EQ(light.unknown4, doctest::Approx(0.0F));
     CHECK_EQ(light.unknown5, doctest::Approx(0.0F));
     CHECK_EQ(light.color_bgra, (std::array<std::uint8_t, 4>{0x11, 0x22, 0x33, 0x44}));
 
-    CHECK_EQ(light.points.at(0).x, doctest::Approx(1.0F));
-    CHECK_EQ(light.points.at(0).y, doctest::Approx(-2.0F));
+    CHECK_EQ(light.points.at(0).x, doctest::Approx(40.0F));
+    CHECK_EQ(light.points.at(0).y, doctest::Approx(80.0F));
     CHECK_EQ(light.points.at(0).z, doctest::Approx(0.0F));
-    CHECK_EQ(light.points.at(1).x, doctest::Approx(1.0F));
-    CHECK_EQ(light.points.at(1).y, doctest::Approx(-2.0F));
-    CHECK_EQ(light.points.at(1).z, doctest::Approx(-1.0F));
+    CHECK_EQ(light.points.at(1).x, doctest::Approx(40.0F));
+    CHECK_EQ(light.points.at(1).y, doctest::Approx(80.0F));
+    CHECK_EQ(light.points.at(1).z, doctest::Approx(40.0F));
 
     const App::Omikron::Vec3 direction{light.direction()};
     CHECK_EQ(direction.x, doctest::Approx(0.0F));
     CHECK_EQ(direction.y, doctest::Approx(0.0F));
-    CHECK_EQ(direction.z, doctest::Approx(-1.0F));
+    CHECK_EQ(direction.z, doctest::Approx(1.0F));
 
     const std::array<float, 4> color{light.color_rgba()};
     CHECK_EQ(color.at(0), doctest::Approx(0x33 / 255.0F));
@@ -572,7 +594,7 @@ TEST_SUITE("Core::Omikron::Model3DO") {
     // Unrelated flags do not change the outcome.
     CHECK_EQ(App::Omikron::blend_mode((1U << 12) | (1U << 20) | (1U << 26) | (1U << 27)),
         BlendMode::k_alpha_blend);
-    // The skybox flag drives a render pass, not a blend mode.
+    // Runtime's U-scroll flag is orthogonal to blend selection.
     CHECK_EQ(App::Omikron::blend_mode(1U << 24), BlendMode::k_opaque);
   }
 }

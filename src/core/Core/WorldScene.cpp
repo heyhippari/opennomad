@@ -21,6 +21,8 @@
 #include "Core/Log.hpp"
 #include "Core/LogCategory.hpp"
 #include "Core/Omikron/Model3DO.hpp"
+#include "Core/RuntimeMath.hpp"
+#include "Core/RuntimePresentation.hpp"
 #include "Core/Scenario/ScenarioManager.hpp"
 #include "Core/Scenario/ScenarioRuntime.hpp"
 #include "Core/Shader.hpp"
@@ -176,9 +178,9 @@ std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state
 
       const bool reachable{
           index < model.hierarchy_reachable.size() && model.hierarchy_reachable.at(index) != 0U};
-      const Omikron::Vec3 bind_origin{index < model.bind_pose_world_origin.size()
-                                          ? model.bind_pose_world_origin.at(index)
-                                          : Omikron::Vec3{}};
+      const Omikron::Model3DOData::RuntimeObjectState object{
+          index < model.runtime_objects.size() ? model.runtime_objects.at(index)
+                                               : Omikron::Model3DOData::RuntimeObjectState{}};
 
       state.mesh_hierarchy.push_back(Debug::WorldMeshHierarchyDebugState{.mesh_id = mesh.mesh_id,
           .name = mesh.name,
@@ -189,7 +191,10 @@ std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state
           .root = std::cmp_equal(model.root_mesh_index, index),
           .position = vec3(mesh.position),
           .bone_position = vec3(mesh.bone_position),
-          .bind_origin = vec3(bind_origin)});
+          .runtime_local_offset = vec3(object.local_offset),
+          .runtime_local_matrix = object.local_matrix.values,
+          .runtime_world_translation = vec3(object.world_translation),
+          .runtime_world_matrix = object.world_matrix.values});
     }
   }
 
@@ -199,8 +204,24 @@ std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state
   state.camera_id = m_camera.active_camera_id();
 
   if (state.camera_has_pose) {
-    state.camera_eye = m_camera.pose().eye;
-    state.camera_target = m_camera.pose().target;
+    const WorldCameraPose& pose{m_camera.pose()};
+    const auto vec3 = [](const Runtime::Vec3& value) {
+      return std::array<float, 3>{value.x, value.y, value.z};
+    };
+    state.camera_runtime_eye = vec3(pose.eye);
+    state.camera_runtime_target = vec3(pose.target);
+    state.camera_render_eye = vec3(Runtime::Presentation::to_gl(pose.eye));
+    state.camera_render_target = vec3(Runtime::Presentation::to_gl(pose.target));
+    state.camera_roll_degrees = pose.roll_degrees;
+    state.camera_horizontal_fov_degrees = pose.horizontal_fov_degrees;
+    state.camera_vertical_fov_4_3_degrees =
+        Runtime::horizontal_4_3_to_vertical_fov(pose.horizontal_fov_degrees);
+    state.camera_near_inches = m_camera.camera().get_near_plane();
+    state.camera_far_inches = m_camera.camera().get_far_plane();
+    if (m_camera.last_command().has_value()) {
+      state.camera_serialized_eye = m_camera.last_command()->serialized_eye;
+      state.camera_serialized_target = m_camera.last_command()->serialized_target;
+    }
   }
 
   return state;
@@ -281,8 +302,11 @@ void WorldScene::update(const float delta_time, const Input::InputManager& input
           m_world_renderer.reset();
         } else {
           m_world_renderer = std::move(renderer).value();
+          // WorldRenderer bounds are presentation-local. Convert the centre
+          // back through the involutive B basis for Runtime-native fallback state.
           m_camera.set_fallback_pose(
-              m_world_renderer->bounds().center, m_world_renderer->bounds().radius);
+              Runtime::Presentation::to_gl(m_world_renderer->bounds().center),
+              m_world_renderer->bounds().radius);
         }
 
         m_observed_scene_id = context->scene_id;
@@ -313,11 +337,12 @@ void WorldScene::update(const float delta_time, const Input::InputManager& input
       }
       m_camera.apply_command(command.value());
       App::Log::debug(LogCategory::Renderer,
-          "World camera {} — duration={} flags={} focal={}",
+          "World camera {} — duration={} flags={} roll={}deg hFov={}deg",
           command->camera_id,
           command->duration_units,
           command->flags,
-          command->focal_parameter);
+          command->roll_degrees,
+          command->horizontal_fov_degrees);
     }
   }
 
@@ -331,20 +356,17 @@ void WorldScene::update(const float delta_time, const Input::InputManager& input
     Audio::AudioSystem* audio{context->runtime->audio_system()};
     if (audio != nullptr) {
       const WorldCameraPose& pose{m_camera.pose()};
-      const float delta_x{pose.target.at(0) - pose.eye.at(0)};
-      const float delta_y{pose.target.at(1) - pose.eye.at(1)};
-      const float delta_z{pose.target.at(2) - pose.eye.at(2)};
-      const float length{
-          std::sqrt((delta_x * delta_x) + (delta_y * delta_y) + (delta_z * delta_z))};
-      const float inverse_length{length > 0.0001F ? 1.0F / length : 0.0F};
+      const Runtime::Matrix3& view{m_camera.runtime_view().world_to_camera.matrix};
       Audio::AudioListenerState listener;
-      listener.position = Audio::Vec3{pose.eye.at(0), pose.eye.at(1), pose.eye.at(2)};
+      // The software spatializer is metre-based (speed of sound is m/s), so
+      // inches convert exactly here at the audio boundary. Orientation stays
+      // in Runtime's native basis; matrix column 2 is forward and -column 1 is up.
+      listener.position = Audio::Vec3{Runtime::inches_to_metres(pose.eye.x),
+          Runtime::inches_to_metres(pose.eye.y),
+          Runtime::inches_to_metres(pose.eye.z)};
       listener.velocity = Audio::Vec3{0.0F, 0.0F, 0.0F};
-      listener.forward = length > 0.0001F ? Audio::Vec3{delta_x * inverse_length,
-                                                delta_y * inverse_length,
-                                                delta_z * inverse_length}
-                                          : Audio::Vec3{0.0F, 0.0F, -1.0F};
-      listener.up = Audio::Vec3{0.0F, 1.0F, 0.0F};
+      listener.forward = Audio::Vec3{view.at(0, 2), view.at(1, 2), view.at(2, 2)};
+      listener.up = Audio::Vec3{-view.at(0, 1), -view.at(1, 1), -view.at(2, 1)};
       audio->set_listener(listener);
     }
   }

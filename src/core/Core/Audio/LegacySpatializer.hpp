@@ -15,9 +15,9 @@ namespace App::Audio {
 // Confirmed binary facts
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Software-Doppler speed of sound in world units per second, observed near
-/// 429.0 in the original binary's software spatializer. Exact semantics
-/// (units, scaling) remain provisional; the value is isolated for correction.
+/// Effective software-Doppler speed in OpenNomad's metre-based audio boundary,
+/// observed near 429.0 in the original binary. Its recovered physical meaning
+/// remains provisional; the value is isolated for correction.
 inline constexpr float k_doppler_speed_of_sound{429.0F};
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -28,7 +28,8 @@ inline constexpr float k_doppler_speed_of_sound{429.0F};
 /// distance, zero gain at/outside the maximum distance, linear falloff
 /// between. Numerical parity with the original DirectSound path is
 /// provisional and deliberately not labelled exact.
-[[nodiscard]] float attenuation_gain(float distance, float minimum_distance, float maximum_distance);
+[[nodiscard]] float attenuation_gain(
+    float distance, float minimum_distance, float maximum_distance);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Deliberately provisional modern approximations

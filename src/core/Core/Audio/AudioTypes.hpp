@@ -8,8 +8,8 @@
 
 namespace App::Audio {
 
-/// Three-component vector, matching the repository's established position
-/// convention (`std::array<float, 3>`).
+/// Audio-boundary vector. Spatializer positions and distances are metres and
+/// remain independent from renderer coordinates.
 using Vec3 = std::array<float, 3>;
 
 /// Typed runtime sound-resource handle. The serialized `uint16_t` resource id
@@ -20,7 +20,9 @@ struct SoundResourceId {
 
   std::uint16_t index{k_invalid};
 
-  [[nodiscard]] constexpr bool valid() const { return index != k_invalid; }
+  [[nodiscard]] constexpr bool valid() const {
+    return index != k_invalid;
+  }
   friend constexpr bool operator==(const SoundResourceId&, const SoundResourceId&) = default;
 };
 
@@ -33,7 +35,9 @@ struct AudioOwnerToken {
   std::uint32_t object_index{0};
   std::uint32_t generation{0};
 
-  [[nodiscard]] constexpr bool is_null() const { return scenario == nullptr; }
+  [[nodiscard]] constexpr bool is_null() const {
+    return scenario == nullptr;
+  }
 
   /// Printable, deterministic debug representation (scenario identity is
   /// rendered as a pointer-sized integer, never dereferenced).
@@ -42,9 +46,8 @@ struct AudioOwnerToken {
       return "null";
     }
     const auto address{reinterpret_cast<std::uintptr_t>(scenario)};
-    return std::string{"scenario#"} + std::to_string(address) +
-           " object " + std::to_string(object_index) +
-           " gen " + std::to_string(generation);
+    return std::string{"scenario#"} + std::to_string(address) + " object " +
+           std::to_string(object_index) + " gen " + std::to_string(generation);
   }
 
   friend constexpr bool operator==(const AudioOwnerToken&, const AudioOwnerToken&) = default;
@@ -96,7 +99,9 @@ struct VoiceHandle {
   std::uint32_t index{k_invalid_index};
   std::uint32_t generation{0};
 
-  [[nodiscard]] constexpr bool valid() const { return index != k_invalid_index; }
+  [[nodiscard]] constexpr bool valid() const {
+    return index != k_invalid_index;
+  }
   friend constexpr bool operator==(const VoiceHandle&, const VoiceHandle&) = default;
 };
 

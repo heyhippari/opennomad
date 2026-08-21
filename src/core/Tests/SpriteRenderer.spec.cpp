@@ -1,3 +1,5 @@
+#include "Core/Sprite/SpriteRenderer.hpp"
+
 #include <doctest/doctest.h>
 
 #include <array>
@@ -7,7 +9,6 @@
 
 #include "Core/Omikron/Model3DO.hpp"
 #include "Core/Sprite/SpritePool.hpp"
-#include "Core/Sprite/SpriteRenderer.hpp"
 #include "Core/Sprite/SpriteResource.hpp"
 
 // NOLINTBEGIN(misc-use-anonymous-namespace, cppcoreguidelines-avoid-do-while, cert-err33-c,
@@ -20,8 +21,8 @@ namespace {
 
 using App::Sprite::SpriteHandle;
 using App::Sprite::SpritePool;
-using App::Sprite::SpriteRenderMode;
 using App::Sprite::SpriteRenderer;
+using App::Sprite::SpriteRenderMode;
 using App::Sprite::SpriteResource;
 using App::Sprite::SpriteSkipReason;
 
@@ -60,10 +61,10 @@ SpriteResource make_resource() {
   return resource;
 }
 
-/// Camera basis: looking down +Z, screen-right -X, world-up +Y.
+/// GL camera basis produced from a Runtime camera looking down native +Z.
 constexpr glm::vec3 k_eye{0.0F, 0.0F, 0.0F};
-constexpr glm::vec3 k_forward{0.0F, 0.0F, 1.0F};
-constexpr glm::vec3 k_right{-1.0F, 0.0F, 0.0F};
+constexpr glm::vec3 k_forward{0.0F, 0.0F, -1.0F};
+constexpr glm::vec3 k_right{1.0F, 0.0F, 0.0F};
 constexpr glm::vec3 k_up{0.0F, 1.0F, 0.0F};
 constexpr float k_near{0.1F};
 constexpr float k_far{100.0F};
@@ -86,10 +87,7 @@ SpriteHandle make_attached(SpritePool& pool,
   return handle;
 }
 
-void check_vec3(const std::array<float, 3>& actual,
-    const float x,
-    const float y,
-    const float z) {
+void check_vec3(const std::array<float, 3>& actual, const float x, const float y, const float z) {
   CHECK_EQ(actual.at(0), doctest::Approx(x));
   CHECK_EQ(actual.at(1), doctest::Approx(y));
   CHECK_EQ(actual.at(2), doctest::Approx(z));
@@ -108,11 +106,11 @@ TEST_SUITE("Core::Sprite::SpriteRenderer") {
     build_queue(renderer, pool, std::span<const SpriteResource* const>{resources});
 
     REQUIRE_EQ(renderer.vertices().size(), std::size_t{6});
-    check_vec3(renderer.vertices().at(0).position, 1.0F, -1.5F, 5.0F);
-    check_vec3(renderer.vertices().at(1).position, -1.0F, -1.5F, 5.0F);
-    check_vec3(renderer.vertices().at(2).position, -1.0F, 1.5F, 5.0F);
-    check_vec3(renderer.vertices().at(4).position, -1.0F, 1.5F, 5.0F);
-    check_vec3(renderer.vertices().at(5).position, 1.0F, 1.5F, 5.0F);
+    check_vec3(renderer.vertices().at(0).position, -1.0F, -1.5F, -5.0F);
+    check_vec3(renderer.vertices().at(1).position, 1.0F, -1.5F, -5.0F);
+    check_vec3(renderer.vertices().at(2).position, 1.0F, 1.5F, -5.0F);
+    check_vec3(renderer.vertices().at(4).position, 1.0F, 1.5F, -5.0F);
+    check_vec3(renderer.vertices().at(5).position, -1.0F, 1.5F, -5.0F);
     CHECK_EQ(renderer.queue_stats().visible, std::size_t{1});
     CHECK_EQ(renderer.queue_stats().drawn, std::size_t{1});
   }
@@ -187,7 +185,7 @@ TEST_SUITE("Core::Sprite::SpriteRenderer") {
     build_queue(renderer, pool, std::span<const SpriteResource* const>{resources});
 
     // Half-extents become 2 x 1.5; corner 0 = pos + right*(-2) + up*(-1.5).
-    check_vec3(renderer.vertices().at(0).position, 2.0F, -1.5F, 5.0F);
+    check_vec3(renderer.vertices().at(0).position, -2.0F, -1.5F, -5.0F);
   }
 
   TEST_CASE("Rotates the quad around the billboard centre") {
@@ -201,7 +199,7 @@ TEST_SUITE("Core::Sprite::SpriteRenderer") {
     build_queue(renderer, pool, std::span<const SpriteResource* const>{resources});
 
     // corner(-1, -1.5) rotated 90° becomes (1.5, -1) in camera space.
-    check_vec3(renderer.vertices().at(0).position, -1.5F, -1.0F, 5.0F);
+    check_vec3(renderer.vertices().at(0).position, 1.5F, -1.0F, -5.0F);
   }
 
   TEST_CASE("Batches equal pipeline keys and counts draw calls") {
@@ -275,8 +273,7 @@ TEST_SUITE("Core::Sprite::SpriteRenderer") {
     CHECK_EQ(renderer.queue_stats().invalid, std::size_t{1});
     CHECK_EQ(renderer.queue_stats().visible, std::size_t{0});
     REQUIRE_EQ(renderer.queue_stats().skipped.size(), std::size_t{1});
-    CHECK_EQ(renderer.queue_stats().skipped.at(0).second,
-        SpriteSkipReason::k_frame_out_of_range);
+    CHECK_EQ(renderer.queue_stats().skipped.at(0).second, SpriteSkipReason::k_frame_out_of_range);
   }
 
   TEST_CASE("Reports a missing resource") {
@@ -318,8 +315,7 @@ TEST_SUITE("Core::Sprite::SpriteRenderer") {
     build_queue(renderer, pool, std::span<const SpriteResource* const>{resources});
     CHECK_EQ(renderer.queue_stats().culled, std::size_t{1});
     REQUIRE_EQ(renderer.queue_stats().skipped.size(), std::size_t{1});
-    CHECK_EQ(renderer.queue_stats().skipped.at(0).second,
-        SpriteSkipReason::k_outside_depth_range);
+    CHECK_EQ(renderer.queue_stats().skipped.at(0).second, SpriteSkipReason::k_outside_depth_range);
   }
 
   TEST_CASE("Detached instances are not queued") {

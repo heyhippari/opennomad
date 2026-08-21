@@ -46,7 +46,8 @@ constexpr std::uint32_t K_WAIT{0x06000017U};
 constexpr std::uint32_t K_AUDIO_OPCODE_FAMILY{0x05000000U};
 constexpr std::uint32_t K_AUDIO_OPCODE_MASK{0xFF000000U};
 
-// Recovered default distances for attached playback (world units).
+// Recovered Runtime-native distances in inches. ScenarioRuntime converts them
+// to metres only at audio submission.
 constexpr float K_PLAY_SOUND_MIN_DISTANCE{78.0F};
 constexpr float K_PLAY_SOUND_MAX_DISTANCE{1170.0F};
 constexpr float K_PLAY_SYNC_MIN_DISTANCE{0.0F};

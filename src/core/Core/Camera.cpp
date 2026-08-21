@@ -4,21 +4,20 @@
 // glm follows a "single-include" convention — the umbrella headers are the
 // canonical way to pull in the library, even though clang-tidy cannot trace
 // individual symbols back to a direct sub-header.
+#include <algorithm>
+#include <cmath>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
-
-#include <algorithm>
-#include <cmath>
 #include <iterator>
 #include <span>
 
 namespace App {
 
 Camera::Camera(const float fov_degrees,
-               const float aspect_ratio,
-               const float near_plane,
-               const float far_plane)
+    const float aspect_ratio,
+    const float near_plane,
+    const float far_plane)
     : m_fov(fov_degrees),
       m_aspect_ratio(aspect_ratio),
       m_near(near_plane),
@@ -28,10 +27,17 @@ Camera::Camera(const float fov_degrees,
 
 void Camera::set_aspect_ratio(const float aspect_ratio) {
   m_aspect_ratio = aspect_ratio;
-  const glm::mat4 proj{
-      glm::perspective(glm::radians(m_fov), m_aspect_ratio, m_near, m_far)};
+  const glm::mat4 proj{glm::perspective(glm::radians(m_fov), m_aspect_ratio, m_near, m_far)};
   // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index)
   std::copy_n(glm::value_ptr(proj), 16, std::begin(m_projection_matrix));
+}
+
+void Camera::set_perspective(
+    const float vertical_fov_degrees, const float near_plane, const float far_plane) {
+  m_fov = vertical_fov_degrees;
+  m_near = near_plane;
+  m_far = far_plane;
+  set_aspect_ratio(m_aspect_ratio);
 }
 
 std::span<const float, 16> Camera::get_view_matrix() const {
@@ -40,17 +46,29 @@ std::span<const float, 16> Camera::get_view_matrix() const {
   return m_view_matrix;
 }
 
-std::span<const float, 16> Camera::get_projection_matrix() const { return m_projection_matrix; }
+std::span<const float, 16> Camera::get_projection_matrix() const {
+  return m_projection_matrix;
+}
 
-std::span<const float, 3> Camera::get_position() const { return m_position; }
+std::span<const float, 3> Camera::get_position() const {
+  return m_position;
+}
 
-float Camera::get_yaw() const { return m_yaw; }
+float Camera::get_yaw() const {
+  return m_yaw;
+}
 
-float Camera::get_pitch() const { return m_pitch; }
+float Camera::get_pitch() const {
+  return m_pitch;
+}
 
-float Camera::get_near_plane() const { return m_near; }
+float Camera::get_near_plane() const {
+  return m_near;
+}
 
-float Camera::get_far_plane() const { return m_far; }
+float Camera::get_far_plane() const {
+  return m_far;
+}
 
 void Camera::set_position(const float pos_x, const float pos_y, const float pos_z) {
   m_position[0] = pos_x;
@@ -65,9 +83,16 @@ void Camera::set_rotation(const float yaw_degrees, const float pitch_degrees) {
   m_view_dirty = true;
 }
 
+void Camera::set_view_matrix(
+    const std::span<const float, 16> view_matrix, const std::span<const float, 3> position) {
+  std::ranges::copy(view_matrix, std::begin(m_view_matrix));
+  std::ranges::copy(position, std::begin(m_position));
+  m_view_dirty = false;
+}
+
 void Camera::look_at(const float target_x, const float target_y, const float target_z) {
-  const glm::vec3 offset{target_x - m_position[0], target_y - m_position[1],
-                         target_z - m_position[2]};
+  const glm::vec3 offset{
+      target_x - m_position[0], target_y - m_position[1], target_z - m_position[2]};
   if (glm::length(offset) == 0.0F) {
     // Target coincides with the eye; keep the current orientation.
     return;

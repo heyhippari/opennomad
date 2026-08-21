@@ -20,6 +20,7 @@ class Camera {
 
   /// Recompute the projection matrix (call after a viewport resize).
   void set_aspect_ratio(float aspect_ratio);
+  void set_perspective(float vertical_fov_degrees, float near_plane, float far_plane);
 
   /// Retrieve matrices as 16-float column-major spans suitable for glUniformMatrix4fv.
   [[nodiscard]] std::span<const float, 16> get_view_matrix() const;
@@ -39,6 +40,11 @@ class Camera {
   // --- Transform setters ---
   void set_position(float x, float y, float z);
   void set_rotation(float yaw_degrees, float pitch_degrees);
+
+  /// Installs an explicit GL view matrix and corresponding GL-world eye.
+  /// Runtime-scripted cameras use this to preserve their recovered roll and
+  /// row-vector matrix convention without passing through glm::lookAt.
+  void set_view_matrix(std::span<const float, 16> view_matrix, std::span<const float, 3> position);
 
   /// Points the camera from its current position at the given world-space target.
   void look_at(float target_x, float target_y, float target_z);

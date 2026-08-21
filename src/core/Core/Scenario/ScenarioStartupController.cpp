@@ -23,6 +23,7 @@
 #include "Core/LogCategory.hpp"
 #include "Core/Omikron/IamArea.hpp"
 #include "Core/Omikron/IamStart.hpp"
+#include "Core/RuntimeMath.hpp"
 #include "Core/Scenario/ScenarioManager.hpp"
 #include "Core/Scenario/ScenarioRuntime.hpp"
 #include "Core/Script/AreaScriptRuntime.hpp"
@@ -216,8 +217,7 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
     m_initial_world_decor_state = "absent: no model 3DO name in the area record";
     record("AreaDependency.Decor.SkippedUnavailable");
   } else {
-    m_initial_world_decor_path =
-        dependency_path(K_DECOR_DIRECTORY, model_name, K_3DO_EXTENSION);
+    m_initial_world_decor_path = dependency_path(K_DECOR_DIRECTORY, model_name, K_3DO_EXTENSION);
     m_initial_world_decor_state = "requested";
     record("AreaDependency.Decor.Requested", m_initial_world_decor_path);
   }
@@ -228,13 +228,11 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
     return std::expected<void, std::string>{std::unexpect, m_last_error};
   }
 
-  m_initial_world_scenario_path =
-      dependency_path(K_SCPTDATA_DIRECTORY, scx_name, K_SCX_EXTENSION);
+  m_initial_world_scenario_path = dependency_path(K_SCPTDATA_DIRECTORY, scx_name, K_SCX_EXTENSION);
 
   const std::optional<std::string> decor_path{
-      m_initial_world_decor_path.empty()
-          ? std::nullopt
-          : std::optional<std::string>{m_initial_world_decor_path}};
+      m_initial_world_decor_path.empty() ? std::nullopt
+                                         : std::optional<std::string>{m_initial_world_decor_path}};
   auto world{manager.load_world_context(0, decor_path, m_initial_world_scenario_path)};
   if (!world) {
     m_last_error = fmt::format("world scenario load: {}", world.error());
@@ -338,43 +336,52 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
   // character through AREA table 0 now, but deliberately stop at the typed
   // launch boundary. Character materialization and concrete ScriptRuntime
   // instance creation belong to the following phases.
-  area_script.set_character_script_sink(
-      [this](const Script::AreaCharacterScriptRequest& request)
-          -> std::expected<void, std::string> {
-        if (!m_area_slots.at(0).primary.has_value()) {
-          return std::expected<void, std::string>{
-              std::unexpect, "no active AREA record for character-script request"};
-        }
+  area_script.set_character_script_sink([this](const Script::AreaCharacterScriptRequest& request)
+                                            -> std::expected<void, std::string> {
+    if (!m_area_slots.at(0).primary.has_value()) {
+      return std::expected<void, std::string>{
+          std::unexpect, "no active AREA record for character-script request"};
+    }
 
-        const Omikron::IamAreaRecord& area{*m_area_slots.at(0).primary};
-        if (!area.character_by_id(request.character_id).has_value()) {
-          return std::expected<void, std::string>{std::unexpect,
-              fmt::format(
-                  "character ID {} not found in active AREA table 0",
-                  request.character_id)};
-        }
+    const Omikron::IamAreaRecord& area{*m_area_slots.at(0).primary};
+    const auto character{area.character_by_id(request.character_id)};
+    if (!character.has_value()) {
+      return std::expected<void, std::string>{std::unexpect,
+          fmt::format("character ID {} not found in active AREA table 0", request.character_id)};
+    }
 
-        const bool tracked{
-            request.mode == Script::AreaCharacterScriptLaunchMode::k_tracked};
-        const std::string_view mode{tracked ? "tracked" : "fire-and-forget"};
+    const bool tracked{request.mode == Script::AreaCharacterScriptLaunchMode::k_tracked};
+    const std::string_view mode{tracked ? "tracked" : "fire-and-forget"};
+    const Runtime::Vec3 runtime_position{
+        Runtime::area_position_to_inches(character->serialized_position)};
+    const std::int32_t orientation_degrees{
+        Runtime::area_angle_to_degrees(character->orientation_units)};
 
-        record("AreaScript.CharacterScriptRequested",
-            fmt::format("character={} script={} parameter={} mode={}",
-                request.character_id,
-                request.script_id,
-                request.parameter,
-                mode));
-
-        App::Log::debug(LogCategory::Script,
-            "AREA opcode {:#04x} — character={} script={} parameter={} "
-            "mode={} (launch deferred)",
-            tracked ? 0x3C : 0x3B,
+    record("AreaScript.CharacterScriptRequested",
+        fmt::format("character={} script={} parameter={} mode={} "
+                    "serialized=({},{},{}) runtime=({},{},{}) orientation={}deg",
             request.character_id,
             request.script_id,
             request.parameter,
-            mode);
-        return {};
-      });
+            mode,
+            character->serialized_position.at(0),
+            character->serialized_position.at(1),
+            character->serialized_position.at(2),
+            runtime_position.x,
+            runtime_position.y,
+            runtime_position.z,
+            orientation_degrees));
+
+    App::Log::debug(LogCategory::Script,
+        "AREA opcode {:#04x} — character={} script={} parameter={} "
+        "mode={} (launch deferred)",
+        tracked ? 0x3C : 0x3B,
+        request.character_id,
+        request.script_id,
+        request.parameter,
+        mode);
+    return {};
+  });
 
   area_script.set_presentation_sink([this](const Script::AreaPresentationRequest& request) {
     if (m_manager == nullptr) {
@@ -434,25 +441,29 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
     m_manager->world_presentation().enqueue_camera(WorldCameraCommand{.scene_id = context->scene_id,
         .scene_generation = context->generation,
         .camera_id = request.camera_id,
-        .runtime_eye = camera->eye,
-        .runtime_target = camera->target,
+        .serialized_eye = camera->serialized_eye,
+        .serialized_target = camera->serialized_target,
+        .runtime_eye = Runtime::area_position_to_inches(camera->serialized_eye),
+        .runtime_target = Runtime::area_position_to_inches(camera->serialized_target),
         .duration_units = request.duration_units,
         .flags = request.flags,
         .wait_for_completion = request.wait_for_completion,
         .camera_type = camera->camera_type,
-        .angle_units = camera->angle_units,
-        .focal_parameter = camera->focal_parameter,
+        .roll_units = camera->roll_units,
+        .horizontal_fov_units = camera->horizontal_fov_units,
+        .roll_degrees = Runtime::area_angle_to_degrees(camera->roll_units),
+        .horizontal_fov_degrees = Runtime::area_angle_to_degrees(camera->horizontal_fov_units),
         .field_20 = camera->field_20,
         .field_22 = camera->field_22,
         .tail_fields = camera->tail_fields});
 
     record("AreaScript.CameraRequested",
-        fmt::format("id={} duration={} flags={} type={} focal={}",
+        fmt::format("id={} duration={} flags={} type={} hFov={}deg",
             request.camera_id,
             request.duration_units,
             request.flags,
             camera->camera_type,
-            camera->focal_parameter));
+            Runtime::area_angle_to_degrees(camera->horizontal_fov_units)));
   });
 
   area_script.set_interface_sink([this](const InterfaceOpenRequest& request)

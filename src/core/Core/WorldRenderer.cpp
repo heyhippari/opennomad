@@ -7,15 +7,14 @@
 // ModelViewerScene.cpp: clang-tidy cannot associate GLM's umbrella headers
 // with the declarations used below without requiring implementation-detail
 // GLM headers.
-#include <glm/glm.hpp>
-#include <glm/gtc/type_ptr.hpp>
-
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <glm/glm.hpp>
+#include <glm/gtc/type_ptr.hpp>
 #include <limits>
 #include <memory>
 #include <span>
@@ -32,6 +31,7 @@
 #include "Core/Omikron/Model3DO.hpp"
 #include "Core/Omikron/Texture3DT.hpp"
 #include "Core/Reflection.hpp"
+#include "Core/RuntimePresentation.hpp"
 #include "Core/Scenario/ScenarioManager.hpp"
 #include "Core/Scenario/ScenarioRuntime.hpp"
 #include "Core/Shader.hpp"
@@ -216,7 +216,12 @@ std::expected<std::unique_ptr<WorldRenderer>, std::string> WorldRenderer::create
   bool special_flags_seen{false};
 
   for (const Omikron::MaterialGroup& group : groups.value()) {
-    renderer->m_meshes.emplace_back(group.vertices, group.indices);
+    std::vector<Vertex> presentation_vertices;
+    presentation_vertices.reserve(group.vertices.size());
+    for (const Vertex& vertex : group.vertices) {
+      presentation_vertices.push_back(Runtime::Presentation::to_gl(vertex));
+    }
+    renderer->m_meshes.emplace_back(presentation_vertices, group.indices);
     renderer->m_group_material_ids.push_back(group.material_id);
     renderer->m_group_flags.push_back(group.flags);
     renderer->m_group_modes.push_back(Omikron::blend_mode(group.flags));
@@ -227,8 +232,8 @@ std::expected<std::unique_ptr<WorldRenderer>, std::string> WorldRenderer::create
     std::array<float, 3> group_max{std::numeric_limits<float>::lowest(),
         std::numeric_limits<float>::lowest(),
         std::numeric_limits<float>::lowest()};
-    
-    for (const Vertex& vertex : group.vertices) {
+
+    for (const Vertex& vertex : presentation_vertices) {
       has_vertices = true;
       for (std::size_t axis{0}; axis < 3U; ++axis) {
         group_min.at(axis) = std::min(group_min.at(axis), vertex.position.at(axis));
@@ -245,10 +250,9 @@ std::expected<std::unique_ptr<WorldRenderer>, std::string> WorldRenderer::create
     }
     renderer->m_group_centers.push_back(center);
 
-    special_flags_seen =
-        special_flags_seen ||
-        Omikron::has_flag(group.flags, Omikron::MeshFlags::k_mirror) ||
-        Omikron::has_flag(group.flags, Omikron::MeshFlags::k_environment_mapped);
+    special_flags_seen = special_flags_seen ||
+                         Omikron::has_flag(group.flags, Omikron::MeshFlags::k_mirror) ||
+                         Omikron::has_flag(group.flags, Omikron::MeshFlags::k_environment_mapped);
   }
 
   if (has_vertices) {
@@ -258,10 +262,9 @@ std::expected<std::unique_ptr<WorldRenderer>, std::string> WorldRenderer::create
     const float extent_x{bounds_max.at(0) - bounds_min.at(0)};
     const float extent_y{bounds_max.at(1) - bounds_min.at(1)};
     const float extent_z{bounds_max.at(2) - bounds_min.at(2)};
-    renderer->m_bounds.radius =
-        std::max(0.5F * std::sqrt((extent_x * extent_x) + (extent_y * extent_y) +
-                                      (extent_z * extent_z)),
-            1.0F);
+    renderer->m_bounds.radius = std::max(
+        0.5F * std::sqrt((extent_x * extent_x) + (extent_y * extent_y) + (extent_z * extent_z)),
+        1.0F);
   }
 
   if (special_flags_seen) {
@@ -271,12 +274,12 @@ std::expected<std::unique_ptr<WorldRenderer>, std::string> WorldRenderer::create
   }
 
   if (context.runtime != nullptr) {
-    context.runtime->set_world_anchor(renderer->m_bounds.center);
+    // Scenario state remains Runtime-native; the bounds above are GL-facing.
+    context.runtime->set_world_anchor(Runtime::Presentation::to_gl(renderer->m_bounds.center));
   }
   if (auto initialized{renderer->m_sprite_renderer.initialize()}; !initialized) {
-    App::Log::warn(LogCategory::Renderer,
-        "World sprite renderer unavailable: {}",
-        initialized.error());
+    App::Log::warn(
+        LogCategory::Renderer, "World sprite renderer unavailable: {}", initialized.error());
   }
 
   App::Log::info(LogCategory::Renderer,
@@ -306,7 +309,7 @@ std::size_t WorldRenderer::uv_scroll_v_group_count() const {
   return static_cast<std::size_t>(
       std::ranges::count_if(m_group_flags, [](const std::uint32_t flags) {
         return Omikron::has_flag(flags, Omikron::MeshFlags::k_uv_scroll_v);
-       }));
+      }));
 }
 
 std::size_t WorldRenderer::environment_group_count() const {
@@ -357,8 +360,7 @@ void WorldRenderer::render(const Camera& camera, ScenarioRuntime* const runtime)
 
   m_shader->bind();
   m_shader->set_uniform_mat4("u_mvp", std::span<const GLfloat, 16>{glm::value_ptr(mvp), 16});
-  m_shader->set_uniform_vec3(
-      "u_light_direction", std::span<const GLfloat, 3>{K_LIGHT_DIRECTION});
+  m_shader->set_uniform_vec3("u_light_direction", std::span<const GLfloat, 3>{K_LIGHT_DIRECTION});
   m_shader->set_uniform_float("u_ambient", K_AMBIENT_STRENGTH);
 
   // Opaque and cutout geometry first.
@@ -383,12 +385,11 @@ void WorldRenderer::render(const Camera& camera, ScenarioRuntime* const runtime)
       blended.push_back(index);
     }
   }
-  std::ranges::sort(
-      blended, [this, &eye](const std::size_t lhs, const std::size_t rhs) {
-        const glm::vec3 lhs_offset{glm::make_vec3(m_group_centers.at(lhs).data()) - eye};
-        const glm::vec3 rhs_offset{glm::make_vec3(m_group_centers.at(rhs).data()) - eye};
-        return glm::dot(lhs_offset, lhs_offset) > glm::dot(rhs_offset, rhs_offset);
-      });
+  std::ranges::sort(blended, [this, &eye](const std::size_t lhs, const std::size_t rhs) {
+    const glm::vec3 lhs_offset{glm::make_vec3(m_group_centers.at(lhs).data()) - eye};
+    const glm::vec3 rhs_offset{glm::make_vec3(m_group_centers.at(rhs).data()) - eye};
+    return glm::dot(lhs_offset, lhs_offset) > glm::dot(rhs_offset, rhs_offset);
+  });
 
   glEnable(GL_BLEND);
   glDepthMask(GL_FALSE);

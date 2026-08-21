@@ -17,7 +17,9 @@ struct SpriteHandle {
   std::uint32_t index{k_invalid_index};
   std::uint32_t generation{0};
 
-  [[nodiscard]] constexpr bool valid() const { return index != k_invalid_index; }
+  [[nodiscard]] constexpr bool valid() const {
+    return index != k_invalid_index;
+  }
   friend constexpr bool operator==(const SpriteHandle&, const SpriteHandle&) = default;
 };
 
@@ -34,6 +36,7 @@ struct SpriteInstance {
   std::size_t resource_index{0};
   /// Object within the resource whose frame table drives this sprite.
   std::size_t object_index{0};
+  /// Gameplay-owned Runtime-native XYZ position in inches.
   std::array<float, 3> position{0.0F, 0.0F, 0.0F};
   SpriteRenderMode render_mode{SpriteRenderMode::k_default};
   std::uint16_t frame_index{k_invalid_frame};

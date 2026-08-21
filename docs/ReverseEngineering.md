@@ -4,6 +4,10 @@ Notes tying confirmed behaviors of the original Omikron executable to their
 OpenNomad implementations. The main-loop behavior covered here is the idle-
 driven Windows message loop and `RenderWindowProc`.
 
+Coordinate, transform, AREA normalization, scripted-camera, and presentation
+rules are documented in
+[Runtime coordinate and transform math](reverse-engineering/runtime-coordinate-math.md).
+
 ## Original globals → OpenNomad mapping
 
 | Original | Meaning | OpenNomad |

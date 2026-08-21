@@ -5,13 +5,17 @@
 #include <optional>
 
 #include "Core/Camera.hpp"
+#include "Core/RuntimeMath.hpp"
 #include "Core/WorldPresentation.hpp"
 
 namespace App {
 
 struct WorldCameraPose {
-  std::array<float, 3> eye{};
-  std::array<float, 3> target{};
+  /// Runtime-native XYZ inches; never GL presentation coordinates.
+  Runtime::Vec3 eye{};
+  Runtime::Vec3 target{};
+  float roll_degrees{0.0F};
+  float horizontal_fov_degrees{74.0F};
 };
 
 /// Presentation-side camera driven by Runtime AREA camera commands.
@@ -64,29 +68,24 @@ class WorldCameraSystem {
   [[nodiscard]] const std::optional<WorldCameraCommand>& last_command() const {
     return m_last_command;
   }
-
-  /// Runtime logical XYZ -> OpenNomad renderer coordinates.
-  ///
-  /// Runtime world coordinates share the basis used by 3DO object placement.
-  /// OpenNomad's presentation basis is a 180-degree X rotation followed by
-  /// the 1/40 world scale: (x, y, z) -> (x, -y, -z) * 0.025. The implementation
-  /// lives here so AREA/scenario code remains renderer-independent.
-  [[nodiscard]] static std::array<float, 3> runtime_to_renderer(
-      const std::array<std::int32_t, 3>& value);
+  [[nodiscard]] const Runtime::CameraView& runtime_view() const {
+    return m_runtime_view;
+  }
 
  private:
   void commit_pose();
   [[nodiscard]] static WorldCameraPose interpolate(
       const WorldCameraPose& from, const WorldCameraPose& to, float amount);
 
-  static constexpr float k_runtime_units_to_world{0.025F};
   static constexpr float k_scenario_frames_per_second{30.0F};
 
-  // Projection metadata (+0x1E in the IAM camera record) is preserved in
-  // last_command(), but the exact Runtime focal->FOV formula is not yet
-  // recovered. Keep one explicit provisional projection here rather than
-  // smearing guesses throughout the renderer.
-  Camera m_camera{60.0F, 1.0F, 0.05F, 5000.0F};
+  // OpenNomad preserves the retail 4:3-derived vertical FOV on widescreen,
+  // allowing horizontal view to expand outside exact retail behavior.
+  Camera m_camera{Runtime::horizontal_4_3_to_vertical_fov(74.0F),
+      1.0F,
+      Runtime::k_default_near_inches,
+      Runtime::metres_to_inches(Runtime::k_default_clip_distance_metres)};
+  Runtime::CameraView m_runtime_view{};
 
   WorldCameraPose m_current{};
   WorldCameraPose m_transition_start{};

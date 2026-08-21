@@ -1,5 +1,7 @@
 #pragma once
 
+#include <glad/glad.h>
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -9,8 +11,6 @@
 #include <string>
 #include <utility>
 #include <vector>
-
-#include <glad/glad.h>
 
 // NOLINTNEXTLINE(misc-include-cleaner) — glm umbrella include, see ModelViewerScene.hpp.
 #include <glm/glm.hpp>
@@ -36,13 +36,11 @@ struct SpritePipelineKey {
   bool second_uv{false};
   bool doubled_fog_range{false};
 
-  friend constexpr bool operator==(const SpritePipelineKey&,
-                                   const SpritePipelineKey&) = default;
-  friend constexpr auto operator<=>(const SpritePipelineKey&,
-                                    const SpritePipelineKey&) = default;
+  friend constexpr bool operator==(const SpritePipelineKey&, const SpritePipelineKey&) = default;
+  friend constexpr auto operator<=>(const SpritePipelineKey&, const SpritePipelineKey&) = default;
 };
 
-/// CPU vertex of one sprite billboard corner (world space).
+/// CPU vertex of one sprite billboard corner in GL presentation space.
 struct SpriteVertex {
   std::array<float, 3> position{0.0F, 0.0F, 0.0F};
   std::array<float, 2> uv{0.0F, 0.0F};
@@ -95,8 +93,9 @@ struct SpriteQueueStats {
 /// Which part of the scene pass a draw belongs to.
 enum class SpritePass : std::uint8_t { k_opaque, k_translucent };
 
-/// Builds and draws the sprite queue: CPU billboards in world space fed to
-/// one dynamic vertex buffer, drawn in batches keyed by pipeline state.
+/// Builds and draws the sprite queue: Runtime-native anchors are adapted into
+/// GL presentation-space billboards, fed to one dynamic vertex buffer, and
+/// drawn in batches keyed by pipeline state.
 class SpriteRenderer {
  public:
   SpriteRenderer() = default;
@@ -117,21 +116,21 @@ class SpriteRenderer {
   /// resources parallels the pool's resource indices. eye/forward/right/up
   /// are the camera basis; near/far bound the depth test.
   void build_queue(const SpritePool& pool,
-                   std::span<const SpriteResource* const> resources,
-                   const glm::vec3& eye,
-                   const glm::vec3& forward,
-                   const glm::vec3& right,
-                   const glm::vec3& up,
-                   float near_plane,
-                   float far_plane);
+      std::span<const SpriteResource* const> resources,
+      const glm::vec3& eye,
+      const glm::vec3& forward,
+      const glm::vec3& right,
+      const glm::vec3& up,
+      float near_plane,
+      float far_plane);
 
   /// Draws one pass of the previously built queue. The caller owns the
   /// surrounding pass state (blend enable and depth mask); this sets blend
   /// functions, cutout and fog uniforms per batch and restores culling.
   void draw_pass(SpritePass pass,
-                 const glm::mat4& view,
-                 const glm::mat4& projection,
-                 const std::vector<std::vector<Texture2D>>& textures);
+      const glm::mat4& view,
+      const glm::mat4& projection,
+      const std::vector<std::vector<Texture2D>>& textures);
 
   /// Renderer-wide grayscale (Rec.601 luminance) for the sprite pass.
   void set_grayscale(bool enabled);
@@ -148,9 +147,9 @@ class SpriteRenderer {
   void upload_vertices();
   /// Draws the commands of one pass in batch order.
   void draw_commands(SpritePass pass,
-                     const glm::mat4& view,
-                     const glm::mat4& projection,
-                     const std::vector<std::vector<Texture2D>>& textures);
+      const glm::mat4& view,
+      const glm::mat4& projection,
+      const std::vector<std::vector<Texture2D>>& textures);
   /// Applies the blend function of one command, caching the current one.
   void apply_blend_function(const SpriteRenderState& state);
 

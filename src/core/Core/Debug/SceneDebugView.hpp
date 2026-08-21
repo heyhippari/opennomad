@@ -22,7 +22,10 @@ struct WorldMeshHierarchyDebugState {
 
   std::array<float, 3> position{};
   std::array<float, 3> bone_position{};
-  std::array<float, 3> bind_origin{};
+  std::array<float, 3> runtime_local_offset{};
+  std::array<float, 9> runtime_local_matrix{};
+  std::array<float, 3> runtime_world_translation{};
+  std::array<float, 9> runtime_world_matrix{};
 };
 
 /// Presentation diagnostics exposed by a normal 3D world scene.
@@ -50,8 +53,17 @@ struct WorldRenderDebugState {
   bool camera_scripted{false};
   bool camera_transitioning{false};
   std::optional<std::uint16_t> camera_id;
-  std::array<float, 3> camera_eye{};
-  std::array<float, 3> camera_target{};
+  std::array<std::int32_t, 3> camera_serialized_eye{};
+  std::array<std::int32_t, 3> camera_serialized_target{};
+  std::array<float, 3> camera_runtime_eye{};
+  std::array<float, 3> camera_runtime_target{};
+  std::array<float, 3> camera_render_eye{};
+  std::array<float, 3> camera_render_target{};
+  float camera_roll_degrees{0.0F};
+  float camera_horizontal_fov_degrees{0.0F};
+  float camera_vertical_fov_4_3_degrees{0.0F};
+  float camera_near_inches{0.0F};
+  float camera_far_inches{0.0F};
 };
 
 /// Optional debug capability implemented by scenes with 3D presentation

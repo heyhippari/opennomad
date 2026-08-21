@@ -4,10 +4,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
 
+#include "Core/RuntimeMath.hpp"
 #include "Core/Vertex.hpp"
 
 namespace App::Omikron {
@@ -83,12 +85,8 @@ enum class BlendMode : std::uint8_t {
   return BlendMode::k_opaque;
 }
 
-/// Three-component vector in converted (right-handed) world space.
-struct Vec3 {
-  float x{0.0F};
-  float y{0.0F};
-  float z{0.0F};
-};
+/// Native Runtime XYZ vector. 3DO values are preserved exactly as serialized.
+using Vec3 = Runtime::Vec3;
 
 /// Parsed .3DO file header. Section offsets and counts are kept for future
 /// expansion (doors and cameras are not decoded yet).
@@ -180,7 +178,7 @@ struct MeshDescriptor {
   std::uint32_t mesh_id{0};
   std::uint32_t script_id{0};
   std::string name;
-  Vec3 position{};  ///< Scaled to world units.
+  Vec3 position{};  ///< Serialized native Runtime XYZ position, in inches.
   std::int32_t parent_id{-1};
   std::int32_t first_child_id{-1};
   std::int32_t next_sibling_id{-1};
@@ -205,8 +203,7 @@ struct MeshDescriptor {
   std::size_t rectangle_byte_offset{0};  ///< Bytes from rectangles_offset.
 };
 
-/// Raw vertex exactly as stored in the file (position converted to world
-/// space, colour still in BGRA byte order).
+/// Raw vertex exactly as stored in the file (native XYZ and BGRA byte order).
 struct RawVertex {
   Vec3 position{};
   Vec3 normal{};
@@ -259,8 +256,8 @@ struct MeshPolygons {
 struct Light {
   std::uint32_t flags{0};  ///< Two 16-bit flag words; meaning unresolved.
   std::string name;
-  float attenuation_end{0.0F};               ///< Far-attenuation end, world units.
-  float attenuation_start{0.0F};             ///< Far-attenuation start, world units.
+  float attenuation_end{0.0F};               ///< Native far-attenuation end, inches.
+  float attenuation_start{0.0F};             ///< Native far-attenuation start, inches.
   float intensity{0.0F};                     ///< Raw intensity multiplier.
   float unknown4{0.0F};                      ///< Unresolved secondary value.
   float unknown5{0.0F};                      ///< Unresolved secondary value.
@@ -299,10 +296,17 @@ struct Model3DOData {
   /// sibling traversal. Parallel to meshes.
   std::vector<std::uint8_t> hierarchy_reachable;
 
-  /// Bind-pose world origin of each runtime object after resolving the
-  /// hierarchy. Root uses MeshDescriptor::position; descendants accumulate
-  /// MeshDescriptor::bone_position from their parent.
-  std::vector<Vec3> bind_pose_world_origin;
+  /// Mutable Runtime object state derived from immutable serialized mesh
+  /// descriptors. Parallel to meshes and ready for later animation matrices.
+  struct RuntimeObjectState {
+    Vec3 local_offset{};
+    Runtime::Matrix3 local_matrix{};
+    std::optional<Runtime::Matrix3> animation_matrix;
+    Vec3 scale{1.0F, 1.0F, 1.0F};
+    Runtime::Matrix3 world_matrix{};
+    Vec3 world_translation{};
+  };
+  std::vector<RuntimeObjectState> runtime_objects;
 
   /// Descriptor index of each mesh's nearest non-joint parent, or -1.
   std::vector<std::int32_t> skin_parent_index;
@@ -319,13 +323,10 @@ struct MaterialGroup {
 
 /// Decoder for Omikron: The Nomad Soul .3DO model files.
 ///
-/// The binary layout follows the reference Blender importer
-/// (Chevluh/Omikron_Blender_Importer), which documents the format.
+/// Runtime.exe behavior is authoritative. The reference Blender importer is
+/// used only as a format hint where Runtime behavior remains unresolved.
 class Model3DO {
  public:
-  /// Omikron coordinates are stored in 1/40 units.
-  static constexpr float k_scale_factor{0.025F};
-
   /// Parses a complete .3DO file from memory.
   [[nodiscard]] static std::expected<Model3DOData, std::string> load(
       std::span<const std::byte> data);
@@ -336,6 +337,11 @@ class Model3DO {
   [[nodiscard]] static std::expected<std::vector<MaterialGroup>, std::string> build_static_geometry(
       const Model3DOData& model);
 
+  /// Re-resolves Runtime object transforms from the current local/animation
+  /// matrices while preserving serialized descriptor data.
+  [[nodiscard]] static std::expected<void, std::string> resolve_runtime_transforms(
+      Model3DOData& model);
+
  private:
   static void read_header(BinaryReader& reader, Header& header);
   static Material read_material(BinaryReader& reader);
@@ -345,7 +351,7 @@ class Model3DO {
   static Rectangle read_rectangle(BinaryReader& reader);
   static Light read_light(BinaryReader& reader);
   static std::string read_fixed_string(BinaryReader& reader, std::size_t length);
-  static Vec3 read_vec3(BinaryReader& reader, float scale);
+  static Vec3 read_vec3(BinaryReader& reader);
 };
 
 }  // namespace App::Omikron

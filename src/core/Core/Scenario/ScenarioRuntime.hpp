@@ -48,8 +48,7 @@ class ScenarioRuntime final : public Script::ScriptWorld {
   /// `activate_startup_scripts` is true every script owning at least one
   /// command group is instantiated in file order (the standalone/SCX load
   /// path); otherwise all templates stay inactive (the scenario-manager path).
-  [[nodiscard]] std::expected<void, std::string> initialize(
-      const Omikron::ScxData& scx,
+  [[nodiscard]] std::expected<void, std::string> initialize(const Omikron::ScxData& scx,
       std::span<const std::byte> scx_bytes,
       std::string_view scenario_name,
       Audio::AudioSystem* audio,
@@ -106,9 +105,8 @@ class ScenarioRuntime final : public Script::ScriptWorld {
 
   // --- World anchor ----------------------------------------------------------
 
-  /// World-space anchor used as the fallback position for script-driven
-  /// sprites and owner resolution until a real XYZ pool is parsed. ModelViewerScene
-  /// sets this to its model centre; a menu leaves it at the origin.
+  /// Runtime-native inch anchor used as the fallback position for script-driven
+  /// sprites and owner resolution until a real XYZ pool is parsed.
   [[nodiscard]] std::array<float, 3> world_anchor() const;
   void set_world_anchor(std::array<float, 3> anchor);
 
@@ -152,7 +150,7 @@ class ScenarioRuntime final : public Script::ScriptWorld {
   std::vector<std::byte> m_scx_bytes;
   Omikron::ScxData m_scx;
   std::string m_scenario_name;
-  std::array<float, 3> m_world_anchor{0.0F, 0.0F, 0.0F};
+  std::array<float, 3> m_world_anchor{0.0F, 0.0F, 0.0F};  ///< Runtime XYZ inches.
 
   Sprite::SpritePool m_sprite_pool;
   /// Decoded embedded effect resources, indexed like the SCX sprite table.

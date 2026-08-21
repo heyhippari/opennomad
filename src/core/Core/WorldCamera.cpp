@@ -1,12 +1,17 @@
 #include "Core/WorldCamera.hpp"
 
+// NOLINTBEGIN(misc-include-cleaner) -- GLM umbrella headers are canonical.
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <cstddef>
-#include <cstdint>
+#include <glm/glm.hpp>
+#include <glm/gtc/type_ptr.hpp>
+#include <numbers>
+#include <span>
 
 #include "Core/Debug/Instrumentor.hpp"
+#include "Core/RuntimeMath.hpp"
+#include "Core/RuntimePresentation.hpp"
 #include "Core/WorldPresentation.hpp"
 
 namespace App {
@@ -23,17 +28,11 @@ void WorldCameraSystem::reset() {
   m_transition_target = WorldCameraPose{};
   m_transition_elapsed = 0.0F;
   m_transition_duration = 0.0F;
+  m_runtime_view = Runtime::CameraView{};
   m_has_pose = false;
   m_has_scripted_pose = false;
   m_active_camera_id.reset();
   m_last_command.reset();
-}
-
-std::array<float, 3> WorldCameraSystem::runtime_to_renderer(
-    const std::array<std::int32_t, 3>& value) {
-  return {static_cast<float>(value.at(0)) * k_runtime_units_to_world,
-      -static_cast<float>(value.at(1)) * k_runtime_units_to_world,
-      -static_cast<float>(value.at(2)) * k_runtime_units_to_world};
 }
 
 void WorldCameraSystem::set_fallback_pose(const std::array<float, 3>& center, const float radius) {
@@ -45,7 +44,8 @@ void WorldCameraSystem::set_fallback_pose(const std::array<float, 3>& center, co
   const float distance{std::max(safe_radius * 1.5F, 6.0F)};
   const float height{std::max(safe_radius * 0.20F, 1.0F)};
   m_current = WorldCameraPose{
-      .eye = {center.at(0), center.at(1) + height, center.at(2) + distance}, .target = center};
+      .eye = {.x = center.at(0), .y = center.at(1) - height, .z = center.at(2) - distance},
+      .target = {.x = center.at(0), .y = center.at(1), .z = center.at(2)}};
   m_has_pose = true;
   m_transition_duration = 0.0F;
   m_transition_elapsed = 0.0F;
@@ -55,8 +55,10 @@ void WorldCameraSystem::set_fallback_pose(const std::array<float, 3>& center, co
 void WorldCameraSystem::apply_command(const WorldCameraCommand& command) {
   APP_PROFILE_FUNCTION();
 
-  const WorldCameraPose requested{.eye = runtime_to_renderer(command.runtime_eye),
-      .target = runtime_to_renderer(command.runtime_target)};
+  const WorldCameraPose requested{.eye = command.runtime_eye,
+      .target = command.runtime_target,
+      .roll_degrees = static_cast<float>(command.roll_degrees),
+      .horizontal_fov_degrees = static_cast<float>(command.horizontal_fov_degrees)};
 
   m_last_command = command;
   m_active_camera_id = command.camera_id;
@@ -93,8 +95,7 @@ void WorldCameraSystem::update(const float delta_seconds) {
   }
 
   m_transition_elapsed += std::max(delta_seconds, 0.0F);
-  const float linear_amount{
-      std::clamp(m_transition_elapsed / m_transition_duration, 0.0F, 1.0F)};
+  const float linear_amount{std::clamp(m_transition_elapsed / m_transition_duration, 0.0F, 1.0F)};
 
   // Runtime's camera transition is quadratic ease-in/ease-out. AREA timing
   // remains in the original 30 Hz duration units, but this curve is sampled
@@ -121,17 +122,36 @@ void WorldCameraSystem::update(const float delta_seconds) {
 WorldCameraPose WorldCameraSystem::interpolate(
     const WorldCameraPose& from, const WorldCameraPose& to, const float amount) {
   WorldCameraPose result;
-  for (std::size_t axis{0}; axis < 3U; ++axis) {
-    result.eye.at(axis) = from.eye.at(axis) + ((to.eye.at(axis) - from.eye.at(axis)) * amount);
-    result.target.at(axis) =
-        from.target.at(axis) + ((to.target.at(axis) - from.target.at(axis)) * amount);
-  }
+  result.eye = Runtime::Vec3{.x = from.eye.x + ((to.eye.x - from.eye.x) * amount),
+      .y = from.eye.y + ((to.eye.y - from.eye.y) * amount),
+      .z = from.eye.z + ((to.eye.z - from.eye.z) * amount)};
+  result.target = Runtime::Vec3{.x = from.target.x + ((to.target.x - from.target.x) * amount),
+      .y = from.target.y + ((to.target.y - from.target.y) * amount),
+      .z = from.target.z + ((to.target.z - from.target.z) * amount)};
+  result.roll_degrees = from.roll_degrees + ((to.roll_degrees - from.roll_degrees) * amount);
+  result.horizontal_fov_degrees =
+      from.horizontal_fov_degrees +
+      ((to.horizontal_fov_degrees - from.horizontal_fov_degrees) * amount);
   return result;
 }
 
 void WorldCameraSystem::commit_pose() {
-  m_camera.set_position(m_current.eye.at(0), m_current.eye.at(1), m_current.eye.at(2));
-  m_camera.look_at(m_current.target.at(0), m_current.target.at(1), m_current.target.at(2));
+  constexpr float k_degrees_to_radians{std::numbers::pi_v<float> / 180.0F};
+  m_runtime_view = Runtime::camera_view(
+      m_current.eye, m_current.target, m_current.roll_degrees * k_degrees_to_radians);
+  const glm::mat4 gl_view{Runtime::Presentation::to_gl(m_runtime_view.world_to_camera)};
+  const Runtime::Vec3 gl_eye{Runtime::Presentation::to_gl(m_current.eye)};
+  const std::array<float, 3> eye{gl_eye.x, gl_eye.y, gl_eye.z};
+  m_camera.set_view_matrix(std::span<const float, 16>{glm::value_ptr(gl_view), 16}, eye);
+
+  if (m_current.horizontal_fov_degrees > 0.0F) {
+    m_camera.set_perspective(
+        Runtime::horizontal_4_3_to_vertical_fov(m_current.horizontal_fov_degrees),
+        Runtime::k_default_near_inches,
+        Runtime::metres_to_inches(Runtime::k_default_clip_distance_metres));
+  }
 }
 
 }  // namespace App
+
+// NOLINTEND(misc-include-cleaner)
