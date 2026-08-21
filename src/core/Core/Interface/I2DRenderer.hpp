@@ -56,6 +56,11 @@ class I2DRenderer {
       int pixel_height,
       Debug::I2DCounters& counters);
 
+  /// Draws a presentation-only full-screen colour overlay after all recovered
+  /// I2D content. Used only when an interface descriptor explicitly opts in.
+  void render_overlay(
+      const std::array<float, 3>& color, float alpha, int pixel_width, int pixel_height);
+
  private:
   /// One contiguous run of quads sharing a texture and source-key state.
   struct DrawCommand {
@@ -91,6 +96,7 @@ class I2DRenderer {
   void reset();
 
   std::unique_ptr<Shader> m_shader;
+  std::unique_ptr<Shader> m_overlay_shader;
   std::unique_ptr<VertexArray> m_vertex_array;
   std::unique_ptr<VertexBuffer> m_vertex_buffer;
   std::unique_ptr<IndexBuffer> m_index_buffer;

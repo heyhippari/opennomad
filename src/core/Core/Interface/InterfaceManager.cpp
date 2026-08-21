@@ -4,12 +4,14 @@
 #include <SDL3/SDL_events.h>
 #include <fmt/format.h>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <memory>
 #include <optional>
+#include <ranges>
 #include <span>
 #include <string>
 #include <string_view>
@@ -26,6 +28,7 @@
 #include "Core/Interface/I2DRenderer.hpp"
 #include "Core/Interface/InterfaceDescriptor.hpp"
 #include "Core/Interface/InterfaceDispatcher.hpp"
+#include "Core/Interface/InterfacePresentation.hpp"
 #include "Core/Interface/StartMenuLayout.hpp"
 #include "Core/Log.hpp"
 #include "Core/LogCategory.hpp"
@@ -39,6 +42,24 @@ namespace {
 
 constexpr std::string_view K_BITMAP_DIRECTORY{"I2D/bitmaps"};
 constexpr std::string_view K_STRING_TABLE_DIRECTORY{"IAM"};
+
+/// OpenNomad-only START MENU presentation policy. The splash already reaches
+/// black before interface 29 opens, so revealing the menu from black continues
+/// the established startup visual language without changing AREA timing.
+constexpr InterfaceFadePresentationHint K_START_MENU_ENTER_FADE{
+    .color = {0.0F, 0.0F, 0.0F},
+    .duration_seconds = 0.50F,
+    .easing = InterfacePresentationEasing::k_quadratic_in};
+
+/// New Game keeps the confirmed menu visible for a short commit beat, then
+/// fades to full white. Only once opaque is Runtime result 3 delivered; AREA's
+/// native 0x77 white->transparent fade then takes over unchanged.
+constexpr std::array<InterfaceCompletionPresentationHint, 1> K_START_MENU_COMPLETION_TRANSITIONS{
+    InterfaceCompletionPresentationHint{.result = 3,
+        .pre_delay_seconds = 0.12F,
+        .fade = InterfaceFadePresentationHint{.color = {1.0F, 1.0F, 1.0F},
+            .duration_seconds = 0.18F,
+            .easing = InterfacePresentationEasing::k_smoothstep}}};
 
 void initialize_start_menu(InterfaceManager& manager, InterfaceInstance& instance);
 void destroy_start_menu(InterfaceManager& manager, InterfaceInstance& instance);
@@ -70,6 +91,24 @@ std::expected<std::vector<std::byte>, std::string> read_file(const std::string& 
   return std::move(loaded->bytes);
 }
 
+const InterfaceCompletionPresentationHint* completion_transition_for(
+    const InterfaceInstance& instance, const std::int16_t result) {
+  if (instance.descriptor == nullptr) {
+    return nullptr;
+  }
+  for (const InterfaceCompletionPresentationHint& hint :
+      instance.descriptor->presentation_hints.completion_transitions) {
+    if (hint.result == result) {
+      return &hint;
+    }
+  }
+  return nullptr;
+}
+
+bool presentation_input_locked(const InterfaceInstance& instance) {
+  return instance.presentation.phase == InterfacePresentationPhase::k_completion ||
+         instance.presentation.phase == InterfacePresentationPhase::k_completion_queued;
+}
 }  // namespace
 
 const InterfaceDescriptor* descriptor_for_id(const std::int32_t id) {
@@ -85,7 +124,11 @@ const InterfaceDescriptor* descriptor_for_id(const std::int32_t id) {
           .companion_interface = 35,
           .init = initialize_start_menu,
           .destroy = destroy_start_menu,
-          .runtime_flags = 0x20000400},
+          .runtime_flags = 0x20000400,
+          .presentation_hints = InterfacePresentationHints{.enter_fade = K_START_MENU_ENTER_FADE,
+              .completion_transitions =
+                  std::span<const InterfaceCompletionPresentationHint>{
+                      K_START_MENU_COMPLETION_TRANSITIONS}}},
   };
   for (const InterfaceDescriptor& descriptor : k_descriptors) {
     if (descriptor.id == id) {
@@ -197,6 +240,14 @@ std::expected<InterfaceHandle, std::string> InterfaceManager::open(
     return std::expected<InterfaceHandle, std::string>{std::unexpect, error};
   }
 
+  if (const auto& enter_fade{descriptor->presentation_hints.enter_fade};
+      enter_fade.has_value() && enter_fade->duration_seconds > 0.0F) {
+    resident.presentation.phase = InterfacePresentationPhase::k_enter_fade;
+    resident.presentation.elapsed_seconds = 0.0F;
+    resident.presentation.overlay =
+        InterfacePresentationOverlay{.color = enter_fade->color, .alpha = 1.0F};
+  }
+
   const InterfaceHandle handle{resident.handle};
   m_focused_interface = handle;
   App::Log::info(LogCategory::Interface,
@@ -217,6 +268,7 @@ void InterfaceManager::close() {
     destroy_instance(*instance);
   }
   m_focused_interface.reset();
+  m_completion_overlay_latch.reset();
 }
 
 void InterfaceManager::close(const InterfaceHandle handle) {
@@ -305,18 +357,48 @@ InterfaceInstance* InterfaceManager::focused_instance_mut() {
 }
 
 void InterfaceManager::request_completion(const InterfaceHandle handle, const std::int16_t result) {
-  const InterfaceInstance* instance{find(handle)};
+  InterfaceInstance* instance{find(handle)};
   if (instance == nullptr) {
     return;
   }
-  m_completions.push_back(InterfaceCompletion{.handle = handle, .result = result});
+  if (presentation_input_locked(*instance)) {
+    return;
+  }
+
+  const InterfaceCompletionPresentationHint* transition{
+      completion_transition_for(*instance, result)};
+  if (transition == nullptr ||
+      (transition->pre_delay_seconds <= 0.0F && transition->fade.duration_seconds <= 0.0F)) {
+    queue_completion(InterfaceCompletion{.handle = handle, .result = result});
+    return;
+  }
+
+  instance->presentation.phase = InterfacePresentationPhase::k_completion;
+  instance->presentation.elapsed_seconds = 0.0F;
+  instance->presentation.overlay =
+      InterfacePresentationOverlay{.color = transition->fade.color, .alpha = 0.0F};
+  instance->presentation.completion_hint = transition;
+  instance->presentation.pending_completion =
+      InterfaceCompletion{.handle = handle, .result = result};
+
+  App::Log::debug(LogCategory::Interface,
+      "interface {} completion {} — presentation hold {:.0f} ms, fade {:.0f} ms",
+      handle.interface_id,
+      result,
+      transition->pre_delay_seconds * 1000.0F,
+      transition->fade.duration_seconds * 1000.0F);
+}
+
+void InterfaceManager::queue_completion(const InterfaceCompletion& completion) {
+  m_completions.push_back(completion);
+  const InterfaceInstance* instance{find(completion.handle)};
   App::Log::info(LogCategory::Interface,
       "completed {} \"{}\" — handle={}:{} result={}",
-      handle.interface_id,
-      instance->descriptor->name,
-      handle.interface_id,
-      handle.generation,
-      result);
+      completion.handle.interface_id,
+      instance != nullptr && instance->descriptor != nullptr ? instance->descriptor->name : "?",
+      completion.handle.interface_id,
+      completion.handle.generation,
+      completion.result);
 }
 
 std::optional<InterfaceCompletion> InterfaceManager::take_completion() {
@@ -328,13 +410,93 @@ std::optional<InterfaceCompletion> InterfaceManager::take_completion() {
   return completion;
 }
 
+std::optional<InterfacePresentationOverlay> InterfaceManager::presentation_overlay() const {
+  if (m_completion_overlay_latch.has_value()) {
+    return m_completion_overlay_latch;
+  }
+  for (const auto& instance : std::ranges::reverse_view{m_instances}) {
+    if (instance->presentation.overlay.alpha > 0.0F) {
+      return instance->presentation.overlay;
+    }
+  }
+  return std::nullopt;
+}
+
+void InterfaceManager::update_presentation(
+    InterfaceInstance& instance, const float delta_time) {
+  InterfacePresentationState& state{instance.presentation};
+  const float delta{std::max(delta_time, 0.0F)};
+
+  if (state.phase == InterfacePresentationPhase::k_enter_fade) {
+    if (instance.descriptor == nullptr ||
+        !instance.descriptor->presentation_hints.enter_fade.has_value()) {
+      state = InterfacePresentationState{};
+      return;
+    }
+    const InterfaceFadePresentationHint& hint{
+        instance.descriptor->presentation_hints.enter_fade.value()};
+    state.elapsed_seconds += delta;
+    const float duration{std::max(hint.duration_seconds, 0.0F)};
+    const float progress{
+        duration > 0.0F ? std::clamp(state.elapsed_seconds / duration, 0.0F, 1.0F) : 1.0F};
+    state.overlay.color = hint.color;
+    state.overlay.alpha = 1.0F - evaluate_presentation_easing(hint.easing, progress);
+    if (progress >= 1.0F) {
+      state = InterfacePresentationState{};
+    }
+    return;
+  }
+
+  if (state.phase != InterfacePresentationPhase::k_completion) {
+    return;
+  }
+  if (state.completion_hint == nullptr || !state.pending_completion.has_value()) {
+    state = InterfacePresentationState{};
+    return;
+  }
+
+  const InterfaceCompletionPresentationHint& hint{*state.completion_hint};
+  state.elapsed_seconds += delta;
+  state.overlay.color = hint.fade.color;
+
+  const float pre_delay{std::max(hint.pre_delay_seconds, 0.0F)};
+  if (state.elapsed_seconds < pre_delay) {
+    state.overlay.alpha = 0.0F;
+    return;
+  }
+
+  const float fade_duration{std::max(hint.fade.duration_seconds, 0.0F)};
+  const float fade_elapsed{state.elapsed_seconds - pre_delay};
+  const float progress{
+      fade_duration > 0.0F ? std::clamp(fade_elapsed / fade_duration, 0.0F, 1.0F) : 1.0F};
+  state.overlay.alpha = evaluate_presentation_easing(hint.fade.easing, progress);
+  if (progress < 1.0F) {
+    return;
+  }
+
+  // Application drains completions and closes the instance before this frame
+  // renders. Latch the final colour independently so the opaque handoff is
+  // still presented. New Game's latch coincides with native 0x77 alpha=1.
+  m_completion_overlay_latch =
+      InterfacePresentationOverlay{.color = hint.fade.color, .alpha = 1.0F};
+  const InterfaceCompletion completion{state.pending_completion.value()};
+  state.phase = InterfacePresentationPhase::k_completion_queued;
+  state.overlay.alpha = 1.0F;
+  queue_completion(completion);
+}
+
 void InterfaceManager::update(const float delta_time, const Input::InputManager& input) {
   APP_PROFILE_FUNCTION();
+
+  // A completion overlay latched by the previous update only needs to survive
+  // that update's render. A newly completed transition below may latch again.
+  m_completion_overlay_latch.reset();
 
   for (const auto& instance : m_instances) {
     if (instance->current_state != nullptr && instance->current_state->background != nullptr) {
       instance->current_state->background->update(delta_time);
     }
+    update_presentation(*instance, delta_time);
   }
   handle_navigation(input);
 }
@@ -349,6 +511,10 @@ void InterfaceManager::render(const int pixel_width, const int pixel_height) {
   for (const auto& instance : m_instances) {
     m_renderer->render(*instance, m_fonts, pixel_width, pixel_height, counters);
   }
+  if (const auto overlay{presentation_overlay()}; overlay.has_value() && overlay->alpha > 0.0F) {
+    m_renderer->render_overlay(overlay->color, overlay->alpha, pixel_width, pixel_height);
+    counters.draw_calls += 1U;
+  }  
   Debug::Metrics::get().set_i2d_counters(counters);
 }
 
@@ -383,7 +549,7 @@ std::expected<void, std::string> InterfaceManager::load_font(const char key) {
 
 void InterfaceManager::select_previous() {
   const InterfaceInstance* instance{focused_instance_mut()};
-  if (instance == nullptr || instance->current_state == nullptr) {
+  if (instance == nullptr || instance->current_state == nullptr || presentation_input_locked(*instance)) {
     return;
   }
   std::vector<I2DTextElement*> selectable{selectable_text_elements(*instance->current_state)};
@@ -404,7 +570,7 @@ void InterfaceManager::select_previous() {
 
 void InterfaceManager::select_next() {
   const InterfaceInstance* instance{focused_instance_mut()};
-  if (instance == nullptr || instance->current_state == nullptr) {
+  if (instance == nullptr || instance->current_state == nullptr || presentation_input_locked(*instance)) {
     return;
   }
   std::vector<I2DTextElement*> selectable{selectable_text_elements(*instance->current_state)};
@@ -449,7 +615,7 @@ void InterfaceManager::confirm() {
 
 void InterfaceManager::cancel() {
   InterfaceInstance* instance{focused_instance_mut()};
-  if (instance == nullptr || instance->current_state == nullptr) {
+  if (instance == nullptr || instance->current_state == nullptr || presentation_input_locked(*instance)) {
     return;
   }
   if (instance->current_state->parent == nullptr) {

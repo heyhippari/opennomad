@@ -4,6 +4,8 @@
 #include <optional>
 #include <string_view>
 
+#include "Core/Interface/InterfacePresentation.hpp"
+
 namespace App::Interface {
 
 class InterfaceManager;
@@ -47,6 +49,10 @@ struct InterfaceDescriptor {
   /// Preserved recovered flag word (interface 29: 0x20000400). Exact bit
   /// semantics are not yet established; kept for RE correlation.
   std::uint32_t runtime_flags{0};
+
+  /// OpenNomad-only presentation policy. Default-empty so recovered interfaces
+  /// remain instantaneous unless their descriptor explicitly opts in.
+  InterfacePresentationHints presentation_hints{};
 };
 
 }  // namespace App::Interface

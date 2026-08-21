@@ -66,6 +66,7 @@ add_library(${NAME} STATIC
   Core/Interface/InterfaceDispatcher.hpp Core/Interface/InterfaceDispatcher.cpp
   Core/Interface/I2DModel.hpp
   Core/Interface/I2DPresentation.hpp
+  Core/Interface/InterfacePresentation.hpp
   Core/Interface/I2DBumpEndpoint.hpp
   Core/Interface/I2DBumpTimeline.hpp
   Core/Interface/InterfaceDescriptor.hpp

@@ -13,6 +13,7 @@
 #include "Core/Interface/I2DModel.hpp"
 #include "Core/Interface/InterfaceDescriptor.hpp"
 #include "Core/Interface/InterfaceDispatcher.hpp"
+#include "Core/Interface/InterfacePresentation.hpp"
 #include "Core/Omikron/IamStringTable.hpp"
 #include "Core/Texture.hpp"
 
@@ -23,6 +24,23 @@ class InputManager;
 namespace App::Interface {
 
 class I2DRenderer;
+
+enum class InterfacePresentationPhase : std::uint8_t {
+  k_idle,
+  k_enter_fade,
+  k_completion,
+  k_completion_queued,
+};
+
+/// Runtime-only state for descriptor presentation hints. This state never
+/// changes the recovered I2D state graph or the result delivered to AREA.
+struct InterfacePresentationState {
+  InterfacePresentationPhase phase{InterfacePresentationPhase::k_idle};
+  float elapsed_seconds{0.0F};
+  InterfacePresentationOverlay overlay;
+  const InterfaceCompletionPresentationHint* completion_hint{nullptr};
+  std::optional<InterfaceCompletion> pending_completion;
+};
 
 /// Runtime instance created from an InterfaceDescriptor by the generic
 /// opener. Owns the descriptor's loaded resources and the I2D state graph.
@@ -48,6 +66,9 @@ struct InterfaceInstance {
   std::vector<std::unique_ptr<I2DState>> states;
   I2DState* root_state{nullptr};
   I2DState* current_state{nullptr};
+
+  /// OpenNomad presentation policy state, separate from recovered I2D state.
+  InterfacePresentationState presentation;
 };
 
 /// Generic interface system: looks up a static descriptor, creates a runtime
@@ -119,6 +140,11 @@ class InterfaceManager {
   /// Returns and removes the oldest deferred completion, if any.
   [[nodiscard]] std::optional<InterfaceCompletion> take_completion();
 
+  /// Top-most full-screen overlay requested by interface presentation hints.
+  /// A completion that became opaque this frame is latched here even if the
+  /// application has already closed the completed interface before render.
+  [[nodiscard]] std::optional<InterfacePresentationOverlay> presentation_overlay() const;
+
   /// Per-frame update: advances every resident instance's background animation
   /// and handles menu navigation on the focused instance.
   void update(float delta_time, const Input::InputManager& input);
@@ -159,6 +185,11 @@ class InterfaceManager {
   /// Destroys one resident instance (descriptor destroy + RAII release).
   void destroy_instance(InterfaceInstance& instance);
 
+  /// Queues the real completion after any presentation-only deferral.
+  void queue_completion(const InterfaceCompletion& completion);
+  /// Advances one instance's presentation-only lifecycle.
+  void update_presentation(InterfaceInstance& instance, float delta_time);
+
   void handle_navigation(const Input::InputManager& input);
 
   std::unique_ptr<I2DRenderer> m_renderer;
@@ -171,6 +202,9 @@ class InterfaceManager {
   std::uint32_t m_generation{0};
   /// Deferred completion requests, drained one at a time by the application.
   std::deque<InterfaceCompletion> m_completions;
+  /// Keeps the final opaque completion colour alive until this frame renders,
+  /// even though Application closes completed interfaces before render().
+  std::optional<InterfacePresentationOverlay> m_completion_overlay_latch;
 };
 
 /// Looks up a descriptor in the static interface registry.

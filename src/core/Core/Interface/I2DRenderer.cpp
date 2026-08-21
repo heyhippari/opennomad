@@ -106,6 +106,31 @@ void main() {
     }
 
     frag_colour = texel * v_color;
+    }
+)glsl";
+
+/// Full-screen triangle used for interface lifecycle presentation hints.
+constexpr std::string_view K_OVERLAY_VERTEX_SOURCE = R"glsl(
+#version 410 core
+
+void main() {
+    const vec2 positions[3] = vec2[3](
+        vec2(-1.0, -1.0),
+        vec2( 3.0, -1.0),
+        vec2(-1.0,  3.0));
+    gl_Position = vec4(positions[gl_VertexID], 0.0, 1.0);
+}
+)glsl";
+
+constexpr std::string_view K_OVERLAY_FRAGMENT_SOURCE = R"glsl(
+#version 410 core
+
+uniform vec3 u_color;
+uniform float u_alpha;
+out vec4 frag_colour;
+
+void main() {
+    frag_colour = vec4(u_color, u_alpha);
 }
 )glsl";
 // clang-format on
@@ -166,6 +191,13 @@ std::expected<void, std::string> I2DRenderer::initialize() {
         std::unexpect, fmt::format("I2D renderer shader: {}", shader.error())};
   }
   m_shader = std::make_unique<Shader>(std::move(shader).value());
+
+  auto overlay_shader{Shader::create(K_OVERLAY_VERTEX_SOURCE, K_OVERLAY_FRAGMENT_SOURCE)};
+  if (!overlay_shader) {
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format("I2D presentation overlay shader: {}", overlay_shader.error())};
+  }
+  m_overlay_shader = std::make_unique<Shader>(std::move(overlay_shader).value());
 
   m_vertex_buffer = std::make_unique<VertexBuffer>(std::span<const std::byte>{}, GL_DYNAMIC_DRAW);
   m_index_buffer = std::make_unique<IndexBuffer>(std::span<const std::uint32_t>{}, GL_DYNAMIC_DRAW);
@@ -414,6 +446,40 @@ void I2DRenderer::render(const InterfaceInstance& instance,
   Shader::unbind();
   Texture2D::unbind();
   VertexArray::unbind();
+}
+
+void I2DRenderer::render_overlay(const std::array<float, 3>& color,
+    const float alpha,
+    const int pixel_width,
+    const int pixel_height) {
+  if (!m_initialized || m_overlay_shader == nullptr || m_vertex_array == nullptr || alpha <= 0.0F) {
+    return;
+  }
+
+  glViewport(0, 0, pixel_width, pixel_height);
+
+  const std::array<GLfloat, 3> gl_color{color.at(0), color.at(1), color.at(2)};
+  m_overlay_shader->bind();
+  m_overlay_shader->set_uniform_vec3(
+      "u_color", std::span<const GLfloat, 3>{gl_color.data(), gl_color.size()});
+  m_overlay_shader->set_uniform_float("u_alpha", std::clamp(alpha, 0.0F, 1.0F));
+
+  glDisable(GL_DEPTH_TEST);
+  glDisable(GL_CULL_FACE);
+  glDepthMask(GL_FALSE);
+  glEnable(GL_BLEND);
+  glBlendEquation(GL_FUNC_ADD);
+  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+  m_vertex_array->bind();
+  glDrawArrays(GL_TRIANGLES, 0, 3);
+  VertexArray::unbind();
+
+  glDisable(GL_BLEND);
+  glDepthMask(GL_TRUE);
+  glEnable(GL_CULL_FACE);
+  glEnable(GL_DEPTH_TEST);
+  Shader::unbind();
 }
 
 void I2DRenderer::reset() {

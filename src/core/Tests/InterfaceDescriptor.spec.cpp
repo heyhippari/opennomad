@@ -24,6 +24,29 @@ TEST_SUITE("Core::Interface::InterfaceDescriptor") {
     CHECK_EQ(descriptor->runtime_flags, 0x20000400U);
   }
 
+
+  TEST_CASE("interface 29 opts into OpenNomad lifecycle presentation hints") {
+    const App::Interface::InterfaceDescriptor* descriptor{descriptor_for_id(29)};
+    REQUIRE(descriptor != nullptr);
+    REQUIRE(descriptor->presentation_hints.enter_fade.has_value());
+
+    const auto enter{descriptor->presentation_hints.enter_fade.value_or(
+        App::Interface::InterfaceFadePresentationHint{})};
+    CHECK(enter.duration_seconds == doctest::Approx(0.30F));
+    CHECK(enter.easing == App::Interface::InterfacePresentationEasing::k_smoothstep);
+    CHECK(enter.color.at(0) == doctest::Approx(0.0F));
+
+    REQUIRE_EQ(descriptor->presentation_hints.completion_transitions.size(), 1U);
+    const auto& new_game{descriptor->presentation_hints.completion_transitions.front()};
+    CHECK_EQ(new_game.result, 3);
+    CHECK(new_game.pre_delay_seconds == doctest::Approx(0.12F));
+    CHECK(new_game.fade.duration_seconds == doctest::Approx(0.18F));
+    CHECK(new_game.fade.easing == App::Interface::InterfacePresentationEasing::k_smoothstep);
+    CHECK(new_game.fade.color.at(0) == doctest::Approx(1.0F));
+    CHECK(new_game.fade.color.at(1) == doctest::Approx(1.0F));
+    CHECK(new_game.fade.color.at(2) == doctest::Approx(1.0F));
+  }
+
   TEST_CASE("an unknown interface has no descriptor") {
     CHECK(descriptor_for_id(7) == nullptr);
     CHECK(descriptor_for_id(28) == nullptr);
