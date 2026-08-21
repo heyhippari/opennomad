@@ -64,10 +64,10 @@ std::expected<Model3DOData, std::string> Model3DO::load(const std::span<const st
   }
 
   App::Log::debug(LogCategory::Renderer,
-      "3DO signature '{}', version {}.{}",
+      "3DO signature '{}', version {}, root offset {:#x}",
       std::string_view{model.header.signature.data(), model.header.signature.size()},
       model.header.version_major,
-      model.header.version_minor);
+      model.header.root_offset);
 
   if (model.header.mesh_count > K_MAX_MESH_COUNT) {
     return std::expected<Model3DOData, std::string>{
@@ -215,40 +215,11 @@ std::expected<Model3DOData, std::string> Model3DO::load(const std::span<const st
   // begins model traversal from that object.
   if (!model.meshes.empty()) {
     const auto root{id_to_index.find(model.header.root_mesh_id)};
-    if (root != id_to_index.end()) {
-      model.root_mesh_index = static_cast<std::int32_t>(root->second);
-    } else {
-      // Some synthetic/legacy fixtures predate recovery of root_mesh_id.
-      // Keep a conservative fallback when there is exactly one parentless
-      // object; real retail models with a valid +0xB4 take the path above.
-      std::int32_t sole_parentless{-1};
-      bool multiple_parentless{false};
-      for (std::size_t index{0}; index < model.meshes.size(); ++index) {
-        if (model.hierarchy_parent_index.at(index) != -1) {
-          continue;
-        }
-        if (sole_parentless != -1) {
-          multiple_parentless = true;
-          break;
-        }
-        sole_parentless = static_cast<std::int32_t>(index);
-      }
-
-      if (sole_parentless == -1 || multiple_parentless) {
-        return std::expected<Model3DOData, std::string>{std::unexpect,
-            fmt::format("3DO root mesh ID {} does not resolve and no unique "
-                        "parentless fallback exists",
-                model.header.root_mesh_id)};
-      }
-
-      model.root_mesh_index = sole_parentless;
-      App::Log::warn(LogCategory::Renderer,
-          "3DO root mesh ID {} does not resolve; using sole parentless mesh "
-          "'{}' (id {})",
-          model.header.root_mesh_id,
-          model.meshes.at(static_cast<std::size_t>(sole_parentless)).name,
-          model.meshes.at(static_cast<std::size_t>(sole_parentless)).mesh_id);
+    if (root == id_to_index.end()) {
+      return std::expected<Model3DOData, std::string>{std::unexpect,
+          fmt::format("3DO root mesh ID {} does not resolve", model.header.root_mesh_id)};
     }
+    model.root_mesh_index = static_cast<std::int32_t>(root->second);
   }
 
   // Skin parents skip joint-only meshes on the way up.
@@ -292,14 +263,40 @@ std::expected<Model3DOData, std::string> Model3DO::load(const std::span<const st
 }
 
 std::expected<void, std::string> Model3DO::resolve_runtime_transforms(Model3DOData& model) {
-  if (model.runtime_objects.size() != model.meshes.size()) {
-    return std::expected<void, std::string>{std::unexpect,
-        fmt::format("3DO runtime object count {} does not match mesh count {}",
-            model.runtime_objects.size(),
-            model.meshes.size())};
+  auto resolved{resolve_runtime_transforms(model, std::span{model.runtime_objects})};
+  if (!resolved) {
+    return resolved;
   }
 
   model.hierarchy_reachable.assign(model.meshes.size(), std::uint8_t{0});
+  if (model.root_mesh_index == -1) {
+    return {};
+  }
+  std::vector<std::size_t> stack{static_cast<std::size_t>(model.root_mesh_index)};
+  while (!stack.empty()) {
+    const std::size_t index{stack.back()};
+    stack.pop_back();
+    if (model.hierarchy_reachable.at(index) != 0U) {
+      continue;
+    }
+    model.hierarchy_reachable.at(index) = 1U;
+    std::int32_t child{model.hierarchy_first_child_index.at(index)};
+    while (child != -1) {
+      stack.push_back(static_cast<std::size_t>(child));
+      child = model.hierarchy_next_sibling_index.at(static_cast<std::size_t>(child));
+    }
+  }
+  return {};
+}
+
+std::expected<void, std::string> Model3DO::resolve_runtime_transforms(const Model3DOData& model,
+    const std::span<Model3DOData::RuntimeObjectState> runtime_objects) {
+  if (runtime_objects.size() != model.meshes.size()) {
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format("3DO runtime object count {} does not match mesh count {}",
+            runtime_objects.size(),
+            model.meshes.size())};
+  }
 
   if (model.root_mesh_index != -1) {
     std::vector<std::uint8_t> visit_state(model.meshes.size(), std::uint8_t{0});
@@ -321,10 +318,10 @@ std::expected<void, std::string> Model3DO::resolve_runtime_transforms(Model3DODa
       }
 
       visit_state.at(index) = 1U;
-      model.hierarchy_reachable.at(index) = 1U;
-
       const MeshDescriptor& mesh{model.meshes.at(index)};
-      Model3DOData::RuntimeObjectState& object{model.runtime_objects.at(index)};
+      // std::span has no bounds-checked at(); the size and traversal index are validated above.
+      // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
+      Model3DOData::RuntimeObjectState& object{runtime_objects[index]};
       Runtime::Matrix3 effective_local{object.local_matrix};
       if (object.animation_matrix.has_value()) {
         effective_local = Runtime::multiply(effective_local, object.animation_matrix.value());
@@ -342,7 +339,8 @@ std::expected<void, std::string> Model3DO::resolve_runtime_transforms(Model3DODa
         }
 
         const Model3DOData::RuntimeObjectState& parent{
-            model.runtime_objects.at(static_cast<std::size_t>(parent_index))};
+            // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
+            runtime_objects[static_cast<std::size_t>(parent_index)]};
         const Runtime::Transform composed{
             Runtime::compose(Runtime::Transform{.matrix = effective_local,
                                  .translation = object.local_offset,
@@ -397,17 +395,6 @@ std::expected<void, std::string> Model3DO::resolve_runtime_transforms(Model3DODa
       return std::expected<void, std::string>{std::unexpect, std::move(result).error()};
     }
 
-    std::size_t reachable_count{0};
-    for (const std::uint8_t reachable : model.hierarchy_reachable) {
-      reachable_count += reachable != 0U ? 1U : 0U;
-    }
-
-    App::Log::debug(LogCategory::Renderer,
-        "3DO hierarchy — root={} index={} reachable={}/{}",
-        model.header.root_mesh_id,
-        model.root_mesh_index,
-        reachable_count,
-        model.meshes.size());
   }
 
   return {};
@@ -415,6 +402,13 @@ std::expected<void, std::string> Model3DO::resolve_runtime_transforms(Model3DODa
 
 std::expected<std::vector<MaterialGroup>, std::string> Model3DO::build_static_geometry(
     const Model3DOData& model) {
+  return build_posed_geometry(model, std::span<const Model3DOData::RuntimeObjectState>{
+                                         model.runtime_objects});
+}
+
+std::expected<std::vector<MaterialGroup>, std::string> Model3DO::build_posed_geometry(
+    const Model3DOData& model,
+    const std::span<const Model3DOData::RuntimeObjectState> runtime_objects) {
   APP_PROFILE_FUNCTION();
 
   if (model.meshes.empty()) {
@@ -424,6 +418,10 @@ std::expected<std::vector<MaterialGroup>, std::string> Model3DO::build_static_ge
   if (model.materials.empty()) {
     return std::expected<std::vector<MaterialGroup>, std::string>{
         std::unexpect, "model contains no material descriptors"};
+  }
+  if (runtime_objects.size() != model.meshes.size()) {
+    return std::expected<std::vector<MaterialGroup>, std::string>{
+        std::unexpect, "posed Runtime object count does not match the model hierarchy"};
   }
 
   std::vector<MaterialGroup> groups;
@@ -480,11 +478,12 @@ std::expected<std::vector<MaterialGroup>, std::string> Model3DO::build_static_ge
               "vertex index {} out of range ({} vertices)", global_index, model.vertices.size())};
     }
     const RawVertex& raw{model.vertices.at(global_index)};
-    if (vertex_owner_index >= model.runtime_objects.size()) {
+    if (vertex_owner_index >= runtime_objects.size()) {
       return std::expected<void, std::string>{
           std::unexpect, "3DO vertex owner has no Runtime object transform"};
     }
-    const Model3DOData::RuntimeObjectState& object{model.runtime_objects.at(vertex_owner_index)};
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
+    const Model3DOData::RuntimeObjectState& object{runtime_objects[vertex_owner_index]};
     const Runtime::Transform transform{.matrix = object.world_matrix,
         .translation = object.world_translation,
         .scale = object.scale};
@@ -611,7 +610,7 @@ void Model3DO::read_header(BinaryReader& reader, Header& header) {
   }
 
   header.version_major = reader.read_u32();
-  header.version_minor = reader.read_u32();
+  header.root_offset = reader.read_u32();
   header.materials_offset = reader.read_u32();
   header.vertices_offset = reader.read_u32();
   header.triangles_offset = reader.read_u32();
@@ -621,6 +620,7 @@ void Model3DO::read_header(BinaryReader& reader, Header& header) {
   header.cameras_offset = reader.read_u32();
   header.lights_offset = reader.read_u32();
 
+  reader.seek(header.root_offset);
   read_raw_array(reader, header.reserved_a);
   header.frame_count = reader.read_u32();
   read_raw_array(reader, header.reserved_b);

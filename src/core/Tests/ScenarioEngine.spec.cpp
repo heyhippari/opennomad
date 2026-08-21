@@ -110,11 +110,11 @@ std::vector<std::byte> make_minimal_scx() {
 /// accepted by Model3DO::load without game data.
 std::vector<std::byte> make_minimal_3do() {
   Buffer bytes;
-  bytes.chars("OD3X", 4).u32(4).u32(0)
-      .u32(372).u32(372).u32(372).u32(372).u32(372)
-      .u32(0).u32(0).u32(372)
-      .zeros(28).u32(0)
-      .zeros(132).u32(0)
+  bytes.chars("OD3X", 4).u32(4).u32(0x2C)
+      .u32(416).u32(416).u32(416).u32(416).u32(416)
+      .u32(0).u32(0).u32(416)
+      .zeros(72).u32(0)
+      .zeros(104).u32(0).zeros(24).u32(0)
       .zeros(12)
       .u32(0).u32(0)
       .u32(0).u32(0).u32(0)

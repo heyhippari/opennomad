@@ -34,10 +34,7 @@ constexpr std::uint32_t K_SET_SPRITE_ROLLING{0x0400001DU};
 constexpr std::uint32_t K_UNKNOWN_20{0x04000020U};
 constexpr std::uint32_t K_DISPLAY_3D_SPRITE{0x04000028U};
 constexpr std::uint32_t K_SET_SPRITE_FRAME{0x04000029U};
-// First root opcode of GRID script ID 1 ("1KaylArrives"). Its semantics are
-// intentionally not implemented; retaining it in the registry gives the
-// debugger a stable structured name at the reverse-engineering breakpoint.
-constexpr std::uint32_t K_UNKNOWN_CHARACTER_2A{0x0200002AU};
+constexpr std::uint32_t K_SELECT_RELATIVE_BODY_ANIMATION{0x0200002AU};
 
 // Audio opcodes (recovered from Runtime.exe).
 constexpr std::uint32_t K_PLAY_SOUND{0x05000014U};
@@ -107,14 +104,14 @@ constexpr std::array<OpcodeSemanticParam, 2> K_WAIT_PARAMS{
 };
 
 constexpr std::array<OpcodeInfo, 13> K_OPCODE_TABLE{
-    OpcodeInfo{.opcode = K_UNKNOWN_CHARACTER_2A,
-        .name = "UnknownCharacterOpcode0x0200002A",
-        .expected_argument_count = 0,
+    OpcodeInfo{.opcode = K_SELECT_RELATIVE_BODY_ANIMATION,
+        .name = "Script_SelectRelativeBodyAnimation",
+        .expected_argument_count = 12,
         .semantic_params = nullptr,
         .semantic_param_count = 0,
         .owns_sprite = false,
-        .support = OpcodeSupport::k_unsupported,
-        .notes = "Character-script opcode semantics are not yet established."},
+        .support = OpcodeSupport::k_supported,
+        .notes = "Anchors a hierarchical 3DA body animation to an SCX 3DP subpath."},
     OpcodeInfo{.opcode = K_SET_SPRITE_TYPE,
         .name = "SetSpriteType",
         .expected_argument_count = 2,
@@ -247,6 +244,12 @@ void reinitialize_command(ScriptInstance& instance, RuntimeScriptCommand& comman
   const std::uint32_t base{command.first_value_index};
   const std::size_t pool_size{instance.value_pool.size()};
   switch (command.opcode) {
+    case K_SELECT_RELATIVE_BODY_ANIMATION:
+      if ((base + 3U) < pool_size && command.value_count >= 12U) {
+        instance.value_pool.at(base + 2U).set_float(0.0F);
+        instance.value_pool.at(base + 3U).set_float(1.0F);
+      }
+      break;
     case K_SCALE_SPRITE_ON_X:
     case K_SCALE_SPRITE_ON_Y:
     case K_SET_SPRITE_ROLLING:
@@ -617,6 +620,9 @@ ScriptCommandStatus ScriptRuntime::dispatch_command(ScriptInstance& instance,
     result.status = ScriptCommandStatus::k_completed;
   } else {
     switch (command.opcode) {
+      case K_SELECT_RELATIVE_BODY_ANIMATION:
+        result = handle_select_relative_body_animation(instance, command, script_delta_frames);
+        break;
       case K_SET_SPRITE_TYPE:
         result = handle_set_sprite_type(instance, command);
         break;
@@ -696,6 +702,74 @@ ScriptCommandStatus ScriptRuntime::dispatch_command(ScriptInstance& instance,
   }
 
   return result.status;
+}
+
+HandlerResult ScriptRuntime::handle_select_relative_body_animation(ScriptInstance& instance,
+    RuntimeScriptCommand& command,
+    const float script_delta_frames) {
+  if (!instance.launch_context.character_id.has_value()) {
+    return HandlerResult{.status = ScriptCommandStatus::k_error,
+        .pause_reason = ScriptPauseReason::k_missing_resource,
+        .reason_text = "Script_SelectRelativeBodyAnimation requires a character-bound instance"};
+  }
+  const Omikron::ScxScript& source{m_scx->scripts.at(instance.source_script_index)};
+  const std::uint32_t base{command.first_value_index};
+  const std::uint32_t binding_index{instance.value_pool.at(base).as_unsigned()};
+  if (binding_index >= source.binding_table_a.entries.size()) {
+    return HandlerResult{.status = ScriptCommandStatus::k_error,
+        .pause_reason = ScriptPauseReason::k_out_of_range_index,
+        .reason_text = fmt::format("binding table A index {} out of range ({} entries)",
+            binding_index,
+            source.binding_table_a.entries.size())};
+  }
+
+  const float previous{instance.value_pool.at(base + 2U).as_float()};
+  const float current{instance.value_pool.at(base + 3U).as_float()};
+  const RelativeBodyAnimationRequest request{
+      .character_id = instance.launch_context.character_id.value(),
+      .object_binding = source.binding_table_a.entries.at(binding_index).name,
+      .animation_index = instance.value_pool.at(base + 1U).as_unsigned(),
+      .previous_progress = previous,
+      .current_progress = current,
+      .body_animation_vector = {instance.value_pool.at(base + 4U).as_float(),
+          instance.value_pool.at(base + 5U).as_float(),
+          instance.value_pool.at(base + 6U).as_float()},
+      .path_index = instance.value_pool.at(base + 7U).as_unsigned(),
+      .subpath_index = instance.value_pool.at(base + 8U).as_unsigned(),
+      .authored_offset = {instance.value_pool.at(base + 9U).as_float(),
+          instance.value_pool.at(base + 10U).as_float(),
+          instance.value_pool.at(base + 11U).as_float()},
+      .first_tick = previous == 0.0F,
+      .execution_count = command.execution_count,
+      .execution_limit = command.execution_limit};
+  auto applied{m_world->select_relative_body_animation(request)};
+  if (!applied) {
+    return HandlerResult{.status = ScriptCommandStatus::k_error,
+        .pause_reason = ScriptPauseReason::k_missing_resource,
+        .reason_text = fmt::format("Script_SelectRelativeBodyAnimation: {}", applied.error())};
+  }
+
+  if (current >= static_cast<float>(applied->max_frame_index)) {
+    command.execution_count += 1U;
+    if (command.execution_limit != K_INFINITE_EXECUTION_LIMIT &&
+        command.execution_count >= command.execution_limit) {
+      return HandlerResult{.status = ScriptCommandStatus::k_completed,
+          .pause_reason = ScriptPauseReason::k_none,
+          .reason_text = {}};
+    }
+    const float remainder{current - static_cast<float>(applied->max_frame_index)};
+    instance.value_pool.at(base + 2U).set_float(0.0F);
+    instance.value_pool.at(base + 3U).set_float(remainder + 1.0F);
+    return HandlerResult{.status = ScriptCommandStatus::k_running,
+        .pause_reason = ScriptPauseReason::k_none,
+        .reason_text = {}};
+  }
+
+  instance.value_pool.at(base + 2U).set_float(current);
+  instance.value_pool.at(base + 3U).set_float(current + script_delta_frames);
+  return HandlerResult{.status = ScriptCommandStatus::k_running,
+      .pause_reason = ScriptPauseReason::k_none,
+      .reason_text = {}};
 }
 
 void ScriptRuntime::pause(ScriptInstance& instance,
@@ -1392,6 +1466,20 @@ std::expected<void, std::string> ScriptRuntime::reset_instance(const std::size_t
       command.execution_count = 0;
       reinitialize_command(instance, command);
     }
+    if (instance.launch_context.character_id.has_value()) {
+      bool owns_body_animation{false};
+      for (const RuntimeScriptCommand& command : instance.root_commands) {
+        owns_body_animation = owns_body_animation ||
+                              command.opcode == K_SELECT_RELATIVE_BODY_ANIMATION;
+      }
+      for (const RuntimeScriptCommand& command : instance.linked_commands) {
+        owns_body_animation = owns_body_animation ||
+                              command.opcode == K_SELECT_RELATIVE_BODY_ANIMATION;
+      }
+      if (owns_body_animation) {
+        m_world->reset_body_animation(instance.launch_context.character_id.value_or(0));
+      }
+    }
     instance.current_group_index = 0;
     instance.elapsed_script_seconds = 0.0F;
     instance.completed = false;
@@ -1419,6 +1507,20 @@ void ScriptRuntime::reset_all() {
     for (RuntimeScriptCommand& command : instance.linked_commands) {
       command.execution_count = 0;
       reinitialize_command(instance, command);
+    }
+    if (instance.launch_context.character_id.has_value()) {
+      bool owns_body_animation{false};
+      for (const RuntimeScriptCommand& command : instance.root_commands) {
+        owns_body_animation = owns_body_animation ||
+                              command.opcode == K_SELECT_RELATIVE_BODY_ANIMATION;
+      }
+      for (const RuntimeScriptCommand& command : instance.linked_commands) {
+        owns_body_animation = owns_body_animation ||
+                              command.opcode == K_SELECT_RELATIVE_BODY_ANIMATION;
+      }
+      if (owns_body_animation) {
+        m_world->reset_body_animation(instance.launch_context.character_id.value_or(0));
+      }
     }
     instance.current_group_index = 0;
     instance.elapsed_script_seconds = 0.0F;

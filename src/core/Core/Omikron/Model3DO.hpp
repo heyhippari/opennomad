@@ -93,7 +93,8 @@ using Vec3 = Runtime::Vec3;
 struct Header {
   std::array<char, 4> signature{};
   std::uint32_t version_major{0};
-  std::uint32_t version_minor{0};
+  /// Offset of Serialized3DORootV4 from the beginning of the OD3X core.
+  std::uint32_t root_offset{0};
   std::uint32_t materials_offset{0};
   std::uint32_t vertices_offset{0};
   std::uint32_t triangles_offset{0};
@@ -102,8 +103,8 @@ struct Header {
   std::uint32_t doors_offset{0};
   std::uint32_t cameras_offset{0};
   std::uint32_t lights_offset{0};
-  /// Unparsed bytes 0x2C..0x47.
-  std::array<std::byte, 28> reserved_a{};
+  /// Unparsed bytes Serialized3DORootV4+0x00..0x47.
+  std::array<std::byte, 72> reserved_a{};
   /// Animation frame count (Serialized3DORootV4+0x48); 0 in all observed
   /// files. The frame-descriptor table has not been located yet, so the
   /// count is preserved for documentation only.
@@ -337,10 +338,22 @@ class Model3DO {
   [[nodiscard]] static std::expected<std::vector<MaterialGroup>, std::string> build_static_geometry(
       const Model3DOData& model);
 
+  /// Builds geometry from instance-local Runtime object transforms without
+  /// mutating the shared parsed model resource.
+  [[nodiscard]] static std::expected<std::vector<MaterialGroup>, std::string> build_posed_geometry(
+      const Model3DOData& model,
+      std::span<const Model3DOData::RuntimeObjectState> runtime_objects);
+
   /// Re-resolves Runtime object transforms from the current local/animation
   /// matrices while preserving serialized descriptor data.
   [[nodiscard]] static std::expected<void, std::string> resolve_runtime_transforms(
       Model3DOData& model);
+
+  /// Resolves an instance-local transform array against an immutable model
+  /// hierarchy.
+  [[nodiscard]] static std::expected<void, std::string> resolve_runtime_transforms(
+      const Model3DOData& model,
+      std::span<Model3DOData::RuntimeObjectState> runtime_objects);
 
  private:
   static void read_header(BinaryReader& reader, Header& header);

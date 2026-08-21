@@ -338,59 +338,71 @@ void WorldRenderer::draw_group(const std::size_t index) {
 void WorldRenderer::sync_character_models(const ScenarioRuntime& runtime) {
   for (const Character::RuntimeCharacter& character : runtime.character_runtime().characters()) {
     if (!character.renderable() || character.model_resource == nullptr ||
-        m_character_models.contains(character.model_resource_name) ||
         std::ranges::contains(m_failed_character_models, character.model_resource_name)) {
       continue;
     }
 
-    auto gpu{std::make_unique<CharacterGpuModel>()};
-    gpu->resource = character.model_resource;
-    bool failed{false};
-    for (const Omikron::Texture3DTImage& image : character.model_resource->images) {
-      auto texture{Texture2D::create(static_cast<int>(image.width),
-          static_cast<int>(image.height),
-          std::span<const std::uint8_t>{image.rgba8},
-          true)};
-      if (!texture) {
-        App::Log::warn(LogCategory::Renderer,
-            "Character model '{}' texture upload failed: {}",
-            character.model_resource_name,
-            texture.error());
-        failed = true;
-        break;
+    auto found{m_character_models.find(character.instance_id)};
+    if (found == m_character_models.end()) {
+      auto gpu{std::make_unique<CharacterGpuModel>()};
+      gpu->resource = character.model_resource;
+      bool failed{false};
+      for (const Omikron::Texture3DTImage& image : character.model_resource->images) {
+        auto texture{Texture2D::create(static_cast<int>(image.width),
+            static_cast<int>(image.height),
+            std::span<const std::uint8_t>{image.rgba8},
+            true)};
+        if (!texture) {
+          App::Log::warn(LogCategory::Renderer,
+              "Character model '{}' texture upload failed: {}",
+              character.model_resource_name,
+              texture.error());
+          failed = true;
+          break;
+        }
+        gpu->textures.push_back(std::move(texture).value());
       }
-      gpu->textures.push_back(std::move(texture).value());
-    }
-    if (failed) {
-      m_failed_character_models.push_back(character.model_resource_name);
-      continue;
+      if (failed) {
+        m_failed_character_models.push_back(character.model_resource_name);
+        continue;
+      }
+      found = m_character_models.emplace(character.instance_id, std::move(gpu)).first;
     }
 
-    for (const Omikron::MaterialGroup& group : character.model_resource->groups) {
+    CharacterGpuModel& gpu{*found->second};
+    if (gpu.pose_revision == character.pose_revision) {
+      continue;
+    }
+    gpu.meshes.clear();
+    gpu.group_material_ids.clear();
+    gpu.group_flags.clear();
+    gpu.group_modes.clear();
+    for (const Omikron::MaterialGroup& group : character.posed_groups) {
       std::vector<Vertex> presentation_vertices;
       presentation_vertices.reserve(group.vertices.size());
       for (const Vertex& vertex : group.vertices) {
         presentation_vertices.push_back(Runtime::Presentation::to_gl(vertex));
       }
-      gpu->meshes.emplace_back(presentation_vertices, group.indices);
-      gpu->group_material_ids.push_back(group.material_id);
-      gpu->group_flags.push_back(group.flags);
-      gpu->group_modes.push_back(Omikron::blend_mode(group.flags));
+      gpu.meshes.emplace_back(presentation_vertices, group.indices);
+      gpu.group_material_ids.push_back(group.material_id);
+      gpu.group_flags.push_back(group.flags);
+      gpu.group_modes.push_back(Omikron::blend_mode(group.flags));
     }
+    gpu.pose_revision = character.pose_revision;
 
     App::Log::debug(LogCategory::Renderer,
-        "Character renderer resource ready — model={} groups={} materials={}",
+        "Character renderer pose ready — model={} instance={} groups={} materials={}",
         character.model_resource_name,
-        gpu->meshes.size(),
-        gpu->textures.size());
-    m_character_models.emplace(character.model_resource_name, std::move(gpu));
+        character.instance_id,
+        gpu.meshes.size(),
+        gpu.textures.size());
   }
 }
 
 void WorldRenderer::draw_character_group(const Character::RuntimeCharacter& character,
     const Camera& camera,
     const std::size_t group_index) {
-  const auto found{m_character_models.find(character.model_resource_name)};
+  const auto found{m_character_models.find(character.instance_id)};
   if (found == m_character_models.end()) {
     return;
   }
@@ -470,7 +482,7 @@ void WorldRenderer::render(const Camera& camera, ScenarioRuntime* const runtime)
   if (runtime != nullptr) {
     for (const Character::RuntimeCharacter& character :
         runtime->character_runtime().characters()) {
-      const auto found{m_character_models.find(character.model_resource_name)};
+      const auto found{m_character_models.find(character.instance_id)};
       if (!character.renderable() || found == m_character_models.end()) {
         continue;
       }
@@ -527,7 +539,7 @@ void WorldRenderer::render(const Camera& camera, ScenarioRuntime* const runtime)
   if (runtime != nullptr) {
     for (const Character::RuntimeCharacter& character :
         runtime->character_runtime().characters()) {
-      const auto found{m_character_models.find(character.model_resource_name)};
+      const auto found{m_character_models.find(character.instance_id)};
       if (!character.renderable() || found == m_character_models.end()) {
         continue;
       }

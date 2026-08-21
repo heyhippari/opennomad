@@ -189,7 +189,12 @@ std::expected<void, std::string> Runtime::activate(const std::int32_t area_id,
         .runtime_orientation_degrees = 0,
         .definition_name = definition->name,
         .model_resource_name = definition->model_resource,
-        .model_resource = std::move(resource)});
+        .model_resource = std::move(resource),
+        .runtime_objects = {},
+        .object_poses = {},
+        .posed_groups = {},
+        .pose_revision = 0,
+        .body_animation = {}});
     character = &m_characters.back();
   } else {
     character->active = true;
@@ -212,6 +217,11 @@ std::expected<void, std::string> Runtime::activate(const std::int32_t area_id,
         static_cast<float>(character->runtime_orientation_degrees) * k_degrees_to_radians);
     character->transform.scale = App::Runtime::Vec3{.x = 1.0F, .y = 1.0F, .z = 1.0F};
   }
+  character->runtime_objects = character->model_resource->model.runtime_objects;
+  character->object_poses.assign(character->runtime_objects.size(), BodyAnimationObjectPose{});
+  character->posed_groups = character->model_resource->groups;
+  character->body_animation = BodyAnimationPlayback{};
+  character->pose_revision += 1U;
   return {};
 }
 
@@ -231,6 +241,18 @@ std::span<const RuntimeCharacter> Runtime::characters() const {
 
 std::size_t Runtime::model_resource_count() const {
   return m_model_resources.size();
+}
+
+void Runtime::reset_pose(const std::int16_t character_id) {
+  RuntimeCharacter* character{find(character_id)};
+  if (character == nullptr || character->model_resource == nullptr) {
+    return;
+  }
+  character->runtime_objects = character->model_resource->model.runtime_objects;
+  character->object_poses.assign(character->runtime_objects.size(), BodyAnimationObjectPose{});
+  character->posed_groups = character->model_resource->groups;
+  character->body_animation = BodyAnimationPlayback{};
+  character->pose_revision += 1U;
 }
 
 }  // namespace App::Character

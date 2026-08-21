@@ -17,7 +17,8 @@
 
 namespace {
 
-constexpr std::size_t K_HEADER_SIZE{372};
+constexpr std::size_t K_DIRECTORY_SIZE{0x2C};
+constexpr std::size_t K_ROOT_SIZE{0x174};
 constexpr std::size_t K_MATERIAL_SIZE{80};
 constexpr std::size_t K_VERTEX_SIZE{32};
 constexpr std::size_t K_TRIANGLE_SIZE{28};
@@ -35,8 +36,11 @@ Buffer make_header(const std::uint32_t material_count,
     const std::uint32_t lights_unknown2 = 0,
     const std::uint32_t frame_count = 0,
     const std::uint32_t texture_count = 0,
-    const std::uint32_t object_count = 0) {
-  const std::size_t materials_offset{K_HEADER_SIZE};
+    const std::uint32_t object_count = 0,
+    const std::uint32_t root_mesh_id = 1,
+    const std::uint32_t root_offset = K_DIRECTORY_SIZE) {
+  const std::size_t header_size{static_cast<std::size_t>(root_offset) + K_ROOT_SIZE};
+  const std::size_t materials_offset{header_size};
   const std::size_t vertices_offset{
       materials_offset + (static_cast<std::size_t>(material_count) * K_MATERIAL_SIZE)};
   const std::size_t triangles_offset{
@@ -52,7 +56,7 @@ Buffer make_header(const std::uint32_t material_count,
   // Real files start with the OD3X signature and version 4.
   buffer.chars("OD3X", 4)
       .u32(4)
-      .u32(0)
+      .u32(root_offset)
       .u32(static_cast<std::uint32_t>(materials_offset))
       .u32(static_cast<std::uint32_t>(vertices_offset))
       .u32(static_cast<std::uint32_t>(triangles_offset))
@@ -61,9 +65,12 @@ Buffer make_header(const std::uint32_t material_count,
       .u32(0)
       .u32(0)
       .u32(static_cast<std::uint32_t>(lights_offset))  // doors, cameras, lights.
-      .zeros(28)
+      .zeros(root_offset - K_DIRECTORY_SIZE)
+      .zeros(72)
       .u32(frame_count)
-      .zeros(132)
+      .zeros(104)
+      .u32(root_mesh_id)
+      .zeros(24)
       .u32(texture_count)
       .zeros(12)
       .u32(object_count)
@@ -171,7 +178,7 @@ TEST_SUITE("Core::Omikron::Model3DO") {
     CHECK_EQ(
         std::string_view{model->header.signature.data(), model->header.signature.size()}, "OD3X");
     CHECK_EQ(model->header.version_major, 4U);
-    CHECK_EQ(model->header.version_minor, 0U);
+    CHECK_EQ(model->header.root_offset, K_DIRECTORY_SIZE);
     CHECK_EQ(model->header.material_count, 0U);
     CHECK_EQ(model->header.mesh_count, 0U);
     CHECK(model->materials.empty());
@@ -191,8 +198,32 @@ TEST_SUITE("Core::Omikron::Model3DO") {
     CHECK_EQ(model->header.object_count, 3U);
   }
 
+  TEST_CASE("Seeks a non-default serialized root offset") {
+    constexpr std::uint32_t root_offset{0x60};
+    Buffer file{make_header(0, 1, 0, 0, 0, 0, 0, 5, 7, 3, 42, root_offset)};
+    append_mesh(file, 0, 42, -1, 0, 0, 0, 0.0F);
+
+    const auto model{App::Omikron::Model3DO::load(file.data())};
+    REQUIRE(model.has_value());
+    CHECK_EQ(model->header.root_offset, root_offset);
+    CHECK_EQ(model->header.root_mesh_id, 42U);
+    CHECK_EQ(model->root_mesh_index, 0);
+    CHECK_EQ(model->header.frame_count, 5U);
+    CHECK_EQ(model->header.texture_count, 7U);
+    CHECK_EQ(model->header.object_count, 3U);
+  }
+
+  TEST_CASE("Rejects an unresolved root object instead of using a parentless fallback") {
+    Buffer file{make_header(0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 99)};
+    append_mesh(file, 0, 1, -1, 0, 0, 0, 0.0F);
+
+    const auto model{App::Omikron::Model3DO::load(file.data())};
+    REQUIRE_FALSE(model.has_value());
+    CHECK(model.error().find("root mesh ID 99 does not resolve") != std::string::npos);
+  }
+
   TEST_CASE("Parses materials, vertices and mesh descriptors") {
-    Buffer file{make_header(1, 1, 1, 1, 0)};
+    Buffer file{make_header(1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 7)};
 
     // Material.
     file.chars("SKIN", 20)
@@ -298,7 +329,7 @@ TEST_SUITE("Core::Omikron::Model3DO") {
   }
 
   TEST_CASE("Skin parents skip joint-only meshes") {
-    Buffer file{make_header(0, 3, 0, 0, 0)};
+    Buffer file{make_header(0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 10)};
 
     append_mesh(file, 0, 10, -1, 0, 0, 0, 0.0F);  // Root.
     append_mesh(file, 1, 11, 10, 0, 0, 0, 0.0F);  // Joint-only (flag bit 0).
@@ -312,7 +343,7 @@ TEST_SUITE("Core::Omikron::Model3DO") {
   }
 
   TEST_CASE("Static geometry applies mesh positions and resolves parented corners") {
-    Buffer file{make_header(1, 2, 2, 1, 0)};
+    Buffer file{make_header(1, 2, 2, 1, 0, 0, 0, 0, 0, 0, 10)};
 
     // Material 64x64.
     file.chars("SKIN", 20).chars("", 20).chars("", 20).u32(0).u64(0).u32(0).u16(64).u16(64);
@@ -354,7 +385,7 @@ TEST_SUITE("Core::Omikron::Model3DO") {
   }
 
   TEST_CASE("Runtime hierarchy composes child offsets through parent rotation") {
-    Buffer file{make_header(0, 2, 0, 0, 0)};
+    Buffer file{make_header(0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 10)};
     append_mesh(file, 0, 10, -1, 0, 0, 0, 5.0F, 11);
     append_mesh(file, 0, 11, 10, 0, 0, 0, 0.0F, -1, -1, 10.0F);
 

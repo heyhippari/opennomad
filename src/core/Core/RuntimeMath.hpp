@@ -14,6 +14,14 @@ struct Vec3 {
   float z{0.0F};
 };
 
+/// Runtime quaternion serialization order used by 3DA and 3DP: w, x, y, z.
+struct Quaternion {
+  float w{1.0F};
+  float x{0.0F};
+  float y{0.0F};
+  float z{0.0F};
+};
+
 /// Runtime.exe row-major 3x3 matrix used with row vectors (`v' = v * M`).
 struct Matrix3 {
   std::array<float, 9> values{1.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 0.0F, 1.0F};
@@ -47,6 +55,7 @@ struct CameraView {
 };
 
 inline constexpr double k_inches_per_metre{39.37007874015748};
+inline constexpr float k_centimetres_to_inches{0.393700778F};
 inline constexpr float k_default_near_inches{2.0F};
 inline constexpr float k_default_clip_distance_metres{50.0F};
 
@@ -71,9 +80,17 @@ inline constexpr float k_default_clip_distance_metres{50.0F};
 [[nodiscard]] Vec3 transform_point(const Vec3& point, const Transform& transform);
 [[nodiscard]] Transform compose(const Transform& local, const Transform& parent);
 
+/// Runtime's body-animation placement formula: sampled - authored * -0.393700778.
+[[nodiscard]] Vec3 relative_body_animation_anchor(
+    const Vec3& sampled_path_coordinate, const Vec3& authored_argument);
+
 [[nodiscard]] Matrix3 rotation_x(float radians);
 [[nodiscard]] Matrix3 rotation_y(float radians);
 [[nodiscard]] Matrix3 rotation_z(float radians);
+
+/// Converts a Runtime-native wxyz quaternion to the row-vector 3x3 matrix
+/// used by Runtime objects.
+[[nodiscard]] Matrix3 quaternion_matrix(const Quaternion& quaternion);
 
 /// Runtime Euler builder: `Ry(y) * Rx(x) * Rz(z)`. With row vectors this
 /// applies Y, then X, then Z.

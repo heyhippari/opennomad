@@ -6,6 +6,7 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <expected>
 #include <memory>
 #include <optional>
@@ -202,18 +203,32 @@ std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state
   if (world_context != nullptr && world_context->runtime != nullptr) {
     for (const Character::RuntimeCharacter& character :
         world_context->runtime->character_runtime().characters()) {
+      const Character::ModelResource* const model_resource{character.model_resource.get()};
       const Runtime::Vec3 render_position{
           Runtime::Presentation::to_gl(character.transform.translation)};
       Runtime::Vec3 bounds_center{character.transform.translation};
       std::size_t group_count{0};
       float bounds_radius{0.0F};
-      if (character.model_resource != nullptr) {
+      if (model_resource != nullptr) {
         bounds_center = Runtime::transform_point(
-            character.model_resource->bounds_center, character.transform);
-        group_count = character.model_resource->groups.size();
-        bounds_radius = character.model_resource->bounds_radius;
+            model_resource->bounds_center, character.transform);
+        group_count = character.posed_groups.size();
+        bounds_radius = model_resource->bounds_radius;
       }
-      state.runtime_characters.push_back(Debug::RuntimeCharacterDebugState{
+      const Character::BodyAnimationPlayback& animation{character.body_animation};
+      std::uint32_t selected_mesh_id{0};
+      std::uint32_t selected_script_id{0};
+      bool selected_is_root{false};
+      if (model_resource != nullptr &&
+          animation.selected_object_index < model_resource->model.meshes.size()) {
+        const Omikron::MeshDescriptor& selected{
+            model_resource->model.meshes.at(animation.selected_object_index)};
+        selected_mesh_id = selected.mesh_id;
+        selected_script_id = selected.script_id;
+        selected_is_root = std::cmp_equal(animation.selected_object_index,
+            model_resource->model.root_mesh_index);
+      }
+      Debug::RuntimeCharacterDebugState debug_character{
           .instance_id = character.instance_id,
           .character_id = character.character_id,
           .area_id = character.area_id,
@@ -232,7 +247,62 @@ std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state
           .model_resource = character.model_resource_name,
           .model_group_count = group_count,
           .runtime_bounds_center = {bounds_center.x, bounds_center.y, bounds_center.z},
-          .bounds_radius = bounds_radius});
+          .bounds_radius = bounds_radius,
+          .body_animation_active = animation.active,
+          .body_animation_completed = animation.completed,
+          .selected_object = animation.selected_object_name,
+          .selected_mesh_id = selected_mesh_id,
+          .selected_script_id = selected_script_id,
+          .selected_is_root = selected_is_root,
+          .animation_descriptor_index = animation.animation_descriptor_index,
+          .animation_name = animation.animation_name,
+          .animation_id = animation.animation_id,
+          .animation_max_frame = animation.max_frame_index,
+          .animation_previous_progress = animation.previous_progress,
+          .animation_current_progress = animation.current_progress,
+          .animation_execution_count = animation.execution_count,
+          .animation_execution_limit = animation.execution_limit,
+          .path_index = animation.path_index,
+          .path_name = animation.path_name,
+          .subpath_index = animation.subpath_index,
+          .subpath_name = animation.subpath_name,
+          .sampled_path_position = {animation.sampled_path_position.x,
+              animation.sampled_path_position.y,
+              animation.sampled_path_position.z},
+          .authored_offset = {
+              animation.authored_offset.x, animation.authored_offset.y, animation.authored_offset.z},
+          .final_anchor = {
+              animation.final_anchor.x, animation.final_anchor.y, animation.final_anchor.z},
+          .root_motion_delta = {animation.root_motion_delta.x,
+              animation.root_motion_delta.y,
+              animation.root_motion_delta.z},
+          .accumulated_root_translation = {animation.accumulated_root_translation.x,
+              animation.accumulated_root_translation.y,
+              animation.accumulated_root_translation.z},
+          .object_poses = {}};
+      if (model_resource != nullptr) {
+        const Omikron::Model3DOData& model{model_resource->model};
+        for (std::size_t index{0}; index < character.object_poses.size() &&
+             index < model.meshes.size() && index < character.runtime_objects.size();
+             ++index) {
+          const Character::BodyAnimationObjectPose& pose{character.object_poses.at(index)};
+          const Omikron::Model3DOData::RuntimeObjectState& object{
+              character.runtime_objects.at(index)};
+          debug_character.object_poses.push_back(Debug::RuntimeCharacterObjectPoseDebugState{
+              .object_name = model.meshes.at(index).name,
+              .script_id = model.meshes.at(index).script_id,
+              .channel_bound = pose.channel_id.has_value(),
+              .channel_id = pose.channel_id.value_or(0),
+              .channel_name = pose.channel_name,
+              .quaternion = {pose.current_quaternion.w,
+                  pose.current_quaternion.x,
+                  pose.current_quaternion.y,
+                  pose.current_quaternion.z},
+              .local_matrix = object.animation_matrix.value_or(object.local_matrix).values,
+              .world_matrix = object.world_matrix.values});
+        }
+      }
+      state.runtime_characters.push_back(std::move(debug_character));
     }
   }
 

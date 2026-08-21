@@ -28,6 +28,17 @@ struct WorldMeshHierarchyDebugState {
   std::array<float, 9> runtime_world_matrix{};
 };
 
+struct RuntimeCharacterObjectPoseDebugState {
+  std::string object_name;
+  std::uint32_t script_id{0};
+  bool channel_bound{false};
+  std::uint32_t channel_id{0};
+  std::string channel_name;
+  std::array<float, 4> quaternion{};
+  std::array<float, 9> local_matrix{};
+  std::array<float, 9> world_matrix{};
+};
+
 struct RuntimeCharacterDebugState {
   std::size_t instance_id{0};
   std::int16_t character_id{0};
@@ -47,6 +58,30 @@ struct RuntimeCharacterDebugState {
   std::size_t model_group_count{0};
   std::array<float, 3> runtime_bounds_center{};
   float bounds_radius{0.0F};
+  bool body_animation_active{false};
+  bool body_animation_completed{false};
+  std::string selected_object;
+  std::uint32_t selected_mesh_id{0};
+  std::uint32_t selected_script_id{0};
+  bool selected_is_root{false};
+  std::uint32_t animation_descriptor_index{0};
+  std::string animation_name;
+  std::uint32_t animation_id{0};
+  std::uint32_t animation_max_frame{0};
+  float animation_previous_progress{0.0F};
+  float animation_current_progress{0.0F};
+  std::uint32_t animation_execution_count{0};
+  std::uint32_t animation_execution_limit{0};
+  std::uint32_t path_index{0};
+  std::string path_name;
+  std::uint32_t subpath_index{0};
+  std::string subpath_name;
+  std::array<float, 3> sampled_path_position{};
+  std::array<float, 3> authored_offset{};
+  std::array<float, 3> final_anchor{};
+  std::array<float, 3> root_motion_delta{};
+  std::array<float, 3> accumulated_root_translation{};
+  std::vector<RuntimeCharacterObjectPoseDebugState> object_poses;
 };
 
 /// Presentation diagnostics exposed by a normal 3D world scene.

@@ -35,6 +35,14 @@ void check_identity(const App::Runtime::Matrix3& matrix) {
 }  // namespace
 
 TEST_SUITE("Core::RuntimeMath") {
+  TEST_CASE("Relative body animation uses Runtime's exact authored-offset formula") {
+    const App::Runtime::Vec3 anchor{App::Runtime::relative_body_animation_anchor(
+        App::Runtime::Vec3{.x = -478.393341F, .y = -43.900246F, .z = 27.611773F},
+        App::Runtime::Vec3{.x = 1.0F, .y = -2.0F, .z = 3.0F})};
+    CHECK_EQ(anchor.x, doctest::Approx(-478.393341F + 0.393700778F));
+    CHECK_EQ(anchor.y, doctest::Approx(-43.900246F - (2.0F * 0.393700778F)));
+    CHECK_EQ(anchor.z, doctest::Approx(27.611773F + (3.0F * 0.393700778F)));
+  }
   TEST_CASE("AREA positional normalization reproduces Runtime truncation") {
     using App::Runtime::area_position_to_inches;
     CHECK_EQ(area_position_to_inches(-2588), -399);

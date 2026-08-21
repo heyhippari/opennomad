@@ -179,8 +179,9 @@ std::vector<std::byte> make_minimal_scx() {
   return bytes.data();
 }
 
-/// Minimal SCX with source index 0 carrying authored script ID 1. Its first
-/// root command is the intentional New Game reverse-engineering breakpoint.
+/// Minimal SCX with source index 0 carrying authored script ID 1. The command
+/// intentionally omits arguments so this focused launch-lifecycle fixture
+/// stops after proving the exact character-bound instance was dispatched.
 std::vector<std::byte> make_kayl_arrives_scx() {
   Buffer descriptor;
   descriptor.u32(K_SCRIPTS_TAG).u32(1);
@@ -208,11 +209,11 @@ std::vector<std::byte> make_kayl_arrives_scx() {
 /// accepted by Model3DO::load without game data.
 std::vector<std::byte> make_minimal_3do() {
   Buffer bytes;
-  bytes.chars("OD3X", 4).u32(4).u32(0)
-      .u32(372).u32(372).u32(372).u32(372).u32(372)
-      .u32(0).u32(0).u32(372)
-      .zeros(28).u32(0)
-      .zeros(132).u32(0)
+  bytes.chars("OD3X", 4).u32(4).u32(0x2C)
+      .u32(416).u32(416).u32(416).u32(416).u32(416)
+      .u32(0).u32(0).u32(416)
+      .zeros(72).u32(0)
+      .zeros(104).u32(0).zeros(24).u32(0)
       .zeros(12)
       .u32(0).u32(0)
       .u32(0).u32(0).u32(0)
@@ -417,13 +418,12 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK(instance->paused);
     CHECK_FALSE(instance->completed);
     CHECK_EQ(instance->pause_info.opcode, 0x0200002AU);
-    CHECK_EQ(instance->pause_info.opcode_name, "UnknownCharacterOpcode0x0200002A");
+    CHECK_EQ(instance->pause_info.opcode_name, "Script_SelectRelativeBodyAnimation");
     CHECK_EQ(instance->pause_info.character_id, std::optional<std::int16_t>{310});
+    CHECK(instance->pause_info.reason ==
+          App::Script::ScriptPauseReason::k_invalid_argument_count);
 
-    // The structured unsupported pause is stable across parent ticks: AREA
-    // remains on the exact child and no duplicate launch is created.
-    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
-    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+    // AREA remains on the exact malformed child and no duplicate launch was created.
     CHECK_EQ(area_script->runtime_state(), 4U);
     CHECK_EQ(area_script->instruction_pointer(), 0x9CU);
     CHECK_EQ(area_script->wait_info().character_script_instance,

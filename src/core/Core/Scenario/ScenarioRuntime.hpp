@@ -14,6 +14,8 @@
 #include "Core/Character/CharacterRuntime.hpp"
 #include "Core/Omikron/IamArea.hpp"
 #include "Core/Omikron/SCX.hpp"
+#include "Core/Omikron/Animation3DA.hpp"
+#include "Core/Omikron/Path3DP.hpp"
 #include "Core/Script/ScriptRuntime.hpp"
 #include "Core/Sprite/SpritePool.hpp"
 #include "Core/Sprite/SpriteRenderMode.hpp"
@@ -146,6 +148,10 @@ class ScenarioRuntime final : public Script::ScriptWorld {
       const Audio::SoundPlayRequest& request) override;
   void stop_sound(Audio::SoundResourceId sound, const Audio::AudioOwnerToken& owner) override;
   [[nodiscard]] Audio::AudioContextInfo audio_context() const override;
+  [[nodiscard]] std::expected<Script::RelativeBodyAnimationResult, std::string>
+  select_relative_body_animation(
+      const Script::RelativeBodyAnimationRequest& request) override;
+  void reset_body_animation(std::int16_t character_id) override;
   [[nodiscard]] std::string_view scenario_name() const override;
 
   // --- Audio subsystem ------------------------------------------------------
@@ -160,6 +166,10 @@ class ScenarioRuntime final : public Script::ScriptWorld {
   /// first use (idempotent).
   [[nodiscard]] std::expected<void, std::string> ensure_sprite_resource_loaded(
       std::size_t resource_index);
+  [[nodiscard]] std::expected<const Omikron::Animation3DA*, std::string> animation_resource(
+      std::size_t resource_index);
+  [[nodiscard]] std::expected<const Omikron::Path3DP*, std::string> path_resource(
+      std::size_t resource_index);
 
   std::vector<std::byte> m_scx_bytes;
   Omikron::ScxData m_scx;
@@ -167,6 +177,8 @@ class ScenarioRuntime final : public Script::ScriptWorld {
   std::array<float, 3> m_world_anchor{0.0F, 0.0F, 0.0F};  ///< Runtime XYZ inches.
 
   Character::Runtime m_character_runtime;
+  std::vector<std::unique_ptr<const Omikron::Animation3DA>> m_animation_resources;
+  std::vector<std::unique_ptr<const Omikron::Path3DP>> m_path_resources;
 
   Sprite::SpritePool m_sprite_pool;
   /// Decoded embedded effect resources, indexed like the SCX sprite table.

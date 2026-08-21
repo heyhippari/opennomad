@@ -23,7 +23,7 @@
 namespace {
 
 constexpr std::uint32_t K_SET_SPRITE_TYPE{0x0400000CU};
-constexpr std::uint32_t K_UNKNOWN_CHARACTER_2A{0x0200002AU};
+constexpr std::uint32_t K_SELECT_RELATIVE_BODY_ANIMATION{0x0200002AU};
 constexpr std::uint32_t K_SCALE_X{0x0400001BU};
 constexpr std::uint32_t K_SCALE_Y{0x0400001CU};
 constexpr std::uint32_t K_ROLL{0x0400001DU};
@@ -60,6 +60,10 @@ class FakeWorld final : public App::Script::ScriptWorld {
       .resource = App::Audio::SoundResourceId{7}, .name = "fx", .h_id = 0, .loaded = true};
   std::vector<App::Audio::SoundPlayRequest> play_requests;
   std::vector<std::pair<App::Audio::SoundResourceId, App::Audio::AudioOwnerToken>> stop_requests;
+  std::vector<App::Script::RelativeBodyAnimationRequest> body_animation_requests;
+  std::vector<std::int16_t> body_animation_resets;
+  std::uint32_t body_animation_max_frame{3};
+  bool fail_body_animation{false};
 
   std::expected<App::Sprite::SpriteHandle, std::string> ensure_sprite(
       const std::uint32_t /*source*/) override {
@@ -141,6 +145,20 @@ class FakeWorld final : public App::Script::ScriptWorld {
   App::Audio::AudioContextInfo audio_context() const override {
     return {};
   }
+  std::expected<App::Script::RelativeBodyAnimationResult, std::string>
+  select_relative_body_animation(
+      const App::Script::RelativeBodyAnimationRequest& request) override {
+    body_animation_requests.push_back(request);
+    if (fail_body_animation) {
+      return std::expected<App::Script::RelativeBodyAnimationResult, std::string>{
+          std::unexpect, "body animation failed"};
+    }
+    return App::Script::RelativeBodyAnimationResult{
+        .max_frame_index = body_animation_max_frame};
+  }
+  void reset_body_animation(const std::int16_t character_id) override {
+    body_animation_resets.push_back(character_id);
+  }
   std::string_view scenario_name() const override {
     return "test";
   }
@@ -187,6 +205,32 @@ App::Omikron::ScxScript single_root_script(const App::Omikron::ScxScriptCommand&
   return script;
 }
 
+App::Omikron::ScxScript relative_body_animation_script(
+    const std::uint32_t execution_limit = 1) {
+  App::Omikron::ScxScript script{
+      single_root_script(command(K_SELECT_RELATIVE_BODY_ANIMATION, 0, 12, std::nullopt,
+          execution_limit))};
+  script.binding_table_a.entries.push_back(App::Omikron::ScxBindingEntry{.name = "RootBody"});
+  return script;
+}
+
+std::vector<App::Omikron::ScriptValue> relative_body_animation_values() {
+  std::vector<App::Omikron::ScriptValue> values(12);
+  values.at(0).set_unsigned(0);
+  values.at(1).set_unsigned(2);
+  values.at(2).set_float(99.0F);
+  values.at(3).set_float(77.0F);
+  values.at(4).set_float(4.0F);
+  values.at(5).set_float(5.0F);
+  values.at(6).set_float(6.0F);
+  values.at(7).set_unsigned(7);
+  values.at(8).set_unsigned(8);
+  values.at(9).set_float(9.0F);
+  values.at(10).set_float(10.0F);
+  values.at(11).set_float(11.0F);
+  return values;
+}
+
 /// Fills `values` with `count` zero words, then overwrites from `words`.
 std::vector<App::Omikron::ScriptValue> make_values(
     const std::size_t count, const std::vector<std::uint32_t> words = {}) {
@@ -201,11 +245,11 @@ std::vector<App::Omikron::ScriptValue> make_values(
 
 TEST_SUITE("Core::Script::ScriptRuntime") {
   TEST_CASE("Opcode registry resolves confirmed opcodes") {
-    REQUIRE_NE(App::Script::opcode_info(K_UNKNOWN_CHARACTER_2A), nullptr);
-    CHECK_EQ(std::string{App::Script::opcode_name(K_UNKNOWN_CHARACTER_2A)},
-        "UnknownCharacterOpcode0x0200002A");
-    CHECK(App::Script::opcode_info(K_UNKNOWN_CHARACTER_2A)->support ==
-          App::Script::OpcodeSupport::k_unsupported);
+    REQUIRE_NE(App::Script::opcode_info(K_SELECT_RELATIVE_BODY_ANIMATION), nullptr);
+    CHECK_EQ(std::string{App::Script::opcode_name(K_SELECT_RELATIVE_BODY_ANIMATION)},
+        "Script_SelectRelativeBodyAnimation");
+    CHECK(App::Script::opcode_info(K_SELECT_RELATIVE_BODY_ANIMATION)->support ==
+          App::Script::OpcodeSupport::k_supported);
     CHECK_NE(App::Script::opcode_info(K_SET_SPRITE_TYPE), nullptr);
     CHECK_EQ(std::string{App::Script::opcode_name(K_SET_SPRITE_TYPE)}, "SetSpriteType");
     CHECK_NE(App::Script::opcode_info(K_SET_FRAME), nullptr);
@@ -223,6 +267,61 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
     CHECK_FALSE(App::Script::opcode_owns_sprite(K_PLAY_SOUND));
     CHECK_EQ(std::string{App::Script::opcode_name(K_WAIT)}, "Wait");
     CHECK_FALSE(App::Script::opcode_owns_sprite(K_WAIT));
+  }
+
+  TEST_CASE("SelectRelativeBodyAnimation reinitializes only mutable progress arguments") {
+    RuntimeFixture fixture{{relative_body_animation_script()}, relative_body_animation_values()};
+    const std::size_t id{fixture.runtime
+            ->create_instance(0,
+                App::Script::ScriptLaunchContext{.character_id = 310, .parameter = 0})
+            .value()};
+    const App::Script::ScriptInstance* instance{fixture.runtime->instance(id)};
+    REQUIRE(instance != nullptr);
+    CHECK_EQ(instance->value_pool.at(2).as_float(), doctest::Approx(0.0F));
+    CHECK_EQ(instance->value_pool.at(3).as_float(), doctest::Approx(1.0F));
+    CHECK_EQ(instance->value_pool.at(4).as_float(), doctest::Approx(4.0F));
+    CHECK_EQ(instance->value_pool.at(11).as_float(), doctest::Approx(11.0F));
+
+    REQUIRE(fixture.runtime->reset_instance(id).has_value());
+    CHECK_EQ(fixture.runtime->instance(id)->value_pool.at(2).as_float(), doctest::Approx(0.0F));
+    CHECK_EQ(fixture.runtime->instance(id)->value_pool.at(3).as_float(), doctest::Approx(1.0F));
+    CHECK_EQ(fixture.runtime->instance(id)->value_pool.at(9).as_float(), doctest::Approx(9.0F));
+    REQUIRE_EQ(fixture.world.body_animation_resets.size(), std::size_t{1});
+    CHECK_EQ(fixture.world.body_animation_resets.at(0), 310);
+  }
+
+  TEST_CASE("SelectRelativeBodyAnimation advances exact progress windows and completes at endpoint") {
+    RuntimeFixture fixture{{relative_body_animation_script()}, relative_body_animation_values()};
+    REQUIRE(fixture.runtime
+                ->create_instance(0,
+                    App::Script::ScriptLaunchContext{.character_id = 310, .parameter = 0})
+                .has_value());
+
+    fixture.runtime->step_tick(1.0F);
+    fixture.runtime->step_tick(0.5F);
+    fixture.runtime->step_tick(0.5F);
+    fixture.runtime->step_tick(0.5F);
+
+    REQUIRE_EQ(fixture.world.body_animation_requests.size(), std::size_t{4});
+    const auto& first{fixture.world.body_animation_requests.at(0)};
+    CHECK_EQ(first.character_id, 310);
+    CHECK_EQ(first.object_binding, "RootBody");
+    CHECK_EQ(first.animation_index, 2U);
+    CHECK_EQ(first.previous_progress, doctest::Approx(0.0F));
+    CHECK_EQ(first.current_progress, doctest::Approx(1.0F));
+    CHECK(first.first_tick);
+    CHECK_EQ(first.path_index, 7U);
+    CHECK_EQ(first.subpath_index, 8U);
+    CHECK_EQ(first.body_animation_vector.at(2), doctest::Approx(6.0F));
+    CHECK_EQ(first.authored_offset.at(0), doctest::Approx(9.0F));
+    const auto& second{fixture.world.body_animation_requests.at(1)};
+    CHECK_EQ(second.previous_progress, doctest::Approx(1.0F));
+    CHECK_EQ(second.current_progress, doctest::Approx(2.0F));
+    const auto& final{fixture.world.body_animation_requests.back()};
+    CHECK_EQ(final.previous_progress, doctest::Approx(2.5F));
+    CHECK_EQ(final.current_progress, doctest::Approx(3.0F));
+    CHECK_EQ(fixture.runtime->instances().at(0).root_commands.at(0).execution_count, 1U);
+    CHECK(fixture.runtime->instances().at(0).completed);
   }
 
   TEST_CASE("Launch context distinguishes world and explicit-character instances") {

@@ -47,6 +47,8 @@ add_library(${NAME} STATIC
   Core/TextureCube.hpp Core/TextureCube.cpp
   Core/Reflection.hpp
   Core/Omikron/BinaryReader.hpp
+  Core/Omikron/Animation3DA.hpp Core/Omikron/Animation3DA.cpp
+  Core/Omikron/Path3DP.hpp Core/Omikron/Path3DP.cpp
   Core/Omikron/Model3DO.hpp Core/Omikron/Model3DO.cpp
   Core/Omikron/Texture3DT.hpp Core/Omikron/Texture3DT.cpp
   Core/Omikron/QdAdp.hpp Core/Omikron/QdAdp.cpp

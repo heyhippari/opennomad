@@ -181,6 +181,27 @@ struct HandlerResult {
   std::string reason_text;
 };
 
+/// Typed request for Runtime's Script_SelectRelativeBodyAnimation operation.
+/// All coordinates and progress values remain in Runtime-native units.
+struct RelativeBodyAnimationRequest {
+  std::int16_t character_id{0};
+  std::string_view object_binding;
+  std::uint32_t animation_index{0};
+  float previous_progress{0.0F};
+  float current_progress{1.0F};
+  std::array<float, 3> body_animation_vector{};
+  std::uint32_t path_index{0};
+  std::uint32_t subpath_index{0};
+  std::array<float, 3> authored_offset{};
+  bool first_tick{true};
+  std::uint32_t execution_count{0};
+  std::uint32_t execution_limit{0};
+};
+
+struct RelativeBodyAnimationResult {
+  std::uint32_t max_frame_index{0};
+};
+
 /// Abstract world service connecting script handlers to the existing sprite
 /// renderer/runtime. Implemented by ModelViewerScene; faked in tests.
 class ScriptWorld {
@@ -232,6 +253,20 @@ class ScriptWorld {
 
   /// Compact audio context for the script debugger's audio diagnostics.
   [[nodiscard]] virtual Audio::AudioContextInfo audio_context() const = 0;
+
+  /// Resolves cached SCX resources and applies one relative body-animation
+  /// interval to the explicitly character-bound model instance.
+  [[nodiscard]] virtual std::expected<RelativeBodyAnimationResult, std::string>
+  select_relative_body_animation(const RelativeBodyAnimationRequest& request) {
+    (void)request;
+    return std::expected<RelativeBodyAnimationResult, std::string>{
+        std::unexpect, "relative body animation is unavailable in this world"};
+  }
+
+  /// Clears instance-local body-animation playback state during script reset.
+  virtual void reset_body_animation(std::int16_t character_id) {
+    (void)character_id;
+  }
 
   [[nodiscard]] virtual std::string_view scenario_name() const = 0;
 };
@@ -353,6 +388,9 @@ class ScriptRuntime {
       ScriptInstance& instance, RuntimeScriptCommand& command);
   HandlerResult handle_stop_sound(
       ScriptInstance& instance, RuntimeScriptCommand& command);
+  HandlerResult handle_select_relative_body_animation(ScriptInstance& instance,
+      RuntimeScriptCommand& command,
+      float script_delta_frames);
 
   /// Stops the matching (soundId, owner) voice for every started audio
   /// command of an instance (replay/reset hook, called before the pool reset).

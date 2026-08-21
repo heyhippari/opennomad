@@ -66,6 +66,13 @@ Transform compose(const Transform& local, const Transform& parent) {
       .scale = local.scale};
 }
 
+Vec3 relative_body_animation_anchor(
+    const Vec3& sampled_path_coordinate, const Vec3& authored_argument) {
+  return Vec3{.x = sampled_path_coordinate.x - (authored_argument.x * -k_centimetres_to_inches),
+      .y = sampled_path_coordinate.y - (authored_argument.y * -k_centimetres_to_inches),
+      .z = sampled_path_coordinate.z - (authored_argument.z * -k_centimetres_to_inches)};
+}
+
 Matrix3 rotation_x(const float radians) {
   const float cosine{std::cos(radians)};
   const float sine{std::sin(radians)};
@@ -82,6 +89,34 @@ Matrix3 rotation_z(const float radians) {
   const float cosine{std::cos(radians)};
   const float sine{std::sin(radians)};
   return Matrix3{{cosine, -sine, 0.0F, sine, cosine, 0.0F, 0.0F, 0.0F, 1.0F}};
+}
+
+Matrix3 quaternion_matrix(const Quaternion& quaternion) {
+  const float length_squared{(quaternion.w * quaternion.w) + (quaternion.x * quaternion.x) +
+                             (quaternion.y * quaternion.y) + (quaternion.z * quaternion.z)};
+  if (length_squared <= 0.0F) {
+    return Matrix3::identity();
+  }
+  const float inverse_length{1.0F / std::sqrt(length_squared)};
+  const float normalized_w{quaternion.w * inverse_length};
+  const float normalized_x{quaternion.x * inverse_length};
+  const float normalized_y{quaternion.y * inverse_length};
+  const float normalized_z{quaternion.z * inverse_length};
+
+  // This is the transpose of the conventional column-vector form because
+  // Runtime multiplies row vectors on the left.
+  return Matrix3{{1.0F - (2.0F * ((normalized_y * normalized_y) +
+                                     (normalized_z * normalized_z))),
+      2.0F * ((normalized_x * normalized_y) + (normalized_w * normalized_z)),
+      2.0F * ((normalized_x * normalized_z) - (normalized_w * normalized_y)),
+      2.0F * ((normalized_x * normalized_y) - (normalized_w * normalized_z)),
+      1.0F - (2.0F * ((normalized_x * normalized_x) +
+                         (normalized_z * normalized_z))),
+      2.0F * ((normalized_y * normalized_z) + (normalized_w * normalized_x)),
+      2.0F * ((normalized_x * normalized_z) + (normalized_w * normalized_y)),
+      2.0F * ((normalized_y * normalized_z) - (normalized_w * normalized_x)),
+      1.0F - (2.0F * ((normalized_x * normalized_x) +
+                         (normalized_y * normalized_y)))}};
 }
 
 Matrix3 euler_rotation(const float x_radians, const float y_radians, const float z_radians) {

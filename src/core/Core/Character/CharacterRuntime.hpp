@@ -6,6 +6,7 @@
 #include <expected>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -37,6 +38,39 @@ struct ModelResource {
   float bounds_radius{0.0F};
 };
 
+struct BodyAnimationObjectPose {
+  std::optional<std::uint32_t> channel_index;
+  std::optional<std::uint32_t> channel_id;
+  std::string channel_name;
+  App::Runtime::Quaternion current_quaternion{};
+};
+
+/// Instance-local playback and diagnostics for Runtime body animation.
+struct BodyAnimationPlayback {
+  bool active{false};
+  bool completed{false};
+  std::size_t selected_object_index{0};
+  std::string selected_object_name;
+  std::uint32_t animation_descriptor_index{0};
+  std::string animation_name;
+  std::uint32_t animation_id{0};
+  std::uint32_t max_frame_index{0};
+  float previous_progress{0.0F};
+  float current_progress{1.0F};
+  std::uint32_t execution_count{0};
+  std::uint32_t execution_limit{0};
+  std::uint32_t path_index{0};
+  std::string path_name;
+  std::uint32_t subpath_index{0};
+  std::string subpath_name;
+  App::Runtime::Vec3 sampled_path_position{};
+  App::Runtime::Vec3 authored_offset{};
+  App::Runtime::Vec3 final_anchor{};
+  App::Runtime::Vec3 root_motion_delta{};
+  App::Runtime::Vec3 accumulated_root_translation{};
+  App::Runtime::Vec3 body_animation_vector{};
+};
+
 /// Persistent logical character materialized in one world runtime.
 struct RuntimeCharacter {
   std::size_t instance_id{0};
@@ -53,13 +87,18 @@ struct RuntimeCharacter {
   std::string definition_name;
   std::string model_resource_name;
   std::shared_ptr<const ModelResource> model_resource;
+  std::vector<Omikron::Model3DOData::RuntimeObjectState> runtime_objects;
+  std::vector<BodyAnimationObjectPose> object_poses;
+  std::vector<Omikron::MaterialGroup> posed_groups;
+  std::uint64_t pose_revision{0};
+  BodyAnimationPlayback body_animation;
 
   [[nodiscard]] bool loaded() const {
     return model_resource != nullptr;
   }
 
   [[nodiscard]] bool renderable() const {
-    return active && area_present && model_resource != nullptr && !model_resource->groups.empty();
+    return active && area_present && model_resource != nullptr && !posed_groups.empty();
   }
 };
 
@@ -88,6 +127,9 @@ class Runtime {
   [[nodiscard]] const RuntimeCharacter* find(std::int16_t character_id) const;
   [[nodiscard]] std::span<const RuntimeCharacter> characters() const;
   [[nodiscard]] std::size_t model_resource_count() const;
+
+  /// Restores one character's mutable pose from its immutable shared model.
+  void reset_pose(std::int16_t character_id);
 
  private:
   [[nodiscard]] static std::expected<std::shared_ptr<const ModelResource>, std::string>

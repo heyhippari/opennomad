@@ -40,6 +40,11 @@ add_executable(Model3DOTest Model3DO.spec.cpp $<TARGET_OBJECTS:TestRunner>)
 add_test(NAME Model3DOTest COMMAND Model3DOTest)
 target_link_libraries(Model3DOTest PRIVATE doctest::doctest Core)
 
+add_executable(BodyAnimationResourcesTest
+  BodyAnimationResources.spec.cpp $<TARGET_OBJECTS:TestRunner>)
+add_test(NAME BodyAnimationResourcesTest COMMAND BodyAnimationResourcesTest)
+target_link_libraries(BodyAnimationResourcesTest PRIVATE doctest::doctest Core)
+
 add_executable(Texture3DTTest Texture3DT.spec.cpp $<TARGET_OBJECTS:TestRunner>)
 add_test(NAME Texture3DTTest COMMAND Texture3DTTest)
 target_link_libraries(Texture3DTTest PRIVATE doctest::doctest Core)

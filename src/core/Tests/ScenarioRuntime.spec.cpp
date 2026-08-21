@@ -24,6 +24,7 @@
 #include "Core/Script/AreaScriptRuntime.hpp"
 #include "Core/Script/ScriptRuntime.hpp"
 #include "Core/Sprite/SpriteInstance.hpp"
+#include "OmikronTestBuffer.hpp"
 
 namespace {
 
@@ -83,6 +84,99 @@ App::Omikron::IamAreaRecord make_character_area() {
   std::memcpy(data.data() + k_definition_offset + 0x90U, k_model.data(), k_model.size());
   write_u16(data, k_definition_offset + 0x110U, 310);
   return App::Omikron::IamAreaRecord::load(data).value();
+}
+
+std::shared_ptr<const App::Character::ModelResource> make_body_model_resource() {
+  auto resource{std::make_shared<App::Character::ModelResource>()};
+  resource->name = "HO1_FNM";
+  resource->model.materials.push_back(App::Omikron::Material{});
+  resource->model.meshes.push_back(App::Omikron::MeshDescriptor{.mesh_id = 100,
+      .script_id = 2,
+      .name = "RootBody",
+      .parent_id = -1,
+      .first_child_id = 200,
+      .next_sibling_id = -1});
+  resource->model.meshes.push_back(App::Omikron::MeshDescriptor{.mesh_id = 200,
+      .script_id = 3,
+      .name = "Child",
+      .parent_id = 100,
+      .first_child_id = -1,
+      .next_sibling_id = -1,
+      .bone_position = {.x = 2.0F, .y = 0.0F, .z = 0.0F}});
+  resource->model.polygons.resize(2);
+  resource->model.root_mesh_index = 0;
+  resource->model.hierarchy_parent_index = {-1, 0};
+  resource->model.hierarchy_first_child_index = {1, -1};
+  resource->model.hierarchy_next_sibling_index = {-1, -1};
+  resource->model.hierarchy_reachable = {1, 1};
+  resource->model.skin_parent_index = {-1, 0};
+  resource->model.runtime_objects = {
+      App::Omikron::Model3DOData::RuntimeObjectState{},
+      App::Omikron::Model3DOData::RuntimeObjectState{.local_offset = {.x = 2.0F}}};
+  resource->groups.push_back(App::Omikron::MaterialGroup{});
+  return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
+}
+
+struct BodyResourcesFixture {
+  App::Omikron::ScxData scx;
+  std::vector<std::byte> bytes;
+};
+
+BodyResourcesFixture make_body_resources() {
+  Buffer path;
+  path.u32(1).chars("UBas.p1", 20).u32(2).u32(3);
+  for (std::uint32_t key{0}; key < 3U; ++key) {
+    path.u32(key)
+        .f32(-478.3933410644531F)
+        .f32(-43.900245666503906F)
+        .f32(27.611772537231445F)
+        .f32(1.0F)
+        .f32(0.0F)
+        .f32(0.0F)
+        .f32(0.0F);
+  }
+
+  constexpr std::uint32_t descriptor_end{8U + (2U * 0x28U)};
+  constexpr std::uint32_t root_rotation_offset{descriptor_end + (4U * 12U)};
+  constexpr std::uint32_t child_rotation_offset{root_rotation_offset + (4U * 16U)};
+  Buffer animation;
+  animation.u32(3).u32(2);
+  animation.u32(2)
+      .chars("RootBody", 20)
+      .u32(4)
+      .u32(descriptor_end)
+      .u32(4)
+      .u32(root_rotation_offset);
+  // mesh_id is 200, but the animation must bind this channel by script_id 3.
+  animation.u32(3)
+      .chars("Child", 20)
+      .u32(4)
+      .u32(0)
+      .u32(4)
+      .u32(child_rotation_offset);
+  for (std::uint32_t frame{0}; frame < 4U; ++frame) {
+    animation.f32(static_cast<float>(frame) * 10.0F).f32(0.0F).f32(0.0F);
+  }
+  animation.f32(1.0F).f32(0.0F).f32(0.0F).f32(0.0F);
+  animation.f32(0.0F).f32(0.0F).f32(0.0F).f32(1.0F);
+  animation.f32(1.0F).f32(0.0F).f32(0.0F).f32(0.0F);
+  animation.f32(1.0F).f32(0.0F).f32(0.0F).f32(0.0F);
+  for (std::uint32_t frame{0}; frame < 4U; ++frame) {
+    animation.f32(1.0F).f32(0.0F).f32(0.0F).f32(0.0F);
+  }
+
+  BodyResourcesFixture fixture;
+  fixture.bytes = path.data();
+  fixture.bytes.insert(fixture.bytes.end(), animation.data().begin(), animation.data().end());
+  fixture.scx.section0_records.push_back(
+      App::Omikron::ScxSection0Record{.name = "Grid_pb.3dp"});
+  fixture.scx.section0_resources.push_back(App::Omikron::ScxEmbeddedResource{
+      .payload_offset = 0, .payload_size = path.data().size()});
+  fixture.scx.animations.push_back(App::Omikron::ScxAnimationRecord{
+      .name = "INTRO1.3DA", .serialized_field_1c = 0, .animation_id = 77});
+  fixture.scx.animation_resources.push_back(App::Omikron::ScxEmbeddedResource{
+      .payload_offset = path.data().size(), .payload_size = animation.data().size()});
+  return fixture;
 }
 
 }  // namespace
@@ -218,6 +312,89 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
     CHECK_EQ(runtime.world_anchor().at(0), 4.0F);
     CHECK_EQ(runtime.world_anchor().at(1), 5.0F);
     CHECK_EQ(runtime.world_anchor().at(2), 6.0F);
+  }
+
+  TEST_CASE("Relative body animation anchors, binds by script id, and isolates shared models") {
+    BodyResourcesFixture resources{make_body_resources()};
+    const std::shared_ptr<const App::Character::ModelResource> shared{make_body_model_resource()};
+    const auto loader = [shared](const std::string_view)
+        -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
+      return shared;
+    };
+
+    App::ScenarioRuntime animated_runtime;
+    REQUIRE(animated_runtime
+                .initialize(resources.scx, resources.bytes, "animated", nullptr, false)
+                .has_value());
+    animated_runtime.character_runtime().set_model_loader(loader);
+    REQUIRE(animated_runtime
+                .activate_character(118,
+                    make_character_area(),
+                    App::Script::AreaCharacterActivationRequest{
+                        .character_id = 310, .apply_area_transform = true})
+                .has_value());
+
+    App::ScenarioRuntime untouched_runtime;
+    REQUIRE(untouched_runtime
+                .initialize(resources.scx, resources.bytes, "untouched", nullptr, false)
+                .has_value());
+    untouched_runtime.character_runtime().set_model_loader(loader);
+    REQUIRE(untouched_runtime
+                .activate_character(118,
+                    make_character_area(),
+                    App::Script::AreaCharacterActivationRequest{
+                        .character_id = 310, .apply_area_transform = true})
+                .has_value());
+
+    const App::Script::RelativeBodyAnimationRequest request{.character_id = 310,
+        .object_binding = "RootBody",
+        .animation_index = 0,
+        .previous_progress = 0.0F,
+        .current_progress = 1.0F,
+        .body_animation_vector = {4.0F, 5.0F, 6.0F},
+        .path_index = 0,
+        .subpath_index = 0,
+        .authored_offset = {0.0F, 0.0F, 0.0F},
+        .first_tick = true,
+        .execution_count = 0,
+        .execution_limit = 1};
+    const auto applied{animated_runtime.select_relative_body_animation(request)};
+    REQUIRE(applied.has_value());
+    CHECK_EQ(applied->max_frame_index, 3U);
+
+    const App::Character::RuntimeCharacter* animated{
+        animated_runtime.character_runtime().find(310)};
+    const App::Character::RuntimeCharacter* untouched{
+        untouched_runtime.character_runtime().find(310)};
+    REQUIRE(animated != nullptr);
+    REQUIRE(untouched != nullptr);
+    CHECK_EQ(animated->body_animation.final_anchor.x, doctest::Approx(-478.393341F));
+    CHECK_EQ(animated->body_animation.final_anchor.y, doctest::Approx(-43.900246F));
+    CHECK_EQ(animated->body_animation.final_anchor.z, doctest::Approx(27.611773F));
+    // The [0,1] root interval is additive after the absolute path anchor.
+    CHECK_EQ(animated->body_animation.root_motion_delta.x, doctest::Approx(10.0F));
+    CHECK_EQ(animated->transform.translation.x, doctest::Approx(-468.393341F));
+    CHECK_EQ(animated->object_poses.at(0).channel_id, std::optional<std::uint32_t>{2});
+    CHECK_EQ(animated->object_poses.at(1).channel_id, std::optional<std::uint32_t>{3});
+    CHECK(animated->runtime_objects.at(0).animation_matrix.has_value());
+    CHECK(animated->runtime_objects.at(1).animation_matrix.has_value());
+    CHECK_EQ(animated->body_animation.body_animation_vector.z, doctest::Approx(6.0F));
+
+    // Both runtime characters share the immutable resource, but only one pose changed.
+    CHECK(animated->model_resource == untouched->model_resource);
+    CHECK_FALSE(shared->model.runtime_objects.at(0).animation_matrix.has_value());
+    CHECK_FALSE(untouched->runtime_objects.at(0).animation_matrix.has_value());
+    CHECK_EQ(untouched->transform.translation.x, doctest::Approx(-1.0F));
+
+    App::Script::RelativeBodyAnimationRequest fractional{request};
+    fractional.previous_progress = 1.0F;
+    fractional.current_progress = 1.5F;
+    fractional.first_tick = false;
+    REQUIRE(animated_runtime.select_relative_body_animation(fractional).has_value());
+    animated = animated_runtime.character_runtime().find(310);
+    REQUIRE(animated != nullptr);
+    CHECK_EQ(animated->body_animation.root_motion_delta.x, doctest::Approx(5.0F));
+    CHECK_EQ(animated->transform.translation.x, doctest::Approx(-463.393341F));
   }
 }
 

@@ -79,6 +79,7 @@ class WorldRenderer {
     std::vector<std::uint32_t> group_flags;
     std::vector<Omikron::BlendMode> group_modes;
     std::vector<Texture2D> textures;
+    std::uint64_t pose_revision{0};
   };
 
   std::unique_ptr<Shader> m_shader;
@@ -90,7 +91,7 @@ class WorldRenderer {
   std::vector<Texture2D> m_textures;
 
   Sprite::SpriteRenderer m_sprite_renderer;
-  std::unordered_map<std::string, std::unique_ptr<CharacterGpuModel>> m_character_models;
+  std::unordered_map<std::size_t, std::unique_ptr<CharacterGpuModel>> m_character_models;
   std::vector<std::string> m_failed_character_models;
 
   WorldBounds m_bounds{};

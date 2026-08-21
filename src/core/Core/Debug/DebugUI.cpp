@@ -921,6 +921,91 @@ void DebugUI::show_overlays() {
           static_cast<double>(character.runtime_bounds_center.at(1)),
           static_cast<double>(character.runtime_bounds_center.at(2)),
           static_cast<double>(character.bounds_radius));
+      if (!character.selected_object.empty()) {
+        ImGui::SeparatorText("Body animation");
+        ImGui::Text("Selected: %s (mesh %u, script %u, %s)",
+            character.selected_object.c_str(),
+            character.selected_mesh_id,
+            character.selected_script_id,
+            character.selected_is_root ? "root" : "non-root");
+        ImGui::Text("Animation: [%u] %s (id %u, max %u)",
+            character.animation_descriptor_index,
+            character.animation_name.c_str(),
+            character.animation_id,
+            character.animation_max_frame);
+        ImGui::Text("Progress: %.3f -> %.3f, execution %u/%u (%s)",
+            static_cast<double>(character.animation_previous_progress),
+            static_cast<double>(character.animation_current_progress),
+            character.animation_execution_count,
+            character.animation_execution_limit,
+            character.body_animation_completed ? "completed" : "active");
+        ImGui::Text("Path: [%u] %s / [%u] %s",
+            character.path_index,
+            character.path_name.c_str(),
+            character.subpath_index,
+            character.subpath_name.c_str());
+        ImGui::Text("Sampled XYZ: %.3f, %.3f, %.3f",
+            static_cast<double>(character.sampled_path_position.at(0)),
+            static_cast<double>(character.sampled_path_position.at(1)),
+            static_cast<double>(character.sampled_path_position.at(2)));
+        ImGui::Text("Authored offset: %.3f, %.3f, %.3f",
+            static_cast<double>(character.authored_offset.at(0)),
+            static_cast<double>(character.authored_offset.at(1)),
+            static_cast<double>(character.authored_offset.at(2)));
+        ImGui::Text("Final anchor: %.3f, %.3f, %.3f",
+            static_cast<double>(character.final_anchor.at(0)),
+            static_cast<double>(character.final_anchor.at(1)),
+            static_cast<double>(character.final_anchor.at(2)));
+        ImGui::Text("Root delta: %.3f, %.3f, %.3f (accum %.3f, %.3f, %.3f)",
+            static_cast<double>(character.root_motion_delta.at(0)),
+            static_cast<double>(character.root_motion_delta.at(1)),
+            static_cast<double>(character.root_motion_delta.at(2)),
+            static_cast<double>(character.accumulated_root_translation.at(0)),
+            static_cast<double>(character.accumulated_root_translation.at(1)),
+            static_cast<double>(character.accumulated_root_translation.at(2)));
+        if (ImGui::TreeNode("Per-object pose")) {
+          for (std::size_t pose_index{0}; pose_index < character.object_poses.size(); ++pose_index) {
+            const Debug::RuntimeCharacterObjectPoseDebugState& pose{
+                character.object_poses.at(pose_index)};
+            ImGui::PushID(static_cast<int>(pose_index));
+            if (ImGui::TreeNode(pose.object_name.c_str())) {
+              ImGui::Text("script_id: %u", pose.script_id);
+              ImGui::Text("channel: %s%u %s",
+                  pose.channel_bound ? "" : "unbound / ",
+                  pose.channel_id,
+                  pose.channel_name.c_str());
+              ImGui::Text("quaternion wxyz: %.4f, %.4f, %.4f, %.4f",
+                  static_cast<double>(pose.quaternion.at(0)),
+                  static_cast<double>(pose.quaternion.at(1)),
+                  static_cast<double>(pose.quaternion.at(2)),
+                  static_cast<double>(pose.quaternion.at(3)));
+              ImGui::Text("local matrix: [%.3f %.3f %.3f] [%.3f %.3f %.3f] [%.3f %.3f %.3f]",
+                  static_cast<double>(pose.local_matrix.at(0)),
+                  static_cast<double>(pose.local_matrix.at(1)),
+                  static_cast<double>(pose.local_matrix.at(2)),
+                  static_cast<double>(pose.local_matrix.at(3)),
+                  static_cast<double>(pose.local_matrix.at(4)),
+                  static_cast<double>(pose.local_matrix.at(5)),
+                  static_cast<double>(pose.local_matrix.at(6)),
+                  static_cast<double>(pose.local_matrix.at(7)),
+                  static_cast<double>(pose.local_matrix.at(8)));
+              ImGui::Text("world matrix: [%.3f %.3f %.3f] [%.3f %.3f %.3f] [%.3f %.3f %.3f]",
+                  static_cast<double>(pose.world_matrix.at(0)),
+                  static_cast<double>(pose.world_matrix.at(1)),
+                  static_cast<double>(pose.world_matrix.at(2)),
+                  static_cast<double>(pose.world_matrix.at(3)),
+                  static_cast<double>(pose.world_matrix.at(4)),
+                  static_cast<double>(pose.world_matrix.at(5)),
+                  static_cast<double>(pose.world_matrix.at(6)),
+                  static_cast<double>(pose.world_matrix.at(7)),
+                  static_cast<double>(pose.world_matrix.at(8)));
+              ImGui::TreePop();
+            }
+            ImGui::PopID();
+          }
+          ImGui::TreePop();
+        }
+      }
       ImGui::Unindent();
     }
 
