@@ -443,9 +443,9 @@ void ScriptRuntime::advance(const float script_delta_frames) {
     if (instance.completed || instance.paused) {
       continue;
     }
-    // Accumulate the per-instance script clock (seconds) once per tick; the
-    // 30 Hz script-frame units are converted here and used by PlaySyncSound.
-    instance.elapsed_script_seconds += script_delta_frames / k_script_frames_per_second;
+    // Runtime keeps the script clock in native 30 Hz frame units.
+    // PlaySyncSound's authored schedule is expressed in the same units.
+    instance.elapsed_script_frames += script_delta_frames;
     if (!advance_instance(instance, script_delta_frames, budget)) {
       return;  // Scenario execution paused partway through the tick.
     }
@@ -1210,7 +1210,7 @@ HandlerResult ScriptRuntime::handle_play_sync_sound(
   }
 
   // Wait until the scheduled script/scenario time is due.
-  if (instance.elapsed_script_seconds < scheduled) {
+  if (instance.elapsed_script_frames < scheduled) {
     return HandlerResult{.status = ScriptCommandStatus::k_running,
         .pause_reason = ScriptPauseReason::k_none,
         .reason_text = {}};
@@ -1481,7 +1481,7 @@ std::expected<void, std::string> ScriptRuntime::reset_instance(const std::size_t
       }
     }
     instance.current_group_index = 0;
-    instance.elapsed_script_seconds = 0.0F;
+    instance.elapsed_script_frames = 0.0F;
     instance.completed = false;
     instance.paused = false;
     instance.pause_info = ScriptPauseInfo{};
@@ -1523,7 +1523,7 @@ void ScriptRuntime::reset_all() {
       }
     }
     instance.current_group_index = 0;
-    instance.elapsed_script_seconds = 0.0F;
+    instance.elapsed_script_frames = 0.0F;
     instance.completed = false;
     instance.paused = false;
     instance.pause_info = ScriptPauseInfo{};

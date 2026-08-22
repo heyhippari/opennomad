@@ -389,9 +389,9 @@ std::expected<void, std::string> parse_dead0000(
   records.reserve(count);
   for (std::uint32_t index{0}; index < count; ++index) {
     const std::size_t file_offset{K_HEADER_SIZE + reader.tell()};
-    records.push_back(ScxSection0Record{.name = fixed_string(reader.read_bytes(K_NAME_24_SIZE)),
-        .runtime_resource_placeholder = reader.read_u32(),
-        .resource_id = reader.read_u32(),
+    records.push_back(ScxSection0Record{.name = fixed_string(reader.read_bytes(K_NAME_24_SIZE)),        
+        .runtime_paths_placeholder = reader.read_u32(),
+        .serialized_subpath_count = reader.read_u32(),
         .file_offset = file_offset});
   }
   return {};
@@ -896,10 +896,10 @@ std::expected<ScxData, std::string> SCX::load(const std::span<const std::byte> d
 
   for (std::size_t index{0}; index < scx.section0_records.size(); ++index) {
     App::Log::trace(LogCategory::SCX,
-        "SCX DEAD0000 {}: '{}' (id {})",
+        "SCX DEAD0000 {}: '{}' (serialized subpaths {})",
         index,
         scx.section0_records.at(index).name,
-        scx.section0_records.at(index).resource_id);
+        scx.section0_records.at(index).serialized_subpath_count);
   }
   for (std::size_t index{0}; index < scx.animations.size(); ++index) {
     App::Log::trace(LogCategory::SCX,

@@ -34,12 +34,22 @@ struct ScxEmbeddedResource {
   std::size_t payload_size{0};
 };
 
-/// One still-provisional DEAD0000 descriptor (0x20 bytes on disk). Runtime
-/// consumes one 8-byte-header embedded payload for each record.
+/// One DEAD0000 path descriptor (0x20 bytes on disk). Runtime consumes one
+/// 8-byte-header 3DP payload for each record.
+///
+/// During retail Runtime loading the live descriptor fields at +0x18/+0x1C
+/// are passed to Read3DP as output slots. On success they become the loaded
+/// Runtime3DPSubpath** and subpath count respectively. The parsed structure
+/// below preserves the serialized pre-load values instead of reproducing that
+/// in-place pointer mutation.
 struct ScxSection0Record {
   std::string name;  ///< +0x00, fixed 24-byte field.
-  std::uint32_t runtime_resource_placeholder{0};  ///< +0x18.
-  std::uint32_t resource_id{0};                   ///< +0x1C.
+  /// +0x18. Pointer-shaped serialized placeholder; live Runtime overwrites
+  /// this slot with Runtime3DPSubpath**.
+  std::uint32_t runtime_paths_placeholder{0};
+  /// +0x1C. Serialized expected/count value; live Runtime overwrites this slot
+  /// with the subpath count returned by Read3DP.
+  std::uint32_t serialized_subpath_count{0};
   std::size_t file_offset{0};
 };
 
@@ -191,7 +201,7 @@ struct ScxData {
   /// retained rather than scanning them for guessed resources.
   std::vector<ScxOpaqueRecord> descriptor_gaps;
 
-  /// DEAD0000: provisional named resources, parallel to section0_resources.
+  /// DEAD0000: path descriptors, parallel to section0_resources.
   std::vector<ScxSection0Record> section0_records;
   std::vector<ScxEmbeddedResource> section0_resources;
 

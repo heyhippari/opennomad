@@ -145,9 +145,9 @@ struct ScriptInstance {
   std::size_t current_group_index{0};
   std::int32_t execution_context_field_34{0};
   std::unordered_map<std::uint32_t, Sprite::SpriteHandle> sprite_remap;
-  /// Accumulated script/scenario time in seconds (the 30 Hz script clock,
-  /// converted once at the tick boundary). Used by PlaySyncSound scheduling.
-  float elapsed_script_seconds{0.0F};
+  /// Accumulated Runtime script time in native 30 Hz frame units.
+  /// PlaySyncSound compares its authored schedule directly against this clock.
+  float elapsed_script_frames{0.0F};
   bool completed{false};
   bool paused{false};
   ScriptPauseInfo pause_info;
