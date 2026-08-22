@@ -1,82 +1,104 @@
 # Packaging
 
-The app comes with packaging through [CPack](https://cmake.org/cmake/help/latest/module/CPack.html), creating installer
-for macOS, Windows, and Linux.
+OpenNomad has CPack infrastructure for developer package artifacts. It has not yet established a supported release or
+installer matrix, so a package must be tested on a clean machine before it is published.
 
-General packaging settings are located under `packaging/`. Executable specific settings
-in `src/app/cmake/Packaging.cmake` and OS specifics under `src/app/cmake/packaging/`.
+General CPack configuration is in `packaging/CMakeLists.txt`. Application installation and platform-specific bundle
+rules are under `src/app/cmake/Packaging.cmake` and `src/app/cmake/packaging/`.
 
-## General packaging settings
+## Generators
 
-General packaging settings are in `packaging/CMakeLists.txt`. It defines names, versions, metadata, where to build the
-package to (`build/distribution/`), and more.
+The configured generators are:
 
-## OS specific settings
+| Host | Generators |
+|---|---|
+| Linux | `.tar.gz` and Debian `.deb` |
+| macOS | `.tar.gz` and DragNDrop `.dmg` |
+| Windows | `.zip` and NSIS `.exe` |
+| Other | `.tar.gz` |
 
-### macOS
+Packages are built natively; the project does not define a cross-packaging workflow.
 
-For macOS a `.dmg` (DragNDrop) file will be generated. Resources for the installer are located under `packaging/dmg/`,
-containing the background image for the DMG view and an apple script to generate the custom DMG view.
+## Build a package
 
-Packaging settings for the application executable are in `src/app/cmake/packaging/Darwin.cmake`.
-
-The final application build for Apple devices should be built via the `Xcode` generator with CMake.
-
-```shell
-cmake -GXcode -DCMAKE_BUILD_TYPE=Release -B build/xcode
-cmake --build build/xcode
-```
-
-### Windows
-
-On Windows a `.exe` is created via [NSIS](https://nsis.sourceforge.io/Main_Page). NSIS **needs to be installed** in
-Windows to create the package. Resources for the installer are located under `packaging/nsis/`, containing installer
-images and the uninstaller icon.
-
-Packaging settings for the application executable are in `src/app/cmake/packaging/Windows.cmake`.
-
-For windows there are also installer texts defined in `packaging/CMakeLists.txt`. Specifically a welcome text,
-description, readme, and license; as txt files under `packaging/`. The CPack variables are:
-
-```cmake
-set(CPACK_RESOURCE_FILE_WELCOME ${CMAKE_CURRENT_LIST_DIR}/Welcome.txt)
-set(CPACK_PACKAGE_DESCRIPTION_FILE ${CMAKE_CURRENT_LIST_DIR}/Description.txt)
-set(CPACK_RESOURCE_FILE_README ${CMAKE_CURRENT_LIST_DIR}/Readme.txt)
-set(CPACK_RESOURCE_FILE_LICENSE ${CMAKE_CURRENT_LIST_DIR}/License.txt)
-```
-
-### Linux
-
-On Linux a `.deb` file will be created that can be installed via the systems package manager.
-
-Packaging settings for the application executable are in `src/app/cmake/packaging/Linux.cmake`.
-
-## Distribution package creation
-
-A release build is needed before creating the distribution package. Packages **for a system** are created **on the
-system**.
-
-### macOS
-
-Xcode should be used to create the release build for the application distributable.
+On Linux, use the checked-in workflow preset:
 
 ```shell
-cmake -GXcode -DCMAKE_BUILD_TYPE=Release -B build/xcode
-cmake --build build/xcode
-cpack --config build/xcode/CPackConfig.cmake
+cmake --workflow --preset dist
 ```
 
-**Attention:** Creating the package will open a Finder window a couple of times to set the DMG window properties. This
-windows should be ignored and will auto-close.
-
-### Windows & Linux
+Or run its stages independently:
 
 ```shell
-cmake -GNinja -DCMAKE_BUILD_TYPE=Release -B build/release
-cmake --build build/release
-cpack --config build/release/CPackConfig.cmake
+cmake --preset release
+cmake --build --preset release
+cpack --preset release
 ```
 
-***
+On macOS:
 
-Next up: [Cmake Presets](CMakePresets.md)
+```shell
+cmake --preset xcode-release \
+  -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
+cmake --build --preset xcode-release
+cpack --preset xcode-release
+```
+
+The package preset reports the generated filenames. CPack's configured output directory is `distribution/` relative to
+the package build invocation.
+
+There is no checked-in Windows preset. Configure and build Release manually, then run CPack against that tree:
+
+```shell
+cpack --config build/release/CPackConfig.cmake -C Release
+```
+
+NSIS must be installed to produce the Windows installer.
+
+## What is installed
+
+- `App` is installed under the platform's runtime/bundle destination.
+- `src/assets/` supplies the debug-UI font and application icons.
+- Linux installs the vcpkg shared-library directory next to `App`, sets an `$ORIGIN` runtime path, and installs a desktop
+  entry plus icon.
+- Windows copies SDL3 beside the development executable and package executable.
+- macOS copies SDL3 into the application bundle's `Frameworks` directory and configures `Info.plist`.
+
+The Windows and macOS rules currently name only SDL3 explicitly even though OpenNomad has additional dynamic
+dependencies. Validate dependency closure on a clean target system before treating either artifact as redistributable.
+Original Omikron game data must never be added to a package.
+
+## Maintainer checklist
+
+Before publishing an artifact:
+
+1. Replace unfinished metadata in `packaging/CMakeLists.txt`, including the Debian maintainer value.
+2. Review `packaging/{Welcome,Description,Readme,License}.txt` and the platform installer artwork for OpenNomad-specific
+   text and branding.
+3. Confirm the project version and company metadata in the root `CMakeLists.txt`.
+4. Build from a clean Release tree with Git LFS assets present.
+5. Inspect the archive to ensure it contains no original game data.
+6. Install or extract it on a clean machine and verify library loading, assets, video, audio, and startup.
+
+## Application icons
+
+Source icons are under `src/assets/icons/`. `src/app/cmake/AppAssets.cmake` connects the macOS `.icns` and Windows `.ico`
+files to their bundles; Linux installs `BaseAppIcon.png` and references it from `App.desktop.in`.
+
+Regenerate the macOS icon on macOS from the checked-in iconset:
+
+```shell
+cd src/assets/icons
+iconutil -c icns icon.iconset
+```
+
+Regenerate the Windows icon with ImageMagick:
+
+```shell
+cd src/assets/icons
+magick windows/icon_16x16.png windows/icon_32x32.png \
+  windows/icon_64x64.png windows/icon_128x128.png \
+  windows/icon_256x256.png windows/icon_512x512.png icon.ico
+```
+
+Keep generated icon assets in Git LFS and verify all three manifests/bundle rules after changing their names.

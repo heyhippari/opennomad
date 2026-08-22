@@ -1,83 +1,59 @@
 # Profiling
 
-The template comes with a small profiling tool included, defining a set of macros
-in `src/core/Core/Debug/Instrumentor.hpp`.
+OpenNomad includes a lightweight scoped profiler in `src/core/Core/Debug/Instrumentor.hpp`. It records Chrome Trace
+Event JSON and keeps a small in-memory ring for the Debug build's ImGui profiler window.
 
-**Remark:** For growing application needs consider using another option like tools built into your IDE, or find the
-right tool here: [List of profiling and benchmarking tools](https://hackingcpp.com/cpp/tools/profilers.html).
+Profiling macros are enabled when `APP_PROFILE` is defined. A normal Debug build enables it automatically; a Release
+configuration can opt in with `-DDEBUG=ON`.
 
-## Setup
+## Application session
 
-The profiler is set up inside the application main entry file `src/app/App/Main.cpp`. A profiling session is defined
-through `APP_PROFILE_BEGIN_SESSION_WITH_FILE` and `APP_PROFILE_END_SESSION`.
-
-The `APP_PROFILE_BEGIN_SESSION_WITH_FILE` macro takes a session name and a file where the profiling results will be
-written to. The profiler is defined as a set of **macros to be stripped on release** builds.
+`src/app/App/Main.cpp` opens one session around the application lifetime:
 
 ```c++
-#include "Core/Debug/Instrumentor.hpp"
+APP_PROFILE_BEGIN_SESSION_WITH_FILE("App", "profile.json");
 
-int main() {
-  APP_PROFILE_BEGIN_SESSION_WITH_FILE("App", "profile.json");
+// Application lifetime.
 
-  // other code ...
-
-  APP_PROFILE_END_SESSION();
-
-  return 0;
-}
+APP_PROFILE_END_SESSION();
 ```
 
-## Add to code
+The output path is relative to the process working directory. A normal run therefore writes `profile.json` wherever
+`App` was launched, not necessarily beside the executable.
 
-There are two different macros defined to profile code: `APP_PROFILE_FUNCTION` and `APP_PROFILE_SCOPE`.
+## Instrument code
 
-### `APP_PROFILE_FUNCTION`
-
-This macro will profile a function and will automatically take its name from the function name. It needs to be set at
-the beginning of the function.
+Use `APP_PROFILE_FUNCTION()` near the start of a function:
 
 ```c++
-// src/core/Core/Application.cpp
 std::expected<Application, std::string> Application::create(const std::string& title) {
   APP_PROFILE_FUNCTION();
-
-  // More code ...
-  auto window{Window::create(Window::Settings{.title = title})};
+  // ...
 }
 ```
 
-To fully capture profiling data all functions should start with the `APP_PROFILE_FUNCTION` macro.
-
-### `APP_PROFILE_SCOPE`
-
-If a custom scope needs to be profiled `APP_PROFILE_SCOPE` can be used. It takes a name for the scope.
+Use `APP_PROFILE_SCOPE("name")` for a smaller region:
 
 ```c++
-// Example function
-void Application::run() {
+{
+  APP_PROFILE_SCOPE("Decode 3DT material");
   // ...
-
-  while (something) {
-    APP_PROFILE_SCOPE("MainLoop");
-
-    // loop ...
-  }
 }
 ```
 
-## Show results
+The timer writes when the scope exits. In builds without `APP_PROFILE`, all profiler macros expand to nothing.
 
-The resulting JSON file uses
-the [Trace Event Format](https://docs.google.com/document/d/1CvAClvFfyA5R-PhYUmn5OOQtYMH4h6I0nSsKchNAySU/preview). Any
-tool that can read this format can visualize the profiler data. For example the web
-tool [Perfetto](https://ui.perfetto.dev/) or Chromes built in [chrome://tracing](chrome://tracing). Just drag&drop the
-generated profiler JSON file onto the tool to load it.
+Do not add a profiler scope to every trivial accessor. Prefer boundaries that can explain startup, loading, scripting,
+audio, or frame-time costs without flooding the trace with noise.
 
-This is roughly how this looks like on Chrome.
+## Inspect results
 
-![chrome-trace.png](assets/chrome-trace.png)
+Open `profile.json` in a Trace Event viewer such as [Perfetto](https://ui.perfetto.dev/). The profiler flushes each event
+as it is recorded, but the JSON footer is written when the session ends; an abruptly terminated process can leave an
+incomplete trace.
 
-***
+In a Debug build, press `F12` to release the mouse, then open **View → Profiler** from the ImGui menu bar. That view reads
+the recent in-memory samples and is useful for live inspection without loading the JSON trace.
 
-Next up: [Logging](Logging.md)
+The built-in profiler is intended for targeted engine instrumentation. Use platform profilers when call stacks,
+sampling, GPU timing, allocations, or system-wide scheduling are needed.

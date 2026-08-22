@@ -1,107 +1,87 @@
-# Where is what
+# Where is what?
 
-Where to find what inside the project, from folder structure to configuration.
+This map describes the current repository and the ownership boundaries between its subsystems.
 
-## Source code
+## Repository root
 
-All relevant source code is located in `src/`. The example setup is having one library, here called _"Core"_
-under `src/core/`, and the application called _"App"_ under `src/app/`.
+| Path | Purpose |
+|---|---|
+| `CMakeLists.txt` | Project metadata, dependency discovery, testing, and top-level subdirectories. |
+| `CMakePresets.json` | Linux Ninja and macOS Xcode configure/build/package workflows. |
+| `vcpkg.json` | Manifest dependencies, features, baseline, and selected overrides. |
+| `vcpkg-configuration.json` | Repository-local vcpkg overlays. |
+| `cmake/` | Compiler warnings, strict C++23 settings, analyzers, and Apple build settings. |
+| `overlay-ports/sdl3/` | SDL3 port overlay that enables libdecor on Linux. |
+| `triplets/` | The Linux dynamic-library/OpenGL-core vcpkg triplet. |
+| `packaging/` | CPack metadata and platform installer assets. |
+| `docs/` | Developer and implementation guides. |
+| `docs/reverse-engineering/` | Recovered Runtime.exe behaviour, evidence, and open questions. |
 
-Core subsystems live under `src/core/Core/`: Omikron game-data parsers in `Core/Omikron/`, debug tooling in
-`Core/Debug/`, and the action-based input system (actions, control schemes, `InputManager`) in `Core/Input/`.
-`Camera` and its `CameraController` (free-fly, input-driven) sit at the top of `Core/`.
-The Runtime-style sprite system lives in `Core/Sprite/`: `SpriteInstance`/`SpritePool` (stable-handle
-instance pool), `SpriteFrame` (frame-descriptor resolution), `SpriteResource` (decoded embedded effects),
-`SpriteRenderMode` (mode → GL state table) and `SpriteRenderer` (CPU billboard queue + GPU drawing).
-Runtime character identity, AREA presence/transforms and shared CPU-side 3DO/3DT resources live in
-`Core/Character/CharacterRuntime`; `WorldRenderer` owns only their per-world GPU presentation cache.
+Generated files belong under `build/<config>/`; source files and original game data do not.
 
-## Architecture ownership
+## Source targets
 
-OpenNomad maps recovered Runtime ownership onto four distinct responsibilities (this is an OpenNomad
-architectural mapping, not a claim that Runtime itself had C++ classes with these names):
+| Path | CMake target | Responsibility |
+|---|---|---|
+| `src/app/` | `App` | Process entry point, platform manifests, application assets, and packaging hooks. |
+| `src/core/` | `Core` | Engine, loaders, runtimes, presentation, input, audio, video, and debug tooling. |
+| `src/settings/` | `Settings` | Project metadata generated from `Settings/Project.cpp.in`. |
+| `src/tests/` | `TestRunner` | Shared doctest entry point used by each test executable. |
+| `src/assets/` | packaged assets | Manrope debug-UI font and application icons. |
 
-- **Scenario state** is owned by `ScenarioManager` / `ScenarioRuntime`: one gameplay-mode SCX slot
-  (`aventure.scx`) plus two world-context SCX slots (`GRID.SCX` in context 0). Each slot owns its own
-  parsed SCX, backing bytes, decor model (world contexts), runtime characters and a mutable
-  `ScenarioRuntime`.
-- **Simulation** is advanced by `ScenarioEngine` (the sole scheduler): the AREA/event runtime, then the
-  gameplay-mode runtime, then every `LoadedActive` world runtime, each frame.
-- **World presentation** is performed by `WorldScene`, the stable post-splash runtime scene. It observes
-  the active world context (identity/generation) but never owns a runtime, never executes scripts and
-  never updates audio.
-- **I2D interfaces** are one presentation layer inside `WorldScene`, via `InterfacePresenter`. The generic
-  `InterfaceManager` owns multiple resident `InterfaceInstance`s, tracks focus separately from residency,
-  and queues completions; no interface is a `Scene`.
+## Core subsystems
 
-`ModelViewerScene` remains a development-only presentation tool (free-flight camera, standalone model
-loading, SCX-effect testing, debug overlays). It is not the Runtime world.
+Most implementation lives under `src/core/Core/`:
+
+| Path | Responsibility |
+|---|---|
+| `Application.*`, `Window.*`, `Scene.hpp` | SDL lifetime, recovered main-loop ordering, window/input events, and scene presentation. |
+| `Scenario/` | Three-slot scenario ownership, startup mode dispatch, world-context lifecycle, and the sole script scheduler. |
+| `Script/` | Immutable script definitions, mutable SCX and AREA VM state, opcode metadata, waits, and presentation requests. |
+| `Omikron/` | Bounds-checked readers for original formats including 3DO, 3DT, 3DA, 3DP, SCX, IAM, BMP, and QD ADP. |
+| `Character/` | Runtime character identity, AREA presence/transforms, body resources, and CPU-side posed geometry. |
+| `Sprite/` | Runtime-style sprite instances, stable handles, frame resolution, draw queues, and billboard rendering. |
+| `Interface/` | Generic I2D interface registry, runtime instances, focus/residency, fonts, timelines, and rendering. |
+| `Audio/` | SDL3_mixer device ownership, voices, resource cache, music, and the Runtime-style software spatializer. |
+| `Video/` | FFmpeg-backed startup-video decoding and presentation. |
+| `Startup/` | Ordered startup phases, trace events, and media policy. |
+| `Input/` | Semantic actions, device bindings, held state, and per-frame input resolution. |
+| `Debug/` | ImGui inspectors, metrics, in-app logging, startup traces, and profiling. |
+| `WorldScene.*`, `WorldRenderer.*`, `WorldCamera.*` | Stable runtime presentation of the active world, scripted camera, effects, interfaces, and GPU resources. |
+| `ModelViewerScene.*` | Development-only free-flight renderer for inspecting standalone and embedded model resources. |
+| `RuntimeMath.*`, `RuntimePresentation.*` | Runtime-native math and the single Runtime-to-OpenGL presentation boundary. |
+| `Resources.hpp`, `Platform/*/Resources.cpp` | Packaged-resource and game-data path resolution. |
+
+## Runtime ownership
+
+OpenNomad separates recovered state from presentation responsibilities:
+
+- `ScenarioManager` owns one gameplay-mode SCX slot and two world-context slots. Each loaded slot owns parsed data,
+  backing bytes, its mutable `ScenarioRuntime`, and—for a world context—decoded decor resources.
+- `ScenarioEngine` is the sole scheduler. It advances AREA/event execution, the gameplay-mode runtime, and active world
+  runtimes in the recovered order.
+- `WorldScene` is installed after startup and remains the normal presentation scene. It observes the active context but
+  does not own or execute a runtime.
+- `WorldRenderer` owns GPU resources for exactly one observed world-context generation. Replacing or recycling a
+  context causes the presentation cache to be rebuilt.
+- `InterfaceManager` owns resident I2D interface instances and focus. `InterfacePresenter`, composed by `WorldScene`,
+  only forwards update and render calls; an interface is not a `Scene`.
+- `AudioSystem` is updated by `Application`; neither `WorldScene` nor the scenario runtime owns the device.
+
+This is an OpenNomad architecture mapping. It is not evidence that Runtime.exe used C++ classes with these names. See
+the [reverse-engineering overview](ReverseEngineering.md) for recovered behaviour.
 
 ## Tests
 
-The test setup is done under `src/tests/`. Test implementations are under the respective source code unit, e.g. App
-tests would be located under `src/app/Tests/`, where Core tests are located under `src/core/Tests/`.
+Core specifications live in `src/core/Tests/`, one `.spec.cpp` per focused area. Their executables and CTest entries are
+declared in `src/core/Tests/CMakeLists.txt`. Integration tests that open original game data are opt-in. See
+[Testing](Testing.md).
 
-## Static assets
+## Platform and packaging files
 
-Static assets like fonts and images are under `src/assets/`. This also includes all application icons
-in `src/assets/icons/`.
+Platform resource lookup is implemented in `src/core/Platform/{Linux,Mac,Windows}/Resources.cpp` and selected with
+`target_sources` in `src/core/CMakeLists.txt`.
 
-## Manifest files
-
-Manifest files contain operating system dependent configuration. They all are located under `src/app/Manifests/`.
-
-- `src/app/Manifests/Info.plist` - Apple properties
-  file ([ref](https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/AboutInformationPropertyListFiles.html#//apple_ref/doc/uid/TP40009254-SW1))
-- `src/app/Manifests/App.manifest` - Windows manifest
-  file ([ref](https://learn.microsoft.com/en-us/windows/win32/sbscs/application-manifests))
-- `src/app/Manifests/app.rc` - Windows resource
-  file ([ref](https://learn.microsoft.com/en-us/windows/win32/menurc/about-resource-files))
-- `src/app/Manifests/App.desktop.in` - Linux app icon
-  configuration ([ref](https://specifications.freedesktop.org/desktop-entry-spec/desktop-entry-spec-latest.html))
-
-## Dependencies
-
-Dependencies are managed by [vcpkg](https://vcpkg.io) in manifest mode. The manifest `vcpkg.json` in the repository
-root lists every dependency with pinned versions and features; the CMake presets route through the vcpkg toolchain,
-which installs the manifest into `build/<config>/vcpkg_installed` on first configure. See
-[Dependencies](Dependencies.md) for details.
-
-## Configurations
-
-### Project
-
-General CMake project settings are defined under `cmake/StandardProjectSettings.cmake`, containing build types and
-compiler flags.
-
-### Compiler
-
-Compiler warnings for all platforms are defined in `cmake/CompilerWarnings.cmake`.
-
-### Static analyzers
-
-Clang Tidy and Address Sanitizer setup is located in `cmake/StaticAnalyzers.cmake`. Clang-tidy is configured
-through `.clang-tidy`.
-
-### Code format
-
-In the root of the project a `.clang-format` together with the `.editorconfig` define the code style of the project.
-
-### Apple build
-
-To configure how to build for Apple Silicon or Intel the `cmake/UniversalAppleBuild.cmake` defines the behavior on
-release builds.
-
-### Packaging
-
-The main configuration to create distributable packages is in `packaging/`. Besides general files it also contains
-platform dependent resources.
-
-- `packaging/dmg/` - Apple DMG files
-- `packaging/nsis/` - Windows NSIS files
-
-Under `src/app/cmake/` are specific packaging files for the main executable.
-
-***
-
-Next up: [Make it your own](MakeItYourOwn.md)
+Application manifests live in `src/app/Manifests/`; build/install logic lives in `src/app/cmake/`; CPack-wide metadata
+and installer resources live in `packaging/`. See [Platform-dependent code](PlatformCode.md) and
+[Packaging](Packaging.md).

@@ -1,79 +1,45 @@
-# Usage Guide
+# OpenNomad documentation
 
-This is the user guide for the template and how to adapt it to your own needs.
+These guides describe the current OpenNomad implementation and its development workflow. OpenNomad is an early-stage,
+open-source reimplementation of *Omikron: The Nomad Soul*; it does not distribute original game data.
 
-## Table of contents
+## Getting started
 
-- [Requirements](#requirements)
-- [Quick Start](QuickStart.md)
-- [Where is What?](WhereIsWhat.md)
-- [Make it your own](MakeItYourOwn.md)
-- [Build and Execution](BuildAndExecution.md)
-- [Testing](Testing.md)
-- [Profiling](Profiling.md)
-- [Logging](Logging.md)
-- [Dependencies](Dependencies.md)
-- [Packaging](Packaging.md)
-- [CMake presets](CMakePresets.md)
-- [Platform dependent code](PlatformCode.md)
-- [Application Icons](ApplicationIcons.md)
-- [Fonts](Fonts.md)
-- [High DPI support](HighDPISupport.md)
-- [Rendering](Rendering.md)
+- [Quick start](QuickStart.md) — build and run the current Linux development target.
+- [Build and execution](BuildAndExecution.md) — presets, build modes, CMake options, platform-specific paths, and
+  controls.
+- [Dependencies](Dependencies.md) — vcpkg, system prerequisites, and dependency maintenance.
+- [Testing](Testing.md) — focused tests, the full suite, sanitizers, and tests that use original game data.
 
-***
+## Implementation guides
+
+- [Where is what?](WhereIsWhat.md) — repository map and subsystem ownership.
+- [Rendering](Rendering.md) — runtime presentation, render layers, game-data resources, and coordinate boundaries.
+- [Logging](Logging.md) — categories, sinks, levels, and usage.
+- [Profiling](Profiling.md) — the built-in trace profiler and in-app profiler view.
+- [Platform-dependent code](PlatformCode.md) — the small platform boundary used for resource lookup.
+- [Packaging](Packaging.md) — current CPack infrastructure and maintainer notes.
+
+## Reverse engineering
+
+- [Runtime-to-OpenNomad overview](ReverseEngineering.md)
+- [Reverse-engineering knowledge base](reverse-engineering/)
+
+The reverse-engineering documents record recovered Runtime.exe behaviour, evidence, and unresolved questions. The
+implementation guides describe OpenNomad's current architecture. When OpenNomad intentionally modernizes behaviour,
+the two should be documented separately rather than making the modernization look like a recovered Runtime fact.
 
 ## Requirements
 
-### Git LFS
+At minimum, development requires:
 
-This template contains assets, specifically [icons and fonts](WhereIsWhat.md#static-assets). When starting a new project
-from a template it gets a clean history. Nevertheless, all assets should be stored
-through [Git Large File Storage (LFS)](https://git-lfs.com).
+- a C++23 compiler;
+- CMake 3.22 or newer;
+- Ninja on Linux, or Xcode for the checked-in macOS presets;
+- Git LFS for the checked-in fonts and images;
+- a vcpkg checkout with `VCPKG_ROOT` pointing to it; and
+- platform libraries required by SDL3. Linux also requires the system libdecor development package used by the SDL3
+  overlay.
 
-As preparation this template contains a `.gitattributes` marking all necessary files. **After project creation** from
-this
-template [git lfs migrate](https://github.com/git-lfs/git-lfs/wiki/Tutorial#migrating-existing-repository-data-to-lfs)
-should be executed. It requires Git LFS v2.2.1 or later to be installed.
-
-Have a look
-at [Migrating existing repository data to LFS](https://github.com/git-lfs/git-lfs/wiki/Tutorial#migrating-existing-repository-data-to-lfs)
-for an in-depth how-to or run the following commands.
-
-```shell
-# Initialize Git LFS
-git lfs install
-
-# Track files
-git mv .gitattributes_example .gitattributes
-git commit -m "Add .gitattributes"
-
-# Migrate history to track files and store them in Git LFS
-git lfs migrate import --everything --include="*.png,*.tiff,*.bmp,*.ico,*.icns,*.ttf"
-git push --force-with-lease
-
-# Clear local .git cache
-git reflog expire --expire-unreachable=now --all
-git gc --prune=now
-```
-
-### CMake
-
-The project uses [CMake](https://cmake.org) version >=3.22 (developed and tested against 4.4.0).
-
-### vcpkg
-
-Dependencies are managed by [vcpkg](https://vcpkg.io) in manifest mode. Install the `vcpkg` package and clone the
-registry once:
-
-```shell
-git clone https://github.com/microsoft/vcpkg.git ~/.local/share/vcpkg
-```
-
-The `VCPKG_ROOT` environment variable must point at that clone (on Arch, `/etc/profile.d/vcpkg.sh` already exports it
-for login shells). See [Dependencies](Dependencies.md) for details.
-
-### Ninja or Xcode
-
-Depending on the operating system, the project uses either [Ninja](https://ninja-build.org) version >=1 for Windows and
-Linux, or Xcode version >=13 on macOS.
+Run `git lfs pull` after cloning. A legal copy of *Omikron: The Nomad Soul* is required to run the application, but not
+for the default unit-test suite. See [Dependencies](Dependencies.md) for setup details.

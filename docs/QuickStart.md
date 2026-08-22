@@ -1,133 +1,91 @@
-# Quick Start
+# Quick start
 
-Having all [requirements](README.md#requirements) set, here you can find how to quickly build and run the application.
+This is the shortest supported path for a Linux development build. See [Build and execution](BuildAndExecution.md) for
+other platforms and build modes.
 
-## Table of contents
+## 1. Prepare the checkout
 
-- [Build](#build)
-- [Execute](#execute)
-  - [macOS](#macos)
-  - [Windows](#windows)
-  - [Linux](#linux)
-- [Distribution](#distribution)
-- [Tests](#tests)
+OpenNomad's font and image assets are stored with Git LFS:
 
-## Build
+```shell
+git lfs install
+git lfs pull
+```
 
-Usually available build modes are `Debug`, `Release`, and `RelWithDebInfo`.
+Install CMake, Ninja, a C++23 compiler, Git, Git LFS, pkg-config, and your distribution's libdecor development package.
+See [Dependencies](Dependencies.md) for why libdecor is required and for the vcpkg setup.
 
-To run a **debug** build:
+Set `VCPKG_ROOT` to a vcpkg checkout. For example:
+
+```shell
+export VCPKG_ROOT="$HOME/.local/share/vcpkg"
+```
+
+The path must contain `scripts/buildsystems/vcpkg.cmake`.
+
+## 2. Configure and build
 
 ```shell
 cmake --preset debug
 cmake --build build/debug
 ```
 
-To run a **release** build:
+The first configure builds the manifest dependencies and can take a while. They are cached under
+`build/debug/vcpkg_installed` for later builds.
+
+Debug builds enable clang-tidy when it is installed, AddressSanitizer on non-Windows platforms, profiling, and the
+in-app debug UI. For a faster build without those development checks:
 
 ```shell
 cmake --preset release
 cmake --build build/release
 ```
 
-The presets use the vcpkg toolchain, so the first configure downloads and builds all
-dependencies (a one-time cost, cached afterwards). `VCPKG_ROOT` must be set — see
-[Requirements](README.md#vcpkg).
+## 3. Point OpenNomad at the game data
 
-On macOS Xcode should be used as generator via `-GXCode`. For example creating a release build with XCode.
-
-```shell
-# Using Xcode
-cmake -GXcode -DCMAKE_BUILD_TYPE=Release -B build/xcode
-cmake --build build/xcode
-```
-
-## Execute
-
-When not running through an [IDE like CLion](https://www.jetbrains.com/clion), the built application can be run by
-directly executing the generated binary.
-
-### macOS
-
-To run a **debug** build:
+OpenNomad does not include copyrighted game files. Set `OPENNOMAD_GAME_DATA_ROOT` to the directory containing the
+original `Runtime.exe` and folders such as `SCPTDATA`, `IAM`, and `IMAGES`:
 
 ```shell
-./build/debug/src/app/App.app/Contents/MacOS/App
+export OPENNOMAD_GAME_DATA_ROOT="/path/to/Omikron"
 ```
 
-To run a **release** build:
+The alternative is to copy the original game tree next to the built executable. The environment variable is more
+convenient for development and does not modify the original installation.
 
-```shell
-./build/release/src/app/App.app/Contents/MacOS/App
-```
-
-To run a **debug** build created **with Xcode**:
-
-```shell
-./build/xcode/src/app/Debug/App.app/Contents/MacOS/App
-```
-
-To run a **release** build created **with Xcode**:
-
-```shell
-./build/xcode/src/app/Release/App.app/Contents/MacOS/App
-```
-
-### Windows
-
-To run a **debug** build:
-
-```shell
-build/debug/src/app/App.exe
-```
-
-To run a **release** build:
-
-```shell
-build/release/src/app/App.exe
-```
-
-### Linux
-
-To run a **debug** build:
+## 4. Run
 
 ```shell
 ./build/debug/src/app/App
 ```
 
-To run a **release** build:
+To set the game-data root for one invocation only:
 
 ```shell
-./build/release/src/app/App
+OPENNOMAD_GAME_DATA_ROOT="/path/to/Omikron" ./build/debug/src/app/App
 ```
 
-## Distribution
+The application currently starts in borderless fullscreen. Useful controls are:
 
-To bundle the application and create a distribution package CPack is used. Before executing CPack
-a [release build needs to be generated](#build).
+| Input | Action |
+|---|---|
+| `Escape` | Skip a startup video; cancel in an interface where supported. |
+| Arrow keys / `Enter` | Navigate and confirm interface entries. |
+| `F11` or `Alt+Enter` | Toggle borderless fullscreen. |
+| `F12` | Release the captured mouse for the debug UI; click the scene to capture it again. |
+| `F3` | Toggle the performance overlay in a debug build. |
+
+## 5. Run the tests
 
 ```shell
-cpack --config build/release/CPackConfig.cmake
+ctest --test-dir build/debug --output-on-failure
 ```
 
-## Tests
+The default suite uses generated fixtures and does not require original game files. See [Testing](Testing.md) for
+focused targets, integration tests, and the AddressSanitizer/LeakSanitizer caveat.
 
-On any [generated build](#build) tests can be executed by using CTest, e.g. a Debug build:
+## Common setup failure
 
-```shell
-ctest --test-dir build/debug
-```
-
-## Preview
-
-Here a preview of the app running on macOS, Windows, and Linux (Ubuntu), in that order.
-
-![A screenshot of the app running on macOS](assets/app_macos.png)
-
-![A screenshot of the app running on Windows](assets/app_windows.png)
-
-![A screenshot of the app running on Ubuntu](assets/app_ubuntu.png)
-
-***
-
-Next up: [Where is What?](WhereIsWhat.md)
+If CMake reports a toolchain path such as `/scripts/buildsystems/vcpkg.cmake`, `VCPKG_ROOT` was empty when that build
+tree was configured. Set the variable, then configure a fresh build tree or explicitly correct
+`CMAKE_TOOLCHAIN_FILE`. The checked-in VS Code tasks already supply the expected vcpkg location.
