@@ -1,7 +1,6 @@
 # Runtime sprite and billboard system
 
 > **Status:** work-in-progress reverse-engineering documentation for OpenNomad  
-> **Intended repository path:** `docs/reverse-engineering/sprite.md`  
 > **Last updated:** 2026-08-22
 >
 > This document describes the Windows retail Runtime's sprite-instance,

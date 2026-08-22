@@ -1,7 +1,6 @@
 # Runtime interface and I2D system
 
 > **Status:** work-in-progress reverse-engineering documentation for OpenNomad  
-> **Intended repository path:** `docs/reverse-engineering/interface.md`  
 > **Last updated:** 2026-08-22
 >
 > This document describes the Windows retail Runtime's generic interface
