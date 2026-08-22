@@ -714,13 +714,16 @@ q = (w, x, y, z)
 the recovered matrix is:
 
 ```text
-[ 1 - 2(y² + z²)   2(xy + wz)       2(xz - wy)     ]
-[ 2(xy - wz)       1 - 2(x² + z²)   2(yz + wx)     ]
-[ 2(xz + wy)       2(yz - wx)       1 - 2(x² + y²) ]
+[ 1 - 2(y² + z²)   2(xy - wz)       2(xz + wy)     ]
+[ 2(xy + wz)       1 - 2(x² + z²)   2(yz - wx)     ]
+[ 2(xz - wy)       2(yz + wx)       1 - 2(x² + y²) ]
 ```
 
-This is the transpose of the common column-vector form because Runtime uses row
-vectors.
+Algebraically, these are the coefficients commonly shown for the conventional column-vector quaternion rotation matrix. That is noteworthy because Runtime's object transform path otherwise uses row vectors.
+
+Do **not** transpose this matrix to compensate for that convention difference.
+
+`0x00442A00` writes these coefficients into the mutable object animation state, and Runtime's hierarchy/vertex transform path consumes those coefficients as-is.
 
 ## 14.1 Runtime does not normalize first
 
@@ -737,16 +740,22 @@ maximum observed |length - 1|
 
 So normalization is unnecessary for valid retail data.
 
-## 14.2 Current OpenNomad difference
+## 14.2 OpenNomad fidelity requirement
 
-`Runtime::quaternion_matrix()` currently normalizes a quaternion defensively
-before constructing the matrix.
+`Runtime::quaternion_matrix()` must mirror `0x00442A00` directly:
 
-That is numerically harmless for the inspected retail keys but is not an exact
-copy of Runtime behavior.
+```text
+input component order:
+    w, x, y, z
 
-If exact malformed-data behavior or bit-level fidelity becomes important,
-OpenNomad should consider matching Runtime's direct conversion.
+normalization:
+    none
+
+matrix convention adaptation:
+    none
+```
+
+In particular, transposing the recovered matrix inverts every unit-quaternion rotation. Large joint rotations therefore become visibly mangled even while small torso/head rotations can still look superficially plausible.
 
 ---
 

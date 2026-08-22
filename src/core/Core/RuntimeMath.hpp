@@ -88,8 +88,9 @@ inline constexpr float k_default_clip_distance_metres{50.0F};
 [[nodiscard]] Matrix3 rotation_y(float radians);
 [[nodiscard]] Matrix3 rotation_z(float radians);
 
-/// Converts a Runtime-native wxyz quaternion to the row-vector 3x3 matrix
-/// used by Runtime objects.
+/// Reproduces Runtime.exe 0x00442A00 for a Runtime-native wxyz quaternion.
+/// The authored components are used directly: do not normalize or transpose
+/// the result as a convention adapter.
 [[nodiscard]] Matrix3 quaternion_matrix(const Quaternion& quaternion);
 
 /// Runtime Euler builder: `Ry(y) * Rx(x) * Rz(z)`. With row vectors this

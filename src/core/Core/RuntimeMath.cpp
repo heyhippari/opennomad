@@ -92,31 +92,24 @@ Matrix3 rotation_z(const float radians) {
 }
 
 Matrix3 quaternion_matrix(const Quaternion& quaternion) {
-  const float length_squared{(quaternion.w * quaternion.w) + (quaternion.x * quaternion.x) +
-                             (quaternion.y * quaternion.y) + (quaternion.z * quaternion.z)};
-  if (length_squared <= 0.0F) {
-    return Matrix3::identity();
-  }
-  const float inverse_length{1.0F / std::sqrt(length_squared)};
-  const float normalized_w{quaternion.w * inverse_length};
-  const float normalized_x{quaternion.x * inverse_length};
-  const float normalized_y{quaternion.y * inverse_length};
-  const float normalized_z{quaternion.z * inverse_length};
-
-  // This is the transpose of the conventional column-vector form because
-  // Runtime multiplies row vectors on the left.
-  return Matrix3{{1.0F - (2.0F * ((normalized_y * normalized_y) +
-                                     (normalized_z * normalized_z))),
-      2.0F * ((normalized_x * normalized_y) + (normalized_w * normalized_z)),
-      2.0F * ((normalized_x * normalized_z) - (normalized_w * normalized_y)),
-      2.0F * ((normalized_x * normalized_y) - (normalized_w * normalized_z)),
-      1.0F - (2.0F * ((normalized_x * normalized_x) +
-                         (normalized_z * normalized_z))),
-      2.0F * ((normalized_y * normalized_z) + (normalized_w * normalized_x)),
-      2.0F * ((normalized_x * normalized_z) + (normalized_w * normalized_y)),
-      2.0F * ((normalized_y * normalized_z) - (normalized_w * normalized_x)),
-      1.0F - (2.0F * ((normalized_x * normalized_x) +
-                         (normalized_y * normalized_y)))}};
+  // Runtime.exe 0x00442A00 consumes the authored wxyz components directly.
+  // Do not normalize or transpose this matrix to adapt conventions: despite
+  // Runtime's row-vector object math, these are the coefficients the retail
+  // routine writes into object animation state and the hierarchy consumes them
+  // as-is.
+  const float w_value{quaternion.w};
+  const float x_value{quaternion.x};
+  const float y_value{quaternion.y};
+  const float z_value{quaternion.z};
+  return Matrix3{{1.0F - (2.0F * ((y_value * y_value) + (z_value * z_value))),
+      2.0F * ((x_value * y_value) - (w_value * z_value)),
+      2.0F * ((x_value * z_value) + (w_value * y_value)),
+      2.0F * ((x_value * y_value) + (w_value * z_value)),
+      1.0F - (2.0F * ((x_value * x_value) + (z_value * z_value))),
+      2.0F * ((y_value * z_value) - (w_value * x_value)),
+      2.0F * ((x_value * z_value) - (w_value * y_value)),
+      2.0F * ((y_value * z_value) + (w_value * x_value)),
+      1.0F - (2.0F * ((x_value * x_value) + (y_value * y_value)))}};
 }
 
 Matrix3 euler_rotation(const float x_radians, const float y_radians, const float z_radians) {
