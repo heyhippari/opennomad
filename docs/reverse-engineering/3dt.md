@@ -1,449 +1,840 @@
-# Omikron `.3DT` indexed texture format
+# Omikron `.3DT` indexed texture payload format
 
-> **Status:** work-in-progress reverse-engineering documentation for OpenNomad.
+> **Status:** work-in-progress reverse-engineering documentation for OpenNomad  
+> **Intended repository path:** `docs/reverse-engineering/3dt.md`  
+> **Last updated:** 2026-08-22
 >
-> This document describes the `.3DT` texture streams used by the Windows release of *Omikron: The Nomad Soul*, with emphasis on behavior observed directly in `Runtime.exe`. The format is unusually dependent on metadata stored outside the `.3DT` file itself, so this document should be read together with [`3do.md`](3do.md).
+> This document describes the indexed palette/texture payload convention used by
+> the Windows retail release of *Omikron: The Nomad Soul*.
+>
+> A `.3DT` is **not a self-describing image container**. Its texture boundaries,
+> dimensions, palette depth and compressed byte counts come from the material
+> table of the corresponding `.3DO` resource.
+>
+> This document distinguishes:
+>
+> 1. serialized `.3DT` bytes;
+> 2. the original Runtime's palette/page/decompression behavior;
+> 3. modern OpenNomad decoding/rendering policy.
 
-## Source precedence and confidence
+Read together with:
 
-The sources used here are, in descending order of authority:
+- [`3do.md`](3do.md) — authoritative material metadata and model-side UV use;
+- [`runtime-coordinate-math.md`](runtime-coordinate-math.md) — presentation
+  transforms, not part of texture serialization;
+- [`script-opcodes.md`](script-opcodes.md) — SCX resource/container context.
 
-1. **`Runtime.exe` behavior** — authoritative for how the retail game reads, decompresses, palettes, and uploads the data.
-2. **Observed retail assets**, including texture payloads associated with standalone `.3DO` resources and `.3DO` objects embedded in `.SCX` scenario data.
-3. **Chevluh's Omikron Blender Importer** — a valuable prior implementation and the original basis for parts of OpenNomad's decoder, but not authoritative where it disagrees with Runtime: <https://github.com/Chevluh/Omikron_Blender_Importer/blob/main/omikronImporter.py>
+---
 
-The `Runtime.exe` currently used for this analysis has:
+# 1. Source precedence and confidence
 
-- PE image base: `0x00400000`
-- linker timestamp: `1999-10-04 20:31:50`
-- SHA-256: `55f7120bfea7891b048c64e3682f3259cdbf2719a43fa24e42254b753c95d2ef`
+Sources are used in this order:
 
-Addresses in this document refer to that executable and are not expected to be stable across other builds.
+1. **`Runtime.exe`** — authoritative for payload boundaries, raw/compressed
+   selection, palette allocation, decompression and indexed page packing.
+2. **Retail assets** — standalone `.3DT` files and equivalent payloads embedded
+   with 3DO resources inside retail SCX data.
+3. **OpenNomad tests/traces** — validation and safe modern implementation
+   behavior.
+4. **Chevluh's Omikron Blender Importer** — valuable prior public
+   implementation, but not authoritative where it differs from Runtime.
 
-Confidence labels used below:
+Reference importer:
 
-- **Confirmed — Runtime:** directly demonstrated by code in `Runtime.exe`.
-- **Confirmed — data:** strongly established from retail asset layout and section boundaries.
-- **Corroborated:** Runtime behavior and asset observations agree, often also agreeing with the Blender importer.
-- **Tentative:** plausible semantic interpretation, but not yet fully demonstrated.
-- **Unknown:** byte layout or behavior is bounded, but its higher-level purpose is not established.
+<https://github.com/Chevluh/Omikron_Blender_Importer/blob/main/omikronImporter.py>
 
-## Overview
-
-`.3DT` is Omikron's indexed texture-data format. Unlike `.3DO`, it does **not** contain a self-describing header, signature, texture count, dimensions, or per-texture directory.
-
-A `.3DT` file is effectively a sequential payload stream whose interpretation is supplied by the material/texture descriptors in the companion `.3DO` model.
-
-For each `.3DO` material, in material-table order, the stream contains:
+Runtime baseline:
 
 ```text
-+-----------------------------------------------+
-| palette: 3 * (1 << bitsPerPixel) bytes       |
-+-----------------------------------------------+
-| indexed pixel payload: dataSize bytes         |
-+-----------------------------------------------+
-| palette for next material                     |
-+-----------------------------------------------+
-| pixel payload for next material               |
-+-----------------------------------------------+
-| ...                                           |
-+-----------------------------------------------+
+File:             Runtime.exe
+Architecture:     PE32 / i386
+Image base:       0x00400000
+Linker timestamp: 1999-10-04 20:31:50
+SHA-256:          55f7120bfea7891b048c64e3682f3259cdbf2719a43fa24e42254b753c95d2ef
 ```
 
-There is no separator between records. The consumer must know, from the `.3DO` material descriptor:
+Confidence labels:
 
-- `bitsPerPixel`;
-- `dataSize`;
-- `width`;
-- `height`;
-- material ordering.
+- **Confirmed — Runtime:** direct executable behavior.
+- **Confirmed — data:** direct retail data observation.
+- **Corroborated:** Runtime and data agree.
+- **Strongly reconstructed:** multiple observations agree but original names are
+  unavailable.
+- **Tentative:** useful hypothesis.
+- **Unknown:** behavior/bytes are bounded but semantics are not.
 
-This means an isolated `.3DT` cannot in general be decoded correctly without its associated `.3DO` metadata or equivalent externally supplied metadata.
+---
 
-## Relationship to `.3DO`
+# 2. Authoring-pipeline context
 
-The relevant serialized `.3DO` record is `0x50` bytes. Runtime turns it into a mutable runtime texture/material descriptor and reuses several fields for texture-page and palette-page allocation.
+Quantic Dream's original tooling included GEM and other internal editors, but no
+current evidence proves that `.3DT` was the native project format of one of
+those tools.
 
-The fields relevant to `.3DT` are:
+Contemporary development notes describe platform-specific asset processing.
 
-| Offset | Size | Type | Runtime-oriented name | Status / notes |
-|---:|---:|---|---|---|
-| `0x00` | 20 | char[20] | material name | Serialized material identifier. |
-| `0x14` | 20 | char[20] | texture resource name | **Confirmed behavior.** Runtime uses this string to identify/share texture-page resources. The Blender importer calls it `BMPfile`. |
-| `0x28` | 20 | char[20] | palette resource name | **Confirmed behavior.** Runtime uses this string to identify/share palette resources. The Blender importer calls it `TGAfile`. |
-| `0x3C` | 4 | u32 | `dataSize` | Number of bytes occupied by the stored indexed pixel payload for this material. |
-| `0x40` | 2 | u16 | `texturePageIndex` | **Confirmed — Runtime mutation.** Index of a 256×256 runtime indexed texture page. Serialized pre-load meaning, if any, remains unknown. |
-| `0x42` | 2 | u16 | `textureSlotIndex` | **Confirmed — Runtime mutation.** Slot within a shared texture page. |
-| `0x44` | 2 | u16 | `palettePageIndex` | **Confirmed — Runtime mutation.** Selects a shared 256-entry runtime palette page. |
-| `0x46` | 2 | u16 | `paletteSlotIndex` | **Confirmed — Runtime mutation.** Selects the material's subpalette within that page. |
-| `0x48` | 1 | u8 | `bitsPerPixel` | Indexed texture bit depth used by Runtime as `1 << bitsPerPixel`. Only the low byte is needed for this calculation. |
-| `0x49` | 1 | byte | unknown / runtime scratch | Not established as serialized `.3DT` metadata. |
-| `0x4A` | 1 | u8 | runtime atlas X offset | **Confirmed behavior.** Used as the low-byte/X component of the destination location inside a 256×256 texture page. |
-| `0x4B` | 1 | u8 | runtime atlas Y offset | **Confirmed behavior.** Used as the high-byte/Y component of the destination location inside a 256×256 texture page. |
-| `0x4C` | 2 | u16 | `width` | Texture width in pixels. |
-| `0x4E` | 2 | u16 | `height` | Texture height in pixels. |
+Treat `.3DT` as a **retail/build/runtime payload representation**, not as a
+recovered GEM source file.
 
-The names `BMPfile` and `TGAfile` from the Blender importer may reflect authoring-pipeline history, but Runtime's retail behavior gives the two strings a more useful operational interpretation: `+0x14` is used as a texture-resource identity and `+0x28` as a palette-resource identity.
+---
 
-### Important consequence
+# 3. Core concept: `.3DT` has no header
 
-The `.3DT` stream contains **only palette and indexed-pixel bytes**. Dimensions, compression size, bit depth, names, and material association all live in the `.3DO` descriptor.
+There is no known:
 
-## Logical `.3DT` record
+- magic/signature;
+- version field;
+- texture count;
+- width/height table;
+- palette-count table;
+- record directory;
+- per-record compressed-size header.
 
-For one material, define:
+Instead, `.3DT` is interpreted by walking the corresponding `.3DO` material
+descriptors in material-table order.
+
+For each material:
 
 ```text
-colorCount  = 1 << bitsPerPixel
-paletteSize = colorCount * 3
-pixelCount  = width * height
++----------------------------------------------+
+| palette: 3 * (1 << bitsPerPixel) bytes      |
++----------------------------------------------+
+| indexed pixel payload: dataSize bytes        |
++----------------------------------------------+
+| next material palette                        |
++----------------------------------------------+
+| next material pixel payload                  |
++----------------------------------------------+
+| ...                                          |
++----------------------------------------------+
 ```
 
-The corresponding `.3DT` record is:
+The start of the next material is:
 
 ```text
-struct Logical3DTRecord {
-    uint8_t palette[colorCount][3]; // paletteSize bytes
-    uint8_t pixelPayload[dataSize]; // raw indices or compressed stream
-};
+nextOffset =
+    currentOffset
+    + 3 * (1 << bitsPerPixel)
+    + dataSize
 ```
 
-This is a **logical** description, not a literal C structure, because both arrays are variable-sized and no record header exists on disk.
+No delimiter is stored between records.
 
-The start of record `n+1` is therefore:
+Therefore an isolated `.3DT` generally cannot be decoded correctly without:
 
 ```text
-next = current + 3 * (1 << bitsPerPixel) + dataSize
+the companion .3DO material table
 ```
 
-using the metadata of record `n`.
+or equivalent externally supplied material metadata.
 
-## Palette data
+---
 
-### Size
+# 4. Material metadata supplied by `.3DO`
 
-**Confirmed — Runtime.** Palette size is calculated exactly as:
+The relevant 3DO material descriptor is `0x50` bytes.
+
+Fields affecting 3DT interpretation:
+
+| 3DO offset | Size | Type | Meaning |
+|---:|---:|---|---|
+| `0x00` | 20 | `char[20]` | material name |
+| `0x14` | 20 | `char[20]` | Runtime texture/cache resource name |
+| `0x28` | 20 | `char[20]` | Runtime palette resource name |
+| `0x3C` | 4 | `u32` | `dataSize` |
+| `0x40` | 2 | `u16` | runtime texture-page field |
+| `0x42` | 2 | `u16` | runtime texture-slot field |
+| `0x44` | 2 | `u16` | runtime palette-page field |
+| `0x46` | 2 | `u16` | runtime palette-slot field |
+| `0x48` | 2 | `u16` | bit-depth field; Runtime uses low byte for palette-size shift |
+| `0x4A` | 1 | `u8` | runtime texture-page X/U offset |
+| `0x4B` | 1 | `u8` | runtime texture-page Y/V offset |
+| `0x4C` | 2 | `u16` | width |
+| `0x4E` | 2 | `u16` | height |
+
+Important:
 
 ```text
-colorCount  = 1 << bitsPerPixel
-paletteSize = 3 * colorCount
+dataSize
+bitsPerPixel
+width
+height
+material ordering
 ```
 
-Examples:
+are **not stored in `.3DT` itself**.
 
-| Indexed depth | Entries | Palette bytes |
-|---:|---:|---:|
-| 4 bpp | 16 | 48 (`0x30`) |
-| 8 bpp | 256 | 768 (`0x300`) |
+## 4.1 Bit-depth field width
 
-Runtime's palette-loading path at `0x004A77E0` calculates this size directly from byte `material+0x48`.
-
-### Entry layout
-
-Each palette entry occupies exactly three consecutive bytes:
+For serialization/documentation it is safest to preserve the full:
 
 ```text
-byte 0
-byte 1
-byte 2
+u16 at material +0x48
 ```
 
-The Blender importer interprets these as `R`, `G`, `B`, and Runtime subsequently consumes them as three independent color channels before converting them into the active display pixel format.
+because the record layout physically allocates two bytes there.
 
-**Corroborated:** treating the serialized order as RGB is consistent with the importer and the Runtime palette-processing pipeline. The exact historical naming of the three internal channel lookup tables has not been independently recovered, so code should avoid deriving additional format semantics from those table addresses alone.
-
-There is **no serialized alpha byte** in a `.3DT` palette entry.
-
-### Palette allocation in Runtime
-
-Runtime does not keep every material palette as an isolated object. It packs palettes into shared pages containing 256 logical palette entries.
-
-After allocation, the material contains:
+The recovered Runtime palette-size calculation consumes the low byte when
+computing:
 
 ```text
-palettePageIndex = material[0x44]
-paletteSlotIndex = material[0x46]
+1 << bitsPerPixel
 ```
 
-For a texture with `bitsPerPixel = b`, its serialized palette is placed at the logical palette-page index:
+Do not repurpose `+0x49` as a separate mandatory `.3DT` header field.
+
+## 4.2 Runtime allocation fields
+
+The page/slot/atlas fields are part of the mutable material record used by the
+original Runtime.
+
+A modern OpenNomad renderer does not need to reproduce the same allocator
+internally.
+
+They remain important for understanding:
+
+- page-space UVs;
+- palette rebasing;
+- original sprite rendering;
+- why a material's serialized local indices are not always the final index
+  stored in Runtime's shared page.
+
+---
+
+# 5. Logical per-material record
+
+Define:
 
 ```text
-firstEntry = palettePageIndex * 256
-           + paletteSlotIndex * (1 << b)
+bpp          = low byte of material.bitsPerPixel
+colorCount   = 1 << bpp
+paletteSize  = 3 * colorCount
+pixelCount   = width * height
 ```
 
-The byte address in Runtime's shared RGB palette storage is therefore equivalent to:
+Then the logical material payload is:
 
 ```text
-paletteRgbBase + 3 * firstEntry
-```
-
-This relationship is directly visible in `0x004A77E0` and the palette callback at `0x004A7900`.
-
-For 8-bpp textures, a single material palette consumes all 256 entries of a page. Lower-bit-depth palettes can share a page.
-
-### Palette names and sharing
-
-Runtime uses the 20-byte string at material offset `0x28` when registering or finding palette resources. This is stronger evidence than the Blender importer's historical `TGAfile` label that the field functions as a **palette resource key** in the retail engine.
-
-Whether two materials with identical palette bytes but different palette-resource names are intentionally considered distinct has not yet been exhaustively characterized.
-
-## Transparency and alpha
-
-`.3DT` does not contain explicit alpha values.
-
-The Blender importer applies this rule when expanding a palette to RGBA:
-
-```text
-RGB == (0, 0, 0) -> alpha 0
-otherwise        -> alpha 1
-```
-
-That is **not confirmed as part of the Omikron file format**.
-
-Runtime reads only three bytes per palette entry. Original transparency behavior is controlled elsewhere, including mesh/material rendering flags such as alpha test, alpha blending, additive blending, and subtractive blending, plus renderer state.
-
-OpenNomad should therefore not document or implement “black means transparent” as an intrinsic `.3DT` rule unless later Runtime analysis demonstrates such a rule in the rendering path.
-
-## Pixel payload
-
-The palette is followed immediately by `dataSize` bytes belonging to the indexed pixel payload.
-
-The decompressed representation is one byte per pixel regardless of the material's indexed bit depth:
-
-```text
-uint8_t indices[width * height]
-```
-
-A 4-bpp texture is therefore **not nibble-packed** after decompression. `bitsPerPixel` controls the palette size/range, not the number of bits physically used per decoded pixel.
-
-For a `b`-bpp texture, serialized/decompressed local indices are expected to address a palette of:
-
-```text
-0 .. (1 << b) - 1
-```
-
-The retail engine later rebases those local indices when packing several small palettes into one 256-entry runtime palette page.
-
-## Raw versus compressed payloads
-
-**Confirmed — Runtime.** The canonical test is:
-
-```text
-if dataSize == width * height:
-    payload is raw indexed pixels
-else:
-    payload is compressed
-```
-
-This is important because the Blender importer contains a special check for `compressedSize == 65536`. Runtime shows that `65536` is not a general magic value meaning “uncompressed”; it is simply the raw pixel count of a 256×256 texture.
-
-### Optimized 256×256 path
-
-`0x004A75E0` has a dedicated branch for:
-
-```text
-width  == 256
-height == 256
-```
-
-If `dataSize == 0x10000`, Runtime copies exactly 65536 raw index bytes directly into the selected 256×256 texture page.
-
-If the dimensions are 256×256 but `dataSize != 0x10000`, Runtime calls the decompressor directly with the texture page as its destination.
-
-For other dimensions, Runtime applies the same general `dataSize == width * height` raw test before deciding whether to decompress.
-
-## Runtime texture pages
-
-The original renderer stores indexed texture pixels in shared 256×256 pages.
-
-A page therefore occupies:
-
-```text
-256 * 256 = 65536 = 0x10000 bytes
-```
-
-The material's runtime `texturePageIndex` at `+0x40` selects a page. Runtime computes the page base using an effective `pageIndex << 16`, which is exactly a 65536-byte stride.
-
-Smaller textures are packed into these pages. Material bytes `+0x4A` and `+0x4B` are populated with the pixel offset of the material inside the page, and Runtime addresses the resulting location as:
-
-```text
-pageBase + (atlasY << 8) + atlasX
+Logical3DTPayload
+{
+    palette[paletteSize]
+    pixels[dataSize]
+}
 ```
 
 where:
 
 ```text
-atlasX = material[0x4A]
-atlasY = material[0x4B]
+palette = colorCount RGB triplets
+pixels  = raw indices or compressed byte stream
 ```
 
-The exact allocation policy for all non-square texture dimensions still deserves additional asset-wide verification. The page addressing itself is confirmed.
+This is not a literal C struct because both arrays are variable-sized and no
+record header exists.
 
-## Local indices versus runtime palette-page indices
+---
 
-This distinction is easy to miss and is important when comparing `.3DT` bytes with Runtime memory.
+# 6. Palette representation
 
-Serialized/decompressed `.3DT` pixels are **local indices into the material's own palette**.
+## 6.1 Palette size
 
-When lower-bit-depth palettes share a 256-entry runtime palette page, `0x004A75E0` transforms each decoded pixel before copying it into the shared indexed texture page:
+**Confirmed — Runtime.**
+
+Runtime calculates:
 
 ```text
-paletteBaseIndex = (1 << bitsPerPixel) * paletteSlotIndex
-runtimeIndex     = localIndex + paletteBaseIndex
+colorCount  = 1 << bpp
+paletteSize = colorCount * 3
 ```
 
-For example, if a 4-bpp texture occupies palette slot 3:
+Examples:
+
+| Indexed depth | Palette entries | Palette bytes |
+|---:|---:|---:|
+| 1 | 2 | 6 |
+| 2 | 4 | 12 |
+| 4 | 16 | 48 / `0x30` |
+| 8 | 256 | 768 / `0x300` |
+
+4-bpp and 8-bpp assets are established practical cases. Runtime's calculation
+is generic; a full retail inventory of every used depth is still desirable.
+
+## 6.2 Palette entry layout
+
+Each entry contains exactly:
 
 ```text
-colorCount       = 16
-paletteBaseIndex = 16 * 3 = 48
-
-local index 0  -> runtime page index 48
-local index 15 -> runtime page index 63
+3 bytes
 ```
 
-The `.3DT` file itself still contains the local values `0..15`.
+The interpretation as:
 
-A modern renderer does not have to reproduce this packing internally. OpenNomad can expand each texture to an independent RGBA image, but the decoder must apply the palette using the **local** indices from the file rather than assuming they are already page-global indices.
+```text
+R, G, B
+```
 
-## Indexed texture compression
+is strongly corroborated by:
 
-Runtime's decompressor begins at `0x004B4B40`.
+- the reference importer;
+- visual decoding;
+- Runtime's subsequent colour conversion/palette-lighting path.
 
-It is a compact LZ/RLE-style byte-stream decoder. It operates entirely on bytes and has no knowledge of image width, height, palette, rows, or texture boundaries.
+There is no fourth serialized alpha byte.
 
-### Runtime function contract
+## 6.3 No serialized alpha channel
 
-The function has the effective signature:
+The file contains:
+
+```text
+RGB-like triplet
+```
+
+not:
+
+```text
+RGBA
+```
+
+Therefore any alpha used by a modern renderer is **derived runtime state**.
+
+That distinction matters particularly for black-key transparency.
+
+---
+
+# 7. Transparency and the black colour key
+
+OpenNomad currently expands a palette entry:
+
+```text
+(0, 0, 0)
+```
+
+to:
+
+```text
+alpha = 0
+```
+
+and all other palette colours to:
+
+```text
+alpha = 255
+```
+
+The reference Blender importer uses the same convention.
+
+This is a useful and apparently correct rendering convention for Omikron
+assets, but it must be described precisely:
+
+```text
+black-key transparency is not a fourth byte in .3DT
+```
+
+The serialized palette still stores only RGB.
+
+The exact original Direct3D mechanism by which black became transparent in each
+alpha-test/blend path still belongs to renderer-state reverse engineering.
+
+Therefore:
+
+- **format fact:** no serialized alpha exists;
+- **engine/rendering convention:** pure black functions as the transparency key
+  for assets that use keyed/transparent rendering;
+- **material state still matters:** alpha-test, alpha-blend, additive and other
+  mesh flags determine how transparent content is ultimately combined.
+
+Do not infer that every black texel in every opaque material must be discarded
+solely because its RGB value is zero.
+
+---
+
+# 8. Pixel representation after decoding
+
+The logical decompressed image is:
+
+```text
+uint8_t indices[width * height]
+```
+
+That remains true for lower indexed depths such as 4 bpp.
+
+In other words:
+
+```text
+4 bpp controls palette size
+```
+
+but the decompressed pixels are not packed two-per-byte.
+
+For a `b`-bit material, local decoded values are expected to fall in:
+
+```text
+0 .. (1 << b) - 1
+```
+
+before Runtime's shared-palette-page rebasing.
+
+A modern decoder should validate this range before palette lookup.
+
+---
+
+# 9. Raw versus compressed payload
+
+**Confirmed — Runtime.**
+
+The canonical decision is:
+
+```text
+if dataSize == width * height:
+    payload is raw indices
+else:
+    payload is compressed
+```
+
+This rule applies generally.
+
+## 9.1 `65536` is not a magic raw marker
+
+Older importer code special-cased:
+
+```text
+compressedSize == 65536
+```
+
+as uncompressed.
+
+Runtime shows the reason that often worked:
+
+```text
+256 * 256 = 65536 = 0x10000
+```
+
+A full-size texture with:
+
+```text
+width     = 256
+height    = 256
+dataSize  = 65536
+```
+
+is simply the normal:
+
+```text
+dataSize == pixelCount
+```
+
+raw case.
+
+Smaller raw textures are legal under the same rule.
+
+## 9.2 256x256 fast path
+
+Runtime code around:
+
+```text
+0x004A75E0
+```
+
+has a dedicated 256x256 upload path.
+
+If:
+
+```text
+width == 256
+height == 256
+dataSize == 0x10000
+```
+
+it copies the 65536 raw indices directly into a texture page.
+
+If dimensions are 256x256 but `dataSize != 0x10000`, Runtime invokes the
+decompressor directly against the destination page.
+
+---
+
+# 10. Original Runtime texture pages
+
+The retail renderer stores indexed pixels in shared:
+
+```text
+256 x 256
+```
+
+pages.
+
+One page is:
+
+```text
+256 * 256 = 65536 = 0x10000 bytes
+```
+
+The material runtime texture-page field at `+0x40` selects the page.
+
+A page base therefore advances by:
+
+```text
+pageIndex << 16
+```
+
+bytes.
+
+Smaller material textures can be packed within one page.
+
+Runtime stores page-space placement in:
+
+```text
+material +0x4A  atlas U/X
+material +0x4B  atlas V/Y
+```
+
+and addresses a pixel as conceptually:
+
+```text
+pageBase + (atlasV << 8) + atlasU
+```
+
+The exact allocator policy for every rectangular size remains incompletely
+documented, but page dimensions and addressing are established.
+
+---
+
+# 11. Original Runtime palette pages
+
+Runtime also packs palettes into shared pages of:
+
+```text
+256 logical colour entries
+```
+
+Material runtime state:
+
+```text
+palettePageIndex = material +0x44
+paletteSlotIndex = material +0x46
+```
+
+For a material with:
+
+```text
+colorCount = 1 << bpp
+```
+
+the first logical palette entry is:
+
+```text
+firstEntry =
+    palettePageIndex * 256
+    + paletteSlotIndex * colorCount
+```
+
+The corresponding RGB byte offset is:
+
+```text
+paletteRgbBase + firstEntry * 3
+```
+
+Consequences:
+
+- 8-bpp palette: consumes all 256 entries of one page;
+- 4-bpp palette: consumes 16 entries and can share a page with other palettes.
+
+This organization is runtime memory management, not additional serialized
+`.3DT` metadata.
+
+---
+
+# 12. Local indices versus runtime page indices
+
+Serialized/decompressed 3DT indices are **local to the material palette**.
+
+When Runtime packs a lower-bpp texture into a shared palette page, it rebases
+each pixel:
+
+```text
+paletteBaseIndex =
+    (1 << bpp) * paletteSlotIndex
+
+runtimePageIndex =
+    localIndex + paletteBaseIndex
+```
+
+Example:
+
+```text
+bpp = 4
+colorCount = 16
+paletteSlotIndex = 3
+
+paletteBaseIndex = 48
+
+local 0  -> page index 48
+local 15 -> page index 63
+```
+
+The `.3DT` payload still contains:
+
+```text
+0 .. 15
+```
+
+not:
+
+```text
+48 .. 63
+```
+
+A modern RGBA decoder should apply the material's local palette directly and
+does not need to emulate page-index rebasing.
+
+---
+
+# 13. UV implications of the 256x256 page architecture
+
+UV bytes are serialized in 3DO polygon/frame records, not in `.3DT`.
+
+However, original page packing explains why different consumers normalize them
+differently.
+
+## 13.1 Ordinary mesh geometry
+
+OpenNomad's ordinary per-material mesh path currently converts:
+
+```text
+u = uByte / material.width
+v = vByte / material.height
+```
+
+because each decoded material becomes an independent modern GPU texture.
+
+## 13.2 Sprite frames
+
+The sprite path uses original page-space semantics:
+
+```text
+u = uByte / 256.0 + textureOffsetU
+v = vByte / 256.0 + textureOffsetV
+```
+
+This matches the 256x256 Runtime page model.
+
+See the dual rectangle/sprite-frame interpretation in [`3do.md`](3do.md).
+
+## 13.3 Do not hard-code a vertical flip
+
+The serialized payload is a linear pixel stream.
+
+No general `.3DT` format rule says:
+
+```text
+flip image vertically
+```
+
+just to match OpenGL, Blender or another API convention.
+
+Image origin/orientation belongs to the consumer/rendering path unless Runtime
+explicitly transforms rows.
+
+Current OpenNomad texture decoding leaves the serialized row order intact.
+
+---
+
+# 14. Indexed texture compressor
+
+Runtime's decompressor begins around:
+
+```text
+0x004B4B40
+```
+
+It is a compact byte-oriented LZ/RLE codec.
+
+It does not know:
+
+- texture width;
+- texture height;
+- palette size;
+- scanline boundaries.
+
+Its effective original contract is approximately:
 
 ```c
-size_t Decompress3DT(
-    uint8_t *destination,
-    const uint8_t *source,
+size_t DecompressIndexedTexture(
+    uint8_t* destination,
+    const uint8_t* source,
     size_t compressedSize);
 ```
 
-It receives **no expected decompressed size**.
-
-Runtime computes:
+The caller separately knows the expected:
 
 ```text
-sourceEnd = source + compressedSize
+width * height
 ```
 
-and stops based on compressed-input consumption. The return value is:
+pixel count.
 
-```text
-number of destination bytes produced/advanced
-```
+---
 
-The texture upload path does not appear to rely on that return value for validating `width * height`.
+# 15. Decoder initialization
 
-### Initial bytes
-
-For a compressed stream, Runtime assumes at least two bytes are available:
+A compressed stream begins with:
 
 ```text
 source[0] = first literal output byte
 source[1] = first control byte
 ```
 
-The first byte is copied directly to the destination before any control bit is processed.
-
-The first control byte then governs the next eight coding decisions.
-
-### Control-bit order
-
-Control bits are consumed **most-significant bit first**:
+Runtime copies the first source byte immediately:
 
 ```text
-bit 7, bit 6, bit 5, ... bit 0
+dst[0] = source[0]
 ```
 
-For each bit:
+Then the control byte governs the next up-to-eight tokens.
 
-- `0` -> copy one literal byte from the source;
-- `1` -> read a sequence descriptor and emit a run/back-reference.
+Compressed data therefore requires at least enough source data to supply the
+initial literal/control sequence in a valid stream.
 
-After eight decisions, a new control byte is read and processing continues.
+---
 
-Conceptually:
+# 16. Control bits
+
+Control bits are consumed:
+
+```text
+MSB first
+```
+
+in order:
+
+```text
+bit 7
+bit 6
+bit 5
+bit 4
+bit 3
+bit 2
+bit 1
+bit 0
+```
+
+Meaning:
+
+```text
+0 -> literal byte
+1 -> sequence descriptor
+```
+
+After eight token decisions, Runtime obtains another control byte.
+
+Conceptual stream:
 
 ```text
 firstLiteral
-controlByte
-  token 0
-  token 1
-  ...
-  token 7
-controlByte
-  token 8
-  ...
+control0
+    token0
+    token1
+    ...
+    token7
+control1
+    token8
+    ...
 ```
 
-The variable-length bytes belonging to tokens are interleaved in the stream between control bytes.
+Token payload bytes are interleaved with control bytes.
 
-## Sequence descriptor
+---
 
-When a control bit is `1`, Runtime reads one descriptor byte `d`:
+# 17. Sequence descriptor
+
+For a sequence token Runtime reads:
+
+```text
+u8 d
+```
+
+and derives:
 
 ```text
 type = d & 0x03
 base = d >> 2
 ```
 
-The upper six bits encode the run length. The lower two bits select one of four forms.
+The upper six bits encode length; the lower two bits select one of four forms.
 
-| Type | Form | Output length | Source/back-reference distance | Extra bytes |
-|---:|---|---:|---:|---:|
-| 0 | repeat previous byte | `base + 2` | 1 | 0 |
+| Type | Meaning | Output length | Distance / source | Extra bytes |
+|---:|---|---:|---|---:|
+| 0 | repeat previous byte | `base + 2` | distance 1 / previous byte | 0 |
 | 1 | short LZ copy | `base + 3` | `1 + next_u8` | 1 |
 | 2 | long LZ copy | `base + 3` | `1 + big_endian_u16` | 2 |
-| 3 | 256-granularity LZ/self copy | `base + 3` | `next_u8 << 8` | 1 |
+| 3 | 256-granularity/self copy | `base + 3` | `next_u8 << 8` | 1 |
 
-The maximum descriptor-derived lengths are therefore:
+Maximum descriptor-derived lengths:
 
 ```text
-type 0: 65 bytes  (63 + 2)
-type 1: 66 bytes  (63 + 3)
-type 2: 66 bytes
-type 3: 66 bytes
+type 0: 65
+types 1..3: 66
 ```
 
-### Type 0 — repeated previous byte
+---
 
-Type 0 emits:
+# 18. Type 0: repeated previous byte
+
+For:
+
+```text
+type = 0
+```
+
+Runtime emits:
 
 ```text
 length = (d >> 2) + 2
 value  = destination[-1]
 ```
 
-Runtime implements this as an optimized fill rather than a generic byte-by-byte LZ copy.
+Semantically:
 
-Semantically it is equivalent to a distance-1 back-reference.
+```text
+distance = 1
+```
 
-### Type 1 — short back-reference
+Runtime uses an optimized fill-like implementation.
 
-Runtime reads one extra byte `n`:
+A valid stream cannot use this before at least one output byte exists; the
+mandatory initial literal guarantees that condition for normal decoding.
+
+---
+
+# 19. Type 1: short back-reference
+
+Runtime reads:
+
+```text
+u8 n
+```
+
+and computes:
 
 ```text
 length   = (d >> 2) + 3
 distance = 1 + n
 ```
 
-Range:
+Distance range:
 
 ```text
-1 .. 256 bytes back
+1 .. 256
 ```
 
-The copy is performed forward, one byte at a time, so overlapping references are supported.
+The copy advances forward one byte at a time.
 
-### Type 2 — 16-bit back-reference
+Overlapping copies are therefore intentional and valid.
 
-Runtime reads two bytes in **big-endian order** for the distance component:
+---
+
+# 20. Type 2: 16-bit back-reference
+
+Runtime reads the two distance bytes in **big-endian order**:
 
 ```text
 n = (next0 << 8) | next1
@@ -452,523 +843,915 @@ length   = (d >> 2) + 3
 distance = 1 + n
 ```
 
-Range:
+Distance range:
 
 ```text
-1 .. 65536 bytes back
+1 .. 65536
 ```
 
-The use of big-endian order here is local to the compression token. It does not imply that other Omikron structures are big-endian; `.3DO` scalar structures are little-endian.
+This local big-endian field does not change the little-endian nature of 3DO
+structures.
 
-### Type 3 — 256-byte-granularity back-reference
+Again, copies proceed forward and can overlap.
 
-Runtime reads one byte `n` and computes:
+---
+
+# 21. Type 3: 256-byte-granularity back-reference
+
+This is the most important edge case in the current decoder work.
+
+Runtime reads:
+
+```text
+u8 n
+```
+
+and computes exactly:
 
 ```text
 length   = (d >> 2) + 3
 distance = n << 8
 ```
 
-Possible encoded distances are:
+Possible numeric distances:
 
 ```text
-0, 256, 512, ... 65280
+0
+256
+512
+...
+65280
 ```
 
-This is a direct observation from `0x004B4B40`.
+There is:
 
-#### Type 3 with `n == 0`
+- no `+1`;
+- no `+256`;
+- no conversion of zero to 65536.
 
-This is an important edge case.
+## 21.1 `n == 0` means distance zero
 
-Runtime does **not** reinterpret zero as 65536. There is no `+65536`, wraparound fix-up, or special branch.
-
-Instead:
+When:
 
 ```text
-distance = 0
-sourcePtr = destinationPtr
+n = 0
 ```
 
-The byte-copy loop then reads each byte from the destination position that it is about to write back to the same position, while advancing the destination pointer.
+Runtime computes:
 
-Operationally, this is a **self-copy/no-op run that advances the output cursor while preserving the destination's previous contents**.
+```text
+sourcePointer = destinationPointer
+```
 
-If the destination region is already zeroed, the result looks like a zero run. If it contains previous data, that data is preserved.
+The byte loop then repeatedly performs conceptually:
 
-This behavior may be intentional for some texture-page cases, but its higher-level purpose is not yet confirmed. A decoder that blindly converts type-3 zero to a 65536-byte back-reference does **not** match Runtime.
+```text
+*dst = *src
+dst++
+src++
+```
 
-This edge case was particularly relevant during OpenNomad's texture-decoder work because treating it as an ordinary vector-style back-reference can lead to truncated output or an out-of-range access.
+with `src == dst` at each iteration.
 
-## Overlapping copies
+This is therefore an **advancing self-copy**:
 
-Types 1, 2, and 3 are copied forward byte-by-byte:
+```text
+output cursor advances
+existing destination bytes are preserved
+```
+
+It is not intrinsically:
+
+```text
+a zero run
+```
+
+and it is not:
+
+```text
+a 65536-byte back-reference
+```
+
+If the destination was already zeroed, the preserved bytes happen to be zero.
+If not, their previous values remain.
+
+## 21.2 Known OpenNomad mismatch
+
+At the time of this documentation update, OpenNomad's current
+`Texture3DT::decompress()` still maps:
+
+```text
+type-3 extra byte 0
+```
+
+to:
+
+```text
+65536
+```
+
+That does **not** match the recovered Runtime behavior.
+
+This should be treated as a known implementation debt, not as ambiguity in this
+format document.
+
+The correct Runtime-compatible semantics are:
+
+```text
+distance = extraByte << 8
+```
+
+including distance zero.
+
+## 21.3 Destination initialization matters
+
+A distance-zero self-copy is unusual because its visible result depends on the
+bytes already in the destination.
+
+Runtime can decode directly into a texture page in some paths and through
+temporary storage in others.
+
+To reproduce a type-3-zero stream byte-for-byte, the initialization/reuse state
+of that destination must also be understood.
+
+This remains an open runtime-memory question even though the machine-level token
+semantics are established.
+
+---
+
+# 22. Overlapping references
+
+Types 1, 2 and non-zero type 3 copy forward.
+
+Conceptually:
 
 ```text
 repeat length times:
-    *dst = *history
-    ++dst
-    ++history
+    dst[0] = history[0]
+    dst++
+    history++
 ```
 
-This means the format intentionally supports overlapping LZ references. A short history sequence can expand into repeated patterns as newly emitted bytes become part of the source for later bytes in the same token.
+The source range can overlap newly written output.
 
-Implementations must **not** use a copy primitive whose behavior is undefined for overlap.
+Do not replace this with a copy operation whose overlap semantics are undefined.
 
-A simple byte loop reproduces Runtime semantics most directly.
+A byte loop or explicitly overlap-safe expansion reproduces Runtime behavior.
 
-## Compression termination behavior
+---
 
-Runtime's decoder is input-size driven.
+# 23. Decoder termination
 
-The main continuation condition is effectively:
+Runtime's decompressor is fundamentally **compressed-input-size driven**.
+
+It receives:
 
 ```text
-source < sourceEnd
+compressedSize
 ```
 
-It does not receive `width * height`, and therefore cannot independently stop when the expected image size has been produced.
-
-Consequences:
-
-1. A valid caller must supply the exact compressed payload size from the `.3DO` descriptor.
-2. The caller must know the expected decompressed pixel count separately.
-3. A modern safe decoder should verify that the decompressed size is exactly `width * height` after decoding.
-4. Runtime itself is permissive/unsafe with malformed streams in ways OpenNomad should not emulate literally.
-
-### Boundary overreads in the original implementation
-
-The retail decoder assumes valid game data. It may fetch a new control byte immediately after the eighth token before checking whether the compressed source has reached the supplied end pointer. Parameter bytes for a token are likewise read before a final boundary check.
-
-That behavior should be treated as a property of the 1999 implementation, **not** as permission for a modern parser to read beyond `dataSize`.
-
-OpenNomad should bounds-check every literal, descriptor, and parameter read.
-
-## Invalid history references
-
-The Blender importer contains a defensive behavior:
+and computes:
 
 ```text
-if backReferenceDistance > bytesAlreadyProduced:
+sourceEnd = source + compressedSize
+```
+
+It does not receive the expected uncompressed pixel count.
+
+Therefore the original codec itself cannot decide:
+
+```text
+stop exactly at width * height
+```
+
+from dimensions.
+
+The caller knows the expected image size separately.
+
+## 23.1 Safety difference in OpenNomad
+
+A modern decoder should not reproduce Runtime's unsafe assumptions literally.
+
+Retail Runtime assumes valid game data and can read token/control bytes with
+minimal boundary protection.
+
+OpenNomad should validate every read against `dataSize`.
+
+---
+
+# 24. Invalid history references
+
+The reference Blender importer contains a defensive behavior equivalent to:
+
+```text
+if distance > bytesAlreadyProduced:
     output zero
 ```
 
-Runtime's decompressor does **not** implement that rule.
+Runtime does not define that as codec semantics.
 
-Except for the legitimate type-3 zero-distance self-copy case, a back-reference that points before the beginning of the destination buffer causes Runtime to read memory before the output region. Retail assets are assumed not to rely on such malformed references.
+For types 1, 2 and non-zero type 3, a distance that points before the intended
+history region is malformed/unsafe data.
 
-A safe OpenNomad decoder should reject an invalid history reference rather than silently defining zero-fill as part of the file format.
-
-## Reference decompression pseudocode
-
-The following pseudocode describes the observed grammar while adding explicit safety checks that Runtime lacks.
+A robust decoder should:
 
 ```text
-function decompress3DT(source, compressedSize, expectedSize):
+report/reject invalid history
+```
+
+rather than silently making zero-fill part of the format.
+
+The separate type-3 **distance-zero** self-copy case is legitimate machine-level
+behavior and must not be rejected simply because `distance <= produced` logic
+was designed for ordinary backward references.
+
+---
+
+# 25. Runtime-faithful decompression pseudocode
+
+The following describes the recovered token grammar while adding modern bounds
+checks.
+
+```text
+function decode(source, compressedSize, destination, expectedSize):
+    require expectedSize > 0
     require compressedSize >= 2
 
     src = 0
-    dst = byte_array(expectedSize)   # initialization policy discussed below
     out = 0
 
-    # Runtime copies this unconditionally.
-    require out < expectedSize
-    dst[out] = source[src]
-    out += 1
-    src += 1
+    destination[out++] = source[src++]
 
-    control = source[src]
-    src += 1
+    control = source[src++]
     bitsRemaining = 8
 
     while src < compressedSize:
-        compressedToken = (control & 0x80) != 0
+        isSequence = (control & 0x80) != 0
 
-        if not compressedToken:
+        if not isSequence:
             require src < compressedSize
             require out < expectedSize
-            dst[out] = source[src]
-            out += 1
-            src += 1
+            destination[out++] = source[src++]
 
         else:
             require src < compressedSize
-            d = source[src]
-            src += 1
+            d = source[src++]
 
             type = d & 3
             base = d >> 2
 
             if type == 0:
-                require out > 0
                 length = base + 2
-                value = dst[out - 1]
+                require out > 0
+                value = destination[out - 1]
+
                 repeat length times:
                     require out < expectedSize
-                    dst[out] = value
-                    out += 1
+                    destination[out++] = value
 
             else if type == 1:
                 require src < compressedSize
-                n = source[src]
-                src += 1
+                distance = 1 + source[src++]
                 length = base + 3
-                distance = 1 + n
                 require distance <= out
+
                 repeat length times:
                     require out < expectedSize
-                    dst[out] = dst[out - distance]
-                    out += 1
+                    destination[out] = destination[out - distance]
+                    out++
 
             else if type == 2:
                 require src + 1 < compressedSize
                 n = (source[src] << 8) | source[src + 1]
                 src += 2
-                length = base + 3
+
                 distance = 1 + n
+                length = base + 3
                 require distance <= out
+
                 repeat length times:
                     require out < expectedSize
-                    dst[out] = dst[out - distance]
-                    out += 1
+                    destination[out] = destination[out - distance]
+                    out++
 
-            else: # type == 3
+            else:
                 require src < compressedSize
-                n = source[src]
-                src += 1
-                length = base + 3
+                n = source[src++]
+
                 distance = n << 8
+                length = base + 3
 
                 if distance == 0:
-                    # Runtime advances while preserving existing destination bytes.
                     require out + length <= expectedSize
+                    # Runtime reads/writes the same addresses.
+                    # Preserve existing destination bytes.
                     out += length
                 else:
                     require distance <= out
+
                     repeat length times:
                         require out < expectedSize
-                        dst[out] = dst[out - distance]
-                        out += 1
+                        destination[out] = destination[out - distance]
+                        out++
 
-        bitsRemaining -= 1
+        control = (control << 1) & 0xFF
+        bitsRemaining--
 
         if bitsRemaining == 0:
             if src >= compressedSize:
                 break
-            control = source[src]
-            src += 1
+
+            control = source[src++]
             bitsRemaining = 8
-        else:
-            control = (control << 1) & 0xFF
 
-    require out == expectedSize
-    return dst
+    return out
 ```
 
-### Initialization and type-3 zero
-
-The safe pseudocode above models a type-3 zero-distance command as “advance without changing destination.” That is what Runtime's memory operations do.
-
-For a standalone software decoder, however, this creates a question Runtime answers implicitly through the pre-existing contents of its destination buffer. If an asset uses type-3 zero before those bytes have otherwise been initialized, faithfully reproducing the result requires knowing how the relevant Runtime texture page or scratch buffer was initialized.
-
-OpenNomad should therefore keep this case visible in diagnostics rather than silently rewriting it to another back-reference distance.
-
-## Runtime upload path
-
-The high-level Runtime sequence for each material is approximately:
+Whether a safe high-level decoder should require:
 
 ```text
-1. allocate/reuse a palette page and palette slot
-2. read paletteSize bytes from the texture stream
-3. register/upload/rebuild palette state
-4. allocate/reuse a 256×256 indexed texture page and texture slot
-5. read dataSize bytes from the texture stream
-6. if raw, use the bytes directly
-7. otherwise decompress them
-8. for shared low-bpp palette pages, rebase local indices
-9. copy/pack the pixels into the 256×256 runtime texture page
-10. invoke the renderer upload callback
+out == expectedSize
 ```
 
-Runtime has synchronous and callback/asynchronous variants of parts of this path, but the serialized byte order is the same.
+for every retail stream is discussed below.
 
-## Palette processing after load
+---
 
-After palette bytes are loaded, Runtime calls a renderer-facing palette upload callback and then `0x00483C70`, which dispatches to `0x00483C80` with a default bias/overbright parameter of zero.
+# 26. Short decoded output and tail initialization
 
-`0x00483C80` reads the three serialized palette channels and builds a larger 16-level table of packed 16-bit colors for the active renderer/pixel format.
+The original decompressor returns how far the destination pointer advanced.
 
-Conceptually, each of the 256 palette-page entries receives multiple intensity variants. This is **runtime rendering state**, not extra `.3DT` data.
-
-A modern OpenNomad renderer that expands indexed textures directly to RGB/RGBA does not need to preserve this exact internal table representation unless it is reproducing Omikron's original palette-lighting behavior.
-
-The important file-format facts are:
-
-- palette entries are three bytes;
-- palette pages contain 256 entries in Runtime;
-- lower-bpp material palettes may occupy subranges of one page;
-- decoded local pixel indices are rebased before entering a shared runtime page.
-
-## Standalone `.3DT` versus `.SCX`-embedded texture payloads
-
-Standalone models conventionally use:
+The surrounding Runtime upload path does not appear to perform a simple,
+universal:
 
 ```text
-MODEL.3DO  -> structural/model data
-MODEL.3DT  -> palette and indexed texture payload stream
+assert(outputCount == width * height)
 ```
 
-The same texture payload representation also appears when a `.3DO` core is embedded inside scenario containers such as `aventure.SCX` and `Grid.SCX`.
+after every decode.
 
-In that case there may be no separate filesystem `.3DT` sibling. The scenario/resource stream supplies the palette and pixel bytes associated with the embedded model.
-
-The useful distinction is therefore:
+Current OpenNomad behavior, at the time of writing, pads a short decoded result
+with:
 
 ```text
-serialized 3DO core metadata
-        +
-3DT-style palette/pixel payload source
+palette index 0
 ```
 
-The payload source can be a standalone `.3DT` file or an enclosing resource/container stream.
+until it reaches:
 
-OpenNomad should model these as two independent concepts rather than making the `.3DO` parser itself assume a sibling `.3DT` path.
-
-## Differences and cautions relative to the Blender importer
-
-Chevluh's importer is an excellent reference and correctly discovered most of the high-level payload grammar, but several details should now be documented differently based on Runtime.
-
-### 1. `.3DT` has no self-contained metadata header
-
-The importer already relies on `.3DO` materials, and Runtime confirms that this dependency is fundamental. A `.3DT` should not be documented as a sequence of autonomous texture structures with their own headers.
-
-### 2. Raw data is identified by pixel count, not by a magic 65536 value
-
-Importer code contains:
-
-```python
-if compressedSize == 65536:
-    return readUBytes(file_object, compressedSize)
+```text
+width * height
 ```
 
-Runtime's general rule is:
+This preserves compatibility with assets that worked under the older importer
+behavior.
+
+That padding is **not confirmed as a serialized codec rule**.
+
+Documentation/implementation should keep these concepts separate:
+
+```text
+Runtime decompressor:
+    input-size-driven
+
+OpenNomad current compatibility policy:
+    constrain to expected image size
+    pad a short tail with index 0
+
+ideal validation question:
+    determine from retail assets and Runtime destination initialization
+    whether every valid stream logically defines all expected pixels
+```
+
+If an asset relies on type-3 zero self-copy into preinitialized memory, replacing
+that with appended zeros can also change the result.
+
+---
+
+# 27. Raw payload decoding
+
+Raw material:
 
 ```text
 dataSize == width * height
 ```
 
-`65536` is simply the optimized 256×256 case.
+Decode is simply:
 
-### 3. Type-3 distance is exactly `next_u8 << 8`
+```text
+indices = next dataSize bytes
+```
 
-The Runtime implementation does not add one and does not reinterpret zero as 65536.
+No nibble unpacking is applied.
 
-### 4. Type-3 zero is a self-copy/no-op run
+The payload cursor then advances by exactly:
 
-A decoder based on an append-only vector cannot reproduce Runtime by evaluating `result[currentByte - 0]`, because that refers to the next not-yet-appended element. Runtime instead operates on preallocated memory, where source and destination can be the same address.
+```text
+dataSize
+```
 
-### 5. Invalid backward references do not define zero-fill semantics
+after the palette.
 
-The importer's zero-fill guard is a robustness choice. It is not present in Runtime and should not be documented as part of the compression format.
+---
 
-### 6. Black palette entries are not serialized alpha
+# 28. Palette lookup
 
-The importer derives transparency from `(0,0,0)`. `.3DT` stores only RGB-like triplets; Runtime's actual transparency comes from rendering behavior outside the palette bytes.
+After local indices are decoded, a modern standalone image expansion is:
 
-### 7. Local pixel indices are not necessarily final runtime page indices
+```text
+rgb = palette[index]
+```
 
-For shared low-bpp palette pages, Runtime adds the material's palette-slot base before copying pixels into its 256×256 indexed page. An RGBA decoder should apply the material's own palette directly and need not emulate this rebase.
+with any desired alpha policy layered on top.
 
-### 8. Vertical image orientation is a consumer concern
+A safe decoder should report an index:
 
-The serialized payload is a linear pixel stream. Coordinate-system and image-origin conversions belong to the rendering/import layer. They should not be described as byte rearrangements intrinsic to `.3DT` unless Runtime's upload path demonstrates such a transformation.
+```text
+>= colorCount
+```
 
-The current understanding is that rows should not be unconditionally flipped merely to match a graphics API convention.
+as malformed or at least suspicious.
 
-## Suggested OpenNomad representation
+Runtime's own page rebasing occurs after local decoding and is not part of the
+stored local index value.
 
-A modern decoder should keep immutable serialized metadata separate from runtime GPU state.
+---
 
-For example:
+# 29. Runtime palette processing after load
+
+Runtime does more than upload the three-byte palette verbatim.
+
+A path around:
+
+```text
+0x00483C70
+0x00483C80
+```
+
+builds a larger table of packed display-format colours at multiple intensity
+levels.
+
+Conceptually:
+
+```text
+serialized RGB palette
+      |
+      v
+shared 256-entry Runtime palette page
+      |
+      v
+multiple intensity/lighting variants
+      |
+      v
+packed 16-bit renderer colours
+```
+
+This is runtime rendering state, not extra `.3DT` data.
+
+A modern RGBA renderer can choose not to reproduce the physical table layout,
+but original palette-lighting behavior may eventually require reproducing its
+math.
+
+---
+
+# 30. Runtime material upload sequence
+
+A simplified original flow for each material is:
+
+```text
+1. allocate/find palette page + palette slot
+2. consume 3 * (1 << bpp) palette bytes
+3. register/rebuild palette renderer state
+4. allocate/find 256x256 texture page + texture slot
+5. consume dataSize pixel bytes
+6. if raw:
+       use local indices directly
+   else:
+       decompress
+7. if using a shared lower-bpp palette page:
+       add palette-slot base to indices
+8. pack/copy into the 256x256 texture page
+9. invoke renderer upload/update callbacks
+```
+
+The exact allocator and asynchronous/callback details are implementation
+machinery around the same serialized byte order.
+
+---
+
+# 31. Standalone `.3DT` versus embedded payload source
+
+Standalone assets:
+
+```text
+MODEL.3DO
+MODEL.3DT
+```
+
+Embedded scenario resources can instead provide:
+
+```text
+3DO core metadata
++
+3DT-style payload bytes
+```
+
+inside an enclosing SCX/resource stream.
+
+Therefore OpenNomad APIs should conceptually accept:
+
+```text
+3DO material metadata
++
+arbitrary texture-payload byte span/source
+```
+
+rather than force the low-level decoder to open a same-basename path.
+
+This is especially important for `aventure.SCX`, `Grid.SCX` and other
+resource-packed content.
+
+---
+
+# 32. Current OpenNomad decoder behavior
+
+At the time of this documentation update, `Texture3DT::load()` performs roughly:
+
+```text
+for each 3DO material:
+    validate bpp <= 8
+    read 3 * (1 << bpp) RGB palette bytes
+    derive RGBA:
+        black -> alpha 0
+        other -> alpha 255
+
+    pixelCount = width * height
+
+    if dataSize == pixelCount:
+        copy raw indices
+    else:
+        invoke OpenNomad decompressor
+
+    validate each local palette index
+    expand to RGBA
+```
+
+It also computes the next material offset as:
+
+```text
+offset += 3 * colorCount + dataSize
+```
+
+and checks that the consumed logical end does not exceed the provided payload.
+
+## 32.1 Intentional modern differences
+
+OpenNomad:
+
+- uses independent RGBA GPU textures rather than indexed 256x256 Runtime pages;
+- does not need Runtime palette-page index rebasing for rendering;
+- can retain strict bounds checks missing in the original executable.
+
+## 32.2 Known fidelity differences / technical debt
+
+Current decoder behavior that should **not** be treated as authoritative format
+semantics:
+
+1. type-3 zero currently becomes a 65536-byte history distance — this is wrong
+   relative to Runtime;
+2. short decompressed output is padded with index 0 — compatibility policy, not
+   a proven Runtime codec rule;
+3. black is converted directly to alpha 0 during image expansion — useful engine
+   rendering convention, but not serialized alpha data.
+
+The format documentation should drive future fixes, not be rewritten to justify
+those implementation shortcuts.
+
+---
+
+# 33. Recommended OpenNomad decoder model
+
+Keep three layers explicit.
+
+## 33.1 Serialized descriptor
 
 ```cpp
-struct Texture3DTDescriptor {
+struct TexturePayloadDescriptor {
     std::string materialName;
-    std::string textureResourceName;
-    std::string paletteResourceName;
+    std::string textureName;
+    std::string paletteName;
 
-    std::uint32_t dataSize{};
-    std::uint8_t bitsPerPixel{};
-    std::uint16_t width{};
-    std::uint16_t height{};
-};
-
-struct Texture3DTDecoded {
-    Texture3DTDescriptor descriptor;
-
-    std::vector<std::array<std::uint8_t, 3>> palette;
-    std::vector<std::uint8_t> indices;
+    std::uint32_t dataSize;
+    std::uint16_t bitsPerPixelRaw;
+    std::uint16_t width;
+    std::uint16_t height;
 };
 ```
 
-Renderer-facing RGBA conversion, GPU texture handles, sampler state, and atlas packing should live outside the immutable serialized representation.
+## 33.2 Decoded indexed image
 
-## Recommended decoder invariants
+```cpp
+struct IndexedTextureImage {
+    std::vector<std::array<std::uint8_t, 3>> palette;
+    std::vector<std::uint8_t> indices;
 
-A robust OpenNomad implementation should enforce at least the following:
+    std::uint16_t width;
+    std::uint16_t height;
+};
+```
 
-1. `bitsPerPixel` must be small enough that `1 << bitsPerPixel` is safe and plausible.
-2. The palette byte count must fit inside the supplied payload source.
-3. `width * height` must be checked for integer overflow before allocation.
-4. Exactly `dataSize` bytes belong to the pixel payload.
-5. If `dataSize == width * height`, read exactly that many raw indices.
-6. Otherwise require a compressed payload large enough for the initial literal/control pair.
-7. Every literal/descriptor/parameter read must remain inside `dataSize`.
-8. Type-1 and type-2 history distances must not point before the beginning of produced output.
-9. Non-zero type-3 history distances must not point before the beginning of produced output.
-10. Type-3 zero must preserve the destination region rather than being rewritten to an invented 65536-byte distance.
-11. Output must never advance past `width * height` in a safe decoder.
-12. At successful completion, decompressed output advancement should equal exactly `width * height`.
-13. Every local pixel index should be less than `1 << bitsPerPixel` before palette lookup, unless later evidence demonstrates intentionally out-of-range data.
-14. Do not infer alpha solely from RGB black.
-15. Do not make standalone `.3DT` path resolution part of the decompressor itself; accept a payload stream/source so embedded SCX resources use the same decoder.
+## 33.3 Renderer-facing image
 
-## Useful diagnostics
+```cpp
+struct TextureRGBA {
+    std::vector<std::uint8_t> rgba8;
+    ...
+};
+```
 
-When a texture fails to decode, logging the following values usually makes reverse-engineering problems much easier to localize:
+This lets:
+
+- file decoding;
+- transparency policy;
+- original palette emulation;
+- modern GPU upload
+
+evolve independently.
+
+---
+
+# 34. Recommended validation invariants
+
+A safe decoder should:
+
+1. validate the companion material metadata before consuming bytes;
+2. prevent overflow in `1 << bpp`;
+3. set a plausible supported bit-depth maximum;
+4. bounds-check `3 * colorCount`;
+5. overflow-check `width * height`;
+6. consume exactly `dataSize` bytes for one pixel payload;
+7. use `dataSize == pixelCount` as the raw test;
+8. require enough compressed data for every literal/control/descriptor read;
+9. handle type-0 only after at least one output byte;
+10. reject type-1/type-2 history before the output base;
+11. reject non-zero type-3 history before the output base;
+12. implement type-3 zero as an advancing self-copy/preserve operation;
+13. never reinterpret type-3 zero as 65536;
+14. support overlapping references;
+15. prevent output advancement beyond the intended destination;
+16. validate local palette indices before RGB lookup;
+17. keep short-output policy explicit rather than silently calling it codec
+    semantics;
+18. avoid an unconditional vertical flip;
+19. keep black-key transparency outside the serialized palette parser if
+    possible;
+20. accept embedded payload byte spans, not only filesystem `.3DT` siblings.
+
+---
+
+# 35. Useful decoder diagnostics
+
+For a material decode failure log:
 
 ```text
 material name
 texture resource name
 palette resource name
-bitsPerPixel
+
+bitsPerPixelRaw
+effective bpp
 colorCount
 paletteSize
+
 width
 height
-expectedPixelCount
+pixelCount
 dataSize
+
+material payload start
 raw/compressed decision
-compressed source offset
-output count at failure
+
+compressed source cursor
+decoded output cursor
+
 control byte
-control-bit index
+control bit index
 descriptor byte
 descriptor type
 descriptor length
-back-reference distance
+extra distance byte(s)
+computed distance
+
+type-3 raw extra byte
+whether type-3 distance was zero
 ```
 
-For type 3, always log the raw extra byte as well as `distance = byte << 8`. A zero value is semantically significant in Runtime.
+For sequential `.3DT` parsing also log:
 
-## Known / unresolved questions
+```text
+material index
+record start
+palette end
+payload end
+whole source size
+```
 
-The following areas should remain explicitly marked as incomplete until additional Runtime work or asset-wide validation resolves them.
+A wrong `dataSize` misaligns every subsequent material.
 
-### Exact palette channel naming
+---
 
-Three serialized bytes per entry are confirmed, and RGB interpretation is strongly corroborated. The exact naming/mapping of Runtime's internal channel lookup tables relative to every supported display pixel format has not yet been fully documented.
+# 36. Corrections relative to older importer/documentation assumptions
 
-### Intended semantic purpose of type-3 zero
+## 36.1 No standalone texture headers
 
-The machine-level behavior is confirmed: it advances the destination while preserving existing bytes.
+A `.3DT` record is defined by external `.3DO` metadata.
 
-What remains uncertain is **why assets use it** and which destination-initialization invariant the original asset pipeline expected. Possibilities such as sparse/no-op runs should be treated as hypotheses until verified across retail textures and caller initialization paths.
+## 36.2 Raw test is not `65536`
 
-### Destination initialization
+Correct:
 
-The 256×256 compressed path can decode directly into a runtime texture page, whereas other compressed textures can decode through a shared scratch buffer before being packed into a page.
+```text
+dataSize == width * height
+```
 
-The exact initialization/reuse lifecycle of those buffers matters only for type-3 zero-distance runs and malformed streams, but should be characterized before claiming byte-for-byte reproduction in every case.
+## 36.3 Decoded lower-bpp pixels are still bytes
 
-### Supported indexed bit depths
+No nibble-unpacking stage follows decompression.
 
-Runtime computes palette size generically as `1 << bitsPerPixel` and has dedicated behavior for 8-bpp palettes. 4-bpp and 8-bpp are established useful cases. A complete inventory of all bit depths present in retail assets has not yet been recorded here.
+## 36.4 Type 2 distance bytes are big-endian
 
-### Non-square texture packing
+Only this token field is big-endian.
 
-Width and height fields are confirmed, as is the 256×256 page representation. The precise texture-slot allocator math for every rectangular size has not yet been generalized or validated against a comprehensive asset set.
+## 36.5 Type 3 distance is exactly `u8 << 8`
 
-This affects original-runtime atlas placement, not the basic `.3DT` decoding grammar.
+No added one.
 
-### Transparency details
+## 36.6 Type 3 zero is distance zero
 
-The file has no alpha channel, but the exact interactions among palette index, alpha-test state, blend flags, texture-page state, and original Direct3D rendering still require renderer-path analysis.
+It is a same-address advancing self-copy in Runtime.
 
-### Animated/sprite texture relationships
+It is **not** a 65536-byte back-reference.
 
-Some `.3DO` resources act as sprites or animated effects. The relationship among sprite frames, quad UVs, material selection, animated texture resources, and texture-page placement is being reverse engineered separately. Nothing in the base `.3DT` compression grammar itself identifies animation frames.
+## 36.7 Importer invalid-history zero fill is defensive behavior
 
-## Runtime function map
+It is not defined by Runtime's codec.
 
-Names below are descriptive research/OpenNomad names rather than recovered original symbols.
+## 36.8 Black-key transparency is not serialized alpha
+
+Three palette bytes remain three palette bytes.
+
+## 36.9 Runtime local indices can be rebased after decoding
+
+The stored local value and the page-global Runtime value are distinct.
+
+## 36.10 Sprite UVs use page-space `/256`
+
+Ordinary modern per-material mesh UV normalization is not a universal rule for
+sprite frames.
+
+---
+
+# 37. Open questions
+
+Still unresolved or incomplete:
+
+- complete retail inventory of used bit depths;
+- exact original text encoding of material resource names;
+- whether every valid compressed stream logically advances exactly
+  `width * height` bytes;
+- intended use of type-3 distance zero;
+- initialization/reuse state of Runtime destinations when type-3 zero occurs;
+- which retail assets actually contain type-3-zero tokens;
+- exact original texture-slot allocation algorithm for all rectangular sizes;
+- exact palette-slot allocator policy;
+- exact Direct3D colour-key/alpha-test state that implements black-key
+  transparency;
+- interaction between keyed black and ordinary opaque materials;
+- exact original palette-lighting/overbright math;
+- whether any palettes use black as a visible opaque colour under a mode that
+  bypasses keying;
+- platform differences in texture conversion;
+- whether Dreamcast build-time conversion preserves this exact payload grammar;
+- any format/version variants outside the current Windows retail dataset.
+
+---
+
+# 38. Useful Runtime locations
 
 | Address | Role |
 |---:|---|
-| `0x00483C70` | Wrapper that rebuilds the material's palette-lighting table with the default bias/overbright parameter. |
-| `0x00483C80` | Converts RGB palette-page entries into 16 levels of packed renderer colors. |
-| `0x004A75E0` | Indexed texture unpack/atlas-upload path. Confirms raw-vs-compressed test, 256×256 page size, decompressor use, local-index rebasing, and runtime texture-page fields. |
-| `0x004A77E0` | Palette read/allocation path. Confirms `3 * (1 << bitsPerPixel)` palette size, palette page/slot fields, and use of material `+0x28` as a palette resource name. |
-| `0x004A7900` | Palette upload/completion callback path; reconstructs palette address from page, slot, and bit depth. |
-| `0x004B4B40` | `.3DT`/3DO indexed texture decompressor. Confirms stream grammar and all four descriptor types. |
+| `0x00483C70` | palette-lighting rebuild wrapper |
+| `0x00483C80` | builds intensity variants / packed renderer colours from RGB palette |
+| `0x004A75E0` | indexed texture unpack and 256x256 page upload |
+| `0x004A77E0` | palette read/allocation; confirms `3 * (1 << bpp)` |
+| `0x004A7900` | palette upload/completion path |
+| `0x004B4B40` | indexed texture LZ/RLE decompressor |
 
-Renderer upload function pointers used by this code are assigned elsewhere during graphics initialization. Their exact names and hardware-backend semantics are outside the serialized `.3DT` format.
+The page/palette allocator internals are runtime implementation details; the
+serialized byte grammar described above is the portable format knowledge.
 
-## Secondary reference: Omikron Blender Importer
+---
 
-Chevluh's Blender importer remains the most useful public prior implementation of the format and correctly establishes the core sequential model:
+# 39. OpenNomad source locations
+
+Relevant current code:
 
 ```text
-for material in materials:
-    read 2**BPP palette entries, 3 bytes each
-    read/decompress material.dataSize bytes
+src/core/Core/Omikron/Texture3DT.hpp
+src/core/Core/Omikron/Texture3DT.cpp
+
+src/core/Core/Omikron/Model3DO.hpp
+src/core/Core/Omikron/Model3DO.cpp
+
+src/core/Core/Sprite/SpriteFrame.cpp
+src/core/Core/Sprite/SpriteResource.cpp
+
+src/core/Core/WorldRenderer.cpp
 ```
 
-It also provided the initial community description of the four compression forms.
+A future type-3-zero fix should update both implementation tests and this
+document only if new Runtime evidence changes the understanding. The existing
+Runtime-derived token semantics should not be weakened to match an old decoder
+shortcut.
 
-Reference:
+---
+
+# 40. Compact format reference
+
+```text
+.3DT
+====
+
+No header.
+
+For each companion .3DO material, in material-table order:
+
+    bpp          = low8(material.bitsPerPixelRaw)
+    colorCount   = 1 << bpp
+    paletteSize  = 3 * colorCount
+    pixelCount   = width * height
+
+    read paletteSize bytes:
+        colorCount * RGB triplets
+
+    read dataSize bytes:
+        if dataSize == pixelCount:
+            raw one-byte local palette indices
+        else:
+            compressed Omikron LZ/RLE stream
+
+Compressed stream:
+    first byte = literal output
+    next byte  = control bits, MSB first
+
+    control 0:
+        literal byte
+
+    control 1:
+        descriptor d
+        type = d & 3
+        base = d >> 2
+
+        type 0:
+            length   = base + 2
+            repeat previous byte
+
+        type 1:
+            length   = base + 3
+            distance = 1 + u8
+
+        type 2:
+            length   = base + 3
+            distance = 1 + BE_u16
+
+        type 3:
+            length   = base + 3
+            distance = u8 << 8
+
+            if u8 == 0:
+                Runtime source == destination
+                advance while preserving existing bytes
+
+Runtime pages:
+    indexed texture page = 256 x 256 bytes
+    palette page         = 256 entries
+
+lower-bpp local index:
+    runtimeIndex =
+        localIndex
+        + paletteSlotIndex * (1 << bpp)
+```
+
+---
+
+# 41. Secondary reference
+
+Chevluh's Blender importer remains extremely useful:
 
 <https://github.com/Chevluh/Omikron_Blender_Importer/blob/main/omikronImporter.py>
 
-When it conflicts with observed `Runtime.exe` behavior, OpenNomad should follow Runtime and document the discrepancy, as done above.
+It correctly established much of the broad sequential palette/payload model and
+the compression family.
 
-## Summary
-
-The essential format can be reduced to a few rules:
-
-```text
-.3DT has no header.
-
-For every material in the companion .3DO, in order:
-    colorCount = 1 << bitsPerPixel
-    read colorCount * 3 palette bytes
-    read dataSize pixel-payload bytes
-
-    if dataSize == width * height:
-        payload is raw one-byte palette indices
-    else:
-        payload uses Omikron's control-byte LZ/RLE codec
-```
-
-The compression codec is:
-
-```text
-first output byte = literal
-control bits = MSB first
-
-0 -> one literal byte
-1 -> descriptor:
-    type 0: len=(d>>2)+2, repeat previous byte
-    type 1: len=(d>>2)+3, distance=1+u8
-    type 2: len=(d>>2)+3, distance=1+BE_u16
-    type 3: len=(d>>2)+3, distance=u8<<8
-```
-
-The most important Runtime-specific cautions are:
-
-- `65536` is not a generic raw-data marker; raw means `dataSize == width * height`;
-- type-3 zero means distance zero and behaves as an advancing self-copy/no-op, **not** a 65536-byte back-reference;
-- Runtime does not define the Blender importer's invalid-history zero-fill rule;
-- black palette entries do not carry serialized alpha;
-- low-bpp local indices are rebased only when Runtime packs them into a shared 256-entry palette page;
-- `.3DT` metadata lives in `.3DO`, and the same payload grammar can be supplied by an `.SCX` container instead of a sibling file.
+Where importer behavior conflicts with disassembled Runtime behavior, this
+document follows Runtime.
