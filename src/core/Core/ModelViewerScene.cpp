@@ -1743,6 +1743,23 @@ bool ModelViewerScene::sprite_grayscale() const {
   return m_sprite_grayscale_enabled;
 }
 
+std::optional<Debug::SpriteRenderDebugState> ModelViewerScene::sprite_render_debug_state() const {
+  return Debug::make_sprite_render_debug_state(
+      m_runtime, m_sprite_renderer.queue_stats(), m_sprite_renderer.commands());
+}
+
+std::optional<std::array<float, 3>> ModelViewerScene::sprite_debug_focus_position() const {
+  return camera_focus_position();
+}
+
+bool ModelViewerScene::sprite_grayscale_enabled() const {
+  return sprite_grayscale();
+}
+
+void ModelViewerScene::set_sprite_grayscale_enabled(const bool enabled) {
+  set_sprite_grayscale(enabled);
+}
+
 bool ModelViewerScene::light_overlay_enabled() const {
   return m_light_overlay_enabled;
 }

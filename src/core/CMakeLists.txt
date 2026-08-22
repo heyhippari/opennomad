@@ -7,7 +7,12 @@ add_library(${NAME} STATIC
   Core/Debug/Metrics.hpp Core/Debug/Metrics.cpp
   Core/Debug/LogSink.hpp
   Core/Debug/LogFilter.hpp
-  Core/Debug/DebugUI.hpp Core/Debug/DebugUI.cpp
+  Core/Debug/DebugRuntimeContext.hpp Core/Debug/DebugRuntimeContext.cpp
+  Core/Debug/SceneDebugView.hpp Core/Debug/SceneDebugView.cpp
+  Core/Debug/DebugUI.hpp Core/Debug/DebugUIInternal.hpp
+  Core/Debug/DebugUI.cpp Core/Debug/DebugUIDiagnostics.cpp
+  Core/Debug/DebugUIRuntime.cpp Core/Debug/DebugUIWorld.cpp
+  Core/Debug/DebugUIAudio.cpp
   Core/Application.cpp Core/Application.hpp
   Core/Window.cpp Core/Window.hpp
   Core/Audio/AudioTypes.hpp

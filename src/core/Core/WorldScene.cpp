@@ -466,6 +466,35 @@ std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state
   return state;
 }
 
+std::optional<Debug::SpriteRenderDebugState> WorldScene::sprite_render_debug_state() const {
+  if (m_world_renderer == nullptr) {
+    return std::nullopt;
+  }
+  return m_world_renderer->sprite_render_debug_state();
+}
+
+std::optional<std::array<float, 3>> WorldScene::sprite_debug_focus_position() const {
+  if (!m_camera.has_pose()) {
+    return std::nullopt;
+  }
+  const Runtime::Vec3 target{m_camera.pose().target};
+  return std::array<float, 3>{target.x, target.y, target.z};
+}
+
+bool WorldScene::sprite_grayscale_supported() const {
+  return m_world_renderer != nullptr;
+}
+
+bool WorldScene::sprite_grayscale_enabled() const {
+  return m_world_renderer != nullptr && m_world_renderer->sprite_grayscale();
+}
+
+void WorldScene::set_sprite_grayscale_enabled(const bool enabled) {
+  if (m_world_renderer != nullptr) {
+    m_world_renderer->set_sprite_grayscale(enabled);
+  }
+}
+
 void WorldScene::consume_fade_commands(const WorldSceneContext* const context) {
   if (m_scenarios == nullptr) {
     return;

@@ -194,6 +194,14 @@ class ScenarioManager {
   /// Current gameplay mode (default: Adventure).
   [[nodiscard]] GameplayMode current_gameplay_mode() const;
 
+  /// Stable identity of the gameplay-mode slot. Its generation advances
+  /// whenever the slot's runtime is replaced.
+  [[nodiscard]] ScenarioIdentity gameplay_identity() const;
+
+  /// Requested and case-resolved paths of the gameplay-mode scenario.
+  [[nodiscard]] std::string_view gameplay_scenario_path() const;
+  [[nodiscard]] std::string_view gameplay_resolved_scenario_path() const;
+
   /// Sets the gameplay-mode scenario to the specified mode. Replaces the
   /// current mode slot with the new one, transactionally. Fails cleanly if
   /// load/parse fails. Does not affect either world context.

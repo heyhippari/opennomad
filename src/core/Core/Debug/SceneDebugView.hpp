@@ -5,9 +5,53 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
+#include "Core/Sprite/SpriteInstance.hpp"
+
+namespace App {
+class ScenarioRuntime;
+}
+
+namespace App::Sprite {
+struct SpriteDrawCommand;
+struct SpriteQueueStats;
+}  // namespace App::Sprite
+
 namespace App::Debug {
+
+struct SpriteDrawCommandDebugState {
+  std::size_t resource_index{0};
+  std::int32_t material_index{0};
+  std::uint32_t vertex_count{0};
+  Sprite::SpriteRenderMode render_mode{Sprite::SpriteRenderMode::k_default};
+};
+
+struct SpriteSkipDebugState {
+  Sprite::SpriteHandle handle;
+  std::string_view reason;
+};
+
+/// Snapshot of the actual presentation renderer's last sprite queue.
+struct SpriteRenderDebugState {
+  const ScenarioRuntime* runtime{nullptr};
+  std::size_t attached{0};
+  std::size_t visible{0};
+  std::size_t drawn{0};
+  std::size_t culled{0};
+  std::size_t invalid{0};
+  std::size_t batches{0};
+  std::size_t draw_calls{0};
+  std::vector<SpriteDrawCommandDebugState> commands;
+  std::vector<SpriteSkipDebugState> skipped;
+};
+
+/// Converts authoritative SpriteRenderer diagnostics into a stable debug
+/// snapshot. Called only while a consumer needs sprite presentation data.
+[[nodiscard]] SpriteRenderDebugState make_sprite_render_debug_state(const ScenarioRuntime* runtime,
+    const Sprite::SpriteQueueStats& stats,
+    const std::vector<Sprite::SpriteDrawCommand>& commands);
 
 struct WorldMeshHierarchyDebugState {
   std::uint32_t mesh_id{0};
@@ -140,6 +184,23 @@ class SceneDebugView {
   [[nodiscard]] virtual std::optional<WorldRenderDebugState> world_render_debug_state() const {
     return std::nullopt;
   }
+
+  [[nodiscard]] virtual std::optional<SpriteRenderDebugState> sprite_render_debug_state() const {
+    return std::nullopt;
+  }
+
+  /// Runtime-native point suitable for deliberately placing a debug sprite.
+  [[nodiscard]] virtual std::optional<std::array<float, 3>> sprite_debug_focus_position() const {
+    return std::nullopt;
+  }
+
+  [[nodiscard]] virtual bool sprite_grayscale_supported() const {
+    return false;
+  }
+  [[nodiscard]] virtual bool sprite_grayscale_enabled() const {
+    return false;
+  }
+  virtual void set_sprite_grayscale_enabled(bool /*enabled*/) {}
 
   [[nodiscard]] virtual bool light_overlay_supported() const {
     return false;

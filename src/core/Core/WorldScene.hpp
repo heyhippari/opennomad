@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <expected>
 #include <memory>
@@ -48,6 +49,13 @@ class WorldScene final : public Scene, public Debug::SceneDebugView {
 
   [[nodiscard]] std::optional<Debug::WorldRenderDebugState>
   world_render_debug_state() const override;
+  [[nodiscard]] std::optional<Debug::SpriteRenderDebugState>
+  sprite_render_debug_state() const override;
+  [[nodiscard]] std::optional<std::array<float, 3>>
+  sprite_debug_focus_position() const override;
+  [[nodiscard]] bool sprite_grayscale_supported() const override;
+  [[nodiscard]] bool sprite_grayscale_enabled() const override;
+  void set_sprite_grayscale_enabled(bool enabled) override;
 
   private:
   WorldScene(ScenarioManager& scenarios, Interface::InterfaceManager& interfaces);

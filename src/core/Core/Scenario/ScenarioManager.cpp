@@ -60,6 +60,19 @@ GameplayMode ScenarioManager::current_gameplay_mode() const {
   return m_gameplay_mode_slot.current_mode;
 }
 
+ScenarioIdentity ScenarioManager::gameplay_identity() const {
+  return ScenarioIdentity{
+      .role = ScenarioRole::GameplayMode, .slot = 0, .generation = m_gameplay_mode_slot.generation};
+}
+
+std::string_view ScenarioManager::gameplay_scenario_path() const {
+  return m_gameplay_mode_slot.scenario_path;
+}
+
+std::string_view ScenarioManager::gameplay_resolved_scenario_path() const {
+  return m_gameplay_mode_slot.resolved_path;
+}
+
 std::expected<void, std::string> ScenarioManager::set_gameplay_mode(const GameplayMode mode) {
   APP_PROFILE_FUNCTION();
 

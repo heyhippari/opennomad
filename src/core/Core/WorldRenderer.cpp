@@ -320,6 +320,16 @@ std::size_t WorldRenderer::environment_group_count() const {
       }));
 }
 
+Debug::SpriteRenderDebugState WorldRenderer::sprite_render_debug_state() const {
+  return Debug::make_sprite_render_debug_state(
+      m_last_sprite_runtime, m_sprite_renderer.queue_stats(), m_sprite_renderer.commands());
+}
+
+void WorldRenderer::set_sprite_grayscale(const bool enabled) {
+  m_sprite_renderer.set_grayscale(enabled);
+  m_sprite_grayscale = enabled;
+}
+
 void WorldRenderer::draw_group(const std::size_t index) {
   m_shader->bind();
   const Omikron::BlendMode mode{m_group_modes.at(index)};
@@ -448,6 +458,7 @@ void WorldRenderer::render(const Camera& camera, ScenarioRuntime* const runtime)
   const glm::mat4 identity{1.0F};
   const glm::vec3 eye{glm::make_vec3(camera.get_position().data())};
 
+  m_last_sprite_runtime = runtime;
   if (runtime != nullptr && m_sprite_renderer.valid()) {
     const ViewBasis basis{view_basis(view)};
     m_sprite_renderer.build_queue(runtime->sprite_pool(),

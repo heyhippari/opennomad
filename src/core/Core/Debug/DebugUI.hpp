@@ -7,13 +7,19 @@
 #include <optional>
 
 #include "Core/Debug/DebugContext.hpp"
+#include "Core/Debug/DebugRuntimeContext.hpp"
 #include "Core/Debug/LogFilter.hpp"
-#include "Core/ModelViewerScene.hpp"
+#include "Core/Debug/SceneDebugView.hpp"
 #include "Core/Scene.hpp"
 
 namespace App {
 class ScenarioManager;
 class ScenarioRuntime;
+
+namespace Script {
+struct RuntimeScriptCommand;
+struct ScriptInstance;
+}  // namespace Script
 }  // namespace App
 
 namespace App::Debug {
@@ -88,25 +94,20 @@ class DebugUI {
   void show_opengl_state();
   void show_overlays();
 
-  enum class DebugRuntimeTarget : std::uint8_t {
-    k_active_world,
-    k_gameplay_mode,
-    k_world_slot_0,
-    k_world_slot_1,
-  };
-
-  /// Shared target selector used by the SCX script/sprite inspectors.
+  /// Global target selector shared by every scenario-runtime inspector.
   void show_runtime_target_selector();
-  /// Resolves the selected runtime and clears stale inspector selections when
-  /// its target, scene ID or generation changes.
-  [[nodiscard]] ScenarioRuntime* selected_scenario_runtime();
+  /// Refreshes the non-owning target view and explicitly invalidates all
+  /// runtime-local selections when its resolved identity changes.
+  void refresh_runtime_context();
+  /// Compact read-only identity strip for scenario-scoped windows.
+  void show_runtime_target_summary() const;
 
   void show_sprite_inspector(float delta_time);
-  void show_sprite_resources_tab(ScenarioRuntime& runtime, ModelViewerScene* scene);
+  void show_sprite_resources_tab(ScenarioRuntime& runtime, SceneDebugView* scene_view);
   void show_sprite_instances_tab(
-      ScenarioRuntime& runtime, ModelViewerScene* scene, float delta_time);
+      ScenarioRuntime& runtime, SceneDebugView* scene_view, float delta_time);
   void show_sprite_frames_tab(ScenarioRuntime& runtime);
-  static void show_sprite_queue_tab(ModelViewerScene& scene);
+  static void show_sprite_queue_tab(const SpriteRenderDebugState& state);
   void show_script_debugger();
   void show_audio_inspector();
   void show_scenarios();
@@ -152,12 +153,8 @@ class DebugUI {
   std::uint64_t m_frame_count{0};
 
   // --- Shared SCX runtime inspector target ---
-  DebugRuntimeTarget m_runtime_target{DebugRuntimeTarget::k_active_world};
-  DebugRuntimeTarget m_last_runtime_target{DebugRuntimeTarget::k_active_world};
-  ScenarioRuntime* m_last_runtime{nullptr};
-  std::uint32_t m_last_runtime_scene_id{0};
-  std::uint32_t m_last_runtime_generation{0};
-  bool m_runtime_identity_initialized{false};
+  DebugRuntimeContext m_runtime_context;
+  std::uint64_t m_applied_runtime_selection_epoch{0};
 
   // --- Sprite inspector state ---
   std::size_t m_sprite_selected_resource{0};

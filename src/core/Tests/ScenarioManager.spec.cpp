@@ -16,6 +16,7 @@
 #include <string_view>
 #include <vector>
 
+#include "Core/Debug/DebugRuntimeContext.hpp"
 #include "Core/Scenario/ScenarioManager.hpp"
 #include "OmikronTestBuffer.hpp"
 
@@ -614,6 +615,87 @@ TEST_SUITE("Core::Scenario::ScenarioManager") {
     CHECK(manager.world_runtime(1) == nullptr);
     CHECK(manager.world_runtime(3) != nullptr);
     CHECK(manager.world_runtime(3) != old_runtime);
+  }
+
+  TEST_CASE("Debugger target context handles unavailable targets and explicit selection changes") {
+    App::Debug::DebugRuntimeContext context;
+
+    CHECK(context.refresh(nullptr));
+    CHECK_FALSE(context.resolved().available());
+    const std::uint64_t initial_epoch{context.selection_epoch()};
+    CHECK_FALSE(context.refresh(nullptr));
+
+    App::ScenarioManager manager;
+    CHECK(context.refresh(&manager));
+    CHECK_FALSE(context.resolved().available());
+    CHECK_FALSE(context.resolved().identity.role.has_value());
+
+    context.set_selected_target(App::Debug::DebugRuntimeTarget::k_gameplay_mode);
+    CHECK(context.refresh(&manager));
+    CHECK(context.selection_epoch() >= initial_epoch + 2U);
+    CHECK(context.resolved().identity.requested ==
+          App::Debug::DebugRuntimeTarget::k_gameplay_mode);
+  }
+
+  TEST_CASE("Debugger resolves gameplay, active world, explicit slots and Free residency") {
+    const TempDirectory temp;
+    write_boot_fixtures(temp);
+    const ScopedGameDataRoot root{temp.root()};
+    App::ScenarioManager manager;
+    initialize_grid_fixture(manager);
+
+    const auto gameplay{App::Debug::DebugRuntimeContext::resolve(
+        App::Debug::DebugRuntimeTarget::k_gameplay_mode, &manager)};
+    CHECK(gameplay.available());
+    CHECK(gameplay.identity.role == App::ScenarioRole::GameplayMode);
+    CHECK(gameplay.gameplay_mode == App::GameplayMode::Adventure);
+    CHECK_EQ(gameplay.scenario_path, "SCPTDATA/aventure.scx");
+
+    const auto active{App::Debug::DebugRuntimeContext::resolve(
+        App::Debug::DebugRuntimeTarget::k_active_world, &manager)};
+    CHECK(active.available());
+    CHECK(active.identity.role == App::ScenarioRole::WorldScene);
+    CHECK_EQ(active.identity.slot.value_or(99U), 0U);
+    CHECK_EQ(active.identity.scene_id, 0U);
+    CHECK(active.residency == App::WorldSceneResidencyState::LoadedActive);
+
+    const auto free_slot{App::Debug::DebugRuntimeContext::resolve(
+        App::Debug::DebugRuntimeTarget::k_world_slot_1, &manager)};
+    CHECK_FALSE(free_slot.available());
+    CHECK_EQ(free_slot.identity.slot.value_or(99U), 1U);
+    CHECK(free_slot.residency == App::WorldSceneResidencyState::Free);
+  }
+
+  TEST_CASE("Debugger epoch follows active-slot and generation identity changes") {
+    const TempDirectory temp;
+    write_boot_fixtures(temp);
+    write_bytes(temp.root() / "SCPTDATA" / "B.SCX", make_script_scx(1));
+    write_bytes(temp.root() / "SCPTDATA" / "C.SCX", make_script_scx(1));
+    const ScopedGameDataRoot root{temp.root()};
+    App::ScenarioManager manager;
+    initialize_grid_fixture(manager);
+    REQUIRE(manager.load_world_context(2, std::nullopt, "SCPTDATA/B.SCX").has_value());
+
+    App::Debug::DebugRuntimeContext context;
+    CHECK(context.refresh(&manager));
+    const std::uint64_t slot_zero_epoch{context.selection_epoch()};
+    CHECK_EQ(context.resolved().identity.slot.value_or(99U), 0U);
+
+    REQUIRE(manager.deactivate_world_context(0).has_value());
+    REQUIRE(manager.activate_world_context(2).has_value());
+    CHECK(context.refresh(&manager));
+    CHECK_EQ(context.resolved().identity.slot.value_or(99U), 1U);
+    CHECK_EQ(context.selection_epoch(), slot_zero_epoch + 1U);
+
+    context.set_selected_target(App::Debug::DebugRuntimeTarget::k_world_slot_0);
+    CHECK(context.refresh(&manager));
+    const std::uint64_t before_recycle_epoch{context.selection_epoch()};
+    const std::uint32_t before_recycle_generation{context.resolved().identity.generation};
+    REQUIRE(manager.unload_world_context(0).has_value());
+    REQUIRE(manager.load_world_context(3, std::nullopt, "SCPTDATA/C.SCX").has_value());
+    CHECK(context.refresh(&manager));
+    CHECK(context.resolved().identity.generation > before_recycle_generation);
+    CHECK_EQ(context.selection_epoch(), before_recycle_epoch + 1U);
   }
 }
 

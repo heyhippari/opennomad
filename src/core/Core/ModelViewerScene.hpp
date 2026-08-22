@@ -8,6 +8,7 @@
 #include <expected>
 #include <glm/glm.hpp>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -162,6 +163,16 @@ class ModelViewerScene final : public Scene, public Debug::SceneDebugView {
   [[nodiscard]] bool sprite_overlay_supported() const override {
     return true;
   }
+
+  [[nodiscard]] std::optional<Debug::SpriteRenderDebugState>
+  sprite_render_debug_state() const override;
+  [[nodiscard]] std::optional<std::array<float, 3>>
+  sprite_debug_focus_position() const override;
+  [[nodiscard]] bool sprite_grayscale_supported() const override {
+    return true;
+  }
+  [[nodiscard]] bool sprite_grayscale_enabled() const override;
+  void set_sprite_grayscale_enabled(bool enabled) override;
 
  private:
   /// A k_mirror mesh and its world-space reflection plane.

@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "Core/Character/CharacterRuntime.hpp"
+#include "Core/Debug/SceneDebugView.hpp"
 #include "Core/Mesh.hpp"
 #include "Core/Omikron/Model3DO.hpp"
 #include "Core/Shader.hpp"
@@ -63,6 +64,12 @@ class WorldRenderer {
   [[nodiscard]] std::size_t uv_scroll_v_group_count() const;
   [[nodiscard]] std::size_t environment_group_count() const;
 
+  [[nodiscard]] Debug::SpriteRenderDebugState sprite_render_debug_state() const;
+  void set_sprite_grayscale(bool enabled);
+  [[nodiscard]] bool sprite_grayscale() const {
+    return m_sprite_grayscale;
+  }
+
  private:
   WorldRenderer() = default;
 
@@ -91,6 +98,8 @@ class WorldRenderer {
   std::vector<Texture2D> m_textures;
 
   Sprite::SpriteRenderer m_sprite_renderer;
+  ScenarioRuntime* m_last_sprite_runtime{nullptr};
+  bool m_sprite_grayscale{false};
   std::unordered_map<std::size_t, std::unique_ptr<CharacterGpuModel>> m_character_models;
   std::vector<std::string> m_failed_character_models;
 
