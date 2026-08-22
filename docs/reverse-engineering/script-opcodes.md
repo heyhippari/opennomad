@@ -1,97 +1,105 @@
-# Omikron SCX scripting and scenario/event VM
+# Omikron SCX scripting and IAM scenario/event VM
 
-> **Status:** work-in-progress reverse-engineering documentation for OpenNomad.  
-> **Intended repository path:** `docs/reverse-engineering/script-opcodes.md`  
+> **Status:** work-in-progress reverse-engineering documentation for OpenNomad  
 > **Last updated:** 2026-08-22
 >
-> This document describes the **serialization, runtime architecture, scheduling,
-> and execution model** of the scripting systems currently identified in the
-> Windows release of *Omikron: The Nomad Soul*.
+> This document describes the **serialization, runtime architecture, instance
+> model, scheduling, and cross-system execution flow** of the two scripting
+> systems currently identified in the Windows retail build of
+> *Omikron: The Nomad Soul*:
 >
-> The detailed 32-bit IAM/Quantic C function catalogue is intentionally **not**
-> duplicated here. [`iam-script-functions.md`](iam-script-functions.md) is the
-> authoritative source for:
+> 1. the structured `.SCX` `Script_*` system built from fixed-size function
+>    records containing 32-bit IAM/Quantic C function IDs; and
+> 2. the compact byte-oriented scenario/event VM used by `IAM/AREA`,
+>    `IAM/START`, and related scenario data.
+>
+> The detailed 32-bit IAM function catalogue is intentionally **not** duplicated
+> here. [`iam-script-functions.md`](iam-script-functions.md) is authoritative for:
 >
 > - `0xCC0000NN` IAM function IDs;
 > - recovered `Script_*` names;
 > - native action/reinit handler addresses;
-> - function-family classification;
-> - blocking/group-active behavior per function;
+> - function families and global ordinals;
 > - `Script_GetNumParam()` selector-to-slot mappings;
-> - legacy/special IAM function IDs;
-> - detailed per-function semantics.
+> - per-function semantics;
+> - legacy/special IAM IDs.
 >
-> This file remains authoritative for:
+> This file is authoritative for:
 >
-> - version-5 `.SCX` script serialization;
-> - script-template and function-record layouts;
-> - index/pointer relocation;
-> - `Script_MakeInstance()` and mutable script instances;
-> - `Script_PlayScript()` scheduling and synchronized groups;
-> - SCX script resource tables;
-> - the separate compact IAM scenario/event bytecode VM;
-> - known one-byte scenario/event opcodes;
-> - the still-unresolved bridge between the two scripting layers.
+> - `.SCX` version-5 script serialization;
+> - the `0x64` script-template record;
+> - the `0x18` script-command/function record;
+> - shared value-pool representation;
+> - related-script and binding-table data;
+> - index-to-pointer relocation;
+> - mutable script instances;
+> - `Script_PlayScript()` group scheduling;
+> - execution-limit/count gating;
+> - synchronized linked-command traversal;
+> - handler-return blocking semantics;
+> - the compact IAM scenario/event VM;
+> - currently recovered one-byte AREA opcodes;
+> - the now-recovered bridge from AREA bytecode to structured SCX scripts.
 
 ---
 
-# 1. Source precedence and confidence
+# 1. Evidence model
 
-The sources used here are, in descending order of authority:
+Sources are used in this order:
 
-1. **`Runtime.exe` behavior** — authoritative for dispatch, data layout,
-   pointer/index relocation, execution state, scheduling and error handling.
-2. **Observed retail data**, principally `aventure.SCX`, `Grid.SCX`,
-   `IAM/START`, and `IAM/AREA`.
-3. **OpenNomad experiments and implementation traces**, used to validate
-   interpretation but subordinate to Runtime when they disagree.
-4. **Historical Quantic Dream material**, useful for original authoring intent
-   and terminology but not a substitute for retail Runtime behavior.
+1. **`Runtime.exe` behavior** — authoritative for execution, field meaning,
+   pointer relocation, timing, waits, scheduling, and resource side effects.
+2. **Retail data** — principally `Grid.SCX`, `aventure.SCX`, `IAM/AREA`,
+   `IAM/START`, and their associated TAG/name registries.
+3. **OpenNomad parser/runtime behavior** — useful where it mirrors Runtime, but
+   explicitly subordinate where the implementation is knowingly approximate.
+4. **Historical Quantic Dream material** — useful for authoring intent and
+   terminology, but not a replacement for Runtime evidence.
 
-The analyzed Runtime build is:
+Analyzed Runtime build:
 
 ```text
 File:             Runtime.exe
-PE image base:    0x00400000
+Architecture:     PE32 / i386
+Image base:       0x00400000
 Linker timestamp: 1999-10-04 20:31:50
 SHA-256:          55f7120bfea7891b048c64e3682f3259cdbf2719a43fa24e42254b753c95d2ef
 ```
 
-Addresses in this document refer to that executable and are not expected to be
-stable across other builds.
-
 Confidence labels:
 
-- **Confirmed — Runtime:** directly demonstrated by executable behavior.
-- **Confirmed — data:** directly demonstrated by retail serialized data.
-- **Corroborated:** Runtime and retail data agree.
-- **Tentative:** structural behavior is known but higher-level intent is not.
-- **Unknown:** the field/system exists but semantics remain unresolved.
+- **Confirmed — Runtime:** directly established from executable behavior.
+- **Confirmed — data:** directly established from retail serialized data.
+- **Corroborated:** Runtime and data agree.
+- **Strongly reconstructed:** several independent observations agree, but no
+  original source-level symbol is available.
+- **Provisional:** useful working interpretation requiring further tracing.
+- **Unknown:** structure exists but semantics are not yet recovered.
 
 ---
 
-# 2. Critical distinction: Omikron has at least two script execution systems
+# 2. Two different script systems
 
-The term **script** is used for more than one execution model in Runtime.
+The term “script” refers to at least two independent runtime systems.
 
-At the current stage of reverse engineering, two systems must remain separate.
+They share the IAM/scenario authoring ecosystem, but their serialized forms and
+execution machinery are different.
 
-## 2.1 SCX `Script_*` function system
+## 2.1 Structured SCX `Script_*` system
 
-This is the structured scripting system associated with Runtime diagnostics such
-as:
+This is the system associated with Runtime diagnostics such as:
 
 ```text
 Script_PlayScript()
 Script_GetNumParam()
 Script_MakeInstance()
 Script_RemoveInstance()
+Script_RemoveAllInstances()
 Script_FunctionsIndexesToAdresses()
 Script_FunctionsAdressesToIndexes()
 ```
 
-Its executable actions are identified by typed 32-bit IAM function IDs of the
-form:
+Its executable actions are identified by 32-bit IAM function IDs:
 
 ```text
 0xCC0000NN
@@ -100,649 +108,721 @@ form:
 Examples:
 
 ```text
-0x01000002
-0x03000008
-0x04000029
-0x06000017
+0x0200002A  SelectRelativeBodyAnimation
+0x04000029  SetSpriteFrame
+0x05000015  PlaySyncSound
+0x06000017  Wait
 ```
 
-The names and semantics of those IDs are maintained in
-[`iam-script-functions.md`](iam-script-functions.md).
+Its serialized representation is a graph/table of high-level actions, not a
+traditional bytecode stream.
 
-This system is built around:
-
-- script templates;
-- mutable script instances;
-- fixed-size `0x18`-byte function records;
-- a shared parameter-value pool;
-- synchronized/linked function records;
-- mutable progress/timing state;
-- function-specific reinitialization;
-- repeated script groups;
-- references to paths, animations, sounds, sprites and scenes.
-
-The serialized representation is **not a bytecode instruction stream**.
-
-It is much closer to a serialized graph/table of high-level IAM actions.
-
-## 2.2 Compact scenario/event bytecode VM
-
-A separate byte-oriented VM is used by scenario/game-state data under the
-`IAM` resource hierarchy, including `IAM/AREA` and `IAM/START`.
-
-This system uses:
-
-- one-byte opcodes;
-- opcode-specific variable-length operands;
-- an instruction pointer;
-- event/script context state;
-- scenario/event scheduling;
-- handlers primarily in the `0x0040xxxx` range.
-
-Known examples include:
+Core concepts:
 
 ```text
-0x46  interface transition/opening path
-0x67  play ADP music track
-0x84  begin cinematic letterbox
-0x85  end cinematic letterbox
+0x64-byte script template
+shared 32-bit value pool
+0x18-byte root command records
+0x18-byte linked command records
+binding tables
+related-script link
+mutable execution counters
+mutable parameter values
+per-instance resources
 ```
 
-This document refers to it as the **scenario/event VM**.
+## 2.2 Compact IAM scenario/event VM
 
-## 2.3 The namespaces must not be merged
-
-These are not equivalent:
+`IAM/AREA` and related data use a different interpreter:
 
 ```text
-SCX/IAM function ID:
+u8 opcode
+opcode-specific operands
+evaluation stack
+global/START-variable namespace
+relative control flow
+native scenario operations
+explicit wait states
+```
+
+Known examples:
+
+```text
+0x03 EndEvent
+0x04 JumpRelative
+0x06 BranchIfFalse
+0x19 Equal
+0x39 StartScxScript
+0x46 OpenInterface
+0x67 PlayMusic
+0x84 BeginCinematicLetterbox
+```
+
+This document calls this the **AREA VM** or **scenario/event VM**.
+
+## 2.3 Never merge the namespaces
+
+These values are unrelated namespaces:
+
+```text
+structured IAM function ID:
     0x04000029
 
-scenario/event opcode:
+AREA VM opcode:
     0x46
 ```
 
-They have different:
+They differ in:
 
-- serialized representations;
-- dispatchers;
-- runtime structures;
-- operand models;
-- scheduling behavior;
-- lifecycle rules.
+- instruction/record width;
+- operand representation;
+- lookup/dispatch path;
+- scheduling;
+- lifetime;
+- wait/completion behavior;
+- serialization.
 
-OpenNomad should therefore keep them as distinct interpreters/subsystems unless
-future Runtime analysis proves a deeper shared implementation.
+OpenNomad should keep the interpreters architecturally separate.
 
 ---
 
-# 3. High-level architecture
+# 3. Current high-level architecture
 
-A useful current model is:
+The current recovered model is:
 
 ```text
                          RETAIL DATA
 
-        .SCX                                  IAM/AREA, IAM/START, ...
-          |                                               |
+        .SCX                                    IAM/AREA / IAM/START
           |                                               |
           v                                               v
-
-  structured Script system                        scenario/event VM
-  ------------------------                        -----------------
-  0x64 script templates                          byte instruction stream
-  0x18 function records                          u8 opcodes
-  parameter pool                                 opcode-specific operands
-  sync-function graph                            event/script context
+ structured Script templates                      compact AREA bytecode
           |                                               |
-          |                                               |
-          +--------------------+--------------------------+
-                               |
-                               v
-                           Runtime.exe
-                               |
-             +-----------------+-----------------+
-             |                                   |
-             v                                   v
-      Script_MakeInstance                  VM opcode handlers
-      Script_PlayScript                          |
-             |                                   |
-             +-----------------+-----------------+
-                               |
-                               v
-                     engine/game subsystems
+          |                              +----------------+----------------+
+          |                              |                                 |
+          |                              v                                 v
+          |                       evaluation stack                  native scenario ops
+          |                       global variables                  interface/music/etc.
+          |                              |                                 |
+          |                              +---------------+-----------------+
+          |                                              |
+          |                                              v
+          |                                  AREA script runtime/context
+          |                                              |
+          |                   +--------------------------+--------------------------+
+          |                   |                          |                          |
+          |                   v                          v                          v
+          |             0x39 StartScxScript        0x3B character          0x3C tracked
+          |                   |                    script launch            character script
+          |                   |                          |                          |
+          +-------------------+--------------------------+--------------------------+
+                                              |
+                                              v
+                                    Script_MakeInstance
+                                              |
+                                              v
+                                       mutable instance
+                                              |
+                                              v
+                                     Script_PlayScript
+                                              |
+                                root command + linked chain
+                                              |
+                                              v
+                                      native Script_* ops
 ```
 
-The exact bridge by which the scenario/event layer starts, stops or waits for
-SCX script instances is still being reconstructed.
+The bridge between the two scripting layers is no longer hypothetical:
+`0x39`, `0x3B`, and `0x3C` explicitly start structured SCX scripts.
 
 ---
 
-# 4. SCX container context
+# 4. SCX v5 context
 
-The complete `.SCX` format contains much more than scripts, but script execution
-depends on several tagged resource sections.
+The complete SCX format deserves its own dedicated document, but script
+serialization depends on the container layout and resource manifest.
 
-## 4.1 Version-5 file header
+## 4.1 Header
 
-**Confirmed — Runtime and data.**
+Observed files begin:
 
-Observed version-5 files begin with:
+| Offset | Type | Meaning |
+|---:|---|---|
+| `0x00` | `u32` | magic `0x00DEAD00` |
+| `0x04` | `u32` | version, currently `5` |
+| `0x08` | `u32` | unresolved header word; observed as `8` |
+| `0x0C` | `u32` | descriptor-block byte size |
 
-| Offset | Type | Meaning | Confidence |
-|---:|---|---|---|
-| `0x00` | `u32` | magic `0x00DEAD00` | Confirmed |
-| `0x04` | `u32` | version, observed/required as `5` | Confirmed |
-| `0x08` | `u32` | unknown; observed as `8` in `aventure.SCX` and `Grid.SCX` | Unknown |
-| `0x0C` | `u32` | size of the main tagged block | Confirmed |
-
-The main tagged block begins at:
+The descriptor block begins at:
 
 ```text
 file + 0x10
 ```
 
-Runtime reads exactly the number of bytes stored at `+0x0C`.
-
-Observed:
+and ends at:
 
 ```text
-Grid.SCX:
-    mainBlockSize = 0x1019
-    main block = file 0x10 .. 0x1028 inclusive
-    next byte  = 0x1029
-
-aventure.SCX:
-    mainBlockSize = 0x41C8
-    main block = file 0x10 .. 0x41D7 inclusive
-    next byte  = 0x41D8
+resourceStreamOffset = 0x10 + descriptorSize
 ```
 
-Therefore:
+This is better described as a **descriptor/tag block** than as the resource
+payload itself.
+
+## 4.2 Descriptor block versus appended resource stream
+
+The file is conceptually:
 
 ```text
-mainBlockEnd = 0x10 + mainBlockSize
+ScxHeader
+    |
+    +-- descriptor/tag block
+    |      DEAD0000
+    |      DEAD0001
+    |      DEAD0002
+    |      ...
+    |      DEADFFFF
+    |
+    +-- appended resource stream
+           resource payload
+           resource payload
+           resource payload
+           ...
 ```
 
-is a confirmed boundary.
+Descriptor sections act as a manifest describing resources that are consumed
+later from the appended stream.
 
-## 4.2 Main-block tags
+Not every descriptor section owns an appended resource.
 
-The main block is parsed as a sequence of 32-bit tags:
+## 4.3 Known section meanings
 
-```text
-0xDEAD0000 .. 0xDEAD000A
-0xDEADFFFF
-```
+Current parser/runtime understanding:
 
-The parser dispatches through logic around:
+| Tag | Descriptor payload | Appended payload |
+|---:|---|---|
+| `DEAD0000` | `0x20` named resource descriptors | 8-byte-framed path/3DP-like resources |
+| `DEAD0001` | `0x24` animation descriptors | 8-byte-framed animation/3DA payloads |
+| `DEAD0002` | structured scripts | none outside the section's own serialized data |
+| `DEAD0003` | `0x1A` sound descriptors | RIFF/WAVE resources |
+| `DEAD0004` | `0x24` sprite/effect descriptors | embedded 3DO package + auxiliary texture block |
+| `DEAD0005` | `0x1C` scene descriptors | 8-byte-framed external-scene resources |
+| `DEAD0006` | `0x318` opaque records | none currently identified |
+| `DEAD0007` | count/flags + `0x20` records | none currently identified |
+| `DEAD0008` | global mode/limit marker | none |
+| `DEAD0009` | reserved/no-op in current parser | none |
+| `DEAD000A` | extra-block descriptor state | one 8-byte-framed extra block |
+| `DEADFFFF` | end marker | — |
 
-```text
-0x0044A040
-```
+Section order is data-dependent.
 
-Current section meanings:
-
-| Tag | Current meaning | Confidence |
-|---|---|---|
-| `0xDEAD0000` | `.3DP` path-resource list | Strongly corroborated |
-| `0xDEAD0001` | `.3DA` animation-resource list | Strongly corroborated |
-| `0xDEAD0002` | script templates/functions/parameters | Confirmed |
-| `0xDEAD0003` | sound-resource list | Strongly corroborated |
-| `0xDEAD0004` | `.3DO` / sprite visual-resource list | Strongly corroborated |
-| `0xDEAD0005` | scene-resource list | Strongly corroborated |
-| `0xDEAD0006` | unknown large table | Unknown |
-| `0xDEAD0007` | unknown fixed-size records copied to global storage | Unknown |
-| `0xDEAD0008` | fixed global/limit setup, observed value `0x100` | Unknown |
-| `0xDEAD0009` | reserved/no-op in current parser | Confirmed behavior |
-| `0xDEAD000A` | auxiliary/external block passed to another loader | Unknown |
-| `0xDEADFFFF` | end of main tagged block | Confirmed |
-
-The Script subsystem is rooted primarily in:
-
-```text
-0xDEAD0002
-```
-
-but function parameters refer to resources supplied by several other sections.
-
-## 4.3 Sections are optional and not numerically ordered
-
-Observed files prove that tag order cannot be assumed.
-
-A parser must:
-
-1. read a tag;
-2. dispatch by tag value;
-3. advance according to that section's format;
-4. stop on `0xDEADFFFF`.
-
-Do not assume that tag `0` precedes tag `1`, or that every section exists.
+A parser must dispatch by tag value rather than assuming numerical order.
 
 ---
 
-# 5. Tag `0xDEAD0002`: script-definition section
+# 5. `DEAD0002`: structured script section
 
-## 5.1 Section beginning
+This section contains:
 
-The tag-2 parser begins with:
+```text
+script templates
+shared argument/value pool
+per-script related-script data
+root command arrays
+linked command arrays
+binding table A
+binding table B
+```
+
+## 5.1 Top-level order
+
+Current recovered serialized order:
 
 ```text
 u32 scriptCount
+
+SerializedScriptTemplateV5 scripts[scriptCount]  // 0x64 each
+
+u32 sharedValueCount
+u32 sharedValues[sharedValueCount]
+
+for each script in template order:
+    u8 relatedScriptPresent
+
+    if relatedScriptPresent != 0:
+        char relatedScriptName[21]
+
+    ScriptCommand rootCommands[rootCommandCount]       // 0x18 each
+    ScriptCommand linkedCommands[linkedCommandCount]   // 0x18 each
+
+    BindingTable tableA
+    BindingTable tableB
 ```
 
-followed by:
+This per-script auxiliary sequence is essential.
+
+The root/linked command arrays are **not** stored inline inside the fixed
+`0x64` template record.
+
+## 5.2 Shared value pool
+
+The value pool is:
 
 ```text
-scriptCount * 0x64-byte script template records
+u32 sharedValueCount
+u32 sharedValues[sharedValueCount]
 ```
 
-Observed counts:
+Each word is intentionally untyped at serialization level.
+
+Depending on the IAM function, a value can represent:
+
+- unsigned integer;
+- signed integer;
+- float bit pattern;
+- resource index;
+- object ID/index;
+- frame count;
+- duration;
+- mutable progress;
+- flags;
+- coordinate component;
+- table index.
+
+The same shared serialized pool is deep-copied into each mutable script instance.
+
+## 5.3 Binding table format
+
+Each binding table currently parses as:
 
 ```text
-Grid.SCX:
-    8 scripts
-
-aventure.SCX:
-    22 scripts
+u32 count
+u8 slotMetadata[count * 8]   // exact two-dword entry semantics unresolved
+char names[count][21]
 ```
 
-Observed names include:
+The fixed template stores a three-dword descriptor for each binding table:
 
 ```text
-Grid.SCX:
-    "1KaylArrives"
-
-aventure.SCX:
-    "effects2_smoke2"
++0x3C .. +0x44  binding table A descriptor
++0x48 .. +0x50  binding table B descriptor
 ```
 
-These names are debug/authoring labels for structured script templates.
+The first dword of each descriptor agrees with the corresponding appended
+binding-table count in the examined retail data.
 
-Their presence does **not** imply automatic execution when the SCX is loaded.
+The remaining two dwords are pointer/index/runtime-oriented and remain
+unresolved.
 
-## 5.2 Shared function-parameter value pool
+## 5.4 Known binding-table use
 
-After the script template table, tag 2 contains a pool of 32-bit values.
+`Script_SelectRelativeBodyAnimation` uses argument 0 as an index into
+**binding table A**.
 
-The loader stores approximately:
+The resulting 21-byte name identifies the object/body channel binding used by
+the animation operation.
+
+Observed example from `Grid.SCX`:
 
 ```text
-ScriptList + 0x44 = valueCount
-ScriptList + 0x48 = pointerToValues
+script: "1KaylArrives"
+
+binding table A:
+    [0] "UBassin"
 ```
 
-The pool is conceptually:
-
-```text
-u32 functionParameterValueCount
-u32 functionParameterValues[functionParameterValueCount]
-```
-
-Function records do not contain native pointers on disk.
-
-Their serialized `+0x08` field indexes this parameter storage.
-
-At runtime:
-
-```text
-serialized parameter index
-        |
-        v
-scriptList->parameterValues + index * 4
-        |
-        v
-native parameter pointer
-```
-
-## 5.3 Two function-record arrays
-
-Each script template refers to two classes of `0x18`-byte function records:
-
-1. a primary array used to select the current function/group;
-2. a secondary array referenced through serialized `SyncFunction` indexes.
-
-The exact original editor/source terminology for these arrays is not fully
-recovered.
-
-Runtime explicitly uses the diagnostic term:
-
-```text
-SyncFunction
-```
-
-for the linked relationship.
-
-At runtime, `+0x0C` becomes a pointer and is traversed as a function chain.
+Binding table B's role remains unresolved.
 
 ---
 
-# 6. Script template record
+# 6. Script template record — `0x64` bytes
 
-Each serialized script-template record is:
-
-```text
-0x64 bytes
-```
-
-A conservative partial schema is:
+Current conservative layout:
 
 ```c
 struct SerializedScriptTemplateV5 {
-    uint32_t owner_placeholder;       // +0x00
-    char     name[20];                // +0x04
+    uint32_t scenarioOwnerPlaceholder;    // +0x00
 
-    uint16_t unknown_18;              // +0x18
-    uint16_t script_id;               // +0x1A
+    char     name[22];                    // +0x04 .. +0x19
+    uint16_t scriptId;                    // +0x1A
 
-    uint16_t runtime_state;           // +0x1C
-    uint16_t flags_state;             // +0x1E
+    uint16_t runtimeState;                // +0x1C
+    uint16_t flags;                       // +0x1E
 
-    uint32_t function_group_count;    // +0x20
-    uint32_t current_group_index;     // +0x24
-    uint32_t function_groups;         // +0x28 serialized/runtime-dependent
+    uint32_t rootCommandCount;            // +0x20
+    uint32_t currentRootCommandIndex;     // +0x24
+    uint32_t rootCommandsPlaceholder;     // +0x28
 
-    uint32_t sync_function_count;     // +0x2C
-    uint32_t sync_functions;          // +0x30 serialized/runtime-dependent
+    uint32_t linkedCommandCount;          // +0x2C
+    uint32_t linkedCommandsPlaceholder;   // +0x30
 
-    int32_t  repeat_limit;            // +0x34
-    uint32_t repeat_index;            // +0x38
+    int32_t  repeatLimit;                 // +0x34
+    uint32_t repeatIndex;                 // +0x38
 
-    uint8_t  unknown_3C[0x18];        // +0x3C .. +0x53
+    uint32_t bindingTableAFields[3];      // +0x3C .. +0x44
+    uint32_t bindingTableBFields[3];      // +0x48 .. +0x50
 
-    uint32_t paired_or_linked_script; // +0x54 runtime pointer
-    float    elapsed_time;            // +0x58
+    uint32_t relatedScriptPlaceholder;    // +0x54
+    uint32_t elapsedTimeBits;             // +0x58, runtime treats as float
 
-    uint8_t  unknown_5C;              // +0x5C
-    uint8_t  paired_gate;             // +0x5D
-    uint8_t  context_flags[4];        // +0x5E .. +0x61
-    uint16_t unknown_62;              // +0x62
+    uint8_t  tail[8];                     // +0x5C .. +0x63
 }; // 0x64
 ```
 
-This is documentation-oriented, not a final OpenNomad ABI.
+The exact serialized-vs-runtime interpretation varies by field.
 
-Several fields are mutated, relocated or repurposed after load, so serialized
-and runtime structures should be separate.
+OpenNomad should keep immutable parsed data separate from mutable runtime
+instances.
 
-## 6.1 `+0x00`: owner/list placeholder
+---
 
-The first dword is pointer-shaped but is not a meaningful serialized process
-address.
+# 7. Script-template fields
 
-Runtime fixes/overwrites it so a loaded script can refer to its owning
-`ScriptList`.
+## 7.1 `+0x00`: owner/scenario placeholder
 
-## 6.2 `+0x04`: script name
+The first dword is overwritten/fixed up after load.
 
-**Confirmed.**
+It is not a serialized process pointer that should be trusted directly.
+
+## 7.2 `+0x04 .. +0x19`: script name
+
+Confirmed width:
 
 ```text
-char name[20]
+22 bytes
 ```
 
-contains a fixed-size script name.
+This is distinct from the numeric script ID at `+0x1A`.
 
-Observed shorter names are NUL-terminated.
+Older documentation incorrectly described a 20-byte name plus an unknown
+`+0x18` word.
 
-## 6.3 `+0x1A`: script ID
+That is obsolete.
 
-**Confirmed — Runtime.**
+## 7.3 `+0x1A`: script ID
 
-A lookup function around:
+A Runtime lookup around:
 
 ```text
 0x0044A0F0
 ```
 
-compares a requested 16-bit ID with:
+compares the requested ID against:
 
 ```text
 WORD [script + 0x1A]
 ```
 
-This is distinct from the textual name.
+AREA opcode `0x39` uses this ID to locate a structured script.
 
-## 6.4 `+0x1C`: runtime state
+## 7.4 `+0x1C`: runtime state
 
-`Script_PlayScript()` checks this field before normal execution.
+`Script_PlayScript()` checks this before normal execution.
 
-A zero state causes an early/non-normal return.
+The complete enum is not yet mapped.
 
-Reinitialization restores an active state.
+## 7.5 `+0x1E`: flags/state
 
-The exact enum remains unknown.
+The low nibble and upper bits participate in execution/context logic.
 
-## 6.5 `+0x1E`: flags/state
+Individual bits remain incompletely named.
 
-The low nibble is manipulated by execution logic.
-
-Upper bits are involved in broader context/lifecycle checks.
-
-Do not assign final bit names yet.
-
-## 6.6 `+0x20`, `+0x24`, `+0x28`: primary function groups
-
-Runtime uses:
+## 7.6 `+0x20`, `+0x24`, `+0x28`: root commands
 
 ```text
-+0x20  number of primary groups
-+0x24  current group index
-+0x28  pointer to primary function-record array
++0x20 rootCommandCount
++0x24 currentRootCommandIndex
++0x28 root-command pointer/placeholder
 ```
 
-Conceptually:
-
-```cpp
-function =
-    script->functionGroups
-    + script->currentGroupIndex;
-```
-
-with each record having a `0x18`-byte stride.
-
-## 6.7 `+0x2C`, `+0x30`: sync-function table
-
-These fields contain:
+Runtime selects one root command by:
 
 ```text
-+0x2C  count of secondary/sync function records
-+0x30  pointer to secondary/sync function array
+rootCommands[currentRootCommandIndex]
 ```
 
-Serialized references into this array are converted to native pointers.
+with a `0x18` stride.
 
-## 6.8 `+0x34`, `+0x38`: repetition
+## 7.7 `+0x2C`, `+0x30`: linked commands
 
-Runtime compares the current repeat state with a configured repeat limit.
+```text
++0x2C linkedCommandCount
++0x30 linked-command pointer/placeholder
+```
 
-A repeat limit of:
+The root command can link into this array through its `+0x0C` field.
+
+Linked commands can themselves link to additional linked commands.
+
+## 7.8 `+0x34`, `+0x38`: whole-script repetition
+
+Runtime confirms:
+
+```text
++0x34 repeatLimit
++0x38 current repeat count/index
+```
+
+At end-of-script, Runtime increments the current repeat state and compares it
+with the configured limit.
+
+A limit of:
 
 ```text
 0xFFFFFFFF / -1
 ```
 
-is treated specially as an unbounded/infinite repetition case.
+is treated specially as unlimited/infinite.
 
-When the script reaches the end and should repeat, Runtime reinitializes script
-and function state rather than simply rewinding an instruction pointer.
+When repeating, Runtime invokes reinitialization rather than merely resetting
+the root index.
 
-## 6.9 `+0x54`: paired/linked script
+## 7.9 `+0x3C .. +0x50`: two binding-table descriptors
 
-This field becomes or behaves as a pointer to another script.
-
-Its authoring meaning is not yet fully established.
-
-Open questions include:
-
-- whether the relation is parent/child;
-- sequence vs parallel behavior;
-- completion propagation;
-- ownership;
-- cancellation;
-- relation to `+0x5D`.
-
-## 6.10 `+0x58`: elapsed time
-
-This is used as a floating-point time accumulator.
-
-It is separate from function-local `+0x10` / `+0x14` state.
-
-## 6.11 `+0x5E .. +0x61`: context gating
-
-These bytes participate in execution gating involving global context state
-around:
+These six dwords correspond to:
 
 ```text
-0x00903AE0
+binding table A descriptor
+binding table B descriptor
 ```
 
-Their exact meanings remain unresolved.
+The associated serialized variable-length binding-table data follows each
+script's command arrays.
 
-They may encode scene/area ownership or cancellation context.
+## 7.10 `+0x54`: related/paired script
+
+Runtime treats this as a related script pointer after fixup.
+
+The exact authoring relationship remains unresolved:
+
+- parent/child;
+- continuation;
+- synchronized companion;
+- lifecycle ownership;
+- completion dependency.
+
+Do not rename it more narrowly yet.
+
+## 7.11 `+0x58`: elapsed script time
+
+Runtime executes:
+
+```text
+script[+0x58] += globalScriptFrameDelta
+```
+
+as a floating-point operation.
+
+This is separate from command-local progress parameters and command
+execution-count fields.
+
+## 7.12 `+0x5D`: related-script/pairing gate
+
+Runtime uses this byte in conjunction with the related-script path.
+
+Exact source-level meaning remains unresolved.
+
+## 7.13 `+0x5E .. +0x61`: context-selection bytes
+
+These four bytes participate in global/scenario context gating.
+
+They are real execution metadata and should be preserved.
+
+Their exact semantic names remain unresolved.
 
 ---
 
-# 7. Function record serialization
+# 8. Script command/function record — `0x18` bytes
 
-Each structured SCX/IAM function record has a stride of:
-
-```text
-0x18 bytes
-```
-
-A conservative runtime-shaped schema is:
+The serialized record is now substantially recovered.
 
 ```c
-struct ScriptFunctionRecord32 {
-    uint32_t function_id;       // +0x00
-    uint32_t unknown_04;        // +0x04
-    uint32_t parameters;        // +0x08 index on disk, pointer at runtime
-    uint32_t sync_function;     // +0x0C index on disk, pointer at runtime
-    uint32_t state_10;          // +0x10
-    uint32_t state_14;          // +0x14
+struct SerializedScriptCommand {
+    uint32_t functionId;           // +0x00
+    uint32_t valueCount;           // +0x04
+    uint32_t firstValueIndex;      // +0x08
+    int32_t  nextLinkedIndex;      // +0x0C, -1 = none
+    uint32_t executionLimit;       // +0x10, 0xFFFFFFFF = unlimited
+    uint32_t executionCount;       // +0x14
 }; // 0x18
 ```
 
-The detailed function-ID catalogue for `+0x00` lives in
-[`iam-script-functions.md`](iam-script-functions.md).
+This replaces older documentation that treated `+0x04`, `+0x10`, and `+0x14`
+as largely unknown generic runtime state.
 
-## 7.1 `+0x00`: typed IAM function ID
+## 8.1 `+0x00`: IAM function ID
 
-This is a 32-bit ID such as:
+The full 32-bit ID is documented in:
+
+[`iam-script-functions.md`](iam-script-functions.md)
+
+Examples:
 
 ```text
-0x01000002
-0x03000008
+0x0200002A
 0x04000029
+0x05000015
+0x06000017
 ```
 
-Do not:
+Do not dispatch using only the low byte.
 
-- call it a one-byte opcode;
-- dispatch using only the low byte;
-- conflate it with the scenario/event VM.
+## 8.2 `+0x04`: `valueCount`
 
-## 7.2 `+0x04`: unresolved function metadata
+Number of raw 32-bit words used by this command.
 
-No universal meaning has been proven.
+This is not the number of semantic selectors reported by
+`Script_GetNumParam()`.
 
-It should remain an unknown/raw field.
-
-Asset analysis should collect value distributions per function ID.
-
-## 7.3 `+0x08`: function parameters
+## 8.3 `+0x08`: `firstValueIndex`
 
 Serialized form:
 
 ```text
-index into parameter storage
+index into the ScriptList/shared value pool
 ```
 
-Runtime form:
+Runtime form after relocation:
 
 ```text
-pointer to parameter values
+pointer to first command value
 ```
 
-Runtime diagnostics refer to these as:
+Therefore:
 
 ```text
-FuncParams
+command values =
+    sharedValues[firstValueIndex
+                 .. firstValueIndex + valueCount)
 ```
 
-## 7.4 `+0x0C`: synchronized/linked function
+## 8.4 `+0x0C`: `nextLinkedIndex`
 
 Serialized form:
 
 ```text
-index into sync-function array
+signed index into the linked-command array
 ```
 
-Runtime form:
+with:
 
 ```text
-pointer to another function record
+-1 = no next linked command
 ```
 
-Runtime diagnostics explicitly use:
+Runtime form after relocation:
+
+```text
+pointer to next linked ScriptFunction
+```
+
+Runtime diagnostics use the term:
 
 ```text
 SyncFunction
 ```
 
-## 7.5 `+0x10` and `+0x14`: mutable function execution state
+for this relationship.
 
-These values broadly behave like:
+## 8.5 `+0x10`: `executionLimit`
+
+Command-level execution limit.
+
+Special value:
 
 ```text
-configured timing/frame/limit state
-current mutable progress
+0xFFFFFFFF
 ```
 
-but exact generic names are not proven.
+means unlimited/infinite.
 
-They are function-instance state and must not be shared across independent
-instances.
+## 8.6 `+0x14`: `executionCount`
+
+Mutable command-local count/progress.
+
+Runtime compares it with `executionLimit` before dispatch.
+
+Handlers/reinitializers can also mutate function-specific value-pool fields in
+addition to this count.
 
 ---
 
-# 8. Index-to-pointer relocation
+# 9. Example command records
 
-Runtime preserves two very useful diagnostic names:
+Retail `Grid.SCX` makes the recovered fields concrete.
+
+Conceptually:
+
+```text
+Script_SelectRelativeBodyAnimation
+    functionId      = 0x0200002A
+    valueCount      = 12
+    firstValueIndex = 0
+    nextLinkedIndex = 0
+    executionLimit  = 1
+    executionCount  = 0
+```
+
+and a synchronized sound command can appear as:
+
+```text
+Script_PlaySyncSound
+    functionId      = 0x05000015
+    valueCount      = 5
+    executionLimit  = 1
+    executionCount  = 0
+```
+
+The linked relationship is structural; the functions' own durations and
+completion behavior are independent.
+
+---
+
+# 10. Index-to-pointer relocation
+
+Runtime diagnostic names:
 
 ```text
 Script_FunctionsIndexesToAdresses()
 Script_FunctionsAdressesToIndexes()
 ```
 
-The misspelling `Adresses` is present in Runtime.
+confirm that script graphs have serialized index form and pointer-rich runtime
+form.
 
-These routines do **not** map IAM IDs to native C function addresses.
+The misspelling `Adresses` is preserved from Runtime.
 
-They relocate references inside the serialized script graph.
+## 10.1 Parameter/value relocation
 
-## 8.1 Load/runtime direction
-
-Conceptually:
+Serialized:
 
 ```text
-serialized:
-    +0x08 = parameter index
-    +0x0C = sync-function index
-
-        Script_FunctionsIndexesToAdresses()
-
-runtime:
-    +0x08 = parameter pointer
-    +0x0C = sync-function pointer
++0x08 = firstValueIndex
 ```
 
-## 8.2 Reverse direction
+Runtime:
 
-Runtime also contains the inverse validation/conversion path.
+```text
++0x08 = pointer into shared/mutable value pool
+```
 
-Representative diagnostics include:
+## 10.2 Linked-command relocation
+
+Serialized:
+
+```text
++0x0C = linked-command index
+```
+
+Runtime:
+
+```text
++0x0C = pointer to linked ScriptFunction
+```
+
+The inverse path validates that runtime addresses belong to the expected arrays
+before converting them back to indexes.
+
+Representative diagnostics:
 
 ```text
 Script_FunctionsAdressesToIndexes(): Index of FuncParams too big: %d/%d.
@@ -753,81 +833,11 @@ Script_FunctionsIndexesToAdresses(): Address of FuncParams isn't valid.
 Script_FunctionsIndexesToAdresses(): Address of SyncFunction isn't valid.
 ```
 
-The inverse path is useful evidence even if retail gameplay does not serialize
-the same structure back to disk.
-
-## 8.3 Reimplementation rule
-
-Never read the serialized `+0x08` or `+0x0C` dwords as native pointers.
-
-Use explicit validated index types in the parser and explicit references in the
-runtime representation.
-
 ---
 
-# 9. Function parameters
+# 11. Templates versus mutable instances
 
-The parameter pool contains 32-bit values and should not be globally typed as
-one C type.
-
-Depending on the function, a value may represent:
-
-- integer;
-- signed integer;
-- float bit pattern;
-- resource index;
-- object/script ID;
-- frame count;
-- duration;
-- flag;
-- scale;
-- another encoded value.
-
-Each function handler owns the final interpretation of its raw positional
-parameters.
-
-## 9.1 Semantic parameter selectors
-
-Runtime contains:
-
-```text
-Script_GetNumParam()
-```
-
-which maps a **semantic parameter selector** to a positional slot for a given
-function ID.
-
-This proves that Runtime has a higher-level parameter ABI layered on top of the
-raw positional values.
-
-The full selector-to-slot matrix and current selector analysis are maintained in
-[`iam-script-functions.md`](iam-script-functions.md).
-
-This file deliberately does not duplicate that table.
-
-## 9.2 Important parser rule
-
-`Script_GetNumParam()` does not enumerate every raw positional field.
-
-Therefore:
-
-```text
-number of semantic selectors
-```
-
-is not necessarily:
-
-```text
-raw parameter count
-```
-
-A parser should preserve the complete raw parameter vector.
-
----
-
-# 10. Script templates vs mutable instances
-
-Runtime has explicit instance-management functions, including:
+Runtime has explicit instance lifecycle functions:
 
 ```text
 Script_MakeInstance()
@@ -835,70 +845,50 @@ Script_RemoveInstance()
 Script_RemoveAllInstances()
 ```
 
-This proves that a loaded SCX template and an executing script instance are
-different objects/concepts.
+A loaded template is therefore not the object that should be mutated during
+playback.
 
-## 10.1 `Script_MakeInstance()` validation
+## 11.1 Instance creation
 
-Representative diagnostics include:
+`Script_MakeInstance()` can allocate/copy:
 
-```text
-Script_MakeInstance(): Your ScriptListPtr is NULL.
-Script_MakeInstance(): Your ScriptPtr is NULL.
-Script_MakeInstance(): Your ScriptPtr isn't a valid script. It's not from your ScriptListPtr..Bad adress.
-Script_MakeInstance(): There are %d instances in script. Max number is %d...Can't add instance.
-```
+- root command records;
+- linked command records;
+- command values;
+- sync-function references;
+- per-instance sprite state.
 
-Runtime verifies that the template belongs to the supplied script list and
-enforces an instance count/limit.
+## 11.2 Mutable value-pool copy
 
-The exact template fields for this accounting are not yet fully mapped.
+The shared serialized value pool is copied for runtime execution.
 
-## 10.2 Instance-local function arrays
+This is necessary because handlers mutate values such as:
 
-Runtime can allocate/copy:
+- elapsed progress;
+- current scale/roll;
+- sound-start latches;
+- animation progress;
+- frame state;
+- other command-local runtime values.
 
-```text
-script functions
-sync functions
-```
+OpenNomad currently mirrors this by deep-copying `ScxData::shared_values` into
+each `ScriptInstance`.
 
-into instance-local storage.
+## 11.3 Command counters are instance-local
 
-Therefore mutable fields such as:
+`executionCount` is mutable runtime state.
 
-```text
-+0x10
-+0x14
-```
+Independent instances of the same template must not share it.
 
-must belong to the playing instance, not the immutable template.
+## 11.4 Linked references are rebuilt inside the instance
 
-## 10.3 Instance-local parameters
-
-Diagnostics show allocation/copying for:
+If a serialized template says:
 
 ```text
-parameter list
-functions parameters
-syncfunctions parameters
+root command A -> linked command B
 ```
 
-This is strong evidence that parameters can be mutable or otherwise
-instance-specific.
-
-A fully faithful implementation should not expose all parameters as immutable
-shared spans.
-
-## 10.4 Sync links are rebuilt per instance
-
-If a template contains:
-
-```text
-function A -> sync function B
-```
-
-then an instance must become:
+a runtime instance must resolve:
 
 ```text
 instance A -> instance B
@@ -910,24 +900,9 @@ not:
 instance A -> template B
 ```
 
-Runtime validates and fixes these references.
-
-## 10.5 Instance-local sprite state
-
-`Script_MakeInstance()` contains sprite-specific allocation failures such as:
-
-```text
-Script_MakeInstance(): Not enough memory to allocate space for new sprite.
-Script_MakeInstance(): Sprite "%s" isn't loaded.
-Script_MakeInstance(): Sprite "%s" can't be allocated.
-```
-
-This shows that at least some structured IAM functions require per-instance
-sprite objects/state.
-
 ---
 
-# 11. `Script_PlayScript()` scheduler
+# 12. `Script_PlayScript()` scheduling
 
 Main playback is around:
 
@@ -935,512 +910,879 @@ Main playback is around:
 0x0044C860
 ```
 
-The high-level scheduler model is now sufficiently established to implement
-without hardcoding script names.
+Runtime uses **two different completion mechanisms**:
 
-## 11.1 Current group selection
+1. command execution-limit/count gating; and
+2. selected handler return values that keep the current synchronized group
+   active.
 
-Runtime uses approximately:
+These mechanisms are complementary.
 
-```text
-script + 0x20  function-group count
-script + 0x24  current group index
-script + 0x28  primary function array
-```
+---
 
-It selects the current primary function record and follows synchronized links.
+# 13. Pre-dispatch execution-count gate
 
-## 11.2 Synchronized function chain
-
-One selected primary record can lead to additional records through:
+Before executing a command, Runtime compares:
 
 ```text
-function + 0x0C
+command +0x10  executionLimit
+command +0x14  executionCount
 ```
-
-after that field has been relocated to a pointer.
-
-Conceptually:
-
-```text
-group N
-  |
-  +-- primary function
-        |
-        +-- sync function
-              |
-              +-- sync function
-                    ...
-```
-
-The original IAM/editor term may not literally have been “group”; this is a
-behavior-based documentation term.
-
-## 11.3 Group-still-active accumulator
-
-Some IAM functions return a value that is ORed into a group-level accumulator.
 
 Conceptually:
 
 ```cpp
-bool stillActive = false;
-
-for (Function& fn : currentGroup) {
-    Result result = execute(fn);
-
-    if (descriptor(fn.id).contributesToGroupActive)
-        stillActive |= result.active;
+if (executionLimit != 0xFFFFFFFF &&
+    executionCount >= executionLimit) {
+    skipThisCommand();
 }
-
-if (!stillActive)
-    advanceToNextGroup();
 ```
 
-This return value is **not generic success/failure**.
-
-For contributing functions, it means approximately:
+This gate answers:
 
 ```text
-this synchronized operation is still in progress
+is this command still eligible to execute?
 ```
 
-The authoritative per-function blocking metadata is in
-[`iam-script-functions.md`](iam-script-functions.md).
-
-## 11.4 Immediate functions inside synchronized groups
-
-A group can contain operations that perform a side effect without blocking
-progress.
-
-For example, conceptually:
+It does **not** by itself answer:
 
 ```text
-timed movement
-sound start
-wait
+should the current root group advance this tick?
 ```
 
-can coexist in one group even if only movement and wait contribute to
-`stillActive`.
-
-## 11.5 Sync does not imply equal duration
-
-Functions in a synchronized group can have independent:
-
-- durations;
-- progress counters;
-- resource state;
-- parameters;
-- completion conditions.
-
-They are synchronized only in the sense that group advancement waits until no
-contributing member remains active.
+That second question is determined by selected handler return values.
 
 ---
 
-# 12. Reinitialization and repetition
+# 14. Synchronized linked-command chain
 
-Runtime contains a generic script-function reinit dispatcher around:
+One root command defines the current group.
+
+Its `nextLinkedIndex`/runtime `SyncFunction` pointer can chain into linked
+commands.
+
+Conceptually:
+
+```text
+root group N
+    |
+    +-- root command
+            |
+            +-- linked command
+                    |
+                    +-- linked command
+                            ...
+```
+
+Runtime services the entire reachable chain.
+
+Each linked command can have independent:
+
+- `executionLimit`;
+- `executionCount`;
+- values;
+- duration;
+- native handler;
+- blocking/non-blocking behavior.
+
+The term “group” is a behavior-based documentation term; `SyncFunction` is the
+actual Runtime diagnostic terminology for the link.
+
+---
+
+# 15. Handler-return group blocking
+
+For a subset of stateful IAM functions, `Script_PlayScript()` literally does:
+
+```asm
+call Script_...
+or   bl, al
+```
+
+`BL` is the current group's “still active” accumulator.
+
+Stateful/blocking functions include:
+
+```text
+InterpolateCameras
+SelectBodyAnimation
+SelectRelativeBodyAnimation
+MoveObjectOnPath
+AnimationFromExternalScene
+MorphObject
+ScaleObjectX
+ScaleObjectY
+ScaleObjectZ
+ChainObjects
+MorphPaletteSprite
+PlaySyncSound
+Wait
+```
+
+Immediate actions are invoked without ORing their return into the accumulator.
+
+Examples include:
+
+```text
+SelectCamera
+SwapObject
+PlaySound
+StopSound
+SendMessage
+```
+
+The authoritative per-function table is in:
+
+[`iam-script-functions.md`](iam-script-functions.md)
+
+## 15.1 Meaning of the return
+
+For contributing handlers:
+
+```text
+AL != 0
+```
+
+means approximately:
+
+```text
+this synchronized operation remains active
+```
+
+It is **not generic success/failure**.
+
+## 15.2 Group advance
+
+After all eligible commands in the root+linked chain have been serviced:
+
+```text
+BL != 0:
+    remain on current root group
+
+BL == 0:
+    advance script +0x24
+```
+
+Therefore the correct scheduler model is:
+
+```text
+executionLimit/executionCount
+    -> command eligibility
+
+handler AL for selected functions
+    -> group remains active this tick
+
+BL == 0
+    -> advance root group
+```
+
+---
+
+# 16. Current OpenNomad scheduler fidelity note
+
+At the time of writing, OpenNomad's `ScriptRuntime` advances a group when every
+command in the chain is considered exhausted by its
+`executionLimit/executionCount` state.
+
+That is a practical current implementation, but it is **not an exact match** for
+the recovered retail `Script_PlayScript()` logic.
+
+Runtime explicitly combines:
+
+```text
+execution-count gating
++
+handler AL -> BL blocking accumulation
+```
+
+The documentation follows Runtime.
+
+OpenNomad should eventually be updated to reproduce the original two-stage
+scheduler.
+
+---
+
+# 17. Reinitialization
+
+Runtime has a generic structured-function reinit dispatcher around:
 
 ```text
 0x0044A7E0
 ```
 
-Many IAM functions have paired `Script_Reinit_*` handlers.
+Many functions have `Script_Reinit_*` companions.
 
-The authoritative pairing table lives in
-[`iam-script-functions.md`](iam-script-functions.md).
+The authoritative per-function pairing table is in:
 
-## 12.1 Why reinit exists
+[`iam-script-functions.md`](iam-script-functions.md)
 
-Reinitialization is used when script execution needs to restore function-local
-state for:
+## 17.1 What reinit resets
 
-- repetition;
-- restart;
-- replay;
-- possibly instance reuse;
-- reset after partial progress.
+Depending on the function, reinitialization can reset:
 
-This is not equivalent to merely resetting:
+- value-pool progress;
+- interpolation state;
+- sound latches;
+- animation progress;
+- sprite state;
+- execution-related state.
 
-```text
-currentGroupIndex = 0
-```
-
-because individual functions can maintain resource-specific mutable state.
-
-## 12.2 Repeat behavior
-
-The template fields:
+Repetition is therefore not correctly modeled as only:
 
 ```text
-+0x34  repeat limit
-+0x38  repeat index/current repeat state
+currentRootCommandIndex = 0
 ```
 
-participate in end-of-script repetition logic.
+## 17.2 Whole-script repetition
 
-A configured limit of `-1`/`0xFFFFFFFF` is treated specially as unbounded.
+At end-of-script Runtime:
 
-OpenNomad should reproduce the state reset order instead of approximating loops
-at a higher level.
+1. increments the script repeat state;
+2. compares against `+0x34`;
+3. treats `-1` as infinite;
+4. invokes reinitialization;
+5. restarts according to the recovered lifecycle.
 
 ---
 
-# 13. Error handling and validation
+# 18. `Script_GetNumParam()` and semantic parameter roles
 
-The structured Script subsystem performs substantial validation.
+`Script_GetNumParam()` maps a semantic selector to a raw positional value slot
+for a given IAM function.
 
-## 13.1 Invalid parameter indexes
-
-Runtime checks that parameter indexes fall inside the owning parameter pool.
-
-## 13.2 Invalid sync indexes
-
-Serialized sync-function indexes are checked against the owning script's
-sync-function count.
-
-## 13.3 Invalid relocated addresses
-
-The inverse pointer-to-index path validates that pointers belong to the expected
-arrays before converting them back to indexes.
-
-## 13.4 Invalid script ownership
-
-`Script_MakeInstance()` checks that the supplied template comes from the
-supplied `ScriptList`.
-
-## 13.5 Instance limit
-
-Runtime refuses to create another instance when the template's configured
-maximum is reached.
-
-## 13.6 Missing resources
-
-Individual IAM functions can report missing:
-
-- objects;
-- cameras;
-- animations;
-- paths;
-- scenes;
-- sprites;
-- palettes;
-- sounds.
-
-A faithful implementation should distinguish:
+Example conceptually:
 
 ```text
-malformed serialized script
+semantic "sprite" selector
+    ->
+argument slot 0
+
+semantic "frame" selector
+    ->
+argument slot 1
 ```
 
-from:
+The complete current selector matrix belongs in:
+
+[`iam-script-functions.md`](iam-script-functions.md)
+
+Important:
 
 ```text
-well-formed script referring to unavailable runtime resource
+semantic selector count != command.valueCount
 ```
 
-because Runtime validates these at different layers.
+Not every raw command value is represented by the semantic helper API.
 
 ---
 
-# 14. Script resources in other SCX sections
+# 19. Loading does not imply execution
 
-Structured script functions depend on the SCX resource tables.
+SCX loading creates:
 
-## 14.1 Tag `0xDEAD0000`: path resources
-
-Current observed record stride:
-
-```text
-0x20 bytes
-```
-
-Observed `Grid.SCX` path:
-
-```text
-Grid_pb.3dp
-```
-
-This section supports high-level path-based IAM operations.
-
-## 14.2 Tag `0xDEAD0001`: animation resources
-
-Current observed record stride:
-
-```text
-0x24 bytes
-```
-
-Observed `Grid.SCX` entries include:
-
-```text
-INTRO1.3DA
-INTRO2.3DA
-INTRO3.3DA
-```
-
-The loader resolves them through animation-related code around:
-
-```text
-0x0046E880
-```
-
-and stores runtime references.
-
-## 14.3 Tag `0xDEAD0003`: sound resources
-
-Current observed record stride:
-
-```text
-0x1A bytes
-```
-
-Observed entry:
-
-```text
-INTRO01.WAV
-```
-
-Runtime resolves sound IDs through code around:
-
-```text
-0x0049FC80
-```
-
-and stores `0xFFFF` when lookup fails.
-
-## 14.4 Tag `0xDEAD0004`: visual/sprite resources
-
-Current observed serialized record stride:
-
-```text
-0x24 bytes
-```
-
-Observed entries include effect models such as:
-
-```text
-EFFECTS2_SMOKE1.3DO
-```
-
-The loader:
-
-- reads outer-SCX metadata;
-- loads the associated/embedded 3DO resource;
-- stores a runtime resource/model pointer;
-- may allocate sprite state depending on record metadata.
-
-## 14.5 Tag `0xDEAD0005`: scenes
-
-Current observed record stride:
-
-```text
-0x1C bytes
-```
-
-Runtime diagnostics include:
-
-```text
-Scene "%s" not found !
-```
-
-`Grid.SCX` and `aventure.SCX` currently have zero records in this section, so
-additional retail files are needed to characterize it.
-
----
-
-# 15. Loading does not imply execution
-
-Loading an SCX establishes:
-
-- resource tables;
+- resource descriptors;
+- appended resource indices;
 - script templates;
-- parameter pools;
-- relocated references;
-- runtime registries.
+- shared values;
+- command arrays;
+- binding tables;
+- runtime lookup structures.
 
-It does **not** mean:
-
-```text
-execute every script in the file
-```
-
-## 15.1 Templates are not a startup queue
-
-For example, a template named:
+It does not mean:
 
 ```text
-1KaylArrives
+execute every script template
 ```
 
-being present in `Grid.SCX` does not prove that it should execute when the main
-menu is entered.
+For example:
 
-Activation is a separate game/scenario decision.
-
-## 15.2 Do not hardcode by script name
-
-This is architecturally wrong as a final implementation:
-
-```cpp
-if (script.name == "1KaylArrives")
-    playKaylArrival();
+```text
+"1KaylArrives"
 ```
 
-Names are useful for diagnostics and lookup, but Runtime has:
+being present in `Grid.SCX` does not itself trigger the scene.
 
-- numeric script IDs;
-- function graphs;
-- instances;
-- scheduler state;
-- resource relationships.
+Activation comes from scenario/game logic.
 
-OpenNomad should preserve the data-driven model.
+Do not hard-code behavior by script name.
 
 ---
 
-# 16. Scenario/event VM overview
+# 20. Compact AREA scenario/event VM
 
-The compact scenario/event VM is structurally separate from SCX `Script_*`
-functions.
+The AREA VM is now sufficiently recovered to describe as a small stack-based
+scenario interpreter rather than just “variable-length one-byte opcodes”.
 
-It is less completely mapped but already has several confirmed operations.
+Core state:
 
-## 16.1 Encoding
+```text
+instruction pointer
+queued event(s)
+active/running state
+evaluation stack
+START/global-variable store
+wait state
+native subsystem bridges
+```
 
-An instruction begins with:
+Conceptually:
+
+```text
+queue event
+    |
+activate context
+    |
+run
+    |
+    +-- stack operations
+    +-- global-variable operations
+    +-- branches/jumps
+    +-- SCX script launches
+    +-- character operations
+    +-- interface operations
+    +-- camera operations
+    +-- presentation effects
+    +-- music
+    |
+wait / ready / completed / failed
+```
+
+---
+
+# 21. AREA VM lifecycle
+
+Current recovered/runtime-modeled lifecycle:
+
+```text
+created
+    |
+    v
+ready
+    |
+queue event
+    |
+activate
+    |
+    v
+running
+    |
+    +-- EndEvent -> ready
+    +-- native wait -> waiting
+    +-- unsupported -> paused
+    +-- malformed execution -> failed
+    +-- end of stream -> completed
+```
+
+Runtime numeric context states are only assigned where they have been directly
+recovered.
+
+Known wait-state values:
+
+```text
+state 4  tracked explicit-character script wait (0x3C)
+state 6  interface wait (0x46)
+state 7  camera wait (0x60)
+```
+
+---
+
+# 22. AREA instruction encoding
+
+Instruction format:
 
 ```text
 u8 opcode
+operand bytes...
 ```
 
-followed by an opcode-specific sequence.
+Operand widths are opcode-specific.
 
-Operands can include signed 16-bit values and a variable/reference encoding.
-
-The VM therefore behaves like:
+Currently observed operand types:
 
 ```text
-[ip]      opcode
-[ip + 1]  operands...
+i8
+i16 little-endian
+i32 little-endian
 ```
 
-with instruction size depending on the opcode.
+Instruction length must be determined from the opcode definition.
 
-## 16.2 Runtime context
-
-The VM has:
-
-- an instruction pointer;
-- event/script context;
-- operand-decoding helpers;
-- scheduling/yield behavior;
-- handlers primarily around `0x0040xxxx`.
-
-This is unlike the SCX Script system, where a current `0x18`-byte function
-record is selected and executed from a graph.
-
-## 16.3 Variable/reference operand encoding
-
-Some handlers read signed 16-bit operand values through helpers that can resolve
-either:
-
-- literal values;
-- encoded references/variables.
-
-The complete encoding scheme has not yet been documented.
-
-A correct VM implementation should preserve the operand reader abstraction
-rather than assuming every `s16` is literal.
+Never consume arbitrary bytes after an unknown or operand-less opcode.
 
 ---
 
-# 17. Known scenario/event opcode `0x46`
+# 23. Evaluation stack and global variables
 
-## 17.1 Startup instruction
+The VM has an explicit evaluation stack.
 
-In `IAM/AREA` record `118`, a known startup instruction is:
+Currently recovered core operations prove this directly:
+
+```text
+0x07 PushInt8
+0x0A PushGlobalVariable
+0x19 Equal
+0x06 BranchIfFalse
+```
+
+Global/START variables are manipulated by:
+
+```text
+0x0D SetGlobalVariableOne
+0x0E SetGlobalVariable
+```
+
+The current high-level model is:
+
+```text
+START/global variable namespace
+        |
+        +-- read
+        +-- write
+        |
+        v
+evaluation stack
+        |
+        +-- comparison
+        +-- conditional branch
+```
+
+---
+
+# 24. Current AREA opcode catalogue
+
+The following table reflects the current recovered compatibility set.
+
+Names marked **provisional** are behavior-based OpenNomad names, not proven
+original source symbols.
+
+| Opcode | Working name | Operands | Current status |
+|---:|---|---|---|
+| `0x03` | `EndEvent` | none | recovered |
+| `0x04` | `JumpRelative` | `i16` | recovered |
+| `0x06` | `BranchIfFalse` | `i16` | recovered |
+| `0x07` | `PushInt8` | `i8` | recovered |
+| `0x0A` | `PushGlobalVariable` | `i16` | recovered |
+| `0x0D` | `SetGlobalVariableOne` | `i16` | recovered |
+| `0x0E` | `SetGlobalVariable` | `i16, i8` | recovered |
+| `0x19` | `Equal` | none | recovered |
+| `0x38` | `CharacterLookup` | `i16` | provisional |
+| `0x39` | `StartScxScript` | `i16, i16, i16` | recovered bridge |
+| `0x3B` | `StartCharacterScript` | `i16, i16, i16` | provisional name, behavior recovered |
+| `0x3C` | `StartCharacterScriptTracked` | `i16, i16, i16` | provisional name, behavior recovered |
+| `0x46` | `OpenInterface` | `i16, i16, i16` | recovered |
+| `0x4E` | `ActivateCharacter` | `i16, i16` | provisional name, behavior substantially traced |
+| `0x4F` | `CharacterSelectionReset` | `i16` | provisional |
+| `0x5C` | `ObjectActivate` | `i16` | provisional |
+| `0x5F` | `CameraSelect` | `i16, i16, i16` | provisional |
+| `0x60` | `CameraMoveAndWait` | `i16, i16, i16` | provisional |
+| `0x67` | `PlayMusic` | `i16, i16, i16` | recovered |
+| `0x68` | `ActivateSubsystem` | none | provisional |
+| `0x76` | `PresentationEffect` | `i32, i16, i16` | provisional |
+| `0x77` | `PresentationEffectAlt` | `i32, i16, i16` | provisional |
+| `0x83` | `SubsystemOperation` | `i16, i16` | provisional |
+| `0x84` | `BeginCinematicLetterbox` | none | recovered |
+| `0x85` | `EndCinematicLetterbox` | none | recovered |
+
+This is not yet the complete retail opcode table.
+
+---
+
+# 25. Control-flow opcodes
+
+## 25.1 `0x03` — `EndEvent`
+
+```text
+operands: none
+```
+
+Terminates the current queued AREA event.
+
+The evaluation stack is cleared and the context returns to its ready state.
+
+## 25.2 `0x04` — `JumpRelative`
+
+```text
+operands:
+    i16 displacement
+```
+
+The target is computed relative to the instruction pointer immediately after
+the operand.
+
+Conceptually:
+
+```text
+target = postOperandIP + displacement
+```
+
+## 25.3 `0x06` — `BranchIfFalse`
+
+```text
+operands:
+    i16 displacement
+```
+
+Pops one value from the evaluation stack.
+
+If the value is zero:
+
+```text
+jump relative
+```
+
+otherwise execution continues to the following instruction.
+
+## 25.4 `0x07` — `PushInt8`
+
+```text
+operands:
+    i8 value
+```
+
+Pushes a signed immediate onto the evaluation stack.
+
+## 25.5 `0x19` — `Equal`
+
+```text
+operands: none
+```
+
+Pops:
+
+```text
+rhs
+lhs
+```
+
+and pushes:
+
+```text
+1 if lhs == rhs
+0 otherwise
+```
+
+---
+
+# 26. Global-variable opcodes
+
+## 26.1 `0x0A` — `PushGlobalVariable`
+
+```text
+operands:
+    i16 variableId
+```
+
+Pushes the current START/global-variable value.
+
+Current OpenNomad behavior uses:
+
+```text
+0
+```
+
+for an unset variable.
+
+## 26.2 `0x0D` — `SetGlobalVariableOne`
+
+```text
+operands:
+    i16 variableId
+```
+
+Sets:
+
+```text
+global[variableId] = 1
+```
+
+## 26.3 `0x0E` — `SetGlobalVariable`
+
+```text
+operands:
+    i16 variableId
+    i8  value
+```
+
+Sets the global variable to the signed immediate value.
+
+---
+
+# 27. AREA -> structured SCX script bridge
+
+This bridge is now directly represented by three opcodes.
+
+## 27.1 `0x39` — `StartScxScript`
+
+```text
+operands:
+    i16 scriptId
+    i16 operandB
+    i16 operandC
+```
+
+Runtime resolves operand 0 against:
+
+```text
+ScxScript +0x1A
+```
+
+and creates a structured script instance.
+
+Current behavior:
+
+```text
+start SCX script
+    |
+    v
+obtain concrete ScriptRuntime instance
+    |
+    v
+AREA context waits for that exact instance
+    |
+    v
+instance completes
+    |
+    v
+AREA resumes after 0x39
+```
+
+The exact semantics of operands B and C remain unresolved.
+
+This opcode is the generic world/non-explicit-character SCX-script bridge.
+
+## 27.2 `0x3B` — `StartCharacterScript`
+
+```text
+operands:
+    i16 characterId
+    i16 scriptId
+    i16 parameter
+```
+
+Starts an SCX script with an explicit character launch context.
+
+Current recovered behavior is **fire-and-forget** from the AREA context:
+
+```text
+AREA continues immediately
+```
+
+The exact original source name remains unknown.
+
+## 27.3 `0x3C` — `StartCharacterScriptTracked`
+
+Same operand shape:
+
+```text
+i16 characterId
+i16 scriptId
+i16 parameter
+```
+
+but the parent AREA context tracks the spawned script.
+
+Known Runtime wait state:
+
+```text
+4
+```
+
+Conceptually:
+
+```text
+start character-bound SCX script
+    |
+    v
+store concrete child instance
+    |
+    v
+AREA wait state 4
+    |
+    v
+that exact child completes
+    |
+    v
+AREA resumes
+```
+
+This distinction between `0x3B` and `0x3C` is architecturally important.
+
+---
+
+# 28. `0x38` — `CharacterLookup` (provisional)
+
+```text
+operands:
+    i16 character/table ID
+```
+
+Current tracing associates it with character-related lookup/activation through
+AREA table 0.
+
+The final source-level semantic name is not yet established.
+
+---
+
+# 29. `0x4E` — `ActivateCharacter` (provisional name)
+
+```text
+operands:
+    i16 characterId
+    i16 applyAreaTransform
+```
+
+Current Runtime tracing establishes:
+
+- normal character IDs are resolved through active AREA table 0;
+- an existing runtime character can be reactivated;
+- its AREA presence state is set;
+- when operand 1 is non-zero, the serialized AREA transform is applied;
+- `characterId == -1` takes a special current-character path.
+
+The exact original opcode name remains unrecovered, but the operation is much
+better understood than a generic “character opcode”.
+
+This instruction does not introduce a wait.
+
+---
+
+# 30. `0x4F` — character selection/reset path
+
+```text
+operands:
+    i16 value
+```
+
+Behavior is character-related and currently treated as a
+selection/reset-style operation.
+
+The name remains provisional.
+
+---
+
+# 31. `0x5C` — object activation path
+
+```text
+operands:
+    i16 objectId
+```
+
+Current tracing associates it with object activation/load behavior.
+
+The final semantic name remains provisional.
+
+---
+
+# 32. Camera opcodes
+
+## 32.1 `0x5F` — `CameraSelect` (provisional)
+
+```text
+operands:
+    i16 cameraId
+    i16 durationOrMode
+    i16 flags
+```
+
+Schedules/selects an IAM camera without entering Runtime wait state 7.
+
+The exact meaning of operands 1 and 2 still needs deeper tracing.
+
+## 32.2 `0x60` — `CameraMoveAndWait` (provisional)
+
+Same operand shape:
+
+```text
+i16 cameraId
+i16 durationUnits
+i16 flags
+```
+
+When the duration is non-zero, Runtime uses:
+
+```text
+wait state 7
+```
+
+The scenario time base is 30 Hz.
+
+OpenNomad currently models the wait by decrementing the recovered duration in
+30 Hz scenario units.
+
+The final original name and completion callback path remain unresolved.
+
+---
+
+# 33. `0x46` — `OpenInterface`
+
+This opcode is now substantially recovered.
+
+```text
+operands:
+    i16 interfaceId
+    i16 interfaceArgument
+    i16 resultVariableId
+```
+
+Observed startup instruction:
 
 ```text
 46 1D 00 FF FF 13 00
 ```
 
-Current decoding:
+decodes as:
 
 ```text
-opcode = 0x46
-
-operand 0 = 0x001D = 29
-operand 1 = 0xFFFF = -1
-operand 2 = 0x0013 = 19
+OpenInterface(
+    interfaceId        = 29,
+    interfaceArgument  = -1,
+    resultVariableId   = 19
+)
 ```
 
-The script byte sequence is located around:
+Interface 29 is the main menu.
+
+## 33.1 Wait semantics
+
+Opening an interface places the AREA context in:
 
 ```text
-areaRecord + 0x422
+Runtime state 6
 ```
 
-in the currently examined record layout.
+The context stores the concrete opened interface instance/handle.
 
-## 17.2 Handler
+It does not resume merely because “some interface” completed.
 
-Known handler:
+## 33.2 Completion result
+
+When the matching interface completes:
 
 ```text
-0x00403860
+result -> START/global variable resultVariableId
 ```
 
-It reads three signed 16-bit operands through the VM operand mechanism.
+and AREA execution resumes at the instruction immediately after `0x46`.
 
-For this specific instruction the values are literal:
-
-```text
-29, -1, 19
-```
-
-## 17.3 Interface path
-
-The call flow participates in:
-
-```text
-0x00403860
-    ->
-0x0041DEF0
-    ->
-0x0041DF30
-    ->
-0x00429BB0
-    ->
-interface 29
-    ->
-0x00479D10
-```
-
-Interface `29` is the main menu.
-
-## 17.4 Scheduling implication
-
-The instruction does not behave as a trivial fire-and-forget call in the
-startup sequence.
-
-The surrounding script behavior proves that opening interface 29 suspends or
-otherwise gates progression: later instructions do not immediately overwrite
-main-menu state.
-
-The exact generic yield/completion contract for opcode `0x46` remains to be
-mapped.
+This explains why startup script execution does not run straight through the
+main-menu sequence.
 
 ---
 
-# 18. Known scenario/event opcode `0x67`: music
+# 34. `0x67` — `PlayMusic`
 
 Known handler:
 
 ```text
-FUN_00404FB0
+0x00404FB0
+```
+
+Instruction shape:
+
+```text
+i16 trackId
+i16 loopFlag
+i16 mode
 ```
 
 Observed startup bytes:
@@ -1449,888 +1791,784 @@ Observed startup bytes:
 67 6D 00 01 00 01 00
 ```
 
-Decode:
+decode as:
 
 ```text
-opcode    = 0x67
-operand 0 = 0x006D = 109
-operand 1 = 0x0001 = 1
-operand 2 = 0x0001 = 1
+trackId  = 109
+loopFlag = 1
+mode     = 1
 ```
 
 Current semantics:
 
-| Operand | Type | Meaning |
-|---:|---|---|
-| 0 | `s16` | numeric ADP track ID, resolved as `TRACKS/%d.ADP` |
-| 1 | `s16` | looping flag; nonzero = loop |
-| 2 | `s16` | unresolved mode/state flag |
+```text
+TRACKS/<trackId>.ADP
+```
 
-Runtime does not restart a track when the requested numeric ID already matches
-the active track.
+with non-zero operand 1 requesting looping.
+
+Operand 2 is preserved but not fully interpreted.
+
+Runtime avoids restarting an already-active track with the same numeric ID.
 
 Music playback can also be suppressed by global/runtime state.
 
-A branch on a zero third operand remains unresolved.
+---
 
-## 18.1 Startup evidence for interface yielding
-
-The startup script later requests another track (`87`).
-
-If the interface-29 instruction simply returned and execution continued
-immediately, track 87 would replace track 109 almost at once.
-
-That does not happen in the original menu sequence.
-
-This is independent evidence that scenario/event instructions can suspend or
-gate execution on higher-level state.
-
-## 18.2 QD ADP container note
-
-The observed music files use a compact Quantic Dream ADP container:
+# 35. `0x68` — subsystem activation (provisional)
 
 ```text
-offset  size  meaning
-0x00    3     compressed payload size, little-endian 24-bit
-0x03    1     stereo flag (0 = mono, 1 = stereo)
-0x04    12    zero/reserved
-0x10    ...   compressed QD IMA payload
+operands: none
 ```
 
-Stream properties:
+Current implementation exposes this as a native subsystem-activation operation.
 
-```text
-sample rate = 22050 Hz
-channels    = stereoFlag ? 2 : 1
-frames      = payloadSize * 2 / channels
-```
-
-Looping is not encoded as a loop-point structure in the ADP file; for this VM
-path it is controlled by opcode `0x67`.
-
-The codec implementation belongs to OpenNomad's audio layer rather than the VM
-itself.
+The actual target subsystem and final source name are unresolved.
 
 ---
 
-# 19. Known scenario/event opcodes `0x84` and `0x85`: cinematic mask
+# 36. `0x76` and `0x77` — presentation effects
 
-These are operand-less presentation commands.
+Both use:
 
 ```text
-0x84  begin cinematic letterbox
-      handler 0x00405A90
-          -> FUN_0041E1B0(1)
-
-0x85  end cinematic letterbox
-      handler 0x00405AB0
-          -> FUN_0041E1B0(0)
+i32 colorOrPackedValue
+i16 operandB
+i16 operandC
 ```
 
-## 19.1 Runtime transition behavior
+Current interpretation:
 
-Runtime keeps explicit entering/leaving cinematic-mask state.
+```text
+0x76 = presentation/fade/effect mode 1
+0x77 = presentation/fade/effect mode 2
+```
 
-The transition timer runs for:
+These are provisional names until the original rendering/effect routines are
+fully traced.
+
+---
+
+# 37. `0x83` — subsystem operation
+
+```text
+operands:
+    i16 operandA
+    i16 operandB
+```
+
+A native subsystem operation is clearly invoked, but semantics remain
+unresolved.
+
+Keep the generic name.
+
+---
+
+# 38. `0x84` / `0x85` — cinematic letterbox
+
+These are operand-less.
+
+```text
+0x84 BeginCinematicLetterbox
+0x85 EndCinematicLetterbox
+```
+
+Known handlers:
+
+```text
+0x84 -> 0x00405A90 -> FUN_0041E1B0(1)
+0x85 -> 0x00405AB0 -> FUN_0041E1B0(0)
+```
+
+## 38.1 Transition duration
+
+Runtime uses:
 
 ```text
 60 scenario units
 ```
 
-Scenario/presentation timing is 30 Hz, giving:
+At the 30 Hz scenario time base:
 
 ```text
 2.0 seconds
 ```
 
-The opcodes themselves do not wait for the visual transition.
+## 38.2 Runtime geometry
 
-They trigger state and script execution continues according to normal VM
-scheduling.
-
-## 19.2 Original Runtime target geometry
-
-The original full-strength target is:
+Full-strength original bars:
 
 ```text
-top bar height    = screenHeight * 2 / 15
-bottom bar height = screenHeight * 2 / 15
+barHeight = screenHeight * 2 / 15
 ```
 
-At `640x480`:
+At 640x480:
 
 ```text
 top    = 64
-image  = 352
+middle = 352
 bottom = 64
 ```
 
-Visible aspect ratio:
+Visible ratio:
 
 ```text
 640 / 352 ~= 1.81818
 ```
 
-## 19.3 OpenNomad modernization
+OpenNomad intentionally targets a standard 1.85:1 presentation viewport; that is
+a modernization, not original Runtime geometry.
 
-OpenNomad intentionally targets a standard `1.85:1` cinematic viewport rather
-than reproducing Runtime's exact `2/15` ratio.
+## 38.3 Parser lesson
 
-For viewport width `W` and height `H`:
+Early OpenNomad development incorrectly treated bytes following `0x84` as if
+they might be operands.
 
-```text
-fullBarHeight = max(0, (H - W / 1.85) / 2)
-```
-
-Current rendered bar height is:
+Runtime proves:
 
 ```text
-fullBarHeight * transitionAmount
+0x84 has zero operands
 ```
 
-This is an intentional presentation modernization, not historical Runtime
-behavior.
+The enduring rule is:
 
-Runtime confirms:
-
-- enabled/disabled endpoints;
-- transition direction;
-- duration.
-
-The exact original easing law remains unresolved.
+```text
+instruction size is opcode-specific
+```
 
 ---
 
-# 20. Known unsupported startup opcode `0x84` context
+# 39. AREA wait model
 
-During early OpenNomad intro work, the area script paused at:
+AREA has typed native waits rather than one generic “yield”.
+
+Current recovered classes:
 
 ```text
-opcode = 0x84
-offset = +0x34
-bytes  = [84 07 00 0a 13 00 19 06]
+interface wait
+SCX script wait
+character script wait
+camera wait
 ```
 
-Reverse engineering established that `0x84` itself has **no operands**.
+Known Runtime numeric states:
 
-The following bytes belong to subsequent instructions/data and must not be
-consumed as `0x84` operands.
+| Wait kind | Runtime state |
+|---|---:|
+| tracked character script (`0x3C`) | `4` |
+| interface (`0x46`) | `6` |
+| timed camera (`0x60`) | `7` |
 
-This is a useful parser lesson:
+Generic SCX-script wait state for `0x39` still needs a firm numeric Runtime
+mapping.
 
-```text
-unsupported opcode
-```
-
-must not imply:
-
-```text
-consume an arbitrary fixed number of following bytes
-```
-
-Instruction length is opcode-specific.
-
----
-
-# 21. Probable relationship between the two scripting layers
-
-The current evidence supports this working architecture:
+The important architecture is:
 
 ```text
-scenario/event VM
+opcode requests native operation
     |
-    +-- area/game events
-    +-- interface changes
-    +-- music/presentation state
-    +-- high-level scenario transitions
-    |
-    |  exact bridge still under investigation
     v
-SCX structured Script system
+concrete child/handle/timer stored
     |
-    +-- high-level IAM action sequences
-    +-- synchronized functions
-    +-- animation/camera/path/effect/sound actions
-    +-- mutable script instances
+    v
+AREA context enters typed wait
+    |
+    v
+matching completion condition
+    |
+    v
+resume after original opcode
 ```
 
-Historical IAM evidence makes it plausible that both are products of the same
-authoring ecosystem, but Runtime executes them differently.
+---
 
-## 21.1 Bridge not yet recovered
+# 40. 30 Hz timing model
 
-The highest-value missing call chain is:
+Both structured IAM action timing and the scenario/event VM repeatedly expose a
+30 Hz logical time base.
+
+OpenNomad currently converts:
 
 ```text
-scenario/event instruction
+real seconds
     ->
-lookup SCX script template
+30 Hz script frames
+```
+
+at the scheduler boundary.
+
+Structured command durations such as `Wait` use script-frame units.
+
+AREA camera waits and cinematic transitions likewise use scenario units
+corresponding to:
+
+```text
+1 unit = 1 / 30 second
+```
+
+Runtime and OpenNomad renderer refresh rates are separate from this logical
+script timing.
+
+---
+
+# 41. AREA event activation is explicit
+
+Loading/constructing an AREA script context does not execute it immediately.
+
+Current model:
+
+```text
+create context
+queue event/state
+activate context
+run on scenario tick
+```
+
+This matters for startup ordering and prevents resource loading from becoming an
+implicit script trigger.
+
+---
+
+# 42. START/global-variable relationship
+
+The compact VM's global-variable instructions operate on the scenario/global
+variable namespace associated with START/game-state data.
+
+Relevant opcodes:
+
+```text
+0x0A read
+0x0D set to 1
+0x0E set explicit value
+0x46 write interface completion result
+```
+
+The complete START data-file format belongs in future dedicated IAM-data
+documentation.
+
+---
+
+# 43. Structured-script activation by ID, not name
+
+AREA opcode `0x39` confirms that structured scripts have a proper numeric
+activation path:
+
+```text
+AREA operand
+    ->
+script +0x1A ID lookup
     ->
 Script_MakeInstance
-    ->
-activate instance
-    ->
-per-frame Script_PlayScript
-    ->
-completion / message / callback
-    ->
-scenario/event VM resumes or reacts
 ```
 
-Every edge in this chain should be proven from Runtime before assigning final
-function names.
+Names remain useful for diagnostics and reverse engineering, but they are not
+the sole runtime key.
+
+Do not implement:
+
+```cpp
+if (script.name == "1KaylArrives")
+    ...
+```
+
+as final architecture.
 
 ---
 
-# 22. SCX parser branch map
+# 44. Character-bound structured script instances
 
-Current main-block parser locations:
+`0x3B`/`0x3C` prove that a structured SCX script can be launched with external
+context not stored directly in its value pool.
 
-| Section | Parser branch / area | Runtime result relevant to scripts |
-|---|---|---|
-| tag 0 | around `0x00449AA0` | path-resource records |
-| tag 1 | around `0x00449B1F` | animation-resource records |
-| tag 2 | around `0x00449881` | script templates, parameters, function arrays |
-| tag 3 | around `0x00449BA0` | sound resources |
-| tag 4 | around `0x00449C15` | 3DO/sprite visual resources |
-| tag 5 | around `0x00449D00` | scene resources |
-| tag 6 | around `0x00449D7D` | unknown |
-| tag 7 | around `0x00449DAC` | unknown |
-| tag 8 | around `0x00449DD8` | unknown global/fixed-limit setup |
-| tag 9 | around `0x00449E3C` | no-op/reserved |
-| tag 10 | around `0x00449DE4` | auxiliary/external block |
+Current OpenNomad launch metadata preserves:
 
-These are parser branch locations and are not necessarily clean original source
-function boundaries.
+```text
+character ID
+third launch parameter
+```
+
+This is important for operations such as:
+
+```text
+SelectRelativeBodyAnimation
+```
+
+which need an explicitly owned character/model instance.
+
+The launch context and serialized SCX template are distinct concepts.
 
 ---
 
-# 23. Observed tag order
+# 45. Relative body-animation bridge example
 
-## 23.1 `Grid.SCX`
-
-Known offsets:
+Current recovered flow for the New Game intro:
 
 ```text
-0x0010  0xDEAD0002  scripts
-0x07DB  0xDEAD0000  paths
-0x0803  0xDEAD0001  animations
-0x0877  0xDEAD0003  sounds
-0x0935  0xDEAD0004  sprites/3DO visuals
-0x100D  0xDEAD0005  scenes, count 0
-0x1015  0xDEAD0006  unknown, count 0
-0x101D  0xDEAD0007  unknown, count 0
-0x1025  0xDEADFFFF
+AREA bytecode
+    |
+    +-- 0x3B / 0x3C
+            |
+            v
+character-bound SCX script instance
+            |
+            v
+0x0200002A SelectRelativeBodyAnimation
+            |
+            +-- binding table A object name
+            +-- animation index
+            +-- previous/current progress
+            +-- body animation vector
+            +-- path index
+            +-- subpath index
+            +-- authored offset
+            |
+            v
+3DA animation + 3DP path + character 3DO pose
 ```
 
-Main-block end:
+This is one of the clearest concrete examples of how IAM AREA logic and
+structured SCX scripts cooperate.
 
-```text
-0x1029
-```
-
-which matches:
-
-```text
-0x10 + 0x1019
-```
-
-## 23.2 `aventure.SCX`
-
-Known offsets:
-
-```text
-0x0010  0xDEAD0002  scripts
-0x1E14  0xDEAD0004  sprites/3DO visuals
-0x41BC  0xDEAD0005  scenes, count 0
-0x41C4  0xDEAD0006  unknown, count 0
-0x41CC  0xDEAD0007  unknown, count 0
-0x41D4  0xDEADFFFF
-```
-
-Main-block end:
-
-```text
-0x41D8
-```
-
-matching:
-
-```text
-0x10 + 0x41C8
-```
-
-These files demonstrate that section presence and ordering are data-dependent.
+Detailed function semantics belong in `iam-script-functions.md`.
 
 ---
 
-# 24. Documentation-oriented serialized structures
+# 46. Validation rules for structured SCX scripts
 
-These are intentionally conservative.
+A robust parser should validate:
 
-## 24.1 SCX header
+1. script count fits the descriptor section;
+2. all `0x64` template records fit;
+3. shared-value count fits;
+4. every command `valueCount` slice stays inside the shared pool;
+5. every non-`-1` `nextLinkedIndex` is within the linked-command array;
+6. command arrays fit their declared counts;
+7. binding-table counts and names fit;
+8. related-script optional name fits;
+9. unknown fields are preserved;
+10. malformed resource references are distinguished from malformed script
+    serialization.
 
-```c
-struct ScxHeaderV5 {
-    uint32_t magic;          // +0x00 = 0x00DEAD00
-    uint32_t version;        // +0x04 = 5
-    uint32_t unknown_08;     // +0x08
-    uint32_t mainBlockSize;  // +0x0C
+---
+
+# 47. Validation rules for AREA bytecode
+
+A safe interpreter should:
+
+1. read exactly one opcode byte;
+2. use opcode-specific operand widths;
+3. reject truncated operands;
+4. sign-extend signed immediate operands correctly;
+5. bounds-check relative jump targets;
+6. detect evaluation-stack underflow;
+7. preserve unknown/unimplemented opcode offset and nearby bytes;
+8. avoid consuming bytes after an unknown opcode using guessed length;
+9. store concrete wait targets;
+10. resume only on matching completion;
+11. separate malformed bytecode from unsupported-but-well-formed operations.
+
+---
+
+# 48. Recommended structured-script runtime model
+
+A faithful modern model should have three layers:
+
+```text
+ParsedScxScript
+    immutable serialized definition
+
+RuntimeScriptTemplate
+    resolved references/resources
+
+ScriptInstance
+    mutable:
+        value pool
+        execution counts
+        current root group
+        linked command state
+        launch context
+        per-instance sprites
+        elapsed time
+```
+
+Avoid mutating parsed serialized structures in place.
+
+---
+
+# 49. Recommended scheduler model
+
+Ultimately OpenNomad should mirror Runtime approximately as:
+
+```cpp
+for each active ScriptInstance:
+    root = currentRootCommand
+
+    bool groupStillActive = false
+
+    for command in root + linked chain:
+        if finite(command.executionLimit) &&
+           command.executionCount >= command.executionLimit:
+            continue
+
+        result = dispatch(command)
+
+        if descriptor(command.functionId).contributesToGroupActive:
+            groupStillActive |= result.runtimeActive
+
+    if (!groupStillActive):
+        ++currentRootCommandIndex
+
+        if at end:
+            if repeat allowed:
+                reinitialize script/functions
+            else:
+                complete instance
+```
+
+The exact command-count mutation timing remains function-specific.
+
+---
+
+# 50. Recommended AREA VM model
+
+```cpp
+struct AreaContext {
+    size_t ip;
+    vector<int32_t> evaluationStack;
+    map<uint16_t, int32_t> globalVariables;
+
+    AreaState state;
+    AreaWait wait;
+
+    queue<uint16_t> events;
 };
 ```
 
-## 24.2 Script function record
-
-```c
-struct SerializedScriptFunction {
-    uint32_t functionId;      // +0x00
-    uint32_t unknown04;       // +0x04
-    uint32_t parameterIndex;  // +0x08
-    uint32_t syncIndex;       // +0x0C
-    uint32_t state10;         // +0x10
-    uint32_t state14;         // +0x14
-}; // 0x18
-```
-
-Runtime form should use proper pointer/reference types rather than preserving
-the serialized dwords.
-
-## 24.3 Script template
-
-Use the `0x64` schema in section 6 as the current best documentation model.
-
-OpenNomad should define separate:
+Native opcodes should emit typed requests rather than directly owning unrelated
+engine subsystems:
 
 ```text
-SerializedScriptTemplateV5
-RuntimeScriptTemplate
-ScriptInstance
+interface request
+music request
+SCX script launch
+character-script launch
+character activation
+camera request
+presentation request
+letterbox request
 ```
 
-rather than one structure that changes meaning after relocation.
+This matches the current OpenNomad direction and keeps VM semantics isolated.
 
 ---
 
-# 25. Important Runtime entry points
+# 51. Useful Runtime locations
 
-| Address | Current role | Confidence |
-|---:|---|---|
-| `0x00449750` | SCX loader | Confirmed |
-| `0x0044A0F0` | script lookup by 16-bit ID | Confirmed behavior |
-| `0x0044A7E0` | generic structured-script reinit dispatcher | Confirmed behavior |
-| `0x0044C090` | `Script_GetNumParam` | Diagnostic + behavior |
-| `0x0044C680` | raw 32-bit parameter accessor | Strongly corroborated |
-| `0x0044C860` | `Script_PlayScript` | Diagnostic + behavior |
-| `0x00403860` | scenario/event opcode `0x46` | Confirmed |
-| `0x00404FB0` | scenario/event opcode `0x67` music handler | Confirmed |
-| `0x00405A90` | scenario/event opcode `0x84` | Confirmed |
-| `0x00405AB0` | scenario/event opcode `0x85` | Confirmed |
+Structured Script system:
 
-Per-IAM-function native handler addresses are intentionally maintained in
-[`iam-script-functions.md`](iam-script-functions.md), not here.
+| Address | Role |
+|---:|---|
+| `0x00449750` | SCX loader |
+| `0x00449881` area | `DEAD0002` script parser |
+| `0x0044A0F0` | script lookup by 16-bit ID |
+| `0x0044A7E0` | generic function reinit dispatcher |
+| `0x0044C090` | `Script_GetNumParam` |
+| `0x0044C680` | raw parameter accessor |
+| `0x0044C860` | `Script_PlayScript` |
+
+AREA VM examples:
+
+| Address | Role |
+|---:|---|
+| `0x00403860` | opcode `0x46` interface path |
+| `0x00404FB0` | opcode `0x67` music |
+| `0x00405A90` | opcode `0x84` |
+| `0x00405AB0` | opcode `0x85` |
+
+Additional opcode-handler addresses should be added as they are individually
+confirmed and named.
 
 ---
 
-# 26. Recommended reverse-engineering breakpoints
+# 52. Useful OpenNomad source locations
 
-## 26.1 SCX loading
+Structured SCX parsing:
 
 ```text
-0x00449750  SCX loader
-0x00449881  tag-2 script parser
-0x00449AA0  path-resource parser
-0x00449B1F  animation-resource parser
-0x00449BA0  sound-resource parser
-0x00449C15  visual/sprite-resource parser
+src/core/Core/Omikron/SCX.hpp
+src/core/Core/Omikron/SCX.cpp
 ```
 
-Log:
+Structured Script runtime:
 
 ```text
-script count
-template addresses
-template names and IDs
-parameter pool base/count
-primary function counts
-sync-function counts
-serialized function IDs
-serialized +0x04 values
-serialized parameter indexes
-serialized sync indexes
-runtime pointers after relocation
+src/core/Core/Script/ScriptRuntime.hpp
+src/core/Core/Script/ScriptRuntime.cpp
+src/core/Core/Script/ScriptOpcode.hpp
 ```
 
-## 26.2 Script lookup and instances
-
-Break on:
+AREA VM:
 
 ```text
-0x0044A0F0
+src/core/Core/Script/AreaScriptRuntime.hpp
+src/core/Core/Script/AreaScriptRuntime.cpp
+src/core/Core/Script/AreaScriptOpcode.hpp
 ```
 
-and functions identified by diagnostics:
+Scenario bridge/orchestration:
 
 ```text
-Script_MakeInstance()
-Script_RemoveInstance()
-Script_RemoveAllInstances()
+src/core/Core/Scenario/ScenarioEngine.*
+src/core/Core/Scenario/ScenarioManager.*
+src/core/Core/Scenario/ScenarioRuntime.*
+src/core/Core/Scenario/ScenarioStartupController.*
 ```
 
-Watch:
+---
+
+# 53. Highest-value remaining structured-script questions
+
+1. exact serialized/runtime meanings of the remaining binding-table descriptor
+   dwords;
+2. binding table B semantics;
+3. exact related-script authoring semantics;
+4. all `+0x1E` flag bits;
+5. exact context-byte meanings at `+0x5E..+0x61`;
+6. precise instance-limit/accounting fields and ownership;
+7. exact native command-count increment timing per IAM function;
+8. alternate invocation/lifecycle path for IAM sprite functions not directly in
+   the main `Script_PlayScript()` switch;
+9. complete usage of `executionLimit == 0xFFFFFFFF`;
+10. full retail SCX inventory of root/linked command patterns.
+
+Function-ID-specific questions belong in `iam-script-functions.md`.
+
+---
+
+# 54. Highest-value remaining AREA VM questions
+
+1. complete one-byte opcode table;
+2. original source/editor names for provisional opcodes;
+3. numeric Runtime wait state used by generic `0x39` SCX-script wait;
+4. exact semantics of operands B/C for `0x39`;
+5. exact meaning of the third `0x3B`/`0x3C` parameter;
+6. `0x38` character lookup semantics;
+7. `0x4F` semantics;
+8. `0x5C` object activation semantics;
+9. camera flags and callback completion path;
+10. presentation effects `0x76`/`0x77`;
+11. subsystem operations `0x68` and `0x83`;
+12. full global-variable namespace and its relationship to `IAM/START`;
+13. event descriptor/header structure around AREA bytecode;
+14. calls/returns if any beyond relative jumps;
+15. additional arithmetic/logical stack operations;
+16. message/event dispatch opcodes;
+17. exact end-of-stream versus `EndEvent` semantics.
+
+---
+
+# 55. Documentation boundaries going forward
+
+The recommended split is:
 
 ```text
-template -> instance copies
-function-array allocation
-parameter copies
-sync-link fixup
-sprite allocation
-instance count/limits
+iam-script-functions.md
+    what each 32-bit IAM function means
+
+script-opcodes.md
+    structured script serialization, instances, scheduling,
+    and the AREA<->SCX bridge
+
+scx.md
+    complete SCX v5 container and resource manifest
+
+iam-scenario-vm.md
+    eventually: complete AREA bytecode opcode catalogue and VM ABI
 ```
 
-## 26.3 Main playback
+Until `iam-scenario-vm.md` exists, this file remains the authoritative AREA VM
+reference.
+
+Once a dedicated VM document is added, this file should keep only:
+
+- the high-level AREA VM architecture;
+- the bridge to SCX structured scripts;
+- references to the dedicated opcode catalogue.
+
+---
+
+# 56. Compact reference
 
 ```text
-0x0044C860  Script_PlayScript
-```
+STRUCTURED SCX SCRIPT
+=====================
 
-Watch per call:
+script template: 0x64 bytes
 
-```text
-script + 0x1C  runtime state
-script + 0x1E  flags
-script + 0x20  group count
-script + 0x24  current group index
-script + 0x34  repeat limit
-script + 0x38  repeat state/index
-script + 0x54  paired script
-script + 0x58  elapsed time
-```
++0x00 owner placeholder
++0x04 name[22]
++0x1A script ID
++0x1C runtime state
++0x1E flags
++0x20 root command count
++0x24 current root command index
++0x28 root-command placeholder/pointer
++0x2C linked command count
++0x30 linked-command placeholder/pointer
++0x34 repeat limit
++0x38 repeat index/count
++0x3C binding table A descriptor[3]
++0x48 binding table B descriptor[3]
++0x54 related-script placeholder/pointer
++0x58 elapsed script time (float at runtime)
++0x5C tail/context metadata
 
-For each function:
+command: 0x18 bytes
 
-```text
 +0x00 function ID
-+0x04 unknown metadata
-+0x08 parameter pointer
-+0x0C sync pointer
-+0x10 state/limit
-+0x14 progress/state
++0x04 value count
++0x08 first value index -> runtime value pointer
++0x0C linked index (-1 none) -> runtime SyncFunction pointer
++0x10 execution limit
++0x14 execution count
+
+scheduler:
+    command count/limit gate first
+    execute eligible commands
+    selected handler AL values OR into BL
+    BL != 0 -> remain on root group
+    BL == 0 -> advance group
+
+DEAD0002 order:
+    scriptCount
+    templates[scriptCount]
+    sharedValueCount
+    sharedValues[]
+    for each script:
+        relatedPresent
+        optional relatedName[21]
+        rootCommands[]
+        linkedCommands[]
+        bindingTableA
+        bindingTableB
 ```
 
-Use `iam-script-functions.md` to interpret the function ID.
-
-## 26.4 Reinitialization
-
 ```text
-0x0044A7E0
-```
+AREA VM
+=======
 
-Record before/after state for every function ID seen in retail assets.
+u8 opcode
+opcode-specific signed operands
 
-## 26.5 Scenario/event VM
+state:
+    IP
+    event queue
+    evaluation stack
+    global variables
+    typed wait
 
-Known useful breakpoints:
+known wait states:
+    4 character script
+    6 interface
+    7 camera
 
-```text
-0x00403860  opcode 0x46
-0x00404FB0  opcode 0x67
-0x00405A90  opcode 0x84
-0x00405AB0  opcode 0x85
-```
+key bridge opcodes:
+    0x39 generic SCX script + wait
+    0x3B explicit-character script, fire-and-forget
+    0x3C explicit-character script + tracked wait
 
-For startup validation:
+interface:
+    0x46 interfaceId, argument, resultVariable
+    waits in state 6
+    completion result written to global variable
 
-```text
-46 1D 00 FF FF 13 00
-```
-
-and trace through:
-
-```text
-0x0041DEF0
-0x0041DF30
-0x00429BB0
-0x00479D10
+timing:
+    scenario/script logical rate = 30 Hz
 ```
 
 ---
 
-# 27. Recommended automated asset analysis
-
-A small offline SCX inspection tool remains one of the highest-value RE aids.
-
-It should report:
-
-```text
-SCX header
-main-block size
-section-tag sequence
-
-script template:
-    name
-    ID
-    group count
-    sync-function count
-    repeat fields
-    flags/context bytes
-
-function record:
-    function ID
-    symbolic name from iam-script-functions map
-    raw +0x04
-    parameter index
-    sync index
-    +0x10
-    +0x14
-
-parameter-pool values
-resource-table names
-```
-
-Useful aggregate reports:
-
-```text
-distinct function IDs across every SCX
-function-ID frequency
-script-name/function-ID matrix
-raw +0x04 distribution per function ID
-+0x10/+0x14 distributions
-sync-chain lengths
-which functions commonly synchronize together
-
-resource usage per script
-SCX files containing scenes/path/animation tables
-
-unknown or legacy function IDs
-```
-
-Function-ID semantic analysis belongs in the IAM-function documentation/tooling,
-but the inventory itself belongs with the SCX parser.
-
----
-
-# 28. Highest-value open questions
-
-## 28.1 Exact byte-for-byte tag-2 grammar
-
-Known:
-
-- script count;
-- `0x64` template stride;
-- shared 4-byte parameter values;
-- `0x18` function-record stride;
-- primary and sync-function arrays;
-- index-to-pointer relocation.
-
-Still needed:
-
-- complete ordering of all arrays/subtables after the template table;
-- all counts and sentinels;
-- exact ownership of each pool;
-- proof across diverse retail SCX files.
-
-## 28.2 Remaining `0x64` template fields
-
-Important unresolved regions:
-
-```text
-+0x18
-+0x3C .. +0x53
-+0x5C .. +0x63
-```
-
-Need to recover:
-
-- instance limit/count fields;
-- paired-script metadata;
-- context ownership;
-- exact flag bits.
-
-## 28.3 Generic meaning of function `+0x04`
-
-Collect per-ID value distributions before assigning semantics.
-
-## 28.4 Exact generic meaning of `+0x10` / `+0x14`
-
-These are mutable execution state, but may be interpreted differently per IAM
-function.
-
-## 28.5 Paired/chained scripts
-
-Recover:
-
-- creation;
-- ownership;
-- scheduling;
-- completion propagation;
-- `+0x54` and `+0x5D` semantics.
-
-## 28.6 Context flags
-
-Map `+0x5E..+0x61` and the associated globals.
-
-## 28.7 Instance accounting
-
-Find exact max/current instance fields and list ownership.
-
-## 28.8 Unknown SCX tags `6`, `7`, `8`, `10`
-
-Determine whether any contain script-adjacent registries/state.
-
-## 28.9 Full scenario/event opcode table
-
-Reconstruct:
-
-- complete dispatch table;
-- operand lengths;
-- operand kinds;
-- variable/reference encoding;
-- jumps and conditions;
-- calls;
-- messages;
-- termination;
-- scheduler/yield rules.
-
-This is now the single largest “opcode map” still properly belonging in this
-document.
-
-## 28.10 Scenario/event script record/header structure
-
-For `IAM/AREA`, recover:
-
-- event descriptors;
-- entry points;
-- local variables;
-- scheduler metadata;
-- script boundaries.
-
-## 28.11 Exact bridge to structured SCX scripts
-
-Find the VM/runtime operations that:
-
-- look up a script;
-- make an instance;
-- start it;
-- stop it;
-- wait for it;
-- observe completion.
-
-## 28.12 Retail asset coverage
-
-Validation currently leans heavily on:
-
-```text
-aventure.SCX
-Grid.SCX
-```
-
-Expand to:
-
-- area/world SCX files;
-- combat/fight resources;
-- shoot resources;
-- character-heavy scenes;
-- effect-heavy scenes;
-- late-game areas.
-
-## 28.13 Build/version differences
-
-Compare:
-
-- localized Windows executables;
-- patched builds;
-- demos;
-- Dreamcast;
-- any surviving development data.
-
----
-
-# 29. Reimplementation checklist
-
-## 29.1 SCX parser
-
-- [ ] Validate magic `0x00DEAD00`.
-- [ ] Validate/record version `5`.
-- [ ] Respect `mainBlockSize` at `+0x0C`.
-- [ ] Dispatch sections by tag value.
-- [ ] Stop on `0xDEADFFFF`.
-- [ ] Parse tag-2 script count.
-- [ ] Parse `0x64` template records.
-- [ ] Preserve all unknown template fields.
-- [ ] Parse shared 4-byte parameter storage.
-- [ ] Parse `0x18` function records.
-- [ ] Validate parameter indexes.
-- [ ] Validate sync-function indexes.
-- [ ] Preserve unknown function IDs.
-- [ ] Do not interpret serialized indexes as pointers.
-
-## 29.2 Runtime template/instance model
-
-- [ ] Separate serialized template, runtime template and instance types.
-- [ ] Give instances mutable function state.
-- [ ] Copy mutable parameters as Runtime does.
-- [ ] Rebuild sync links within the instance.
-- [ ] Preserve repetition state.
-- [ ] Preserve elapsed script time.
-- [ ] Preserve paired-script metadata.
-- [ ] Support per-instance sprite state.
-
-## 29.3 Structured-script scheduler
-
-- [ ] Compare full 32-bit IAM function IDs.
-- [ ] Obtain function semantics from `iam-script-functions.md`.
-- [ ] Walk synchronized function links.
-- [ ] Preserve per-function progress state.
-- [ ] Keep `contributesToGroupActive` as explicit metadata.
-- [ ] Advance only when no contributing function remains active.
-- [ ] Run immediate side effects without falsely blocking the group.
-- [ ] Reinitialize correctly on repetition/restart.
-- [ ] Preserve distinct failure/resource-missing paths.
-
-## 29.4 Loading/activation architecture
-
-- [ ] Do not execute every script on SCX load.
-- [ ] Do not hardcode behavior by script name.
-- [ ] Let scenario/game state activate script instances.
-- [ ] Preserve numeric script IDs and lookup behavior.
-
-## 29.5 Scenario/event VM
-
-- [ ] Use one-byte opcode dispatch.
-- [ ] Keep opcode-specific instruction lengths.
-- [ ] Implement the variable/reference operand reader.
-- [ ] Preserve signed-16-bit literal semantics.
-- [ ] Implement known `0x46`, `0x67`, `0x84`, `0x85` behavior.
-- [ ] Do not consume following bytes for operand-less opcodes.
-- [ ] Model yield/suspension separately from instruction side effects.
-- [ ] Preserve unknown opcodes with useful byte/offset diagnostics.
-
-## 29.6 Documentation separation
-
-- [ ] Keep function-ID names/handler tables in `iam-script-functions.md`.
-- [ ] Keep SCX serialization/scheduling in this file.
-- [ ] Keep the compact scenario/event opcode map in this file until it becomes
-      large enough to justify a dedicated `iam-scenario-vm.md`.
-
----
-
-# 30. Terminology
-
-| Term | Meaning in this document |
-|---|---|
-| **structured Script system** | SCX system using `0x18` function records and 32-bit IAM function IDs |
-| **IAM function ID** | `0xCC0000NN` high-level action identifier; see `iam-script-functions.md` |
-| **script template** | loaded `0x64` SCX script definition before/independent of a playing instance |
-| **script instance** | mutable playing copy/state created through `Script_MakeInstance()` |
-| **function record** | `0x18` record containing ID, parameters, sync link and mutable state |
-| **function group** | working term for a primary function plus linked/synchronized functions evaluated together |
-| **SyncFunction** | Runtime's diagnostic term for the linked secondary-function relationship |
-| **group-still-active** | scheduler accumulator controlled by selected IAM function returns |
-| **scenario/event VM** | separate one-byte interpreter used by `IAM/AREA`, `IAM/START`, etc. |
-| **scenario opcode** | one-byte VM opcode such as `0x46`; unrelated to `0xCC0000NN` IAM IDs |
-
----
-
-# 31. Related documentation
-
-## Authoritative companion document
+# 57. Related documentation
 
 [`iam-script-functions.md`](iam-script-functions.md)
 
-Use it for:
-
-- complete current IAM function catalogue;
-- `Script_*` names;
-- handler and reinit addresses;
-- family/ordinal interpretation;
+- authoritative 32-bit IAM function catalogue;
 - per-function behavior;
-- `Script_GetNumParam()` selector matrix;
-- legacy/special function IDs;
-- unresolved IAM function IDs.
-
-## Other reverse-engineering documents
-
-[`runtime-globals.md`](runtime-globals.md)
-
-- global Script/scene/runtime state relevant to the structures documented here.
-
-[`startup-sequence.md`](startup-sequence.md)
-
-- when SCX resources and IAM scenario scripts are loaded/activated during boot,
-  intro, main menu and New Game transitions.
+- handler/reinit addresses;
+- semantic parameter-selector matrix;
+- legacy/special IAM IDs.
 
 [`3do.md`](3do.md)
 
-- 3DO resource format used by SCX visual/sprite entries.
+- geometry, hierarchy, sprites, texture/material descriptors.
 
 [`3dt.md`](3dt.md)
 
-- texture format and renderer-side texture resources.
+- indexed palette/pixel payload and texture decompression.
+
+[`runtime-coordinate-math.md`](runtime-coordinate-math.md)
+
+- Runtime-native units and transform conventions.
+
+[`runtime-globals.md`](runtime-globals.md)
+
+- global runtime state used by scenario/script systems.
+
+[`startup-sequence.md`](startup-sequence.md)
+
+- how startup reaches `IAM/START`, `IAM/AREA`, interface 29, and the main menu.
+
+[`save-format.md`](save-format.md)
+
+- persistent configuration and per-playthrough snapshot structures.
 
 ---
 
-# 32. Current reverse-engineering boundary
+# 58. Current boundary of knowledge
 
-The current structured-Script understanding is:
+The structured-script system is now understood at the level of:
 
 ```text
-SCX v5
+SCX descriptor
     |
-    +-- main tagged block
+    +-- DEAD0002
           |
-          +-- 0xDEAD0002
-                |
-                +-- ScriptTemplate[0x64]
-                +-- parameter storage
-                +-- primary ScriptFunction[0x18]
-                +-- sync ScriptFunction[0x18]
-                        |
-                        +-- 32-bit IAM function ID
-                        +-- unknown +0x04
-                        +-- parameter index
-                        +-- sync index
-                        +-- mutable +0x10
-                        +-- mutable +0x14
-                |
-                +-- load-time index -> pointer relocation
-                |
-                +-- Script template registry
-                |
-                +-- Script_MakeInstance()
-                |
-                +-- mutable instance
-                |
-                +-- Script_PlayScript()
-                       |
-                       +-- current function group
-                       +-- sync chain
-                       +-- execute IAM actions
-                       +-- accumulate group-still-active
-                       +-- advance/repeat/reinit
+          +-- 0x64 template
+          +-- shared value pool
+          +-- 0x18 root commands
+          +-- 0x18 linked commands
+          +-- binding tables
+          +-- related script
+          |
+          +-- Script_MakeInstance
+                  |
+                  +-- mutable value copy
+                  +-- mutable counts
+                  +-- linked-pointer fixup
+                  +-- per-instance resources
+                  |
+                  +-- Script_PlayScript
+                         |
+                         +-- execution-limit gate
+                         +-- root + SyncFunction chain
+                         +-- native Script_* dispatch
+                         +-- OR selected AL returns into BL
+                         +-- group advance / repeat / reinit
 ```
 
-In parallel:
+The AREA VM is now understood at the level of:
 
 ```text
-IAM/AREA / IAM/START / related scenario data
+AREA event bytecode
     |
-    +-- compact byte stream
-          |
-          +-- u8 opcode
-          +-- opcode-specific operands
-          +-- VM context / scheduler
-          |
-          +-- high-level game/interface/presentation behavior
+    +-- stack/control flow
+    +-- START/global variables
+    +-- native interface/music/presentation operations
+    +-- character/object/camera operations
+    +-- SCX script launch opcodes
+    +-- explicit typed waits
 ```
 
-The important documentation boundary is now:
-
-```text
-this file:
-    how scripts are stored, instantiated, scheduled and bridged
-
-iam-script-functions.md:
-    what each 32-bit IAM function actually means
-```
-
-That separation should be maintained as reverse engineering progresses.
+The major remaining work is no longer discovering whether these systems are
+connected; it is completing their field/opcode semantics and reproducing the
+remaining Runtime details exactly.

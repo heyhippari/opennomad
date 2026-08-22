@@ -2,7 +2,6 @@
 # IAM / Quantic C 32-bit Script Function Catalogue
 
 > **Status:** reverse-engineering reference for OpenNomad  
-> **Intended repository path:** `docs/reverse-engineering/iam-script-functions.md`  
 > **Last updated:** 2026-08-22  
 >
 > This document reconstructs the 32-bit function-ID catalogue used by the `Script_*`

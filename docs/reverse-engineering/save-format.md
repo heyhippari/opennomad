@@ -1,7 +1,6 @@
 # Omikron Save System and Persistent Game State
 
 > **Status:** work-in-progress reverse-engineering documentation for OpenNomad.  
-> **Intended repository path:** `docs/reverse-engineering/save-format.md`  
 > **Authority:** the retail Windows `Runtime.exe` is authoritative. Asset files, real save files, UI screenshots, and fan-developed tools are corroborating evidence only.
 
 This document records the currently understood save/persistence architecture of **Omikron: The Nomad Soul**, with particular emphasis on `IAM/GAMES`, the `OMK_SAVE` block, the `IAM/START`-derived per-playthrough state, and the serialized current-character record.

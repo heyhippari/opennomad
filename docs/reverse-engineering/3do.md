@@ -1,7 +1,6 @@
 # Omikron `.3DO` model format (version 4)
 
 > **Status:** work-in-progress reverse-engineering documentation for OpenNomad  
-> **Intended repository path:** `docs/reverse-engineering/3do.md`  
 > **Last updated:** 2026-08-22
 >
 > This document describes the version-4 `.3DO` model/resource format used by the
