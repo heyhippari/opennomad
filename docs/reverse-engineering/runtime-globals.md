@@ -94,6 +94,7 @@ A major purpose of this document is to keep those categories distinct.
 | `0x00930724` | pointer | `g_currentEntity` (?) | Central entity pointer; player-only meaning not yet proven | Strong / tentative name |
 | `0x008F5EC0` | `128 × 0x1A8` | `g_loaded3DOPool` | Fixed storage for loaded 3DO runtime records | Confirmed |
 | `0x00907100` | `128` pointers | `g_loaded3DORegistry` | Pointer registry for loaded 3DO records | Confirmed |
+| `0x0054ECB8` | `512 × 0x10` | `g_animation3DAPool` | Fixed Runtime 3DA animation slot pool | Confirmed |
 | `0x00660B5C` | pointer | `g_spriteInstancePool` | Heap pool of `0x40`-byte sprite instances | Confirmed |
 | `0x00660B58` | `u16` | `g_spriteInstanceCapacity` | Pool capacity; startup initializes to `0x800` | Confirmed |
 | `0x009070B8` | pointer | `g_sortArrayLo` | Renderer sort array; allocation diagnostic names `SortArrayLo` | Confirmed |
@@ -114,6 +115,13 @@ A major purpose of this document is to keep those categories distinct.
 | `0x004E6C74` | `u32` | `g_scenarioEngineState` | ScenarioEngine state-machine value | Confirmed |
 | `0x004E6C9C` | flag/dword | `g_scenarioReloadRequested` | Mode-1 transition request; causes mode 3 then mode 2 | Confirmed |
 | `0x004E6C7C` | pointer | `g_specialScenarioScriptContext` | Scenario/event context saved specially for startup interface 29 | Confirmed behavior |
+| `0x004E61E8` | `32` pointers | `g_scenarioContextRegistry` | Fixed registry of compact IAM scenario/event contexts | Confirmed |
+| `0x004E6D94` | pointer | `g_scenarioGlobalState` | Shared scenario/START state; `+0x08` points to the dword global-variable array | Confirmed behavior |
+| `0x004C012C` | `u8` | `g_scenarioEventStatus` (?) | Event/native-operation status byte touched by `EndEvent` and presentation paths | Strong |
+| `0x004C0130` | `u32` | `g_scenarioAreaOpcodeGate` (?) | Special area/opcode execution gate used by `0x2D`/`0x2F` paths | Strong |
+| `0x004C013C` | `i32/u32` | `g_currentMusicTrackId` | Numeric music-track state used to avoid restarting the same track | Confirmed behavior |
+| `0x004C0140` | static `8`-byte entries | `g_scenarioOpcodeDescriptors` | Native compact-scenario opcode table for `0x00..0x98`, followed by `0x99` sentinel | Confirmed |
+| `0x006A05E0` | `u32` | `g_scenarioProbeMode` | Side-effect-suppression flag used while Runtime probes/scans scenario bytecode | Confirmed |
 | `0x0067A0B4` | function pointer | `g_scriptMessageCallback` | Callback used by `Script_SendMessage` | Confirmed |
 | `0x0067A0B8` | dword/pointer-like | `g_scriptMessageTarget` (?) | Target/context set before Script message callback | Tentative |
 | `0x004E9818` | `3 × 0x7C` | `g_interfaceInstances` | Fixed runtime interface-instance pool | Confirmed |
@@ -139,6 +147,10 @@ This range contains:
 Important examples:
 
 ```text
+0x004C012C  scenario event/native-operation status byte
+0x004C0130  special scenario area/opcode execution gate
+0x004C013C  current scenario music-track ID
+0x004C0140  compact scenario-VM opcode descriptor table
 0x004C30D8  effective frame-time scalar
 0x004C4910..0x004C493F renderer-backend callback tables
 0x004CB640  interface descriptor table
@@ -153,6 +165,7 @@ Do not assume every `0x004Cxxxx` address is read-only.
 This region contains many compact process-lifetime structures:
 
 ```text
+0x004E61E8..0x004E6267 32-entry compact scenario-context registry
 0x004E6Bxx..0x004E6Dxx ScenarioEngine/event state cluster
 0x004E7804..0x004E780C Win32 module/window handles
 0x004E96FC..0x004E9734 timing/input/frame-state cluster
@@ -170,6 +183,7 @@ Known examples:
 0x00531218 Script frame delta
 0x0053AAD8 DirectX/HRESULT diagnostic string buffer
 0x0053ADF0 renderer mode/state
+0x0054ECB8..0x00550CB7 fixed 512-entry 3DA animation pool
 ```
 
 ## `0x0065xxxx`–`0x006Axxxx`: renderer, palette, sprite, scratch-heavy BSS
@@ -182,6 +196,7 @@ Well-understood examples:
 0x00660B58..0x00660B5C sprite pool capacity/pointer
 0x0067A0B4..0x0067A0B8 Script message callback state
 0x0067A3E8 / 0x006823E8 texture loading/decompression work addresses
+0x006A05E0 scenario-VM probe / side-effect-suppression flag
 ```
 
 Many nearby software-rasterizer globals remain unnamed.
@@ -753,10 +768,54 @@ It lies after `OMK_SAVE`.
 The main state is concentrated around:
 
 ```text
+0x004E61E8..0x004E6267
 0x004E6Bxx..0x004E6Dxx
 ```
 
 This should be modeled as a larger state structure, not dozens of independent scalars.
+
+## `0x004E61E8..0x004E6267` — compact scenario-context registry
+
+**Confirmed — Runtime.**
+
+Initializer:
+
+```text
+0x00406270
+```
+
+clears:
+
+```text
+0x20 dwords
+```
+
+beginning at:
+
+```text
+0x004E61E8
+```
+
+Therefore the registry is exactly:
+
+```c
+RuntimeScenarioContext *g_scenarioContextRegistry[32];
+```
+
+Context creation at:
+
+```text
+0x00406290
+```
+
+scans this array for the first null pointer and stores the new `0x2C`-byte
+scenario/event context there. It also writes the selected registry index into the context's byte field at `+0x1E`.
+
+Context destruction clears the corresponding global registry slot.
+
+The live `RuntimeScenarioContext` layout belongs in
+`iam-scenario-vm.md`; the important global fact here is the fixed 32-pointer
+registry.
 
 ## `0x004E6C74` — engine state
 
@@ -802,6 +861,204 @@ Other paths reset it to `-1`.
 
 Exact semantic meaning remains unknown.
 
+## `0x004E6D94` — shared scenario/START state pointer
+
+This field can now be promoted out of the unresolved ScenarioEngine cluster.
+
+Runtime global-variable helpers:
+
+```text
+0x0040E510  set scenario/global variable
+0x0040E530  get scenario/global variable
+```
+
+perform:
+
+```text
+state = *(void**)0x004E6D94
+variables = *(int32_t**)(state + 0x08)
+variables[id] = value
+```
+
+or the corresponding read.
+
+A conservative partial type is:
+
+```c
+struct RuntimeScenarioGlobalState {
+    uint8_t  unknown00[8];
+    int32_t *globalVariables;   // +0x08
+    // ...
+};
+
+RuntimeScenarioGlobalState *g_scenarioGlobalState; // 0x004E6D94
+```
+
+The pointed structure contains more than the variable array; other offsets are
+used throughout the ScenarioEngine.
+
+The crucial architectural result is:
+
+```text
+START/scenario variables are shared process/scenario state
+```
+
+and are **not** stored independently in each compact VM context.
+
+## `0x004C0140` — compact scenario opcode descriptor table
+
+**Confirmed — Runtime.**
+
+The compact IAM scenario interpreter at:
+
+```text
+0x00406460
+```
+
+indexes an eight-byte static entry by opcode:
+
+```c
+struct RuntimeScenarioOpcodeDescriptor {
+    void (*handler)(RuntimeScenarioContext *);
+    uint32_t auxiliaryWord;
+}; // 0x08
+```
+
+Table base:
+
+```text
+0x004C0140
+```
+
+Valid handler entries exist for:
+
+```text
+0x00 .. 0x98
+```
+
+Entry:
+
+```text
+0x99
+```
+
+contains:
+
+```text
+0xFFFFFFFF
+0xFFFFFFFF
+```
+
+and acts as the static sentinel/end marker.
+
+The second dword is deliberately named `auxiliaryWord`: direct handler
+analysis proves it is **not** a reliable generic operand-byte count.
+
+See `iam-scenario-vm.md` for the complete handler-address inventory.
+
+## `0x006A05E0` — scenario VM probe mode
+
+**Confirmed — Runtime.**
+
+This is a 32-bit global repeatedly read by native compact-VM handlers.
+
+Alternate event-scanning paths around:
+
+```text
+0x004060B0
+0x00406120
+0x00406180
+```
+
+set it while walking bytecode through the normal native handler table.
+
+When nonzero, many side-effecting handlers decode/classify their instruction
+but suppress the normal engine operation.
+
+Recommended working name:
+
+```c
+uint32_t g_scenarioProbeMode;
+```
+
+This is best understood as:
+
+```text
+probe / dry-run / side-effect-suppression mode
+```
+
+until the original source-level terminology is recovered.
+
+## `0x004C012C` — scenario event/native-operation status byte
+
+This is explicitly byte-sized.
+
+`EndEvent` at:
+
+```text
+0x00401B90
+```
+
+writes:
+
+```text
+0xFF
+```
+
+to it, and presentation/native-operation handlers also inspect it.
+
+Its exact enum/flag semantics remain unresolved.
+
+Keep a cautious name such as:
+
+```text
+g_scenarioEventStatus
+```
+
+rather than assigning a narrow “event complete” meaning.
+
+## `0x004C0130` — special area/opcode execution gate
+
+This dword is read/written by compact-VM native area-transition paths,
+especially the currently provisional:
+
+```text
+opcode 0x2D
+opcode 0x2F
+```
+
+The central interpreter also contains special handling associated with those
+operations.
+
+Recommended:
+
+```text
+g_scenarioAreaOpcodeGate
+```
+
+with a tentative semantic label until the area-transition lifecycle is fully
+named.
+
+## `0x004C013C` — current music-track ID
+
+Music handler:
+
+```text
+0x00404FB0
+```
+
+compares the requested numeric track ID with this dword before starting new
+music and updates it when the track changes.
+
+This explains Runtime's observed behavior of avoiding a restart when the same
+numeric track is already active.
+
+Recommended:
+
+```c
+int32_t g_currentMusicTrackId;
+```
+
 ## Wider cluster
 
 Frequently used nearby state includes:
@@ -821,10 +1078,11 @@ Frequently used nearby state includes:
 0x004E6D88
 0x004E6D8C
 0x004E6D90
-0x004E6D94
 ```
 
 These recur throughout `0x00407Dxx..0x0040Exxx`.
+
+`0x004E6D94` is intentionally absent from this unresolved list now that its shared-scenario-state role and `+0x08` global-variable pointer are established.
 
 Recommended Ghidra strategy:
 
@@ -1220,6 +1478,64 @@ Loaded3DOModel *g_loaded3DORegistry[128];
 
 This registry is distinct from the fixed backing pool.
 
+## Related fixed 3DA animation pool — `0x0054ECB8`
+
+The 3DA loaders around:
+
+```text
+0x0046E690
+0x0046E8B0
+```
+
+scan fixed runtime slots beginning at:
+
+```text
+0x0054ECB8
+```
+
+in steps of:
+
+```text
+0x10
+```
+
+until:
+
+```text
+0x00550CB8
+```
+
+Therefore:
+
+```text
+base   = 0x0054ECB8
+stride = 0x10
+count  = 512
+end    = 0x00550CB8
+```
+
+The recovered runtime slot is:
+
+```c
+struct RuntimeAnimation3DA {
+    uint32_t lastFrame;          // +0x00
+    uint32_t trackCount;         // +0x04
+    Runtime3DATrack *tracks;     // +0x08
+    void *backingAllocation;     // +0x0C
+}; // 0x10
+```
+
+The serialized 3DA itself contains only its header, track descriptors and
+offset-addressed sample streams; this `0x10` structure is Runtime's live slot.
+
+Recommended global label:
+
+```c
+RuntimeAnimation3DA g_animation3DAPool[512];
+```
+
+See `3da.md` for serialization, binding and root-motion semantics.
+
 ---
 
 # 14. SpriteInstance pool
@@ -1274,7 +1590,7 @@ Creation at `0x0048EBF0` scans `0x40`-byte entries.
 Field:
 
 ```text
-+0x04
+0x04
 ```
 
 nonzero means occupied.
@@ -1282,14 +1598,14 @@ nonzero means occupied.
 After clearing a slot, Runtime initializes at least:
 
 ```text
-+0x04 = owner/model resource
-+0x16 = 0xFFFF
-+0x18 = 1.0f
-+0x1C = 1.0f
-+0x24 = 0.9f
-+0x28 = 0
-+0x2C = 0
-+0x30 = 0x00FFFFFF
+0x04 = owner/model resource
+0x16 = 0xFFFF
+0x18 = 1.0f
+0x1C = 1.0f
+0x24 = 0.9f
+0x28 = 0
+0x2C = 0
+0x30 = 0x00FFFFFF
 ```
 
 The detailed sprite structure belongs in sprite/3DO documentation.
@@ -1878,7 +2194,7 @@ Rendering functions dereference it as a COM object.
 A vtable call at offset:
 
 ```text
-+0x58
+0x58
 ```
 
 receives values behaving like:
