@@ -659,14 +659,16 @@ void WorldScene::render() {
     m_world_renderer->render(m_camera.camera(), context->runtime.get());
   }
 
+  if (m_fade_renderer != nullptr && m_white_fade_alpha > 0.0F) {
+    m_fade_renderer->render(m_white_fade_alpha);
+  }
+
+  // The cinematic mask remains opaque during presentation fades, matching
+  // Runtime's layer order: the whiteout affects the world, not the bars.
   if (m_letterbox_renderer != nullptr && m_letterbox.amount() > 0.0F) {
     m_letterbox_renderer->render(
         m_letterbox.current_bar_height(static_cast<float>(m_width), static_cast<float>(m_height)),
         static_cast<float>(m_height));
-  }
-
-  if (m_fade_renderer != nullptr && m_white_fade_alpha > 0.0F) {
-    m_fade_renderer->render(m_white_fade_alpha);
   }
 
   // I2D is always the final scene layer. Interface 29's full-screen bump
