@@ -29,8 +29,7 @@ So I did it myself. Both to finally fulfil the promise David Cage made in 2006 a
 ## Status
 
 This is EXTREMELY early. I basically started by loading some hardcoded 3DO/3DT files in a scene, and expanded the scope from there.
-I am starting with the engine's initialization, because most of the game seems to be script-based. As of the commit this revision of the README is a part of, we should be close to reaching the main menu.
-A lot of things beyond that are already reverse engineered (As tends to happen when reversing software, you pull on a thread that might or might not be related to what you're trying to find), but not implemented yet, as much context is still missing.
+I am starting with the engine's initialization, because most of the game seems to be script-based. As of the commit this revision of the README is a part of, we have the intro FMV, splash screen and general main menu working, and the introduction of the game works partially. We have also started building an enhancement layer that sits on top of the retail game data and provides small changes intended to make the game feel a bit nicer: smoother transitions, better menu layouts for high resolutions, dynamically cropped introduction FMV, eventually improved subtitle display, etc.
 
 Currently, we can reach the main menu (as well as fix the black background on the game's logo, and improve the layout for larger resolutions of today!), with the intro videos, the splash screen (slightly "improved" with a fade in/out) and music working.
 
@@ -40,9 +39,11 @@ Next steps: handle the `Quit` menu entry, improve the presentation of the menu a
 
 ## How to run
 
-There's not much to run at the moment, but if you're really motivated, follow the instructions in [docs/QuickStart.md](the quick start documentation).
+There's not much to run at the moment, but if you're really motivated, follow the instructions in the
+[quick start documentation](docs/QuickStart.md).
 
-You can then either copy the original files next to the executable or set an environment variable names `OPENNOMAD_GAME_DATA_ROOT` to the root folder of the game (Where `Runtime.exe` is located).
+You can then either copy the original files next to the executable or set an environment variable named
+`OPENNOMAD_GAME_DATA_ROOT` to the root folder of the game (where `Runtime.exe` is located).
 
 ## Special Thanks
 
