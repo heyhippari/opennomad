@@ -82,6 +82,12 @@ class DialogRuntime {
     return m_generation;
   }
   [[nodiscard]] std::optional<DialogPresentation> presentation() const;
+
+  /// Face-motion basename authored by an arbitrary node in the currently
+  /// loaded dialog. Used by the presentation layer to prepare likely
+  /// successor performances without changing dialog graph state.
+  [[nodiscard]] std::optional<std::string> face_motion_base_for_node(std::int16_t node_id) const;
+
   [[nodiscard]] const std::string& last_error() const {
     return m_last_error;
   }

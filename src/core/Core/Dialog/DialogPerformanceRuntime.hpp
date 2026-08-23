@@ -11,6 +11,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "Core/Audio/DialogVoiceCodec.hpp"
 #include "Core/RuntimeMath.hpp"
 
 namespace App::Audio {
@@ -81,9 +82,41 @@ class DialogPerformanceRuntime {
   }
 
  private:
+  /// Expensive first-use work cached together: the validated source clip and
+  /// its complete continuously-decoded dialogue PCM stream.
+  struct PreparedClip {
+    std::shared_ptr<const Omikron::ThreeDM> clip;
+    std::shared_ptr<const std::vector<std::int16_t>> stereo_samples;
+    std::string audio_error;
+  };
+
+  /// Incrementally prepares a likely successor while the current line is
+  /// already playing. Decoding is deliberately bounded per game tick so
+  /// multi-megabyte 3DMs cannot stall the presentation thread.
+  struct PendingPrefetch {
+    std::string basename;
+    std::shared_ptr<const Omikron::ThreeDM> clip;
+    std::shared_ptr<std::vector<std::int16_t>> stereo_samples;
+    Audio::DialogAdpcmState decoder_state{};
+    std::size_t next_frame{0};
+  };
+
+
   [[nodiscard]] static std::expected<std::shared_ptr<const Omikron::ThreeDM>, std::string>
   load_clip(std::string_view basename);
-  void stop(bool stop_voice);
+
+  [[nodiscard]] std::expected<const PreparedClip*, std::string> prepare_clip(
+      std::string_view basename);
+
+  void queue_successor_prefetches(
+      const DialogRuntime& dialog, std::string_view current_basename);
+  void pump_prefetch();
+
+  /// Natural EOF: remove visual overlay but retain generation/world identity.
+  void finish_generation();
+  /// Explicit state/world/dialog transition.
+  void stop();
+
   void start_generation(const DialogRuntime& dialog,
       Character::Runtime* characters,
       std::uint64_t world_identity,
@@ -91,9 +124,16 @@ class DialogPerformanceRuntime {
   void apply_frame(std::size_t frame_index);
 
   ClipLoader m_loader;
-  std::unordered_map<std::string, std::shared_ptr<const Omikron::ThreeDM>> m_cache;
+  std::unordered_map<std::string, PreparedClip> m_cache;
   std::shared_ptr<const Omikron::ThreeDM> m_clip;
   std::optional<ThreeDmBinding> m_binding;
+
+  /// Prepared one-at-a-time while the current mixer stream is already
+  /// playing. This moves disk/parse/ADPCM work away from the node boundary.
+  std::vector<std::string> m_prefetch_candidates;
+  std::size_t m_prefetch_cursor{0};
+  std::optional<PendingPrefetch> m_pending_prefetch;
+
   Character::Runtime* m_characters{nullptr};
   Audio::AudioSystem* m_audio{nullptr};
   std::int16_t m_character_id{0};

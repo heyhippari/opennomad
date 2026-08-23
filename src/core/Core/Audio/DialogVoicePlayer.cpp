@@ -4,12 +4,9 @@
 #include <cstdint>
 #include <string>
 #include <utility>
-#include <vector>
 
 #include <SDL3/SDL_audio.h>
 #include <SDL3/SDL_error.h>
-#include <SDL3/SDL_iostream.h>
-#include <SDL3/SDL_properties.h>
 #include <SDL3_mixer/SDL_mixer.h>
 
 #include "Core/Log.hpp"
@@ -37,34 +34,53 @@ void DialogVoicePlayer::shutdown() {
     m_track = nullptr;
   }
   m_mixer = nullptr;
-  m_samples.clear();
+  m_samples.reset();
 }
 
 bool DialogVoicePlayer::play(
-    std::string display_name, std::vector<std::int16_t> stereo_samples) {
-  if (m_mixer == nullptr || m_track == nullptr || stereo_samples.empty()) {
+    std::string display_name, DialogVoiceSamples stereo_samples) {
+  if (m_mixer == nullptr || m_track == nullptr || stereo_samples == nullptr ||
+      stereo_samples->empty()) {
     return false;
   }
-  const std::size_t byte_size{stereo_samples.size() * sizeof(std::int16_t)};
-  SDL_IOStream* io{SDL_IOFromConstMem(stereo_samples.data(), byte_size)};
-  if (io == nullptr) {
-    return false;
-  }
+  const std::size_t byte_size{stereo_samples->size() * sizeof(std::int16_t)};
+
   SDL_AudioSpec spec{};
   spec.format = SDL_AUDIO_S16;
   spec.channels = 2;
   spec.freq = 22080;
-  MIX_StopTrack(m_track, 0);
-  if (!MIX_SetTrackRawIOStream(m_track, io, &spec, /*closeio=*/true)) {
-    SDL_CloseIO(io);
+  // The PCM is already completely decoded and resident. Wrap it directly in
+  // MIX_Audio instead of making SDL_mixer stream it through an SDL_IOStream.
+  // No copy is made; m_samples below keeps the backing allocation alive.
+  MIX_Audio* input{MIX_LoadRawAudioNoCopy(
+      m_mixer,
+      stereo_samples->data(),
+      byte_size,
+      &spec,
+      /*free_when_done=*/false)};
+  if (input == nullptr) {
     return false;
   }
+  
+  // Replacing a track's MIX_Audio while it is playing is explicitly legal.
+  // Do not MIX_StopTrack() first: MIX_PlayTrack() below restarts the track
+  // against the new input, avoiding an unnecessary stop/start hole.
+  if (!MIX_SetTrackAudio(m_track, input)) {
+    MIX_DestroyAudio(input);
+    return false;
+  }
+
+  // MIX_SetTrackAudio() takes its own reference.
+  MIX_DestroyAudio(input);
+
+  // Keep the no-copy PCM backing alive for as long as the track can reference
+  // this MIX_Audio.
   m_samples = std::move(stereo_samples);
   m_source_name = std::move(display_name);
-  const SDL_PropertiesID properties{SDL_CreateProperties()};
-  SDL_SetNumberProperty(properties, MIX_PROP_PLAY_LOOPS_NUMBER, 0);
-  const bool started{MIX_PlayTrack(m_track, properties)};
-  SDL_DestroyProperties(properties);
+  
+  // Default MIX_PlayTrack options already mean zero loops.
+  const bool started{MIX_PlayTrack(m_track, 0)};
+
   if (!started) {
     App::Log::warn(
         LogCategory::Audio, "dialogue voice '{}' failed: {}", m_source_name, SDL_GetError());
@@ -75,7 +91,9 @@ bool DialogVoicePlayer::play(
 void DialogVoicePlayer::stop() {
   if (m_track != nullptr) {
     MIX_StopTrack(m_track, 0);
+    MIX_SetTrackAudio(m_track, nullptr);
   }
+  m_samples.reset();
 }
 
 void DialogVoicePlayer::set_gain(const float gain) {

@@ -85,7 +85,7 @@ class AudioSystem {
   /// Replaces the dedicated nonspatial dialogue lane with one 22080 Hz
   /// stereo signed-16 PCM stream. The player owns the samples until stopped.
   [[nodiscard]] std::expected<void, std::string> play_dialog_voice(
-      std::string display_name, std::vector<std::int16_t> stereo_samples);
+      std::string display_name, DialogVoiceSamples stereo_samples);
   void stop_dialog_voice();
   [[nodiscard]] bool dialog_voice_playing() const;
 

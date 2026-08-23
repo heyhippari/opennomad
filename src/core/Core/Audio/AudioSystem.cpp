@@ -26,6 +26,7 @@
 #include <vector>
 
 #include "Core/Audio/AudioTypes.hpp"
+#include "Core/Audio/DialogVoicePlayer.hpp"
 #include "Core/Audio/LegacySpatializer.hpp"
 #include "Core/Audio/MusicPlayer.hpp"
 #include "Core/Audio/SoundResourceCache.hpp"
@@ -387,7 +388,7 @@ void AudioSystem::stop_all_sfx() {
 }
 
 std::expected<void, std::string> AudioSystem::play_dialog_voice(
-    std::string display_name, std::vector<std::int16_t> stereo_samples) {
+    std::string display_name, DialogVoiceSamples stereo_samples) {
   if (!available()) {
     return std::expected<void, std::string>{std::unexpect, "audio subsystem unavailable"};
   }

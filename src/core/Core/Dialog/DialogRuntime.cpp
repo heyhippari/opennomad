@@ -186,6 +186,18 @@ DialogCameraPair DialogRuntime::resolve_cameras(
   return pair;
 }
 
+std::optional<std::string> DialogRuntime::face_motion_base_for_node(
+   const std::int16_t node_id) const {
+  if (!m_record.has_value()) {
+    return std::nullopt;
+  }
+  const auto node{m_record->node_by_id(node_id)};
+  if (!node.has_value()) {
+    return std::nullopt;
+  }
+  return node->face_motion_base;
+}
+
 std::optional<DialogPresentation> DialogRuntime::presentation() const {
   if (!active() || !m_record.has_value() || !m_node.has_value()) {
     return std::nullopt;
