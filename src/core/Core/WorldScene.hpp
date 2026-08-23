@@ -5,6 +5,7 @@
 #include <expected>
 #include <memory>
 #include <optional>
+#include <string>
 
 #include "Core/Debug/SceneDebugView.hpp"
 #include "Core/Interface/InterfacePresenter.hpp"
@@ -18,6 +19,7 @@ class ScenarioManager;
 struct WorldSceneContext;
 class WorldFadeRenderer;
 class WorldLetterboxRenderer;
+class WorldColorPipeline;
 class WorldRenderer;
 
 namespace Interface {
@@ -73,6 +75,7 @@ class WorldScene final : public Scene, public Debug::SceneDebugView {
   std::unique_ptr<WorldRenderer> m_world_renderer;
   std::unique_ptr<WorldFadeRenderer> m_fade_renderer;
   std::unique_ptr<WorldLetterboxRenderer> m_letterbox_renderer;
+  std::unique_ptr<WorldColorPipeline> m_color_pipeline;
   WorldCameraSystem m_camera;
   WorldLetterboxState m_letterbox;
   WorldUvPhaseState m_uv_phases;
@@ -88,6 +91,7 @@ class WorldScene final : public Scene, public Debug::SceneDebugView {
   std::uint32_t m_observed_generation{0};
   bool m_world_observed{false};
   bool m_geometry_wireframe_enabled{false};
+  std::string m_color_pipeline_error;
 };
 
 }  // namespace App

@@ -37,7 +37,7 @@ TEST_SUITE("Core::Sprite::SpritePool") {
 
     CHECK_EQ(instance->scale_x, 1.0F);
     CHECK_EQ(instance->scale_y, 1.0F);
-    CHECK_EQ(instance->unknown_24, 0.9F);
+    CHECK_EQ(instance->diffuse_alpha, 0.9F);
     CHECK_EQ(instance->frame_index, SpriteInstance::k_invalid_frame);
     CHECK_EQ(instance->tint.at(0), 1.0F);
     CHECK_EQ(instance->tint.at(1), 1.0F);
@@ -215,7 +215,7 @@ TEST_SUITE("Core::Sprite::SpritePool") {
     pool.set_tint(handle, {0.5F, 0.25F, 0.125F});
     pool.set_render_mode(handle, SpriteRenderMode::k_additive);
     pool.set_texture_offset(handle, 0.25F, 0.5F);
-    pool.set_unknown_24(handle, 7.0F);
+    pool.set_diffuse_alpha(handle, 7.0F);
     REQUIRE(pool.set_frame(handle, 1).has_value());
     pool.set_position(handle, {9.0F, 8.0F, 7.0F});
 
@@ -225,7 +225,7 @@ TEST_SUITE("Core::Sprite::SpritePool") {
     CHECK_EQ(instance->scale_x, 1.0F);
     CHECK_EQ(instance->scale_y, 1.0F);
     CHECK_EQ(instance->rotation, 0.0F);
-    CHECK_EQ(instance->unknown_24, 0.9F);
+    CHECK_EQ(instance->diffuse_alpha, 0.9F);
     CHECK_EQ(instance->frame_index, SpriteInstance::k_invalid_frame);
     CHECK_EQ(instance->render_mode, SpriteRenderMode::k_default);
     CHECK_EQ(instance->texture_offset_u, 0.0F);

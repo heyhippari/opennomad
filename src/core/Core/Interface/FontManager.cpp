@@ -114,7 +114,7 @@ std::expected<FontResource, std::string> FontResource::load_ttf_fallback(
   auto texture{Texture2D::create(width,
       height,
       std::span<const std::uint8_t>{flipped},
-      /*srgb=*/false,
+      TextureColorEncoding::k_linear,
       TextureFilter::k_linear)};
   if (!texture) {
     return std::expected<FontResource, std::string>{

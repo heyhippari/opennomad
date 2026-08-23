@@ -157,21 +157,24 @@ TEST_SUITE("Core::Sprite::SpriteRenderer") {
     CHECK_EQ(renderer.vertices().at(5).uv.at(1), doctest::Approx((255.0F / 256.0F) - 0.2F));
   }
 
-  TEST_CASE("Propagates the tint with full alpha") {
+  TEST_CASE("Propagates diffuse alpha to every billboard vertex") {
     SpritePool pool;
     const SpriteHandle handle{make_attached(pool, {0.0F, 0.0F, 5.0F})};
     pool.set_tint(handle, {0.5F, 0.25F, 0.125F});
+    pool.set_diffuse_alpha(handle, 0.5F);
     const SpriteResource resource{make_resource()};
     const std::array<const SpriteResource*, 1> resources{&resource};
 
     SpriteRenderer renderer;
     build_queue(renderer, pool, std::span<const SpriteResource* const>{resources});
 
-    const auto& tint{renderer.vertices().at(0).tint};
-    CHECK_EQ(tint.at(0), 0.5F);
-    CHECK_EQ(tint.at(1), 0.25F);
-    CHECK_EQ(tint.at(2), 0.125F);
-    CHECK_EQ(tint.at(3), 1.0F);
+    REQUIRE_EQ(renderer.vertices().size(), std::size_t{6});
+    for (const App::Sprite::SpriteVertex& vertex : renderer.vertices()) {
+      CHECK_EQ(vertex.tint.at(0), 0.5F);
+      CHECK_EQ(vertex.tint.at(1), 0.25F);
+      CHECK_EQ(vertex.tint.at(2), 0.125F);
+      CHECK_EQ(vertex.tint.at(3), 0.5F);
+    }
   }
 
   TEST_CASE("Scales the quad by scale_x and scale_y") {
@@ -242,6 +245,32 @@ TEST_SUITE("Core::Sprite::SpriteRenderer") {
     REQUIRE_EQ(renderer.commands().size(), std::size_t{2});
     CHECK_EQ(renderer.commands().at(0).pipeline_key.render_mode, SpriteRenderMode::k_default);
     CHECK_EQ(renderer.commands().at(1).pipeline_key.render_mode, SpriteRenderMode::k_alpha);
+  }
+
+  TEST_CASE("Orders additive before darken regardless of resource identity") {
+    SpritePool pool;
+    const SpriteHandle additive{
+        pool.create(1, 0, 1, {0.0F, 0.0F, 5.0F}).value()};
+    pool.set_render_mode(additive, SpriteRenderMode::k_additive);
+    pool.set_frame(additive, 0).value();
+    pool.attach(additive).value();
+    const SpriteHandle darken{
+        pool.create(0, 0, 1, {1.0F, 0.0F, 5.0F}).value()};
+    pool.set_render_mode(darken, SpriteRenderMode::k_darken);
+    pool.set_frame(darken, 0).value();
+    pool.attach(darken).value();
+
+    const SpriteResource low_resource{make_resource()};
+    const SpriteResource high_resource{make_resource()};
+    const std::array<const SpriteResource*, 2> resources{&low_resource, &high_resource};
+    SpriteRenderer renderer;
+    build_queue(renderer, pool, std::span<const SpriteResource* const>{resources});
+
+    REQUIRE_EQ(renderer.commands().size(), std::size_t{2});
+    CHECK_EQ(renderer.commands().at(0).sprite, additive);
+    CHECK_EQ(renderer.commands().at(0).pipeline_key.render_mode, SpriteRenderMode::k_additive);
+    CHECK_EQ(renderer.commands().at(1).sprite, darken);
+    CHECK_EQ(renderer.commands().at(1).pipeline_key.render_mode, SpriteRenderMode::k_darken);
   }
 
   TEST_CASE("Preserves insertion order within a batch") {

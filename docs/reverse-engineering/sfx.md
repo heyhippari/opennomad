@@ -83,8 +83,8 @@ copied to `SpriteInstance::render_mode`; modes are the existing retail-compatibl
 **Confirmed — Runtime**, except where explicitly marked unsupported:
 
 - `0x0002`: selects a special `SpriteInstance+0x24` path. GRID does not use it.
-  Without it, particles set the preserved `unknown_24` field to exactly `0.5`.
-  Its final semantic name remains **Unknown**.
+  Without it, particles set the confirmed `diffuse_alpha` field to exactly
+  `0.5`. The behavior selected by the flag itself remains unsupported.
 - `0x0004`: grow, with scale velocity `+initialScale/lifetime`.
 - `0x0010`: random initial billboard rotation in `[0, 2pi]`.
 - `0x0040`: independently add `2*random01` to each direction component.
@@ -187,7 +187,7 @@ unsupported; GRID uses only the invalid sentinel.
 Each burst creates `spawn_count` ordinary attached sprites up to the retail
 particle capacity of 1000. Creation selects the resource's default object and
 frame zero, emitter position, authored scale, validated render mode, normalized
-start tint, optional random rotation, and `unknown_24=0.5` for GRID's non-`0x0002`
+start tint, optional random rotation, and `diffuse_alpha=0.5` for GRID's non-`0x0002`
 path. Lifetime, scale velocity, angular velocity, vertical acceleration, color
 deltas, and frame count are stored per particle.
 

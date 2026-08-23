@@ -91,7 +91,10 @@ std::expected<std::unique_ptr<SplashScene>, std::string> SplashScene::create(
         std::unexpect, fmt::format("Splash: {}", image.error())};
   }
   auto texture{Texture2D::create(
-      image->width, image->height, std::span<const std::uint8_t>{image->rgba8}, true)};
+      image->width,
+      image->height,
+      std::span<const std::uint8_t>{image->rgba8},
+      TextureColorEncoding::k_srgb)};
   if (!texture) {
     return std::expected<std::unique_ptr<SplashScene>, std::string>{
         std::unexpect, fmt::format("Splash: {}", texture.error())};
@@ -121,6 +124,9 @@ void SplashScene::update(const float delta_time, const Input::InputManager& /*in
 
 void SplashScene::render() {
   APP_PROFILE_FUNCTION();
+
+  // The splash shader performs the final sRGB OETF explicitly.
+  glDisable(GL_FRAMEBUFFER_SRGB);
 
   // Black behind the image so the contain-fit bars stay neutral.
   glClearColor(0.0F, 0.0F, 0.0F, 1.0F);

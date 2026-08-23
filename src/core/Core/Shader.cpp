@@ -227,8 +227,19 @@ uniform vec4 u_tint;
 
 out vec4 frag_colour;
 
+float linear_to_srgb(float linear) {
+    if (linear <= 0.0031308) {
+        return 12.92 * linear;
+    }
+    return (1.055 * pow(linear, 1.0 / 2.4)) - 0.055;
+}
+
 void main() {
-    frag_colour = texture(u_texture0, v_uv) * u_tint;
+    vec4 linear = texture(u_texture0, v_uv) * u_tint;
+    frag_colour = vec4(linear_to_srgb(linear.r),
+                       linear_to_srgb(linear.g),
+                       linear_to_srgb(linear.b),
+                       linear.a);
 }
 )glsl";
   // clang-format on

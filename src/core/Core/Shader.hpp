@@ -47,7 +47,8 @@ class Shader {
   /// No-op when the program has no such block (e.g. it was optimised out).
   void set_uniform_block_binding(std::string_view name, GLuint binding_point) const;
 
-  /// Returns a simple default shader (MVP transform + textured + tinted).
+  /// Returns a simple default shader (MVP transform + textured + linear tint
+  /// + explicit sRGB display encoding). Used by the startup splash.
   ///
   /// Throws std::runtime_error if the hardcoded sources fail to build — that
   /// is a programmer error, not a recoverable runtime condition.

@@ -47,9 +47,8 @@ struct SpriteInstance {
   float scale_y{1.0F};  ///< Runtime default 1.0.
   /// Radians, around the billboard centre (Runtime +0x20).
   float rotation{0.0F};
-  /// Runtime +0x24, default 0.9. Semantics not yet understood — kept with an
-  /// explicitly provisional name and never interpreted by the renderer.
-  float unknown_24{0.9F};
+  /// Runtime +0x24 normalized diffuse/vertex alpha, default 0.9.
+  float diffuse_alpha{0.9F};
   float texture_offset_u{0.0F};
   float texture_offset_v{0.0F};
   /// Diffuse tint from Runtime's 0x00RRGGBB colour (linear RGB in [0, 1]).

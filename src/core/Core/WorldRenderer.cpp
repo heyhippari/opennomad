@@ -134,7 +134,11 @@ std::expected<std::vector<Texture2D>, std::string> make_white_textures(const std
   std::vector<Texture2D> textures;
   textures.reserve(count);
   for (std::size_t index{0}; index < count; ++index) {
-    auto texture{Texture2D::create(1, 1, std::span<const std::uint8_t>{k_white_pixel}, true)};
+    auto texture{Texture2D::create(1,
+        1,
+        std::span<const std::uint8_t>{k_white_pixel},
+        k_retail_texture_policy.encoding,
+        k_retail_texture_policy.filter)};
     if (!texture) {
       return std::expected<std::vector<Texture2D>, std::string>{
           std::unexpect, std::move(texture).error()};
@@ -187,7 +191,8 @@ std::expected<std::vector<Texture2D>, std::string> load_decor_textures(
     auto texture{Texture2D::create(static_cast<int>(image.width),
         static_cast<int>(image.height),
         std::span<const std::uint8_t>{image.rgba8},
-        true)};
+        k_retail_texture_policy.encoding,
+        k_retail_texture_policy.filter)};
     if (!texture) {
       return std::expected<std::vector<Texture2D>, std::string>{
           std::unexpect, std::move(texture).error()};
@@ -396,7 +401,8 @@ void WorldRenderer::sync_character_models(const ScenarioRuntime& runtime) {
         auto texture{Texture2D::create(static_cast<int>(image.width),
             static_cast<int>(image.height),
             std::span<const std::uint8_t>{image.rgba8},
-            true)};
+            k_retail_texture_policy.encoding,
+            k_retail_texture_policy.filter)};
         if (!texture) {
           App::Log::warn(LogCategory::Renderer,
               "Character model '{}' texture upload failed: {}",
@@ -674,10 +680,14 @@ void WorldRenderer::render(const Camera& camera,
   glBlendEquation(GL_FUNC_ADD);
   glDisable(GL_BLEND);
   glDepthMask(GL_TRUE);
+  Shader::unbind();
+}
+
+void WorldRenderer::render_debug_overlay(
+    const Camera& camera, const ScenarioRuntime* const runtime) {
   if (m_geometry_wireframe) {
     render_geometry_wireframe(camera, runtime);
   }
-  Shader::unbind();
 }
 
 }  // namespace App

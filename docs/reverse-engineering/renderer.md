@@ -3341,9 +3341,10 @@ However:
 
 may expose order differences.
 
-Once Runtime bucket-key traversal is fully recovered, OpenNomad should encode
-its observable ordering explicitly rather than relying on incidental
-`std::sort` behavior.
+Confirmed sprite state bits are traversed in ascending bucket order. OpenNomad
+therefore makes `bucket_bits(render_mode)` the primary sprite command key and
+uses stable ties. The remaining unknown material-key bits still require care;
+ordinary mesh ordering is not implied by this sprite result.
 
 ---
 
@@ -3354,7 +3355,7 @@ Potential future debug/reference options:
 ```text
 640×480 / 4:3 projection reference
 
-nearest filtering
+confirmed bilinear retail texture filtering
 
 optional 15/16-bit final quantization
 
@@ -3905,3 +3906,33 @@ The central architectural takeaway is:
 > resources and flush the prepared scene through legacy DirectDraw/Direct3D.
 > OpenNomad should reproduce the resulting semantics while keeping file data,
 > runtime state, draw scheduling and the modern graphics API cleanly separated.
+
+---
+
+# 146. Color-domain and filtering facts
+
+**Confirmed — Runtime:**
+
+- the Direct3D 6-era renderer has no sRGB texture-decode or framebuffer-encode
+  state, so texture filtering, modulation, lighting and blending manipulate
+  stored/display-encoded RGB numbers directly;
+- `D3DTSS_MAGFILTER` and `D3DTSS_MINFILTER` are both set to `LINEAR` at
+  `0x00463BFF` and `0x00463C36`;
+- sprite mode bucket bits are traversed in ascending numeric order through the
+  16,384-entry sort array, so additive `0x2100` precedes darken `0x2200`
+  regardless of texture identity;
+- Runtime enables legacy target dithering;
+- `SpriteInstance+0x24` supplies the diffuse alpha byte packed into generated
+  faces (see `sprite.md`).
+
+**Modern reconstruction:** retail RGB is treated as sRGB-like only when the
+completed encoded game frame crosses into OpenNomad's linear scene domain.
+OpenNomad accumulates the legacy frame in normalized `GL_RGBA16`, deliberately
+omits obsolete low-bit-depth dithering, decodes it with the exact standard sRGB
+EOTF into `GL_RGBA16F`, and explicitly applies the standard sRGB OETF for SDR
+display. These target formats and transfer functions are OpenNomad choices,
+not recovered Runtime behavior.
+
+The `GL_RGBA16` attachment is a linear OpenGL *format* but contains semantically
+encoded RGB. That choice prevents implicit transfer conversion while retaining
+Runtime's encoded-domain saturation behavior at modern precision.

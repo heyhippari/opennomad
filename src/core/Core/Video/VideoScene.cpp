@@ -103,7 +103,7 @@ void VideoScene::present_frame(
     auto texture{Texture2D::create(frame.width,
         frame.height,
         std::span<const std::uint8_t>{frame.rgba},
-        /*srgb=*/false)};
+        TextureColorEncoding::k_linear)};
     if (!texture) {
       return;
     }

@@ -161,7 +161,7 @@ constexpr std::string_view K_BACKGROUND_FRAGMENT_SOURCE = R"glsl(
 #version 410 core
 
 uniform isampler2D u_gradient;   // RG8I 256x256 signed gradients
-uniform sampler2D u_palette;     // 64x1 RGBA8 sRGB ramp
+uniform sampler2D u_palette;     // 64x1 legacy-encoded RGBA8 ramp
 uniform usampler2D u_row_warp;   // RG8UI pixel_height x 1 (R=N, G=N+1)
 uniform usampler2D u_col_warp;   // RG8UI pixel_width x 1 (R=N, G=N+1)
 uniform vec2 u_viewport_size;
@@ -274,7 +274,8 @@ std::expected<Texture2D, std::string> create_palette_texture() {
     pixels.at((i * 4U) + 2U) = palette.at(i).at(2);
     pixels.at((i * 4U) + 3U) = 255U;
   }
-  return Texture2D::create(64, 1, std::span<const std::uint8_t>{pixels}, /*srgb=*/true);
+  return Texture2D::create(
+      64, 1, std::span<const std::uint8_t>{pixels}, TextureColorEncoding::k_legacy_encoded);
 }
 
 }  // namespace

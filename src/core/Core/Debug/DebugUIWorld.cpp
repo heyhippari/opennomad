@@ -843,9 +843,9 @@ void DebugUI::show_sprite_instances_tab(
   if (ImGui::DragFloat("UV offset V", &offset_v, 0.01F)) {
     runtime.set_sprite_texture_offset(handle, offset_u, offset_v);
   }
-  float unknown_24{instance->unknown_24};
-  if (ImGui::DragFloat("Unknown +0x24 (provisional)", &unknown_24, 0.05F)) {
-    runtime.set_sprite_unknown_24(handle, unknown_24);
+  float diffuse_alpha{instance->diffuse_alpha};
+  if (ImGui::DragFloat("Diffuse alpha (+0x24)", &diffuse_alpha, 0.01F, 0.0F, 1.0F)) {
+    runtime.set_sprite_diffuse_alpha(handle, diffuse_alpha);
   }
   int mode{static_cast<int>(instance->render_mode)};
   if (ImGui::Combo("Render mode",

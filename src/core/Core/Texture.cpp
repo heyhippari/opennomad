@@ -20,13 +20,26 @@
 
 namespace App {
 
-Texture2D::Texture2D(const int width, const int height, const GLuint id)
-    : m_id(id), m_width(width), m_height(height) {}
+Texture2D::Texture2D(const int width,
+    const int height,
+    const GLuint id,
+    const TextureColorEncoding encoding,
+    const TextureFilter filter,
+    const TextureStorageFormat storage_format)
+    : m_id(id),
+      m_width(width),
+      m_height(height),
+      m_color_encoding(encoding),
+      m_filter(filter),
+      m_storage_format(storage_format) {}
 
 Texture2D::Texture2D(Texture2D&& other) noexcept
     : m_id(std::exchange(other.m_id, 0)),
       m_width(other.m_width),
-      m_height(other.m_height) {}
+      m_height(other.m_height),
+      m_color_encoding(other.m_color_encoding),
+      m_filter(other.m_filter),
+      m_storage_format(other.m_storage_format) {}
 
 Texture2D& Texture2D::operator=(Texture2D&& other) noexcept {
   if (this != &other) {
@@ -36,6 +49,9 @@ Texture2D& Texture2D::operator=(Texture2D&& other) noexcept {
     m_id = std::exchange(other.m_id, 0);
     m_width = other.m_width;
     m_height = other.m_height;
+    m_color_encoding = other.m_color_encoding;
+    m_filter = other.m_filter;
+    m_storage_format = other.m_storage_format;
   }
   return *this;
 }
@@ -43,7 +59,7 @@ Texture2D& Texture2D::operator=(Texture2D&& other) noexcept {
 std::expected<Texture2D, std::string> Texture2D::create(const int width,
                                                         const int height,
                                                         const std::span<const std::uint8_t> rgba8,
-                                                        const bool srgb,
+                                                        const TextureColorEncoding encoding,
                                                         const TextureFilter filter) {
   APP_PROFILE_FUNCTION();
 
@@ -65,7 +81,7 @@ std::expected<Texture2D, std::string> Texture2D::create(const int width,
   glBindTexture(GL_TEXTURE_2D, id);
   glTexImage2D(GL_TEXTURE_2D,
                0,
-               srgb ? GL_SRGB8_ALPHA8 : GL_RGBA8,
+               texture_upload_internal_format(encoding),
                width,
                height,
                0,
@@ -74,9 +90,6 @@ std::expected<Texture2D, std::string> Texture2D::create(const int width,
                rgba8.data());
 
   const GLint min_filter{filter == TextureFilter::k_linear ? GL_LINEAR : GL_NEAREST};
-  // Nearest filtering + repeat wrapping matches the texture behaviour of
-  // late-90s hardware and keeps the checker pattern crisp. Linear filtering
-  // is used for scalable content (font atlases).
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, min_filter);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, min_filter);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
@@ -84,25 +97,36 @@ std::expected<Texture2D, std::string> Texture2D::create(const int width,
 
   glBindTexture(GL_TEXTURE_2D, 0);
 
-  return Texture2D{width, height, id};
+  return Texture2D{
+      width, height, id, encoding, filter, TextureStorageFormat::k_rgba8_unorm};
 }
 
-std::expected<Texture2D, std::string> Texture2D::create(const int width,
-                                                        const int height,
-                                                        const bool srgb) {
+std::expected<Texture2D, std::string> Texture2D::create_render_target(
+    const int width,
+    const int height,
+    const TextureColorEncoding encoding,
+    const TextureStorageFormat storage_format) {
   APP_PROFILE_FUNCTION();
 
   if (width <= 0 || height <= 0) {
     return std::expected<Texture2D, std::string>{
         std::unexpect, "Texture2D dimensions must be positive"};
   }
+  if (encoding == TextureColorEncoding::k_srgb &&
+      storage_format != TextureStorageFormat::k_rgba8_unorm) {
+    return std::expected<Texture2D, std::string>{
+        std::unexpect, "sRGB render-target encoding requires RGBA8 storage"};
+  }
 
   GLuint id{0};
   glGenTextures(1, &id);
   glBindTexture(GL_TEXTURE_2D, id);
+  const GLint internal_format{storage_format == TextureStorageFormat::k_rgba8_unorm
+                                  ? texture_upload_internal_format(encoding)
+                                  : texture_storage_internal_format(storage_format)};
   glTexImage2D(GL_TEXTURE_2D,
                0,
-               srgb ? GL_SRGB8_ALPHA8 : GL_RGBA8,
+               internal_format,
                width,
                height,
                0,
@@ -117,7 +141,8 @@ std::expected<Texture2D, std::string> Texture2D::create(const int width,
 
   glBindTexture(GL_TEXTURE_2D, 0);
 
-  return Texture2D{width, height, id};
+  return Texture2D{
+      width, height, id, encoding, TextureFilter::k_linear, storage_format};
 }
 
 Texture2D::~Texture2D() {
@@ -162,6 +187,12 @@ GLuint Texture2D::id() const { return m_id; }
 int Texture2D::width() const { return m_width; }
 
 int Texture2D::height() const { return m_height; }
+
+TextureColorEncoding Texture2D::color_encoding() const { return m_color_encoding; }
+
+TextureFilter Texture2D::filter() const { return m_filter; }
+
+TextureStorageFormat Texture2D::storage_format() const { return m_storage_format; }
 
 std::expected<std::vector<std::uint8_t>, std::string> Texture2D::generate_checkerboard(
     const int width,

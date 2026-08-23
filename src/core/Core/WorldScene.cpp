@@ -26,10 +26,12 @@
 #include "Core/Omikron/Model3DO.hpp"
 #include "Core/RuntimeMath.hpp"
 #include "Core/RuntimePresentation.hpp"
+#include "Core/Renderer.hpp"
 #include "Core/Scenario/ScenarioManager.hpp"
 #include "Core/Scenario/ScenarioRuntime.hpp"
 #include "Core/Shader.hpp"
 #include "Core/WorldCamera.hpp"
+#include "Core/WorldColorPipeline.hpp"
 #include "Core/WorldPresentation.hpp"
 #include "Core/WorldRenderer.hpp"
 
@@ -258,6 +260,12 @@ std::expected<std::unique_ptr<WorldScene>, std::string> WorldScene::create(
         std::unexpect, letterbox_renderer.error()};
   }
   scene->m_letterbox_renderer = std::move(letterbox_renderer).value();
+  auto color_pipeline{WorldColorPipeline::create()};
+  if (!color_pipeline) {
+    return std::expected<std::unique_ptr<WorldScene>, std::string>{
+        std::unexpect, "world color pipeline: " + std::move(color_pipeline).error()};
+  }
+  scene->m_color_pipeline = std::move(color_pipeline).value();
   return std::expected<std::unique_ptr<WorldScene>, std::string>{std::move(scene)};
 }
 
@@ -723,6 +731,23 @@ void WorldScene::update(const float delta_time, const Input::InputManager& input
 void WorldScene::render() {
   APP_PROFILE_FUNCTION();
 
+  if (m_width <= 0 || m_height <= 0 || m_color_pipeline == nullptr) {
+    return;
+  }
+  if (auto targets{m_color_pipeline->ensure_targets(m_width, m_height)}; !targets) {
+    if (m_color_pipeline_error != targets.error()) {
+      m_color_pipeline_error = targets.error();
+      App::Log::error(
+          LogCategory::Renderer, "World color pipeline unavailable: {}", targets.error());
+    }
+    return;
+  }
+  m_color_pipeline_error.clear();
+
+  // All retail presentation layers below compose numerically in encoded RGB
+  // against normalized GL_RGBA16 storage. No automatic sRGB transfer occurs.
+  m_color_pipeline->begin_legacy(Renderer::clear_color());
+
   // Scenario execution happens after WorldScene::update() in the frame, so
   // consume newly-emitted presentation commands again here. This lets opcode
   // 0x77 cover the first world frame and 0x84/0x85 reverse without an extra
@@ -735,8 +760,10 @@ void WorldScene::render() {
   // A world context may be replaced between update and render; never
   // dereference a runtime cached by the renderer. If generation no longer
   // matches, skip one world frame and rebuild on the next update.
-  if (m_world_renderer != nullptr && context != nullptr && m_world_observed &&
-      context->scene_id == m_observed_scene_id && context->generation == m_observed_generation) {
+  const bool world_renderable{m_world_renderer != nullptr && context != nullptr &&
+                              m_world_observed && context->scene_id == m_observed_scene_id &&
+                              context->generation == m_observed_generation};
+  if (world_renderable) {
     m_world_renderer->render(m_camera.camera(),
         context->runtime.get(),
         static_cast<float>(m_uv_phases.u_phase()),
@@ -759,6 +786,16 @@ void WorldScene::render() {
   // background therefore covers the world while the main menu is active,
   // exactly as the stable WorldScene architecture intends.
   m_interfaces.render(m_width, m_height);
+
+  // Cross once into canonical RGBA16F linear scene color. OpenNomad-native
+  // diagnostics stay outside the compatibility composition boundary.
+  m_color_pipeline->resolve_legacy_to_linear();
+  if (world_renderable) {
+    m_world_renderer->render_debug_overlay(m_camera.camera(), context->runtime.get());
+  }
+
+  // Explicitly encode for the default SDR framebuffer. ImGui follows later.
+  m_color_pipeline->present_linear();
 }
 
 void WorldScene::resize(const int width, const int height) {

@@ -130,7 +130,7 @@ class ScenarioRuntime final : public Script::ScriptWorld, private Sfx::Host {
   void set_sprite_scale(Sprite::SpriteHandle handle, float scale_x, float scale_y);
   void set_sprite_tint(Sprite::SpriteHandle handle, std::array<float, 3> tint);
   void set_sprite_texture_offset(Sprite::SpriteHandle handle, float offset_u, float offset_v);
-  void set_sprite_unknown_24(Sprite::SpriteHandle handle, float value);
+  void set_sprite_diffuse_alpha(Sprite::SpriteHandle handle, float value);
   void reset_sprite_to_defaults(Sprite::SpriteHandle handle);
 
   // --- World anchor ----------------------------------------------------------

@@ -388,7 +388,8 @@ std::expected<void, std::string> ScenarioRuntime::ensure_sprite_resource_loaded(
     auto texture{Texture2D::create(static_cast<int>(image.width),
         static_cast<int>(image.height),
         std::span<const std::uint8_t>{image.rgba8},
-        true)};
+        k_retail_texture_policy.encoding,
+        k_retail_texture_policy.filter)};
     if (!texture) {
       return std::expected<void, std::string>{std::unexpect,
           fmt::format(
@@ -496,8 +497,9 @@ void ScenarioRuntime::set_sprite_texture_offset(
   m_sprite_pool.set_texture_offset(handle, offset_u, offset_v);
 }
 
-void ScenarioRuntime::set_sprite_unknown_24(const Sprite::SpriteHandle handle, const float value) {
-  m_sprite_pool.set_unknown_24(handle, value);
+void ScenarioRuntime::set_sprite_diffuse_alpha(
+    const Sprite::SpriteHandle handle, const float value) {
+  m_sprite_pool.set_diffuse_alpha(handle, value);
 }
 
 void ScenarioRuntime::reset_sprite_to_defaults(const Sprite::SpriteHandle handle) {

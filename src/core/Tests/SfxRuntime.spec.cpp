@@ -344,7 +344,7 @@ TEST_SUITE("Core::Sfx::Runtime") {
     CHECK(sprite->resource_index == 90U);
     CHECK(sprite->render_mode == App::Sprite::SpriteRenderMode::k_darken);
     CHECK(sprite->type == 6U);
-    CHECK(sprite->unknown_24 == doctest::Approx(0.5F));
+    CHECK(sprite->diffuse_alpha == doctest::Approx(0.5F));
     CHECK(sprite->scale_x == doctest::Approx(2.5F));
     CHECK(sprite->scale_y == doctest::Approx(2.5F));
     CHECK(sprite->tint.at(0) == doctest::Approx(0.25F));

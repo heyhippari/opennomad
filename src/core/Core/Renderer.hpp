@@ -2,6 +2,7 @@
 
 #include <glad/glad.h>
 
+#include <array>
 #include <cstdint>
 
 namespace App {
@@ -26,8 +27,10 @@ class Renderer {
   /// Placeholder for any end-of-frame work (currently a no-op — swap lives in Window).
   void end_frame();
 
- private:
-  float m_clear_color[4]{0.0F, 0.0F, 0.0F, 1.0F};
+  /// Shared scene clear color, including offscreen WorldScene composition.
+  [[nodiscard]] static constexpr std::array<float, 4> clear_color() {
+    return {0.0F, 0.0F, 0.0F, 1.0F};
+  }
 };
 
 }  // namespace App

@@ -24,6 +24,7 @@ add_library(${NAME} STATIC
   Core/Audio/MusicPlayer.hpp Core/Audio/MusicPlayer.cpp
   Core/Audio/AudioSystem.hpp Core/Audio/AudioSystem.cpp
   Core/Renderer.cpp Core/Renderer.hpp
+  Core/ColorManagement.hpp Core/ColorManagement.cpp
   Core/Shader.cpp Core/Shader.hpp
   Core/Camera.cpp Core/Camera.hpp
   Core/RuntimeMath.hpp Core/RuntimeMath.cpp
@@ -49,6 +50,7 @@ add_library(${NAME} STATIC
   Core/WorldRenderer.hpp Core/WorldRenderer.cpp
   Core/ModelViewerScene.hpp Core/ModelViewerScene.cpp
   Core/WorldScene.hpp Core/WorldScene.cpp
+  Core/WorldColorPipeline.hpp Core/WorldColorPipeline.cpp
   Core/SplashScene.hpp Core/SplashScene.cpp
   Core/Framebuffer.hpp Core/Framebuffer.cpp
   Core/TextureCube.hpp Core/TextureCube.cpp

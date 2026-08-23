@@ -187,7 +187,7 @@ struct RuntimeSpriteInstance {
     float scaleY;                   // +0x1C
 
     float rotationRadians;          // +0x20
-    float unknown24;                // +0x24
+    float diffuseAlpha;             // +0x24
 
     float textureOffsetU;           // +0x28
     float textureOffsetV;           // +0x2C
@@ -250,7 +250,7 @@ scaleY          = 1.0
 
 rotation        = 0.0
 
-unknown24       = 0.9
+diffuseAlpha    = 0.9
                  float bits 0x3F666666
 
 textureOffsetU  = 0.0
@@ -429,32 +429,27 @@ current evidence is consistent with radians.
 
 # 16. Field `+0x24`
 
+**Confirmed — Runtime.** This normalized float is sprite diffuse/vertex alpha.
+Runtime multiplies it by 255 at `0x00496EC3`, stores the result in both
+generated `Face3D+0x6C` fields, then packs that byte into the high byte of
+diffuse ARGB at backend submission around `0x00460442`.
+
 Creation default:
 
 ```text
 0.9f
 ```
 
-Exact semantics are unresolved.
-
-Do not rename it to:
+OpenNomad names the semantic field:
 
 ```text
-alpha
-depth
-fade
-fog
+diffuse_alpha
 ```
 
-without a decisive consumer.
-
-OpenNomad correctly keeps:
-
-```text
-unknown_24
-```
-
-and does not interpret it in the renderer.
+It is copied to all six generated billboard vertex tint alphas. Texture alpha
+and diffuse alpha therefore multiply in the sprite fragment shader. Additive
+modes retain their confirmed `ONE, ONE` RGB blend factors; diffuse alpha does
+not replace those factors.
 
 ---
 
@@ -1279,9 +1274,8 @@ Runtime's:
 
 colour becomes normalized RGB multiplicative tint in OpenNomad.
 
-Alpha remains controlled by texture/render mode.
-
-This cleanly maps the known field without inventing an 8-bit alpha component.
+The separate `+0x24` diffuse alpha becomes the vertex alpha byte. Runtime and
+OpenNomad multiply texture and vertex alpha through the material stage.
 
 ---
 
@@ -1289,11 +1283,11 @@ This cleanly maps the known field without inventing an 8-bit alpha component.
 
 Attach prepends at the head.
 
-Within equivalent modern batches OpenNomad uses stable ordering so original
-scene-list insertion order is retained where possible.
-
-For translucent effects, final ordering semantics should continue to be checked
-against Runtime bucket traversal.
+OpenNomad sorts first by confirmed ascending `bucket_bits(render_mode)`, then by
+texture/pipeline identity. Within an identical key it uses stable ordering so
+scene-list insertion order is retained. This reconstructs the confirmed state
+domain—not every unknown bit of Runtime's full material key—and guarantees
+additive `0x2100` is submitted before darken `0x2200` across textures.
 
 ---
 
@@ -1396,7 +1390,7 @@ frame
 type
 scale
 rotation
-unknown_24
+diffuse alpha
 texture offsets
 tint
 external association
@@ -1424,7 +1418,7 @@ The current direct offset reconstruction instead accounts cleanly for:
 +16 frame
 +18..1C scale
 +20 rotation
-+24 unknown
++24 diffuse alpha
 +28..2C UV offsets
 +30 RGB
 +34 association
@@ -1511,7 +1505,7 @@ rechecked.
 - [ ] `+0x04` equivalent occupancy semantic;
 - [ ] frame defaults `0xFFFF`;
 - [ ] scale defaults 1/1;
-- [ ] `unknown24` default 0.9;
+- [x] diffuse alpha default 0.9;
 - [ ] UV offsets default 0/0;
 - [ ] tint default white;
 - [ ] attach prepends;
@@ -1587,7 +1581,7 @@ size 0x40
 +18 scaleX
 +1C scaleY
 +20 rotation
-+24 unknown (default 0.9)
++24 diffuse alpha (default 0.9)
 +28 texture U offset
 +2C texture V offset
 +30 00RRGGBB
@@ -1668,21 +1662,22 @@ sprite/effect SCX resource relationship
 rectangle-as-frame interpretation
 UV byte selection and /256 scaling
 render modes and bucket bits
+ascending bucket traversal
 blend/depth/fog categories
 grayscale weights
+field +0x24 diffuse/vertex alpha
 ```
 
 Still incomplete:
 
 ```text
 exact render-mode storage offset/path
-field +0x24
 external association type
 root 3DO frameCount meaning
 second-UV path
 exact fog equation
 all sprite Script_* setters
-exact original translucent ordering in every bucket case
+complete material identity ordering within equal state buckets
 ```
 
 The central architectural rule is:

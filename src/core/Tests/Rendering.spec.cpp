@@ -12,12 +12,59 @@
 #include <vector>
 
 #include "Core/Camera.hpp"
+#include "Core/ColorManagement.hpp"
 #include "Core/Reflection.hpp"
 #include "Core/Texture.hpp"
 #include "Core/TextureCube.hpp"
 #include "Core/Vertex.hpp"
+#include "Core/WorldColorPipeline.hpp"
 
 TEST_SUITE("Core::Rendering") {
+  TEST_CASE("Standard sRGB transfer functions preserve their exact boundaries") {
+    using App::ColorManagement::linear_to_srgb;
+    using App::ColorManagement::srgb_to_linear;
+
+    CHECK_EQ(srgb_to_linear(0.0F), doctest::Approx(0.0F));
+    CHECK_EQ(srgb_to_linear(1.0F), doctest::Approx(1.0F));
+    CHECK_EQ(srgb_to_linear(0.04045F), doctest::Approx(0.04045F / 12.92F));
+    CHECK_EQ(linear_to_srgb(0.0031308F), doctest::Approx(12.92F * 0.0031308F));
+    CHECK_EQ(srgb_to_linear(0.5F), doctest::Approx(0.21404114F));
+
+    constexpr std::array<float, 7> k_encoded_values{
+        0.0F, 0.01F, 0.04045F, 0.18F, 0.5F, 0.75F, 1.0F};
+    for (const float encoded : k_encoded_values) {
+      CHECK_EQ(linear_to_srgb(srgb_to_linear(encoded)), doctest::Approx(encoded).epsilon(1.0e-5));
+    }
+  }
+
+  TEST_CASE("Texture color policies select explicit GL storage without a context") {
+    CHECK_EQ(App::texture_upload_internal_format(App::TextureColorEncoding::k_srgb),
+        GL_SRGB8_ALPHA8);
+    CHECK_EQ(App::texture_upload_internal_format(App::TextureColorEncoding::k_legacy_encoded),
+        GL_RGBA8);
+    CHECK_EQ(App::texture_upload_internal_format(App::TextureColorEncoding::k_linear), GL_RGBA8);
+    CHECK_EQ(App::k_retail_texture_policy.encoding,
+        App::TextureColorEncoding::k_legacy_encoded);
+    CHECK_EQ(App::k_retail_texture_policy.filter, App::TextureFilter::k_linear);
+  }
+
+  TEST_CASE("World color targets expose their semantic domains and precision") {
+    CHECK_EQ(App::k_legacy_encoded_target_description.color_encoding,
+        App::TextureColorEncoding::k_legacy_encoded);
+    CHECK_EQ(App::texture_storage_internal_format(
+                 App::k_legacy_encoded_target_description.color_storage),
+        GL_RGBA16);
+    CHECK_EQ(App::k_legacy_encoded_target_description.depth_stencil,
+        App::DepthStencilFormat::k_depth24_stencil8);
+    CHECK_EQ(App::k_linear_scene_target_description.color_encoding,
+        App::TextureColorEncoding::k_linear);
+    CHECK_EQ(App::texture_storage_internal_format(
+                 App::k_linear_scene_target_description.color_storage),
+        GL_RGBA16F);
+    CHECK_EQ(App::k_linear_scene_target_description.depth_stencil,
+        App::DepthStencilFormat::k_depth24_stencil8);
+  }
+
   TEST_CASE("Vertex layout is tightly packed") {
     CHECK_EQ(sizeof(App::Vertex), std::size_t{48});
     CHECK_EQ(offsetof(App::Vertex, position), std::size_t{0});

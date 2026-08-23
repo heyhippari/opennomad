@@ -11,27 +11,78 @@
 
 namespace App {
 
-/// Texture sampling filter policy. The default for pixel-data uploads remains
-/// nearest filtering (late-90s hardware behaviour); scalable content such as
-/// font atlases opts into linear filtering explicitly.
+/// Texture sampling filter policy. Upload call sites select this explicitly;
+/// the default nearest mode is retained only for generated/utility textures.
 enum class TextureFilter : std::uint8_t { k_nearest, k_linear };
 
-/// RAII 2D texture with a fixed 8-bit RGBA upload format.
+/// Meaning of the RGB numbers stored in a texture. `k_legacy_encoded` is
+/// intentionally distinct from `k_linear` even though both use an ordinary
+/// (non-sRGB) OpenGL format: legacy values are display encoded, but must reach
+/// shaders unchanged for Runtime-compatible filtering and blending.
+enum class TextureColorEncoding : std::uint8_t {
+  k_linear,
+  k_srgb,
+  k_legacy_encoded,
+};
+
+/// Storage precision for textures allocated as render targets.
+enum class TextureStorageFormat : std::uint8_t {
+  k_rgba8_unorm,
+  k_rgba16_unorm,
+  k_rgba16_float,
+};
+
+/// Explicit upload policy shared by all retail game textures.
+struct TextureUploadPolicy {
+  TextureColorEncoding encoding{TextureColorEncoding::k_linear};
+  TextureFilter filter{TextureFilter::k_nearest};
+
+  friend constexpr bool operator==(const TextureUploadPolicy&, const TextureUploadPolicy&) =
+      default;
+};
+
+inline constexpr TextureUploadPolicy k_retail_texture_policy{
+    .encoding = TextureColorEncoding::k_legacy_encoded,
+    .filter = TextureFilter::k_linear};
+
+/// GL internal format for an RGBA8 upload. This is context-free so color
+/// policy can be regression-tested without creating an OpenGL context.
+[[nodiscard]] constexpr GLint texture_upload_internal_format(
+    const TextureColorEncoding encoding) {
+  return encoding == TextureColorEncoding::k_srgb ? GL_SRGB8_ALPHA8 : GL_RGBA8;
+}
+
+/// GL internal format for render-target storage.
+[[nodiscard]] constexpr GLint texture_storage_internal_format(
+    const TextureStorageFormat format) {
+  switch (format) {
+    case TextureStorageFormat::k_rgba16_unorm:
+      return GL_RGBA16;
+    case TextureStorageFormat::k_rgba16_float:
+      return GL_RGBA16F;
+    case TextureStorageFormat::k_rgba8_unorm:
+    default:
+      return GL_RGBA8;
+  }
+}
+
+/// RAII 2D texture with explicit color semantics and storage policy.
 class Texture2D {
  public:
   /// Uploads RGBA8 pixel data (width * height * 4 bytes).
   ///
-  /// When srgb is true the storage uses GL_SRGB8_ALPHA8 so sampling decodes
-  /// sRGB-encoded values into linear space (matching GL_FRAMEBUFFER_SRGB).
   static std::expected<Texture2D, std::string> create(int width,
       int height,
       std::span<const std::uint8_t> rgba8,
-      bool srgb = true,
+      TextureColorEncoding encoding,
       TextureFilter filter = TextureFilter::k_nearest);
 
-  /// Allocates an uninitialised texture (render-target storage) with linear
-  /// filtering and clamp-to-edge wrapping.
-  static std::expected<Texture2D, std::string> create(int width, int height, bool srgb = true);
+  /// Allocates uninitialised render-target storage with linear filtering and
+  /// clamp-to-edge wrapping.
+  static std::expected<Texture2D, std::string> create_render_target(int width,
+      int height,
+      TextureColorEncoding encoding,
+      TextureStorageFormat storage_format);
 
   Texture2D(Texture2D&& other) noexcept;
   Texture2D& operator=(Texture2D&& other) noexcept;
@@ -52,6 +103,9 @@ class Texture2D {
   [[nodiscard]] GLuint id() const;
   [[nodiscard]] int width() const;
   [[nodiscard]] int height() const;
+  [[nodiscard]] TextureColorEncoding color_encoding() const;
+  [[nodiscard]] TextureFilter filter() const;
+  [[nodiscard]] TextureStorageFormat storage_format() const;
 
   /// Generates RGBA8 checkerboard pixels with squares_per_side cells per edge.
   ///
@@ -66,11 +120,19 @@ class Texture2D {
 
  private:
   /// Assumes ownership of an already uploaded texture.
-  Texture2D(int width, int height, GLuint id);
+  Texture2D(int width,
+      int height,
+      GLuint id,
+      TextureColorEncoding encoding,
+      TextureFilter filter,
+      TextureStorageFormat storage_format);
 
   GLuint m_id{0};
   int m_width{0};
   int m_height{0};
+  TextureColorEncoding m_color_encoding{TextureColorEncoding::k_linear};
+  TextureFilter m_filter{TextureFilter::k_nearest};
+  TextureStorageFormat m_storage_format{TextureStorageFormat::k_rgba8_unorm};
 };
 
 }  // namespace App

@@ -8,7 +8,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -83,12 +82,6 @@ uniform vec3 u_source_colour_key;
 
 out vec4 frag_colour;
 
-vec3 srgb_from_linear(vec3 colour) {
-    vec3 low = colour * 12.92;
-    vec3 high = 1.055 * pow(colour, vec3(1.0 / 2.4)) - 0.055;
-    return mix(high, low, lessThanEqual(colour, vec3(0.0031308)));
-}
-
 void main() {
     vec4 texel = texture(u_texture0, v_uv);
 
@@ -97,9 +90,8 @@ void main() {
         // (RGB555) pixel value against the key. Quantising the sRGB source
         // bytes to 5 bits makes the near-black background (4,4,4 -> 0) key
         // out without any chroma-key threshold.
-        vec3 srgb = srgb_from_linear(texel.rgb);
         ivec3 key = ivec3(u_source_colour_key * 255.0 + 0.5) >> 3;
-        ivec3 pixel = ivec3(srgb * 255.0 + 0.5) >> 3;
+        ivec3 pixel = ivec3(texel.rgb * 255.0 + 0.5) >> 3;
         if (all(equal(pixel, key))) {
             discard;
         }
@@ -135,15 +127,10 @@ void main() {
 )glsl";
 // clang-format on
 
-/// Converts an sRGB byte component (0..255) to linear light. The vertex tint
-/// feeds a linear pipeline with a sRGB framebuffer, so recovered sRGB byte
-/// values (255 / 127) must be linearized to display faithfully.
-float srgb_to_linear(const std::uint8_t byte) {
-  const float srgb{static_cast<float>(byte) / 255.0F};
-  if (srgb <= 0.04045F) {
-    return srgb / 12.92F;
-  }
-  return std::pow((srgb + 0.055F) / 1.055F, 2.4F);
+/// Converts an authored display-encoded byte to its unchanged normalized
+/// numeric value for encoded-domain Runtime composition.
+float encoded_from_byte(const std::uint8_t byte) {
+  return static_cast<float>(byte) / 255.0F;
 }
 
 /// Minimal UTF-8 decoder: advances `cursor` past one codepoint and returns
@@ -380,11 +367,12 @@ void I2DRenderer::render(const InterfaceInstance& instance,
         // Recovered Runtime text-style behaviour (0x004769A0): inactive
         // elements divide the RGB components by two.
         const float red{
-            srgb_to_linear(selected ? text->red : static_cast<std::uint8_t>(text->red / 2U))};
+            encoded_from_byte(selected ? text->red : static_cast<std::uint8_t>(text->red / 2U))};
         const float green{
-            srgb_to_linear(selected ? text->green : static_cast<std::uint8_t>(text->green / 2U))};
+            encoded_from_byte(
+                selected ? text->green : static_cast<std::uint8_t>(text->green / 2U))};
         const float blue{
-            srgb_to_linear(selected ? text->blue : static_cast<std::uint8_t>(text->blue / 2U))};
+            encoded_from_byte(selected ? text->blue : static_cast<std::uint8_t>(text->blue / 2U))};
         const std::array<float, 4> tint{red, green, blue, 1.0F};
 
         const float text_width{font->measure(label)};

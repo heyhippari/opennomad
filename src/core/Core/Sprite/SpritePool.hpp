@@ -37,7 +37,7 @@ class SpritePool {
   ~SpritePool() = default;
 
   /// Allocates a free slot with the Runtime creation defaults: scale 1/1,
-  /// unknown_24 0.9, frame index 0xFFFF, tint white, render mode default.
+  /// diffuse alpha 0.9, frame index 0xFFFF, tint white, render mode default.
   /// frame_count is the object's frame table size and drives set_frame().
   [[nodiscard]] std::expected<SpriteHandle, std::string> create(
       std::size_t resource_index,
@@ -75,8 +75,8 @@ class SpritePool {
   void set_rotation(SpriteHandle handle, float rotation);
   void set_tint(SpriteHandle handle, std::array<float, 3> tint);
   void set_texture_offset(SpriteHandle handle, float offset_u, float offset_v);
-  /// Provisional setter for the unresolved Runtime +0x24 field.
-  void set_unknown_24(SpriteHandle handle, float value);
+  /// Assigns Runtime's normalized diffuse alpha field at +0x24.
+  void set_diffuse_alpha(SpriteHandle handle, float value);
   /// Restores the Runtime creation defaults (position and attachment are
   /// left untouched).
   void reset_to_defaults(SpriteHandle handle);

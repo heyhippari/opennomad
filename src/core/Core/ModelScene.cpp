@@ -770,7 +770,11 @@ std::expected<std::unique_ptr<ModelScene>, std::string> ModelScene::create_from_
           "Texture of material '{}' has zero size; using a white fallback",
           model.materials.at(index).name);
       static constexpr std::array<std::uint8_t, 4> k_white_pixel{255, 255, 255, 255};
-      auto fallback{Texture2D::create(1, 1, std::span<const std::uint8_t>{k_white_pixel}, true)};
+      auto fallback{Texture2D::create(1,
+          1,
+          std::span<const std::uint8_t>{k_white_pixel},
+          k_retail_texture_policy.encoding,
+          k_retail_texture_policy.filter)};
       if (!fallback) {
         return std::expected<std::unique_ptr<ModelScene>, std::string>{
             std::unexpect, std::move(fallback).error()};
@@ -781,7 +785,8 @@ std::expected<std::unique_ptr<ModelScene>, std::string> ModelScene::create_from_
     auto texture{Texture2D::create(static_cast<int>(image.width),
         static_cast<int>(image.height),
         std::span<const std::uint8_t>{image.rgba8},
-        true)};
+        k_retail_texture_policy.encoding,
+        k_retail_texture_policy.filter)};
     if (!texture) {
       return std::expected<std::unique_ptr<ModelScene>, std::string>{
           std::unexpect, std::move(texture).error()};
@@ -810,13 +815,17 @@ std::expected<std::unique_ptr<ModelScene>, std::string> ModelScene::create_from_
     return std::expected<std::unique_ptr<ModelScene>, std::string>{
         std::unexpect, std::move(overlay_shader).error()};
   }
-  auto mirror_framebuffer{Framebuffer::create(k_mirror_resolution, k_mirror_resolution)};
+  auto mirror_framebuffer{Framebuffer::create(k_mirror_resolution,
+      k_mirror_resolution,
+      FramebufferDescription{.color_encoding = TextureColorEncoding::k_legacy_encoded,
+          .color_storage = TextureStorageFormat::k_rgba8_unorm,
+          .depth_stencil = DepthStencilFormat::k_depth24})};
   if (!mirror_framebuffer) {
     return std::expected<std::unique_ptr<ModelScene>, std::string>{
         std::unexpect, std::move(mirror_framebuffer).error()};
   }
   auto sky_cubemap{
-      TextureCube::create(k_sky_cubemap_size, generate_sky_cubemap(k_sky_cubemap_size), true)};
+      TextureCube::create(k_sky_cubemap_size, generate_sky_cubemap(k_sky_cubemap_size), false)};
   if (!sky_cubemap) {
     return std::expected<std::unique_ptr<ModelScene>, std::string>{
         std::unexpect, std::move(sky_cubemap).error()};
@@ -1718,8 +1727,8 @@ void ModelScene::set_sprite_texture_offset(
   m_runtime->sprite_pool().set_texture_offset(handle, offset_u, offset_v);
 }
 
-void ModelScene::set_sprite_unknown_24(const Sprite::SpriteHandle handle, const float value) {
-  m_runtime->sprite_pool().set_unknown_24(handle, value);
+void ModelScene::set_sprite_diffuse_alpha(const Sprite::SpriteHandle handle, const float value) {
+  m_runtime->sprite_pool().set_diffuse_alpha(handle, value);
 }
 
 void ModelScene::reset_sprite_to_defaults(const Sprite::SpriteHandle handle) {

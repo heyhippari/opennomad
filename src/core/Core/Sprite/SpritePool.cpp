@@ -214,9 +214,9 @@ void SpritePool::set_texture_offset(const SpriteHandle handle,
   }
 }
 
-void SpritePool::set_unknown_24(const SpriteHandle handle, const float value) {
+void SpritePool::set_diffuse_alpha(const SpriteHandle handle, const float value) {
   if (SpriteInstance* instance{find(handle)}; instance != nullptr) {
-    instance->unknown_24 = value;
+    instance->diffuse_alpha = value;
   }
 }
 
@@ -224,7 +224,7 @@ void SpritePool::reset_to_defaults(const SpriteHandle handle) {
   if (SpriteInstance* instance{find(handle)}; instance != nullptr) {
     instance->scale_x = 1.0F;
     instance->scale_y = 1.0F;
-    instance->unknown_24 = 0.9F;
+    instance->diffuse_alpha = 0.9F;
     instance->frame_index = SpriteInstance::k_invalid_frame;
     instance->tint = {1.0F, 1.0F, 1.0F};
     instance->render_mode = SpriteRenderMode::k_default;

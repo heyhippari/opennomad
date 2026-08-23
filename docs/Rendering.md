@@ -115,12 +115,20 @@ Reusable OpenGL wrappers live directly in `src/core/Core/`:
 - `Texture2D`, `IntegerTexture`, and `TextureCube` own texture resources.
 - `Shader` owns a linked GLSL program and cached uniform locations.
 - `UniformBuffer` owns std140 uniform-block storage.
-- `Framebuffer` owns offscreen colour/depth targets used by development rendering.
+- `Framebuffer` owns offscreen colour targets with explicit storage/color
+  semantics and optional depth/stencil attachments.
+- `WorldColorPipeline` owns the legacy encoded `GL_RGBA16` target and modern
+  linear `GL_RGBA16F` target used by normal gameplay presentation.
 - `Camera` stores the OpenGL-facing view/projection state; `WorldCameraSystem` derives it from Runtime camera intent.
 - `Renderer` initializes shared GL state and clears the drawable pixel viewport each frame.
 
 These wrappers are move-only RAII types. They must be created after the OpenGL context and destroyed before it.
 `Application` and `Window` member ordering enforces that lifetime.
+
+The gameplay color-domain flow is documented in
+[Rendering color pipeline](RenderingColorPipeline.md). `GL_FRAMEBUFFER_SRGB`
+is not a global renderer policy; color transfers happen only in explicit
+fullscreen passes.
 
 ## High-DPI and debug UI
 

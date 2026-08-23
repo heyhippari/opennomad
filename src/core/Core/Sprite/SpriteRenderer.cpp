@@ -301,7 +301,10 @@ void SpriteRenderer::build_queue(const SpritePool& pool,
 
     const std::uint32_t first_vertex{static_cast<std::uint32_t>(m_vertices.size())};
     const std::array<float, 4> tint{
-        instance->tint.at(0), instance->tint.at(1), instance->tint.at(2), 1.0F};
+        instance->tint.at(0),
+        instance->tint.at(1),
+        instance->tint.at(2),
+        instance->diffuse_alpha};
     const auto emit = [&](const glm::vec3& world, const std::array<float, 2>& uv) {
       SpriteVertex vertex{.uv = uv, .tint = tint};
       std::copy_n(glm::value_ptr(world), 3, vertex.position.begin());
@@ -332,15 +335,20 @@ void SpriteRenderer::build_queue(const SpritePool& pool,
     m_stats.drawn += 1;
   }
 
-  // Group opaque commands first, then translucent, each stably sorted by
-  // pipeline key. The stable sort preserves the scene-list insertion order
-  // inside a batch, matching the original runtime's behaviour.
+  // Runtime traverses its 14-bit state buckets in ascending order. Preserve
+  // that confirmed state ordering before grouping by texture/pipeline; stable
+  // ties retain scene-list insertion order.
   std::ranges::stable_sort(
       m_commands, [](const SpriteDrawCommand& lhs, const SpriteDrawCommand& rhs) {
         const bool lhs_blend{render_state(lhs.pipeline_key.render_mode).blend_enabled};
         const bool rhs_blend{render_state(rhs.pipeline_key.render_mode).blend_enabled};
         if (lhs_blend != rhs_blend) {
           return !lhs_blend;  // Opaque commands sort first.
+        }
+        const std::uint16_t lhs_bucket{bucket_bits(lhs.pipeline_key.render_mode)};
+        const std::uint16_t rhs_bucket{bucket_bits(rhs.pipeline_key.render_mode)};
+        if (lhs_bucket != rhs_bucket) {
+          return lhs_bucket < rhs_bucket;
         }
         return lhs.pipeline_key < rhs.pipeline_key;
       });

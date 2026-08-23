@@ -46,6 +46,8 @@ class WorldRenderer {
   WorldRenderer& operator=(WorldRenderer&&) = delete;
 
   void render(const Camera& camera, ScenarioRuntime* runtime, float uv_phase_u, float uv_phase_v);
+  /// Draws OpenNomad-native diagnostics after legacy color has been decoded.
+  void render_debug_overlay(const Camera& camera, const ScenarioRuntime* runtime);
 
   [[nodiscard]] const WorldBounds& bounds() const {
     return m_bounds;

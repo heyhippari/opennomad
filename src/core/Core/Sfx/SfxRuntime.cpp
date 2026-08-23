@@ -81,7 +81,7 @@ struct Runtime::Particle {
   float elapsed{0.0F};
   App::Runtime::Vec3 velocity{};
   float acceleration_y{0.0F};
-  float unknown_24_delta{0.0F};
+  float diffuse_alpha_delta{0.0F};
   App::Runtime::Vec3 color{};
   App::Runtime::Vec3 color_delta{};
   float rotation_velocity_radians{0.0F};
@@ -535,7 +535,8 @@ void Runtime::create_particle(
   sprite->tint = normalized_rgb(start_color);
   sprite->rotation =
       (definition.flags & 0x0010U) != 0U ? random01() * 360.0F * K_DEGREES_TO_RADIANS : 0.0F;
-  sprite->unknown_24 = (definition.flags & 0x0002U) == 0U ? 0.5F : sprite->unknown_24;
+  sprite->diffuse_alpha =
+      (definition.flags & 0x0002U) == 0U ? 0.5F : sprite->diffuse_alpha;
 
   float scale_velocity{0.0F};
   if ((definition.flags & 0x0004U) != 0U) {
@@ -591,7 +592,7 @@ void Runtime::create_particle(
       .elapsed = 0.0F,
       .velocity = velocity,
       .acceleration_y = acceleration_y,
-      .unknown_24_delta = 0.0F,
+      .diffuse_alpha_delta = 0.0F,
       .color = start_color,
       .color_delta = App::Runtime::Vec3{.x = (end_color.x - start_color.x) / lifetime,
           .y = (end_color.y - start_color.y) / lifetime,

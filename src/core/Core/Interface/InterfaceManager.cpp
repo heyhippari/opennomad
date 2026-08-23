@@ -189,7 +189,7 @@ std::expected<InterfaceHandle, std::string> InterfaceManager::open(
     auto texture{Texture2D::create(bmp->width,
         bmp->height,
         std::span<const std::uint8_t>{bmp->rgba8},
-        /*srgb=*/true,
+        TextureColorEncoding::k_legacy_encoded,
         TextureFilter::k_linear)};
     if (!texture) {
       return std::expected<InterfaceHandle, std::string>{
