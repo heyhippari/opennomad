@@ -172,8 +172,8 @@ struct ScxScript {
   std::uint32_t root_commands_placeholder{0};   ///< +0x28.
   std::uint32_t linked_command_count{0};        ///< +0x2C.
   std::uint32_t linked_commands_placeholder{0}; ///< +0x30.
-  std::int32_t execution_context_field_34{0};   ///< +0x34, unresolved.
-  std::uint32_t runtime_field_38{0};            ///< +0x38.
+  std::int32_t repeat_limit{0};                 ///< +0x34, whole-script repeat limit.
+  std::uint32_t initial_repeat_index{0};        ///< +0x38, serialized repeat-index seed.
   std::array<std::uint32_t, 3> binding_table_a_fields{};  ///< +0x3C..0x44.
   std::array<std::uint32_t, 3> binding_table_b_fields{};  ///< +0x48..0x50.
   std::uint32_t related_script_placeholder{0};  ///< +0x54.

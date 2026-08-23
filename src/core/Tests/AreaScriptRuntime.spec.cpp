@@ -106,6 +106,75 @@ auto recording_interface_sink(
 }  // namespace
 
 TEST_SUITE("Core::Script::AreaScriptRuntime") {
+  TEST_CASE("0x39 launches SCX fire-and-forget and executes the following instruction") {
+    Buffer bytes;
+    bytes.u8(0x39).u16(20).u16(7).u16(9);
+    bytes.u8(0x0D).u16(175);
+    bytes.u8(0x03);
+
+    AreaScriptRuntime runtime{bytes.data()};
+    std::vector<AreaScxScriptRequest> requests;
+    std::vector<std::uint32_t> instructions;
+    runtime.set_scx_script_sink(
+        [&requests](const AreaScxScriptRequest& request) -> std::expected<std::size_t, std::string> {
+          requests.push_back(request);
+          return 42U;
+        });
+    runtime.set_instruction_sink(
+        [&instructions](const std::uint32_t opcode, const std::vector<std::int32_t>&) {
+          instructions.push_back(opcode);
+        });
+    runtime.queue_event(1);
+    runtime.activate();
+
+    CHECK(runtime.run() == AreaScriptState::k_ready);
+    REQUIRE_EQ(requests.size(), 1U);
+    CHECK_EQ(requests.at(0).script_id, 20U);
+    CHECK_EQ(requests.at(0).operand_b, 7);
+    CHECK_EQ(requests.at(0).operand_c, 9);
+    CHECK(runtime.wait_info().kind == AreaWaitKind::k_none);
+    CHECK_EQ(runtime.wait_state(), 0U);
+    CHECK_EQ(instructions, std::vector<std::uint32_t>{0x39U, 0x0DU, 0x03U});
+  }
+
+  TEST_CASE("0x3A tracks the exact SCX instance in Runtime state 4") {
+    Buffer bytes;
+    bytes.u8(0x3A).u16(6).u16(2).u16(3);
+    bytes.u8(0x0D).u16(175);
+    bytes.u8(0x03);
+
+    AreaScriptRuntime runtime{bytes.data()};
+    std::optional<AreaScxScriptRequest> request;
+    std::vector<std::uint32_t> instructions;
+    runtime.set_scx_script_sink(
+        [&request](const AreaScxScriptRequest& value) -> std::expected<std::size_t, std::string> {
+          request = value;
+          return 77U;
+        });
+    runtime.set_instruction_sink(
+        [&instructions](const std::uint32_t opcode, const std::vector<std::int32_t>&) {
+          instructions.push_back(opcode);
+        });
+    runtime.queue_event(1);
+    runtime.activate();
+
+    REQUIRE(runtime.run() == AreaScriptState::k_waiting);
+    REQUIRE(request.has_value());
+    CHECK_EQ(request->script_id, 6U);
+    CHECK_EQ(runtime.wait_state(), 4U);
+    CHECK_EQ(runtime.runtime_state(), 4U);
+    CHECK(runtime.wait_info().kind == AreaWaitKind::k_scx_script);
+    CHECK_EQ(runtime.wait_info().scx_script_instance, std::optional<std::size_t>{77U});
+    CHECK_EQ(instructions, std::vector<std::uint32_t>{0x3AU});
+
+    REQUIRE_FALSE(runtime.complete_scx_script_wait(78U).has_value());
+    CHECK(runtime.state() == AreaScriptState::k_waiting);
+    REQUIRE(runtime.complete_scx_script_wait(77U).has_value());
+    CHECK_EQ(runtime.runtime_state(), 1U);
+    CHECK(runtime.run() == AreaScriptState::k_ready);
+    CHECK_EQ(instructions, std::vector<std::uint32_t>{0x3AU, 0x0DU, 0x03U});
+  }
+
   TEST_CASE("Opcodes 0x84 and 0x85 emit operand-less cinematic requests without waiting") {
     const App::Script::AreaOpcodeInfo* begin_info{App::Script::area_opcode_info(0x84)};
     const App::Script::AreaOpcodeInfo* end_info{App::Script::area_opcode_info(0x85)};
@@ -762,15 +831,12 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     REQUIRE(runtime.last_camera_request().has_value());
     CHECK_EQ(runtime.last_camera_request()->camera_id, 2152U);
 
-    // The next tick reaches AREA -> SCX script ID 20 (Wait5sec) and waits on
-    // the concrete ScriptRuntime instance returned by the bridge.
-    REQUIRE(runtime.run() == AreaScriptState::k_waiting);
-    CHECK(runtime.wait_info().kind == AreaWaitKind::k_scx_script);
+    // The next tick launches Wait5sec independently, continues through camera
+    // 2153 in the same invocation, and yields only for that camera command.
+    REQUIRE(runtime.run() == AreaScriptState::k_running);
+    CHECK(runtime.wait_info().kind == AreaWaitKind::k_none);
     REQUIRE_EQ(scripts.size(), 1U);
     CHECK_EQ(scripts.at(0).script_id, 20U);
-
-    REQUIRE(runtime.complete_scx_script_wait(42U).has_value());
-    REQUIRE(runtime.run() == AreaScriptState::k_running);
     REQUIRE(runtime.last_camera_request().has_value());
     CHECK_EQ(runtime.last_camera_request()->camera_id, 2153U);
 
@@ -891,6 +957,7 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     CHECK(App::Script::area_opcode_name(0x19) != nullptr);
     CHECK(App::Script::area_opcode_name(0x2F) != nullptr);
     CHECK(App::Script::area_opcode_name(0x39) != nullptr);
+    CHECK(App::Script::area_opcode_name(0x3A) != nullptr);
     CHECK(App::Script::area_opcode_name(0x3B) != nullptr);
     CHECK(App::Script::area_opcode_name(0x3C) != nullptr);
     CHECK(App::Script::area_opcode_name(0x3D) != nullptr);

@@ -80,9 +80,9 @@ struct WorldCameraCommand {
 
 /// One AREA 0x76/0x77 presentation command resolved against the active world.
 ///
-/// Runtime mode 2 (opcode 0x77) is a full-screen white-to-transparent fade.
-/// The retail New Game path uses duration_units=30, i.e. one second at the
-/// 30 Hz scenario clock. Other modes/fields remain preserved for later RE.
+/// Mode 1 (0x76) fades into the authored RGB colour; mode 2 (0x77) fades out
+/// of it. Durations use the 30 Hz AREA clock while interpolation is sampled at
+/// display rate.
 struct WorldFadeCommand {
   std::uint32_t scene_id{0};
   std::uint32_t scene_generation{0};
@@ -90,6 +90,66 @@ struct WorldFadeCommand {
   std::uint32_t color{0};
   std::int16_t duration_units{0};
   std::int16_t operand_c{0};
+};
+
+/// CPU-only state for asynchronous AREA 0x76/0x77 presentation fades.
+class WorldFadeState {
+ public:
+  static constexpr float k_frames_per_second{30.0F};
+
+  /// Applies only a supported command belonging to the presented world.
+  [[nodiscard]] bool apply_command(
+      const WorldFadeCommand& command, std::uint32_t scene_id, std::uint32_t generation) {
+    if (command.scene_id != scene_id || command.scene_generation != generation ||
+        (command.mode != 1U && command.mode != 2U)) {
+      return false;
+    }
+
+    m_mode = command.mode;
+    m_color = command.color & 0x00FFFFFFU;
+    m_duration_seconds =
+        std::abs(static_cast<float>(command.duration_units)) / k_frames_per_second;
+    m_elapsed_seconds = 0.0F;
+    m_alpha = command.mode == 1U ? 0.0F : 1.0F;
+    if (m_duration_seconds <= 0.0F) {
+      m_alpha = command.mode == 1U ? 1.0F : 0.0F;
+    }
+    return true;
+  }
+
+  void update(const float delta_time) {
+    if (m_duration_seconds <= 0.0F || m_elapsed_seconds >= m_duration_seconds) {
+      return;
+    }
+    m_elapsed_seconds += std::max(delta_time, 0.0F);
+    const float progress{
+        std::clamp(m_elapsed_seconds / m_duration_seconds, 0.0F, 1.0F)};
+    m_alpha = m_mode == 1U ? progress : 1.0F - progress;
+  }
+
+  void reset() {
+    m_mode = 0;
+    m_color = 0;
+    m_alpha = 0.0F;
+    m_elapsed_seconds = 0.0F;
+    m_duration_seconds = 0.0F;
+  }
+
+  [[nodiscard]] std::uint8_t mode() const { return m_mode; }
+  [[nodiscard]] std::uint32_t color() const { return m_color; }
+  [[nodiscard]] float alpha() const { return m_alpha; }
+  [[nodiscard]] float elapsed_seconds() const { return m_elapsed_seconds; }
+  [[nodiscard]] float duration_seconds() const { return m_duration_seconds; }
+  [[nodiscard]] bool transitioning() const {
+    return m_duration_seconds > 0.0F && m_elapsed_seconds < m_duration_seconds;
+  }
+
+ private:
+  std::uint8_t m_mode{0};
+  std::uint32_t m_color{0};
+  float m_alpha{0.0F};
+  float m_elapsed_seconds{0.0F};
+  float m_duration_seconds{0.0F};
 };
 
 /// One AREA 0x84/0x85 cinematic-mask request resolved against the active world.

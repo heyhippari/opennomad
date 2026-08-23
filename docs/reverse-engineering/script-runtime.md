@@ -2252,6 +2252,29 @@ script handoff if applicable, and updates state flags.
 For cloned instance slots, `Script_PlayScriptList()` sees return zero and
 destroys the instance immediately.
 
+## OpenNomad D5A mapping
+
+The immutable parser names script `+0x34` as `repeat_limit` and `+0x38` as
+`initial_repeat_index`. Each mutable `ScriptInstance` owns its current
+`repeat_index`. At whole-script end OpenNomad increments that index, repeats
+when the limit is `-1` or the incremented index is below the finite limit, and
+otherwise completes the same instance.
+
+Between passes, every root and linked command restores `execution_count` from
+its serialized `initial_execution_count` and runs the existing function-specific
+reinitializer (`Script_Reinit` in the recovered lifecycle). The instance ID,
+launch context, character ownership, and sprite remap remain intact. An explicit
+debugger reset additionally restores the serialized repeat-index seed.
+
+The command precheck is deliberately independent of script `repeat_limit`:
+
+```text
+eligible iff execution_limit == 0xFFFFFFFF
+         or execution_count < execution_limit
+```
+
+`0x004A0260` is `Script_MakeInstance`, not an execution-precheck routine.
+
 ---
 
 # 80. Script elapsed clock update order
@@ -2801,29 +2824,20 @@ relationship differently.
 
 ---
 
-# 101. Current OpenNomad `0x39` mismatch
+# 101. OpenNomad `0x39`/`0x3A` implementation
 
-Current OpenNomad behavior historically attached the AREA wait directly to:
+OpenNomad now implements:
 
 ```text
 0x39 StartScxScript
+    fire-and-forget; continue in the same AREA interpreter invocation
+
+0x3A StartScxScriptTracked
+    track the exact ScriptInstance and wait in Runtime state 4
 ```
 
-by creating/tracking a `ScriptRuntime` instance.
-
-Retail behavior says:
-
-```text
-0x39:
-    fire-and-forget
-
-0x3A:
-    tracked state-4 variant
-```
-
-This is a concrete fidelity correction.
-
-The AREA runtime should distinguish all four launch opcodes.
+Both forms use the same generic SCX-ID resolution and launch sink. Only `0x3A`
+installs the typed wait/completion handle.
 
 ---
 
@@ -4020,8 +4034,8 @@ related-script handoff.
 - [ ] every reachable SyncFunction is considered;
 - [ ] root index advances once per completed group;
 - [ ] next root executes on later scheduler call;
-- [ ] repetition calls generic reinit;
-- [ ] `-1` repeat limit repeats indefinitely;
+- [x] repetition calls generic reinit;
+- [x] `-1` repeat limit repeats indefinitely;
 - [ ] exhausted repetition produces zero normal completion result.
 
 ---
@@ -4054,8 +4068,8 @@ tests can assert equivalent semantics.
 
 # 151. Recommended tests — AREA bridge
 
-- [ ] `0x39` launches and immediately continues AREA VM;
-- [ ] `0x3A` launches and enters state 4;
+- [x] `0x39` launches and immediately continues AREA VM;
+- [x] `0x3A` launches and enters state 4;
 - [ ] `0x3B` preserves character ID + parameter and continues;
 - [ ] `0x3C` preserves character ID + parameter and enters state 4;
 - [ ] script ID is raw 16-bit lookup against `+0x1A`;

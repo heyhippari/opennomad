@@ -4,12 +4,12 @@
 
 #include <algorithm>
 #include <array>
-#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -41,8 +41,6 @@ namespace App {
 
 namespace {
 
-constexpr float K_PRESENTATION_FRAMES_PER_SECOND{30.0F};
-
 constexpr std::string_view K_FADE_VERTEX_SHADER{R"glsl(
 #version 410 core
 
@@ -58,11 +56,12 @@ void main() {
 constexpr std::string_view K_FADE_FRAGMENT_SHADER{R"glsl(
 #version 410 core
 
+uniform vec3 u_color;
 uniform float u_alpha;
 out vec4 frag_color;
 
 void main() {
-  frag_color = vec4(1.0, 1.0, 1.0, u_alpha);
+  frag_color = vec4(u_color, u_alpha);
 }
 )glsl"};
 
@@ -104,7 +103,7 @@ void restore_capability(const GLenum capability, const bool enabled) {
 
 }  // namespace
 
-/// Minimal full-screen presentation pass for Runtime's mode-2 white fade.
+/// Minimal full-screen presentation pass for Runtime's authored-colour fades.
 /// It deliberately owns no timing; WorldScene advances the recovered 30 Hz
 /// effect at display rate and supplies only the current alpha.
 class WorldFadeRenderer {
@@ -138,12 +137,18 @@ class WorldFadeRenderer {
   WorldFadeRenderer& operator=(const WorldFadeRenderer&) = delete;
   WorldFadeRenderer& operator=(WorldFadeRenderer&&) = delete;
 
-  void render(const float alpha) const {
+  void render(const std::uint32_t color, const float alpha) const {
     if (m_shader == nullptr || m_vertex_array == 0U || alpha <= 0.0F) {
       return;
     }
 
     m_shader->bind();
+    constexpr float k_byte_to_float{1.0F / 255.0F};
+    const std::array<GLfloat, 3> rgb{
+        static_cast<GLfloat>((color >> 16U) & 0xFFU) * k_byte_to_float,
+        static_cast<GLfloat>((color >> 8U) & 0xFFU) * k_byte_to_float,
+        static_cast<GLfloat>(color & 0xFFU) * k_byte_to_float};
+    m_shader->set_uniform_vec3("u_color", std::span<const GLfloat, 3>{rgb});
     m_shader->set_uniform_float("u_alpha", std::clamp(alpha, 0.0F, 1.0F));
 
     glDisable(GL_DEPTH_TEST);
@@ -579,22 +584,18 @@ void WorldScene::consume_fade_commands(const WorldSceneContext* const context) {
       continue;
     }
 
-    if (command->mode != 2U) {
+    if (!m_fade.apply_command(
+            command.value(), context->scene_id, context->generation)) {
       App::Log::debug(LogCategory::Renderer,
           "WorldScene: presentation mode {} remains unsupported",
           command->mode);
       continue;
     }
-
-    const float duration_frames{std::abs(static_cast<float>(command->duration_units))};
-    m_white_fade_duration = duration_frames / K_PRESENTATION_FRAMES_PER_SECOND;
-    m_white_fade_elapsed = 0.0F;
-    m_white_fade_alpha = m_white_fade_duration > 0.0F ? 1.0F : 0.0F;
-
     App::Log::debug(LogCategory::Renderer,
-        "World white fade — duration={} color={:#010x} arg={}",
+        "presentation fade-{} color=#{:06X} duration={} arg={}",
+        command->mode == 1U ? "in" : "out",
+        command->color & 0x00FFFFFFU,
         command->duration_units,
-        command->color,
         command->operand_c);
   }
 }
@@ -618,21 +619,6 @@ void WorldScene::consume_letterbox_commands(const WorldSceneContext* const conte
           command->scene_generation);
     }
   }
-}
-
-void WorldScene::update_white_fade(const float delta_time) {
-  if (m_white_fade_alpha <= 0.0F) {
-    return;
-  }
-  if (m_white_fade_duration <= 0.0F) {
-    m_white_fade_alpha = 0.0F;
-    return;
-  }
-
-  m_white_fade_elapsed += std::max(delta_time, 0.0F);
-  const float amount{std::clamp(m_white_fade_elapsed / m_white_fade_duration, 0.0F, 1.0F)};
-  // Runtime mode 2: 255 * (1 - elapsed/duration).
-  m_white_fade_alpha = 1.0F - amount;
 }
 
 bool WorldScene::update_dialog_input(const Input::InputManager& input) {
@@ -708,6 +694,7 @@ void WorldScene::update(const float delta_time, const Input::InputManager& input
             context->generation);
 
         m_camera.reset();
+        m_fade.reset();
         m_letterbox.reset();
         auto renderer{WorldRenderer::create(*context)};
         if (!renderer) {
@@ -734,6 +721,7 @@ void WorldScene::update(const float delta_time, const Input::InputManager& input
     } else if (m_world_observed) {
       m_world_renderer.reset();
       m_camera.reset();
+      m_fade.reset();
       m_letterbox.reset();
       m_world_observed = false;
     }
@@ -767,7 +755,7 @@ void WorldScene::update(const float delta_time, const Input::InputManager& input
 
   consume_fade_commands(context);
   consume_letterbox_commands(context);
-  update_white_fade(delta_time);
+  m_fade.update(delta_time);
   m_letterbox.update(delta_time);
   m_uv_phases.update(delta_time);
 
@@ -854,8 +842,8 @@ void WorldScene::render() {
   // remain outside HDR scene processing and compose in encoded display space.
   m_color_pipeline->present_linear();
 
-  if (m_fade_renderer != nullptr && m_white_fade_alpha > 0.0F) {
-    m_fade_renderer->render(m_white_fade_alpha);
+  if (m_fade_renderer != nullptr && m_fade.alpha() > 0.0F) {
+    m_fade_renderer->render(m_fade.color(), m_fade.alpha());
   }
 
   // The cinematic mask remains opaque during presentation fades, matching

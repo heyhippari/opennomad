@@ -83,7 +83,7 @@ struct AreaWaitState {
   std::optional<App::InterfaceHandle> interface;
   /// Destination START/global variable for an interface result (opcode 0x46).
   std::optional<std::uint16_t> interface_result_variable;
-  /// SCX ScriptRuntime instance spawned by opcode 0x39.
+  /// SCX ScriptRuntime instance tracked by opcode 0x3A.
   std::optional<std::size_t> scx_script_instance;
   /// Explicit-character request blocked by opcode 0x3C (debug metadata).
   std::optional<AreaCharacterScriptRequest> character_script;
@@ -96,7 +96,7 @@ struct AreaWaitState {
   float remaining_scenario_frames{0.0F};
 };
 
-/// AREA opcode 0x39 request. Runtime resolves operand 0 against the active
+/// AREA opcode 0x39/0x3A request. Runtime resolves operand 0 against the active
 /// parsed SCX source script's +0x1A ID; the other operands are preserved until
 /// their semantics are fully recovered.
 struct AreaScxScriptRequest {
@@ -246,7 +246,7 @@ class AreaScriptRuntime {
   /// Wires the music sink (opcode 0x67).
   void set_music_sink(MusicSink sink);
 
-  /// Wires AREA opcode 0x39 to the active world's SCX ScriptRuntime.
+  /// Wires AREA opcodes 0x39/0x3A to the active world's SCX ScriptRuntime.
   void set_scx_script_sink(ScxScriptSink sink);
 
   /// Wires AREA opcodes 0x3B/0x3C to explicit-character script handling.
@@ -280,7 +280,7 @@ class AreaScriptRuntime {
   [[nodiscard]] std::expected<void, std::string> complete_interface_wait(
       const App::InterfaceCompletion& completion);
 
-  /// Completes the SCX-script wait created by opcode 0x39. The instance ID
+  /// Completes the SCX-script wait created by opcode 0x3A. The instance ID
   /// must match the one returned by the bridge sink.
   [[nodiscard]] std::expected<void, std::string> complete_scx_script_wait(std::size_t instance_id);
 
@@ -303,7 +303,7 @@ class AreaScriptRuntime {
   }
 
   /// The recovered legacy wait state (6 for interfaces); meaningful only
-  /// while Waiting. Opcode 0x3C uses recovered state 4.
+  /// while Waiting. Opcodes 0x3A/0x3C use recovered state 4.
   [[nodiscard]] std::uint16_t wait_state() const {
     return m_wait_state;
   }

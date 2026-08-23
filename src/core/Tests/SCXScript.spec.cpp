@@ -106,7 +106,8 @@ TEST_SUITE("Core::Omikron::SCXScript") {
     CHECK_EQ(scx->scripts.at(0).script_id, 1U);
     CHECK_EQ(scx->scripts.at(0).root_command_count, 1U);
     CHECK_EQ(scx->scripts.at(0).linked_command_count, 0U);
-    CHECK_EQ(scx->scripts.at(0).execution_context_field_34, 1);
+    CHECK_EQ(scx->scripts.at(0).repeat_limit, 1);
+    CHECK_EQ(scx->scripts.at(0).initial_repeat_index, 0U);
     CHECK_EQ(scx->scripts.at(0).file_offset, 24U);  // 16 header + 8 tag/count.
 
     REQUIRE_EQ(scx->shared_values.size(), 2U);

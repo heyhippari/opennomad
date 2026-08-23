@@ -2100,22 +2100,19 @@ This is the tracked/waiting generic variant.
 
 ---
 
-# 75. OpenNomad `0x39` correction
+# 75. OpenNomad `0x39`/`0x3A` implementation
 
-Current OpenNomad:
+OpenNomad implements the recovered split directly:
 
 ```text
 0x39 StartScxScript
     launch concrete ScriptRuntime instance
-    wait for that instance
+    continue AREA execution immediately
+
+0x3A StartScxScriptTracked
+    launch concrete ScriptRuntime instance
+    wait for that exact instance in state 4
 ```
-
-That behavior belongs more closely to the tracked `0x3A` family.
-
-Runtime `0x39` itself continues.
-
-This is a concrete implementation mismatch that should be corrected before the
-VM catalogue is considered faithful.
 
 ---
 
@@ -2555,12 +2552,21 @@ but the handlers consume:
 This is another direct counterexample to interpreting the descriptor's second
 dword as instruction size.
 
-Current semantic names remain provisional:
+OpenNomad presentation behavior is:
 
 ```text
-PresentationEffect
-PresentationEffectAlt
+0x76 / mode 1: fade into authored RGB colour, alpha 0 -> 1
+0x77 / mode 2: fade out of authored RGB colour, alpha 1 -> 0
 ```
+
+The signed duration magnitude is converted from 30 Hz AREA units to seconds.
+Both operations are asynchronous relative to AREA; their existing dispatcher
+yield does not create a typed wait. A zero-duration mode 1 ends opaque and a
+zero-duration mode 2 ends transparent.
+
+OpenNomad preserves the authored low 24-bit RGB value (`0x00RRGGBB`) and does
+not infer alpha from the high byte. Presentation interpolation remains sampled
+at display rate; AREA duration values remain 30 Hz units.
 
 ---
 
@@ -3605,24 +3611,14 @@ rather than only byte widths.
 
 ---
 
-# 126. OpenNomad mismatch: opcode `0x39`
+# 126. OpenNomad status: opcodes `0x39` and `0x3A`
 
-Current OpenNomad treats:
-
-```text
-0x39
-```
-
-as a waiting SCX launch.
-
-Runtime:
+OpenNomad now distinguishes:
 
 ```text
-0x39 non-tracked
-0x3A tracked state-4 variant
+0x39 non-tracked/fire-and-forget
+0x3A tracked state-4 variant keyed to the exact launched instance
 ```
-
-This needs correction.
 
 ---
 
@@ -3640,7 +3636,6 @@ including:
 0x0F..0x18 global operations
 0x1A..0x29 expression family
 0x2A..0x2C compare/branch family
-0x3A tracked generic SCX launch
 ```
 
 These are high-value implementation targets because they are pure VM behavior

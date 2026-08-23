@@ -68,7 +68,6 @@ class WorldScene final : public Scene, public Debug::SceneDebugView {
 
   void consume_fade_commands(const WorldSceneContext* context);
   void consume_letterbox_commands(const WorldSceneContext* context);
-  void update_white_fade(float delta_time);
   [[nodiscard]] bool update_dialog_input(const Input::InputManager& input);
 
   ScenarioManager* m_scenarios{nullptr};
@@ -78,11 +77,9 @@ class WorldScene final : public Scene, public Debug::SceneDebugView {
   std::unique_ptr<WorldLetterboxRenderer> m_letterbox_renderer;
   std::unique_ptr<WorldColorPipeline> m_color_pipeline;
   WorldCameraSystem m_camera;
+  WorldFadeState m_fade;
   WorldLetterboxState m_letterbox;
   WorldUvPhaseState m_uv_phases;
-  float m_white_fade_alpha{0.0F};
-  float m_white_fade_elapsed{0.0F};
-  float m_white_fade_duration{0.0F};
   int m_width{640};
   int m_height{480};
 

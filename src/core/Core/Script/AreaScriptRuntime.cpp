@@ -39,6 +39,7 @@ constexpr std::uint32_t K_OP_EQUAL{0x19};
 constexpr std::uint32_t K_OP_BEGIN_AREA_TRANSITION{0x2F};
 constexpr std::uint32_t K_OP_CHARACTER_LOOKUP{0x38};
 constexpr std::uint32_t K_OP_START_SCX_SCRIPT{0x39};
+constexpr std::uint32_t K_OP_START_SCX_SCRIPT_TRACKED{0x3A};
 constexpr std::uint32_t K_OP_START_CHARACTER_SCRIPT{0x3B};
 constexpr std::uint32_t K_OP_START_CHARACTER_SCRIPT_TRACKED{0x3C};
 constexpr std::uint32_t K_OP_START_DIALOG{0x3D};
@@ -58,8 +59,8 @@ constexpr std::uint32_t K_OP_END_CINEMATIC_LETTERBOX{0x85};
 
 /// Wait state assigned by the interface-open opcode (recovered value 6).
 constexpr std::uint16_t K_OPEN_INTERFACE_WAIT_STATE{6};
-/// Wait state assigned by tracked explicit-character script opcode 0x3C.
-constexpr std::uint16_t K_CHARACTER_SCRIPT_WAIT_STATE{4};
+/// Wait state assigned by tracked script opcodes 0x3A and 0x3C.
+constexpr std::uint16_t K_TRACKED_SCRIPT_WAIT_STATE{4};
 /// Wait state assigned by camera opcode 0x60 when its duration is non-zero.
 constexpr std::uint16_t K_CAMERA_WAIT_STATE{7};
 /// Runtime context state while native AREA transition coordination is active.
@@ -90,7 +91,7 @@ constexpr std::array<AreaOperandWidth, 3> K_OPERANDS_67{
 constexpr std::array<AreaOperandWidth, 3> K_OPERANDS_PRESENTATION{
     AreaOperandWidth::k_int32, AreaOperandWidth::k_int16, AreaOperandWidth::k_int16};
 
-constexpr std::array<AreaOpcodeInfo, 27> K_AREA_OPCODE_TABLE{
+constexpr std::array<AreaOpcodeInfo, 28> K_AREA_OPCODE_TABLE{
     AreaOpcodeInfo{.opcode = K_OP_END_EVENT,
         .name = "EndEvent",
         .support = OpcodeSupport::k_supported,
@@ -167,7 +168,14 @@ constexpr std::array<AreaOpcodeInfo, 27> K_AREA_OPCODE_TABLE{
         .name = "StartScxScript",
         .support = OpcodeSupport::k_supported,
         .provisional = false,
-        .notes = "resolves operand 0 against active SCX source script +0x1A and waits",
+        .notes = "resolves operand 0 against active SCX source script +0x1A and continues",
+        .operands = K_OPERANDS_3X_I16.data(),
+        .operand_count = K_OPERANDS_3X_I16.size()},
+    AreaOpcodeInfo{.opcode = K_OP_START_SCX_SCRIPT_TRACKED,
+        .name = "StartScxScriptTracked",
+        .support = OpcodeSupport::k_supported,
+        .provisional = false,
+        .notes = "starts a generic SCX script and blocks in Runtime state 4 on its exact instance",
         .operands = K_OPERANDS_3X_I16.data(),
         .operand_count = K_OPERANDS_3X_I16.size()},
     AreaOpcodeInfo{.opcode = K_OP_START_CHARACTER_SCRIPT,
@@ -838,7 +846,8 @@ void AreaScriptRuntime::execute_instruction() {
           accepted->generation);
       break;
     }
-    case K_OP_START_SCX_SCRIPT: {
+    case K_OP_START_SCX_SCRIPT:
+    case K_OP_START_SCX_SCRIPT_TRACKED: {
       if (!m_scx_script_sink) {
         m_pause_info = AreaPauseInfo{.offset = instruction_offset,
             .opcode = opcode,
@@ -862,19 +871,27 @@ void AreaScriptRuntime::execute_instruction() {
         m_state = AreaScriptState::k_failed;
         return;
       }
-      m_wait = AreaWaitState{.kind = AreaWaitKind::k_scx_script,
-          .runtime_state = 0,
-          .interface = std::nullopt,
-          .interface_result_variable = std::nullopt,
-          .scx_script_instance = instance.value(),
-          .character_script = std::nullopt,
-          .character_script_instance = std::nullopt,
-          .area_transition = std::nullopt,
-          .area_transition_handle = std::nullopt,
-          .remaining_scenario_frames = 0.0F};
-      wait_after_instruction = true;
-      entry.effect = fmt::format(
-          "start SCX script {} as instance {} and wait", request.script_id, instance.value());
+      if (opcode == K_OP_START_SCX_SCRIPT_TRACKED) {
+        m_wait_state = K_TRACKED_SCRIPT_WAIT_STATE;
+        m_wait = AreaWaitState{.kind = AreaWaitKind::k_scx_script,
+            .runtime_state = K_TRACKED_SCRIPT_WAIT_STATE,
+            .interface = std::nullopt,
+            .interface_result_variable = std::nullopt,
+            .scx_script_instance = instance.value(),
+            .character_script = std::nullopt,
+            .character_script_instance = std::nullopt,
+            .area_transition = std::nullopt,
+            .area_transition_handle = std::nullopt,
+            .remaining_scenario_frames = 0.0F};
+        wait_after_instruction = true;
+        entry.effect = fmt::format("start SCX script {} as instance {} and wait in Runtime state 4",
+            request.script_id,
+            instance.value());
+      } else {
+        entry.effect = fmt::format("start SCX script {} as instance {} (fire-and-forget)",
+            request.script_id,
+            instance.value());
+      }
       break;
     }
     case K_OP_START_CHARACTER_SCRIPT:
@@ -914,9 +931,9 @@ void AreaScriptRuntime::execute_instruction() {
       }
 
       if (tracked) {
-        m_wait_state = K_CHARACTER_SCRIPT_WAIT_STATE;
+        m_wait_state = K_TRACKED_SCRIPT_WAIT_STATE;
         m_wait = AreaWaitState{.kind = AreaWaitKind::k_character_script,
-            .runtime_state = K_CHARACTER_SCRIPT_WAIT_STATE,
+            .runtime_state = K_TRACKED_SCRIPT_WAIT_STATE,
             .interface = std::nullopt,
             .interface_result_variable = std::nullopt,
             .scx_script_instance = std::nullopt,

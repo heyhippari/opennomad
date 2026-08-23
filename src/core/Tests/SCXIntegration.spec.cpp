@@ -195,8 +195,8 @@ TEST_SUITE("Core::Omikron::SCXIntegration") {
     // command chain and the argument words it addresses.
     const App::Omikron::ScxScript& first{scx->scripts.at(0)};
     MESSAGE("script 0: '", first.name, "' id ", first.script_id, " roots ",
-        first.root_command_count, " linked ", first.linked_command_count, " field34 ",
-        first.execution_context_field_34);
+        first.root_command_count, " linked ", first.linked_command_count, " repeat limit ",
+        first.repeat_limit);
 
     for (std::size_t index{0}; index < first.root_commands.size(); ++index) {
       const App::Omikron::ScxScriptCommand& command{first.root_commands.at(index)};

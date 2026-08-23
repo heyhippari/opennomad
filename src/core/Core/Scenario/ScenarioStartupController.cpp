@@ -415,7 +415,7 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
               request.operand_b,
               request.operand_c));
       App::Log::debug(LogCategory::Script,
-          "AREA opcode 0x39 — started world script {} '{}' from '{}' as instance {}",
+          "AREA generic SCX launch — started world script {} '{}' from '{}' as instance {}",
           request.script_id,
           scripts.at(index).name,
           context->scenario_path,
@@ -864,8 +864,8 @@ std::expected<void, std::string> ScenarioStartupController::tick(const float del
     }
   }
 
-  // Opcode 0x39 bridges into the active world's SCX runtime and yields the
-  // AREA VM until that concrete ScriptRuntime instance completes.
+  // Tracked opcode 0x3A yields the AREA VM until its exact concrete
+  // ScriptRuntime instance completes. Fire-and-forget 0x39 never enters here.
   if (area_script.state() == Script::AreaScriptState::k_waiting &&
       area_script.wait_info().kind == Script::AreaWaitKind::k_scx_script) {
     if (m_manager == nullptr || !area_script.wait_info().scx_script_instance.has_value()) {

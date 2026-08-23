@@ -786,14 +786,11 @@ Grid.SCX Wait5sec:
     repeatLimit = -1
 ```
 
-Current OpenNomad `SCX.hpp` still uses the older neutral name:
+OpenNomad models this field directly as:
 
 ```text
-execution_context_field_34
+ScxScript::repeat_limit
 ```
-
-That name is now stale and can be replaced with `repeat_limit` in a later code
-cleanup.
 
 ---
 
@@ -825,13 +822,13 @@ Supplied packages serialize:
 
 for every examined script.
 
-Current OpenNomad `SCX.hpp` still calls it:
+OpenNomad preserves the serialized seed as:
 
 ```text
-runtime_field_38
+ScxScript::initial_repeat_index
 ```
 
-which can now be improved.
+and copies it into mutable `ScriptInstance::repeat_index` state.
 
 ---
 
@@ -2180,21 +2177,16 @@ This is naming cleanup rather than a structural parser change.
 
 New Runtime analysis now supports better names than some current neutral fields.
 
-Current:
-
-```text
-execution_context_field_34
-runtime_field_38
-runtime_field_58
-```
-
-Better:
+Current serialized/runtime names:
 
 ```text
 repeat_limit
-repeat_index
-serialized_elapsed_time_bits
+initial_repeat_index / repeat_index
+runtime_field_58
 ```
+
+`runtime_field_58` can become `serialized_elapsed_time_bits` once that separate
+cleanup is in scope.
 
 Likewise:
 
@@ -3656,17 +3648,15 @@ clone lifetime — belongs in the runtime/AREA documents.
 
 # 126. Current OpenNomad corrections suggested by this document
 
-Documentation-driven code cleanup candidates:
+Implemented OpenNomad names:
 
 ```text
 ScxScriptCommand::opcode
     -> function_id / iam_function_id
 
-ScxScript::execution_context_field_34
-    -> repeat_limit
-
-ScxScript::runtime_field_38
-    -> repeat_index_seed
+ScxScript::repeat_limit
+ScxScript::initial_repeat_index
+ScriptInstance::repeat_index
 
 ScxScript::runtime_field_58
     -> elapsed_time_bits
@@ -3678,8 +3668,8 @@ Potential optional format-preservation improvement:
 retain the two raw count-dword arrays in each binding block
 ```
 
-None of these changes is required to understand the format, but they would make
-source names match current RE knowledge more closely.
+Command eligibility uses only each command's `execution_limit` and mutable
+`execution_count`; the script-level repeat limit is not an eligibility gate.
 
 ---
 

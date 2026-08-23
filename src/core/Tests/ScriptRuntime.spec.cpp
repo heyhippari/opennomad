@@ -199,7 +199,7 @@ App::Omikron::ScxScript single_root_script(const App::Omikron::ScxScriptCommand&
   script.name = "test";
   script.root_command_count = 1;
   script.linked_command_count = 0;
-  script.execution_context_field_34 = 1;
+  script.repeat_limit = 1;
   script.root_commands.push_back(root);
   return script;
 }
@@ -366,6 +366,144 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
     CHECK_EQ(fixture.runtime->run_state(), App::Script::ScriptRunState::k_completed);
   }
 
+  TEST_CASE("Script repeat limits count whole passes and reinitialize Wait state") {
+    SUBCASE("one pass") {
+      App::Omikron::ScxScript script{single_root_script(command(K_WAIT, 0, 2))};
+      script.repeat_limit = 1;
+      RuntimeFixture fixture{{script}, make_values(2, {0x3F800000U, 0U})};
+      REQUIRE(fixture.runtime->create_instance(0).has_value());
+
+      fixture.runtime->step_tick(1.0F);
+
+      const App::Script::ScriptInstance& instance{fixture.runtime->instances().at(0)};
+      CHECK(instance.completed);
+      CHECK_EQ(instance.repeat_index, 1U);
+      CHECK_EQ(fixture.runtime->run_state(), App::Script::ScriptRunState::k_completed);
+    }
+
+    SUBCASE("two passes preserve identity and launch context") {
+      App::Omikron::ScxScriptCommand wait{command(K_WAIT, 0, 2, std::nullopt, 3)};
+      wait.initial_execution_count = 2;
+      App::Omikron::ScxScript script{single_root_script(wait)};
+      script.repeat_limit = 2;
+      RuntimeFixture fixture{{script}, make_values(2, {0x3F800000U, 0U})};
+      const App::Script::ScriptLaunchContext launch{.character_id = 310, .parameter = -7};
+      const std::size_t id{fixture.runtime->create_instance(0, launch).value()};
+
+      fixture.runtime->step_tick(1.0F);
+
+      const App::Script::ScriptInstance& first_pass{fixture.runtime->instances().at(0)};
+      CHECK_FALSE(first_pass.completed);
+      CHECK_EQ(first_pass.instance_id, id);
+      CHECK_EQ(first_pass.launch_context.character_id, launch.character_id);
+      CHECK_EQ(first_pass.launch_context.parameter, launch.parameter);
+      CHECK_EQ(first_pass.repeat_index, 1U);
+      CHECK_EQ(first_pass.current_group_index, 0U);
+      CHECK_EQ(first_pass.elapsed_script_frames, 0.0F);
+      CHECK_EQ(first_pass.value_pool.at(1).as_float(), 0.0F);
+      CHECK_EQ(first_pass.root_commands.at(0).initial_execution_count, 2U);
+      CHECK_EQ(first_pass.root_commands.at(0).execution_count, 2U);
+
+      fixture.runtime->step_tick(1.0F);
+      const App::Script::ScriptInstance& second_pass{fixture.runtime->instances().at(0)};
+      CHECK(second_pass.completed);
+      CHECK_EQ(second_pass.instance_id, id);
+      CHECK_EQ(second_pass.repeat_index, 2U);
+    }
+
+    SUBCASE("minus one repeats indefinitely") {
+      App::Omikron::ScxScript script{
+          single_root_script(command(K_SET_FRAME, 0, 2))};
+      script.repeat_limit = -1;
+      RuntimeFixture fixture{{script}, make_values(2, {0, 5})};
+      const std::size_t id{fixture.runtime->create_instance(0).value()};
+
+      fixture.runtime->step_tick(1.0F);
+      fixture.runtime->step_tick(1.0F);
+      fixture.runtime->step_tick(1.0F);
+
+      const App::Script::ScriptInstance& instance{fixture.runtime->instances().at(0)};
+      CHECK_FALSE(instance.completed);
+      CHECK_EQ(instance.instance_id, id);
+      CHECK_EQ(instance.repeat_index, 3U);
+      CHECK_EQ(instance.current_group_index, 0U);
+      CHECK_EQ(instance.root_commands.at(0).execution_count, 0U);
+      CHECK_EQ(fixture.world.frame_requests.size(), 3U);
+      CHECK_EQ(fixture.runtime->run_state(), App::Script::ScriptRunState::k_running);
+    }
+  }
+
+  TEST_CASE("Script repeat limit does not override finite command eligibility") {
+    App::Omikron::ScxScriptCommand exhausted{command(K_SET_FRAME, 0, 2)};
+    exhausted.initial_execution_count = 1;
+    App::Omikron::ScxScript script{single_root_script(exhausted)};
+    script.repeat_limit = -1;
+    RuntimeFixture fixture{{script}, make_values(2, {0, 5})};
+    REQUIRE(fixture.runtime->create_instance(0).has_value());
+
+    fixture.runtime->step_tick(1.0F);
+    fixture.runtime->step_tick(1.0F);
+
+    CHECK(fixture.world.frame_requests.empty());
+    CHECK_EQ(fixture.runtime->instances().at(0).repeat_index, 2U);
+    CHECK_EQ(fixture.runtime->instances().at(0).root_commands.at(0).execution_count, 1U);
+  }
+
+  TEST_CASE("Unlimited command remains eligible on every scheduler tick") {
+    App::Omikron::ScxScript script{single_root_script(
+        command(K_SET_FRAME, 0, 2, std::nullopt, 0xFFFFFFFFU))};
+    script.repeat_limit = -1;
+    RuntimeFixture fixture{{script}, make_values(2, {0, 5})};
+    REQUIRE(fixture.runtime->create_instance(0).has_value());
+
+    fixture.runtime->step_tick(1.0F);
+    fixture.runtime->step_tick(1.0F);
+
+    CHECK_EQ(fixture.world.frame_requests.size(), 2U);
+    CHECK_EQ(fixture.runtime->instances().at(0).repeat_index, 0U);
+    CHECK_FALSE(fixture.runtime->instances().at(0).completed);
+  }
+
+  TEST_CASE("Infinite Wait5sec repeats every 150 frames without completing") {
+    App::Omikron::ScxScript script{single_root_script(command(K_WAIT, 0, 2))};
+    script.repeat_limit = -1;
+    RuntimeFixture fixture{{script}, make_values(2, {0x43160000U, 0U})};
+    REQUIRE(fixture.runtime->create_instance(0).has_value());
+
+    fixture.runtime->step_tick(149.0F);
+    CHECK_EQ(fixture.runtime->instances().at(0).value_pool.at(1).as_float(), 149.0F);
+    CHECK_EQ(fixture.runtime->instances().at(0).repeat_index, 0U);
+
+    fixture.runtime->step_tick(1.0F);
+    const App::Script::ScriptInstance& instance{fixture.runtime->instances().at(0)};
+    CHECK_FALSE(instance.completed);
+    CHECK_EQ(instance.repeat_index, 1U);
+    CHECK_EQ(instance.value_pool.at(1).as_float(), 0.0F);
+    CHECK_EQ(instance.root_commands.at(0).execution_count, 0U);
+  }
+
+  TEST_CASE("Infinite character body animation reenters its root after each whole pass") {
+    App::Omikron::ScxScript script{relative_body_animation_script()};
+    script.repeat_limit = -1;
+    RuntimeFixture fixture{{script}, relative_body_animation_values()};
+    const std::size_t id{fixture.runtime
+            ->create_instance(
+                0, App::Script::ScriptLaunchContext{.character_id = 310, .parameter = 0})
+            .value()};
+
+    for (std::size_t tick{0}; tick < 8U; ++tick) {
+      fixture.runtime->step_tick(1.0F);
+    }
+
+    const App::Script::ScriptInstance& instance{fixture.runtime->instances().at(0)};
+    CHECK_FALSE(instance.completed);
+    CHECK_EQ(instance.instance_id, id);
+    CHECK(instance.repeat_index >= 2U);
+    CHECK(fixture.world.body_animation_requests.size() >= 8U);
+    CHECK(fixture.world.body_animation_resets.empty());
+    CHECK_EQ(instance.launch_context.character_id, std::optional<std::int16_t>{310});
+  }
+
   TEST_CASE("SetSpriteFrame selects the frame and completes in one tick") {
     RuntimeFixture fixture{
         {single_root_script(command(K_SET_FRAME, 0, 2))}, make_values(2, {0, 5})};
@@ -496,7 +634,7 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
     script.name = "cycle";
     script.root_command_count = 1;
     script.linked_command_count = 2;
-    script.execution_context_field_34 = 1;
+    script.repeat_limit = 1;
     script.root_commands.push_back(command(K_SET_SPRITE_TYPE, 0, 2, 0));
     script.linked_commands.push_back(command(K_SET_FRAME, 2, 2, 1));
     script.linked_commands.push_back(command(K_SET_FRAME, 4, 2, 0));  // loops back.
@@ -516,7 +654,7 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
     script.name = "group";
     script.root_command_count = 2;
     script.linked_command_count = 0;
-    script.execution_context_field_34 = 1;
+    script.repeat_limit = 1;
     script.root_commands.push_back(command(K_SET_FRAME, 0, 2));  // group 0
     script.root_commands.push_back(command(K_SET_FRAME, 2, 2));  // group 1
 
@@ -534,8 +672,11 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
   }
 
   TEST_CASE("Reset restores initial values and counters") {
+    App::Omikron::ScxScript script{
+        single_root_script(command(K_SCALE_X, 0, 6, std::nullopt, 0xFFFFFFFFU))};
+    script.initial_repeat_index = 7;
     RuntimeFixture fixture{
-        {single_root_script(command(K_SCALE_X, 0, 6, std::nullopt, 0xFFFFFFFFU))},
+        {script},
         make_values(6, {0, 0x3F800000U, 0x40000000U, 0x3F800000U, 0x41200000U, 0})};
     const std::size_t id{fixture.runtime->create_instance(0).value()};
 
@@ -546,6 +687,8 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
     REQUIRE(fixture.runtime->reset_instance(id).has_value());
     const App::Script::ScriptInstance& instance{fixture.runtime->instances().at(0)};
     CHECK_EQ(instance.root_commands.at(0).execution_count, 0U);
+    CHECK_EQ(instance.repeat_index, 7U);
+    CHECK_EQ(instance.initial_repeat_index, 7U);
     CHECK_EQ(instance.value_pool.at(3).as_float(), doctest::Approx(1.0F));  // current reset.
     CHECK_EQ(instance.value_pool.at(5).as_float(), doctest::Approx(0.0F));  // elapsed reset.
   }
@@ -644,7 +787,7 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
     script.name = "exhausted";
     script.root_command_count = 1;
     script.linked_command_count = 1;
-    script.execution_context_field_34 = 1;
+    script.repeat_limit = 1;
     script.root_commands.push_back(command(K_SET_SPRITE_TYPE, 0, 2, 0));
     script.linked_commands.push_back(command(K_SET_FRAME, 2, 2, std::nullopt, 0xFFFFFFFFU));
 
@@ -725,7 +868,7 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
     script.name = "effect";
     script.root_command_count = 1;
     script.linked_command_count = 5;
-    script.execution_context_field_34 = 1;
+    script.repeat_limit = 1;
     script.root_commands.push_back(command(K_SET_SPRITE_TYPE, 0, 2, 0));
     script.linked_commands.push_back(command(K_SET_FRAME, 2, 2, 1));
     script.linked_commands.push_back(command(K_ROLL, 4, 6, 2));
@@ -773,7 +916,7 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
     script.name = "oor";
     script.root_command_count = 1;
     script.linked_command_count = 1;
-    script.execution_context_field_34 = 1;
+    script.repeat_limit = 1;
     script.root_commands.push_back(command(K_SET_SPRITE_TYPE, 0, 2, 5));
     script.linked_commands.push_back(command(K_SET_FRAME, 2, 2, std::nullopt));
 
@@ -792,7 +935,7 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
     script.name = "mid";
     script.root_command_count = 1;
     script.linked_command_count = 2;
-    script.execution_context_field_34 = 1;
+    script.repeat_limit = 1;
     script.root_commands.push_back(command(K_SET_SPRITE_TYPE, 0, 2, 0));
     script.linked_commands.push_back(command(K_UNKNOWN_20, 2, 2, 1));
     script.linked_commands.push_back(command(K_SET_FRAME, 4, 2, std::nullopt));

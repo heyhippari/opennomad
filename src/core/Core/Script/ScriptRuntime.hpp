@@ -119,6 +119,7 @@ struct RuntimeScriptCommand {
   std::uint32_t first_value_index{0};
   std::optional<std::uint32_t> next_linked_command_index;
   std::uint32_t execution_limit{0};
+  std::uint32_t initial_execution_count{0};
   std::uint32_t execution_count{0};
   std::size_t source_file_offset{0};
 };
@@ -144,7 +145,9 @@ struct ScriptInstance {
   std::vector<RuntimeScriptCommand> root_commands;
   std::vector<RuntimeScriptCommand> linked_commands;
   std::size_t current_group_index{0};
-  std::int32_t execution_context_field_34{0};
+  std::int32_t repeat_limit{0};
+  std::uint32_t repeat_index{0};
+  std::uint32_t initial_repeat_index{0};
   std::unordered_map<std::uint32_t, Sprite::SpriteHandle> sprite_remap;
   /// Accumulated Runtime script time in native 30 Hz frame units.
   /// PlaySyncSound compares its authored schedule directly against this clock.
@@ -371,12 +374,18 @@ class ScriptRuntime {
   /// OpenNomad execution-limit eligibility helper. Retail performs this check
   /// inside Script_PlayScript around 0x0044C9D2; 0x004A0260 is
   /// Script_MakeInstance.
-  [[nodiscard]] static bool precheck_completed(
-      const ScriptInstance& instance, const RuntimeScriptCommand& command);
+  [[nodiscard]] static bool precheck_completed(const RuntimeScriptCommand& command);
 
   /// Explicit exhaustion predicate: an unlimited (0xFFFFFFFF) limit is never
   /// exhausted; a finite limit is exhausted once the count reaches it.
   [[nodiscard]] static bool is_command_exhausted(const RuntimeScriptCommand& command);
+
+  /// Finishes one whole pass, either completing the instance or restarting
+  /// it at group zero with command-local mutable state reinitialised.
+  static void finish_script_pass(ScriptInstance& instance);
+
+  /// Restores debugger-visible runtime state to the serialized initial state.
+  void reset_instance_to_initial_state(ScriptInstance& instance);
 
   /// Handler implementations.
   HandlerResult handle_set_sprite_type(ScriptInstance& instance, RuntimeScriptCommand& command);

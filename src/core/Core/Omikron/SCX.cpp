@@ -266,8 +266,8 @@ std::expected<void, std::string> parse_dead0002(BinaryReader& reader,
     script.root_commands_placeholder = reader.read_u32();
     script.linked_command_count = reader.read_u32();
     script.linked_commands_placeholder = reader.read_u32();
-    script.execution_context_field_34 = reader.read_i32();
-    script.runtime_field_38 = reader.read_u32();
+    script.repeat_limit = reader.read_i32();
+    script.initial_repeat_index = reader.read_u32();
     for (std::uint32_t& field : script.binding_table_a_fields) {
       field = reader.read_u32();
     }

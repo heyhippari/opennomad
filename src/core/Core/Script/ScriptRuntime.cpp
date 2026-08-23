@@ -370,7 +370,9 @@ std::expected<std::size_t, std::string> ScriptRuntime::create_instance(
   instance.script_name = source.name;
   instance.launch_context = launch_context;
   instance.value_pool = m_scx->shared_values;  // Deep copy: runtime owns mutable args.
-  instance.execution_context_field_34 = source.execution_context_field_34;
+  instance.repeat_limit = source.repeat_limit;
+  instance.repeat_index = source.initial_repeat_index;
+  instance.initial_repeat_index = source.initial_repeat_index;
 
   instance.root_commands.reserve(source.root_commands.size());
   for (const Omikron::ScxScriptCommand& command : source.root_commands) {
@@ -379,6 +381,7 @@ std::expected<std::size_t, std::string> ScriptRuntime::create_instance(
         .first_value_index = command.first_value_index,
         .next_linked_command_index = command.next_linked_command_index,
         .execution_limit = command.execution_limit,
+        .initial_execution_count = command.initial_execution_count,
         .execution_count = command.initial_execution_count,
         .source_file_offset = command.file_offset});
   }
@@ -389,6 +392,7 @@ std::expected<std::size_t, std::string> ScriptRuntime::create_instance(
         .first_value_index = command.first_value_index,
         .next_linked_command_index = command.next_linked_command_index,
         .execution_limit = command.execution_limit,
+        .initial_execution_count = command.initial_execution_count,
         .execution_count = command.initial_execution_count,
         .source_file_offset = command.file_offset});
   }
@@ -408,8 +412,8 @@ std::expected<std::size_t, std::string> ScriptRuntime::create_instance(
       instance.script_name,
       instance.root_commands.size(),
       instance.linked_commands.size());
-  // A completed runtime may receive another instance later through AREA
-  // opcode 0x39; creating it makes the scenario schedulable again.
+  // A completed runtime may receive another instance later through AREA's
+  // generic SCX launch opcodes; creating it makes the scenario schedulable again.
   if (m_run_state == ScriptRunState::k_completed) {
     m_run_state = ScriptRunState::k_running;
   }
@@ -467,7 +471,7 @@ void ScriptRuntime::advance(const float script_delta_frames) {
 bool ScriptRuntime::advance_instance(
     ScriptInstance& instance, const float script_delta_frames, std::size_t& budget) {
   if (instance.current_group_index >= instance.root_commands.size()) {
-    instance.completed = true;
+    finish_script_pass(instance);
     return true;
   }
 
@@ -568,8 +572,7 @@ bool ScriptRuntime::advance_instance(
         instance.current_group_index,
         instance.root_commands.size());
     if (instance.current_group_index >= instance.root_commands.size()) {
-      instance.completed = true;
-      App::Log::debug(LogCategory::Script, "instance {} completed", instance.instance_id);
+      finish_script_pass(instance);
     }
   }
   return true;
@@ -616,7 +619,7 @@ ScriptCommandStatus ScriptRuntime::dispatch_command(ScriptInstance& instance,
         info->name,
         info->expected_argument_count,
         command.value_count);
-  } else if (precheck_completed(instance, command)) {
+  } else if (precheck_completed(command)) {
     result.status = ScriptCommandStatus::k_completed;
   } else {
     switch (command.opcode) {
@@ -852,14 +855,10 @@ void ScriptRuntime::pause(ScriptInstance& instance,
       info.reason_text);
 }
 
-bool ScriptRuntime::precheck_completed(
-    const ScriptInstance& instance, const RuntimeScriptCommand& command) {
-  // OpenNomad's current eligibility model gates on the unresolved context
-  // field and skips unlimited limits. Retail performs the limit check inside
-  // Script_PlayScript; 0x004A0260 is Script_MakeInstance.
-  return instance.execution_context_field_34 != -1 &&
-         command.execution_count >= command.execution_limit &&
-         command.execution_limit != K_INFINITE_EXECUTION_LIMIT;
+bool ScriptRuntime::precheck_completed(const RuntimeScriptCommand& command) {
+  // Command eligibility is independent of the script-level repeat limit.
+  return command.execution_limit != K_INFINITE_EXECUTION_LIMIT &&
+         command.execution_count >= command.execution_limit;
 }
 
 bool ScriptRuntime::is_command_exhausted(const RuntimeScriptCommand& command) {
@@ -867,6 +866,81 @@ bool ScriptRuntime::is_command_exhausted(const RuntimeScriptCommand& command) {
   // exhausts once the execution count reaches it.
   return command.execution_limit != K_INFINITE_EXECUTION_LIMIT &&
          command.execution_count >= command.execution_limit;
+}
+
+void ScriptRuntime::finish_script_pass(ScriptInstance& instance) {
+  instance.repeat_index += 1U;
+  const bool repeats_forever{instance.repeat_limit == -1};
+  const bool repeats_again{instance.repeat_limit > 0 &&
+                           std::cmp_less(instance.repeat_index, instance.repeat_limit)};
+  if (!repeats_forever && !repeats_again) {
+    instance.completed = true;
+    App::Log::debug(LogCategory::Script,
+        "instance {} script '{}' completed at repeat {}",
+        instance.instance_id,
+        instance.script_name,
+        instance.repeat_index);
+    return;
+  }
+
+  for (RuntimeScriptCommand& command : instance.root_commands) {
+    command.execution_count = command.initial_execution_count;
+    reinitialize_command(instance, command);
+  }
+  for (RuntimeScriptCommand& command : instance.linked_commands) {
+    command.execution_count = command.initial_execution_count;
+    reinitialize_command(instance, command);
+  }
+  instance.current_group_index = 0;
+  instance.elapsed_script_frames = 0.0F;
+  instance.completed = false;
+  instance.paused = false;
+  instance.pause_info = ScriptPauseInfo{};
+  instance.step_at_root = true;
+  instance.step_linked_index = 0;
+  instance.step_chain_position = 0;
+  App::Log::trace(LogCategory::Script,
+      "script '{}' repeat {} -> restart at group 0 (instance {})",
+      instance.script_name,
+      instance.repeat_index,
+      instance.instance_id);
+}
+
+void ScriptRuntime::reset_instance_to_initial_state(ScriptInstance& instance) {
+  reset_audio_commands(instance);
+  instance.value_pool = m_scx->shared_values;
+  for (RuntimeScriptCommand& command : instance.root_commands) {
+    command.execution_count = command.initial_execution_count;
+    reinitialize_command(instance, command);
+  }
+  for (RuntimeScriptCommand& command : instance.linked_commands) {
+    command.execution_count = command.initial_execution_count;
+    reinitialize_command(instance, command);
+  }
+  if (instance.launch_context.character_id.has_value()) {
+    bool owns_body_animation{false};
+    for (const RuntimeScriptCommand& command : instance.root_commands) {
+      owns_body_animation =
+          owns_body_animation || command.opcode == K_SELECT_RELATIVE_BODY_ANIMATION;
+    }
+    for (const RuntimeScriptCommand& command : instance.linked_commands) {
+      owns_body_animation =
+          owns_body_animation || command.opcode == K_SELECT_RELATIVE_BODY_ANIMATION;
+    }
+    if (owns_body_animation) {
+      m_world->reset_body_animation(instance.launch_context.character_id.value_or(0));
+    }
+  }
+  instance.current_group_index = 0;
+  instance.repeat_index = instance.initial_repeat_index;
+  instance.elapsed_script_frames = 0.0F;
+  instance.completed = false;
+  instance.paused = false;
+  instance.pause_info = ScriptPauseInfo{};
+  instance.sprite_remap.clear();
+  instance.step_at_root = true;
+  instance.step_linked_index = 0;
+  instance.step_chain_position = 0;
 }
 
 std::expected<Sprite::SpriteHandle, std::string> ScriptRuntime::resolve_sprite(
@@ -1466,39 +1540,7 @@ std::expected<void, std::string> ScriptRuntime::reset_instance(const std::size_t
     if (instance.instance_id != instance_id) {
       continue;
     }
-    reset_audio_commands(instance);
-    instance.value_pool = m_scx->shared_values;
-    for (RuntimeScriptCommand& command : instance.root_commands) {
-      command.execution_count = 0;
-      reinitialize_command(instance, command);
-    }
-    for (RuntimeScriptCommand& command : instance.linked_commands) {
-      command.execution_count = 0;
-      reinitialize_command(instance, command);
-    }
-    if (instance.launch_context.character_id.has_value()) {
-      bool owns_body_animation{false};
-      for (const RuntimeScriptCommand& command : instance.root_commands) {
-        owns_body_animation =
-            owns_body_animation || command.opcode == K_SELECT_RELATIVE_BODY_ANIMATION;
-      }
-      for (const RuntimeScriptCommand& command : instance.linked_commands) {
-        owns_body_animation =
-            owns_body_animation || command.opcode == K_SELECT_RELATIVE_BODY_ANIMATION;
-      }
-      if (owns_body_animation) {
-        m_world->reset_body_animation(instance.launch_context.character_id.value_or(0));
-      }
-    }
-    instance.current_group_index = 0;
-    instance.elapsed_script_frames = 0.0F;
-    instance.completed = false;
-    instance.paused = false;
-    instance.pause_info = ScriptPauseInfo{};
-    instance.sprite_remap.clear();
-    instance.step_at_root = true;
-    instance.step_linked_index = 0;
-    instance.step_chain_position = 0;
+    reset_instance_to_initial_state(instance);
     App::Log::debug(LogCategory::Script, "reset instance {}", instance_id);
     return {};
   }
@@ -1508,39 +1550,7 @@ std::expected<void, std::string> ScriptRuntime::reset_instance(const std::size_t
 
 void ScriptRuntime::reset_all() {
   for (ScriptInstance& instance : m_instances) {
-    reset_audio_commands(instance);
-    instance.value_pool = m_scx->shared_values;
-    for (RuntimeScriptCommand& command : instance.root_commands) {
-      command.execution_count = 0;
-      reinitialize_command(instance, command);
-    }
-    for (RuntimeScriptCommand& command : instance.linked_commands) {
-      command.execution_count = 0;
-      reinitialize_command(instance, command);
-    }
-    if (instance.launch_context.character_id.has_value()) {
-      bool owns_body_animation{false};
-      for (const RuntimeScriptCommand& command : instance.root_commands) {
-        owns_body_animation =
-            owns_body_animation || command.opcode == K_SELECT_RELATIVE_BODY_ANIMATION;
-      }
-      for (const RuntimeScriptCommand& command : instance.linked_commands) {
-        owns_body_animation =
-            owns_body_animation || command.opcode == K_SELECT_RELATIVE_BODY_ANIMATION;
-      }
-      if (owns_body_animation) {
-        m_world->reset_body_animation(instance.launch_context.character_id.value_or(0));
-      }
-    }
-    instance.current_group_index = 0;
-    instance.elapsed_script_frames = 0.0F;
-    instance.completed = false;
-    instance.paused = false;
-    instance.pause_info = ScriptPauseInfo{};
-    instance.sprite_remap.clear();
-    instance.step_at_root = true;
-    instance.step_linked_index = 0;
-    instance.step_chain_position = 0;
+    reset_instance_to_initial_state(instance);
   }
   m_run_state = ScriptRunState::k_running;
   m_user_paused = false;

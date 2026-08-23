@@ -373,8 +373,10 @@ void DebugUI::show_scx_script_inspector() {
         source_script.name.c_str(),
         source_script.script_id,
         static_cast<unsigned long>(selected->instance_id));
-    ImGui::Text("Context field34 %d, elapsed %.3f script frames, %s%s, sprite remaps %lu",
-        selected->execution_context_field_34,
+    ImGui::Text("Repeat %u / %d (initial %u), elapsed %.3f script frames, %s%s, sprite remaps %lu",
+        selected->repeat_index,
+        selected->repeat_limit,
+        selected->initial_repeat_index,
         static_cast<double>(selected->elapsed_script_frames),
         selected->completed ? "completed" : "active",
         selected->paused ? ", paused" : "",
