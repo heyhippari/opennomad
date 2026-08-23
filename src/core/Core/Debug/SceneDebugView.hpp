@@ -217,6 +217,14 @@ class SceneDebugView {
     return false;
   }
   virtual void set_sprite_overlay_enabled(bool /*enabled*/) {}
+
+  [[nodiscard]] virtual bool geometry_wireframe_supported() const {
+    return false;
+  }
+  [[nodiscard]] virtual bool geometry_wireframe_enabled() const {
+    return false;
+  }
+  virtual void set_geometry_wireframe_enabled(bool /*enabled*/) {}
 };
 
 }  // namespace App::Debug

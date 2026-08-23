@@ -39,9 +39,9 @@ App::Omikron::ScxScriptCommand make_command() {
       .file_offset = 0};
 }
 
-/// One script template with the given root command count.
-App::Omikron::ScxScript make_script(const std::string_view name,
-    const std::size_t root_command_count) {
+/// One parsed SCX source script with the given root command count.
+App::Omikron::ScxScript make_script(
+    const std::string_view name, const std::size_t root_command_count) {
   App::Omikron::ScxScript script;
   script.name = std::string{name};
   script.root_command_count = static_cast<std::uint32_t>(root_command_count);
@@ -110,8 +110,7 @@ std::shared_ptr<const App::Character::ModelResource> make_body_model_resource() 
   resource->model.hierarchy_next_sibling_index = {-1, -1};
   resource->model.hierarchy_reachable = {1, 1};
   resource->model.skin_parent_index = {-1, 0};
-  resource->model.runtime_objects = {
-      App::Omikron::Model3DOData::RuntimeObjectState{},
+  resource->model.runtime_objects = {App::Omikron::Model3DOData::RuntimeObjectState{},
       App::Omikron::Model3DOData::RuntimeObjectState{.local_offset = {.x = 2.0F}}};
   resource->groups.push_back(App::Omikron::MaterialGroup{});
   return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
@@ -148,12 +147,7 @@ BodyResourcesFixture make_body_resources() {
       .u32(4)
       .u32(root_rotation_offset);
   // mesh_id is 200, but the animation must bind this channel by script_id 3.
-  animation.u32(3)
-      .chars("Child", 20)
-      .u32(4)
-      .u32(0)
-      .u32(4)
-      .u32(child_rotation_offset);
+  animation.u32(3).chars("Child", 20).u32(4).u32(0).u32(4).u32(child_rotation_offset);
   for (std::uint32_t frame{0}; frame < 4U; ++frame) {
     animation.f32(static_cast<float>(frame) * 10.0F).f32(0.0F).f32(0.0F);
   }
@@ -168,10 +162,9 @@ BodyResourcesFixture make_body_resources() {
   BodyResourcesFixture fixture;
   fixture.bytes = path.data();
   fixture.bytes.insert(fixture.bytes.end(), animation.data().begin(), animation.data().end());
-  fixture.scx.section0_records.push_back(
-      App::Omikron::ScxSection0Record{.name = "Grid_pb.3dp"});
-  fixture.scx.section0_resources.push_back(App::Omikron::ScxEmbeddedResource{
-      .payload_offset = 0, .payload_size = path.data().size()});
+  fixture.scx.section0_records.push_back(App::Omikron::ScxSection0Record{.name = "Grid_pb.3dp"});
+  fixture.scx.section0_resources.push_back(
+      App::Omikron::ScxEmbeddedResource{.payload_offset = 0, .payload_size = path.data().size()});
   fixture.scx.animations.push_back(App::Omikron::ScxAnimationRecord{
       .name = "INTRO1.3DA", .serialized_field_1c = 0, .animation_id = 77});
   fixture.scx.animation_resources.push_back(App::Omikron::ScxEmbeddedResource{
@@ -186,8 +179,8 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
     App::Omikron::ScxData scx;
     App::ScenarioRuntime runtime;
 
-    const auto result{runtime.initialize(
-        scx, std::span<const std::byte>{}, "empty", nullptr, false)};
+    const auto result{
+        runtime.initialize(scx, std::span<const std::byte>{}, "empty", nullptr, false)};
     REQUIRE(result.has_value());
     CHECK(runtime.initialized());
     CHECK(runtime.script_runtime() != nullptr);
@@ -196,15 +189,15 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
     CHECK(runtime.script_runtime()->instances().empty());
   }
 
-  TEST_CASE("Loads script templates inactive by default") {
+  TEST_CASE("Loads parsed SCX scripts without runtime instances by default") {
     App::Omikron::ScxData scx;
     scx.scripts.push_back(make_script("a", 1));
     scx.scripts.push_back(make_script("b", 1));
     scx.scripts.push_back(make_script("c", 0));
     App::ScenarioRuntime runtime;
 
-    const auto result{runtime.initialize(
-        scx, std::span<const std::byte>{}, "templates", nullptr, false)};
+    const auto result{
+        runtime.initialize(scx, std::span<const std::byte>{}, "source-scripts", nullptr, false)};
     REQUIRE(result.has_value());
     REQUIRE(runtime.script_runtime() != nullptr);
     CHECK_EQ(runtime.script_runtime()->scx().scripts.size(), 3U);
@@ -217,8 +210,8 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
     scx.scripts.push_back(make_script("b", 0));
     App::ScenarioRuntime runtime;
 
-    const auto result{runtime.initialize(
-        scx, std::span<const std::byte>{}, "active", nullptr, true)};
+    const auto result{
+        runtime.initialize(scx, std::span<const std::byte>{}, "active", nullptr, true)};
     REQUIRE(result.has_value());
     REQUIRE(runtime.script_runtime() != nullptr);
     REQUIRE_EQ(runtime.script_runtime()->instances().size(), 1U);
@@ -230,7 +223,7 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
     scx.scripts.push_back(make_script("a", 1));
     App::ScenarioRuntime runtime;
     REQUIRE(runtime.initialize(scx, std::span<const std::byte>{}, "inactive", nullptr, false)
-                .has_value());
+            .has_value());
 
     const auto instance{runtime.spawn_script_instance(0)};
     REQUIRE(instance.has_value());
@@ -283,8 +276,8 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
   TEST_CASE("Sprite pool lifecycle works through the runtime") {
     App::Omikron::ScxData scx;
     App::ScenarioRuntime runtime;
-    REQUIRE(runtime.initialize(scx, std::span<const std::byte>{}, "pool", nullptr, false)
-                .has_value());
+    REQUIRE(
+        runtime.initialize(scx, std::span<const std::byte>{}, "pool", nullptr, false).has_value());
 
     App::Sprite::SpritePool& pool{runtime.sprite_pool()};
     const auto handle{pool.create(0, 0, 4, {1.0F, 2.0F, 3.0F})};
@@ -302,7 +295,7 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
     App::Omikron::ScxData scx;
     App::ScenarioRuntime runtime;
     REQUIRE(runtime.initialize(scx, std::span<const std::byte>{}, "anchor", nullptr, false)
-                .has_value());
+            .has_value());
 
     CHECK_EQ(runtime.world_anchor().at(0), 0.0F);
     CHECK_EQ(runtime.world_anchor().at(1), 0.0F);
@@ -323,28 +316,27 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
     };
 
     App::ScenarioRuntime animated_runtime;
-    REQUIRE(animated_runtime
-                .initialize(resources.scx, resources.bytes, "animated", nullptr, false)
-                .has_value());
+    REQUIRE(animated_runtime.initialize(resources.scx, resources.bytes, "animated", nullptr, false)
+            .has_value());
     animated_runtime.character_runtime().set_model_loader(loader);
     REQUIRE(animated_runtime
-                .activate_character(118,
-                    make_character_area(),
-                    App::Script::AreaCharacterActivationRequest{
-                        .character_id = 310, .apply_area_transform = true})
-                .has_value());
+            .activate_character(118,
+                make_character_area(),
+                App::Script::AreaCharacterActivationRequest{
+                    .character_id = 310, .apply_area_transform = true})
+            .has_value());
 
     App::ScenarioRuntime untouched_runtime;
-    REQUIRE(untouched_runtime
-                .initialize(resources.scx, resources.bytes, "untouched", nullptr, false)
-                .has_value());
+    REQUIRE(
+        untouched_runtime.initialize(resources.scx, resources.bytes, "untouched", nullptr, false)
+            .has_value());
     untouched_runtime.character_runtime().set_model_loader(loader);
     REQUIRE(untouched_runtime
-                .activate_character(118,
-                    make_character_area(),
-                    App::Script::AreaCharacterActivationRequest{
-                        .character_id = 310, .apply_area_transform = true})
-                .has_value());
+            .activate_character(118,
+                make_character_area(),
+                App::Script::AreaCharacterActivationRequest{
+                    .character_id = 310, .apply_area_transform = true})
+            .has_value());
 
     const App::Script::RelativeBodyAnimationRequest request{.character_id = 310,
         .object_binding = "RootBody",

@@ -41,11 +41,14 @@ void DebugUI::toggle_opengl_state() {
 void DebugUI::toggle_sprite_inspector() {
   m_show_sprite_inspector = !m_show_sprite_inspector;
 }
-void DebugUI::toggle_overlays() {
-  m_show_overlays = !m_show_overlays;
+void DebugUI::toggle_world_inspector() {
+  m_show_world_inspector = !m_show_world_inspector;
 }
-void DebugUI::toggle_script_debugger() {
-  m_show_script_debugger = !m_show_script_debugger;
+void DebugUI::toggle_visualizers() {
+  m_show_visualizers = !m_show_visualizers;
+}
+void DebugUI::toggle_scx_script_inspector() {
+  m_show_scx_script_inspector = !m_show_scx_script_inspector;
 }
 void DebugUI::toggle_audio_inspector() {
   m_show_audio_inspector = !m_show_audio_inspector;
@@ -53,11 +56,11 @@ void DebugUI::toggle_audio_inspector() {
 void DebugUI::toggle_scenarios() {
   m_show_scenarios = !m_show_scenarios;
 }
-void DebugUI::toggle_area_script() {
-  m_show_area_script = !m_show_area_script;
+void DebugUI::toggle_area_vm() {
+  m_show_area_vm = !m_show_area_vm;
 }
-void DebugUI::toggle_startup() {
-  m_show_startup = !m_show_startup;
+void DebugUI::toggle_runtime_overview() {
+  m_show_runtime_overview = !m_show_runtime_overview;
 }
 void DebugUI::toggle_interface() {
   m_show_interface = !m_show_interface;
@@ -134,14 +137,17 @@ void DebugUI::update(const float delta_time) {
   if (m_show_opengl_state) {
     show_opengl_state();
   }
-  if (m_show_overlays) {
-    show_overlays();
+  if (m_show_world_inspector) {
+    show_world_inspector();
+  }
+  if (m_show_visualizers) {
+    show_visualizers();
   }
   if (m_show_sprite_inspector) {
     show_sprite_inspector(delta_time);
   }
-  if (m_show_script_debugger) {
-    show_script_debugger();
+  if (m_show_scx_script_inspector) {
+    show_scx_script_inspector();
   }
   if (m_show_audio_inspector) {
     show_audio_inspector();
@@ -149,11 +155,11 @@ void DebugUI::update(const float delta_time) {
   if (m_show_scenarios) {
     show_scenarios();
   }
-  if (m_show_area_script) {
-    show_area_script();
+  if (m_show_area_vm) {
+    show_area_vm();
   }
-  if (m_show_startup) {
-    show_startup();
+  if (m_show_runtime_overview) {
+    show_runtime_overview();
   }
   if (m_show_interface) {
     show_interface();
@@ -170,16 +176,17 @@ void DebugUI::update(const float delta_time) {
 void DebugUI::show_menu_bar() {
   if (ImGui::BeginMainMenuBar()) {
     if (ImGui::BeginMenu("Runtime")) {
+      ImGui::MenuItem("Runtime Overview", nullptr, &m_show_runtime_overview);
       ImGui::MenuItem("Scenarios", nullptr, &m_show_scenarios);
-      ImGui::MenuItem("Script Debugger", nullptr, &m_show_script_debugger);
-      ImGui::MenuItem("Area Script", nullptr, &m_show_area_script);
-      ImGui::MenuItem("Startup / IAM", nullptr, &m_show_startup);
+      ImGui::MenuItem("AREA VM", nullptr, &m_show_area_vm);
+      ImGui::MenuItem("SCX Script Inspector", nullptr, &m_show_scx_script_inspector);
       ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("World")) {
-      ImGui::MenuItem("Overlays", nullptr, &m_show_overlays);
+      ImGui::MenuItem("World Inspector", nullptr, &m_show_world_inspector);
       ImGui::MenuItem("Sprite Inspector", nullptr, &m_show_sprite_inspector);
-      ImGui::MenuItem("Interface", nullptr, &m_show_interface);
+      ImGui::MenuItem("Interface Inspector", nullptr, &m_show_interface);
+      ImGui::MenuItem("Visualizers", nullptr, &m_show_visualizers);
       ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Audio")) {

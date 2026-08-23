@@ -90,6 +90,8 @@ void main() {
 }
 )glsl"};
 
+constexpr std::array<GLfloat, 4> K_WIREFRAME_COLOR{0.15F, 0.95F, 1.0F, 0.9F};
+
 constexpr std::string_view K_FRAGMENT_SHADER_SOURCE{R"glsl(
 #version 410 core
 in vec3 v_normal;
@@ -367,11 +369,13 @@ layout(location = 0) in vec3 a_position;
 layout(location = 1) in vec4 a_color;
 
 uniform mat4 u_mvp;
+uniform float u_uniform_color;
+uniform vec4 u_color;
 
 out vec4 v_color;
 
 void main() {
-    v_color = a_color;
+    v_color = mix(a_color, u_color, u_uniform_color);
     gl_Position = u_mvp * vec4(a_position, 1.0);
     gl_PointSize = 12.0;
 }
@@ -1237,6 +1241,9 @@ void ModelViewerScene::render() {
   }
 
   render_scene(view, projection, model, eye, glm::make_vec4(k_no_clip_plane.data()), true);
+  if (m_geometry_wireframe_enabled) {
+    render_geometry_wireframe(view, projection, model);
+  }
 
   // Expose the sprite queue statistics to the debug performance window.
   const Sprite::SpriteQueueStats& sprite_stats{m_sprite_renderer.queue_stats()};
@@ -1307,6 +1314,7 @@ void ModelViewerScene::render_light_overlay(const glm::mat4& view, const glm::ma
 
   m_overlay_shader.bind();
   m_overlay_shader.set_uniform_mat4("u_mvp", std::span<const GLfloat, 16>{glm::value_ptr(mvp), 16});
+  m_overlay_shader.set_uniform_float("u_uniform_color", 0.0F);
   m_overlay_array.bind();
 
   // Depth-tested but depth-non-writing: markers respect the geometry in
@@ -1404,6 +1412,7 @@ void ModelViewerScene::render_sprite_overlay(const glm::mat4& view, const glm::m
 
   m_overlay_shader.bind();
   m_overlay_shader.set_uniform_mat4("u_mvp", std::span<const GLfloat, 16>{glm::value_ptr(mvp), 16});
+  m_overlay_shader.set_uniform_float("u_uniform_color", 0.0F);
   m_overlay_shader.set_uniform_float("u_point_mode", 0.0F);
   m_sprite_overlay_array.bind();
 
@@ -1418,6 +1427,34 @@ void ModelViewerScene::render_sprite_overlay(const glm::mat4& view, const glm::m
   glDisable(GL_BLEND);
   VertexArray::unbind();
   Shader::unbind();
+}
+
+void ModelViewerScene::render_geometry_wireframe(
+    const glm::mat4& view, const glm::mat4& projection, const glm::mat4& model) {
+  const glm::mat4 mvp{projection * view * model};
+
+  m_overlay_shader.bind();
+  m_overlay_shader.set_uniform_mat4("u_mvp", std::span<const GLfloat, 16>{glm::value_ptr(mvp), 16});
+  m_overlay_shader.set_uniform_float("u_point_mode", 0.0F);
+  m_overlay_shader.set_uniform_float("u_uniform_color", 1.0F);
+  m_overlay_shader.set_uniform_vec4("u_color", std::span<const GLfloat, 4>{K_WIREFRAME_COLOR});
+
+  glEnable(GL_BLEND);
+  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+  glDepthMask(GL_FALSE);
+  glDepthFunc(GL_LEQUAL);
+  glDisable(GL_CULL_FACE);
+  glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+
+  for (const Mesh& mesh : m_meshes) {
+    mesh.draw();
+  }
+
+  glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+  glEnable(GL_CULL_FACE);
+  glDepthFunc(GL_LESS);
+  glDepthMask(GL_TRUE);
+  glDisable(GL_BLEND);
 }
 
 void ModelViewerScene::render_scene(const glm::mat4& view,
@@ -1774,6 +1811,14 @@ bool ModelViewerScene::sprite_overlay_enabled() const {
 
 void ModelViewerScene::set_sprite_overlay_enabled(const bool enabled) {
   m_sprite_overlay_enabled = enabled;
+}
+
+bool ModelViewerScene::geometry_wireframe_enabled() const {
+  return m_geometry_wireframe_enabled;
+}
+
+void ModelViewerScene::set_geometry_wireframe_enabled(const bool enabled) {
+  m_geometry_wireframe_enabled = enabled;
 }
 
 }  // namespace App

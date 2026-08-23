@@ -94,6 +94,30 @@ void main() {
 }
 )glsl"};
 
+constexpr std::string_view K_WIREFRAME_VERTEX_SHADER{R"glsl(
+#version 410 core
+layout(location = 0) in vec3 a_position;
+
+uniform mat4 u_mvp;
+
+void main() {
+    gl_Position = u_mvp * vec4(a_position, 1.0);
+}
+)glsl"};
+
+constexpr std::string_view K_WIREFRAME_FRAGMENT_SHADER{R"glsl(
+#version 410 core
+uniform vec4 u_color;
+
+out vec4 frag_colour;
+
+void main() {
+    frag_colour = u_color;
+}
+)glsl"};
+
+constexpr std::array<GLfloat, 4> K_WIREFRAME_COLOR{0.15F, 0.95F, 1.0F, 0.9F};
+
 /// Legacy fallback lighting used when the decor relies on ordinary normals
 /// rather than baked vertex lighting. Keep these aligned with ModelViewerScene.
 constexpr std::array<GLfloat, 3> K_LIGHT_DIRECTION{0.35F, 0.75F, 0.55F};
@@ -195,6 +219,11 @@ std::expected<std::unique_ptr<WorldRenderer>, std::string> WorldRenderer::create
     return std::expected<std::unique_ptr<WorldRenderer>, std::string>{
         std::unexpect, std::move(shader).error()};
   }
+  auto wireframe_shader{Shader::create(K_WIREFRAME_VERTEX_SHADER, K_WIREFRAME_FRAGMENT_SHADER)};
+  if (!wireframe_shader) {
+    return std::expected<std::unique_ptr<WorldRenderer>, std::string>{
+        std::unexpect, std::move(wireframe_shader).error()};
+  }
 
   auto textures{load_decor_textures(context, model)};
   if (!textures) {
@@ -205,6 +234,7 @@ std::expected<std::unique_ptr<WorldRenderer>, std::string> WorldRenderer::create
   // NOLINTNEXTLINE(cppcoreguidelines-owning-memory) -- private constructor.
   auto renderer{std::unique_ptr<WorldRenderer>{new WorldRenderer()}};
   renderer->m_shader = std::make_unique<Shader>(std::move(shader).value());
+  renderer->m_wireframe_shader = std::make_unique<Shader>(std::move(wireframe_shader).value());
   renderer->m_textures = std::move(textures).value();
 
   std::array<float, 3> bounds_min{std::numeric_limits<float>::max(),
@@ -445,6 +475,56 @@ void WorldRenderer::draw_character_group(const Character::RuntimeCharacter& char
   gpu.meshes.at(group_index).draw();
 }
 
+void WorldRenderer::render_geometry_wireframe(
+    const Camera& camera, const ScenarioRuntime* const runtime) {
+  if (m_wireframe_shader == nullptr) {
+    return;
+  }
+
+  const glm::mat4 view{glm::make_mat4(camera.get_view_matrix().data())};
+  const glm::mat4 projection{glm::make_mat4(camera.get_projection_matrix().data())};
+  const glm::mat4 identity{1.0F};
+  glm::mat4 mvp{projection * view * identity};
+
+  m_wireframe_shader->bind();
+  m_wireframe_shader->set_uniform_vec4("u_color", std::span<const GLfloat, 4>{K_WIREFRAME_COLOR});
+
+  glEnable(GL_BLEND);
+  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+  glDepthMask(GL_FALSE);
+  glDepthFunc(GL_LEQUAL);
+  glDisable(GL_CULL_FACE);
+  glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+
+  m_wireframe_shader->set_uniform_mat4(
+      "u_mvp", std::span<const GLfloat, 16>{glm::value_ptr(mvp), 16});
+  for (const Mesh& mesh : m_meshes) {
+    mesh.draw();
+  }
+
+  if (runtime != nullptr) {
+    for (const Character::RuntimeCharacter& character : runtime->character_runtime().characters()) {
+      const auto found{m_character_models.find(character.instance_id)};
+      if (!character.renderable() || found == m_character_models.end()) {
+        continue;
+      }
+      const glm::mat4 model{Runtime::Presentation::to_gl(character.transform)};
+      mvp = projection * view * model;
+      m_wireframe_shader->set_uniform_mat4(
+          "u_mvp", std::span<const GLfloat, 16>{glm::value_ptr(mvp), 16});
+      for (const Mesh& mesh : found->second->meshes) {
+        mesh.draw();
+      }
+    }
+  }
+
+  glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+  glEnable(GL_CULL_FACE);
+  glDepthFunc(GL_LESS);
+  glDepthMask(GL_TRUE);
+  glDisable(GL_BLEND);
+}
+
 void WorldRenderer::render(const Camera& camera, ScenarioRuntime* const runtime) {
   APP_PROFILE_FUNCTION();
 
@@ -477,8 +557,7 @@ void WorldRenderer::render(const Camera& camera, ScenarioRuntime* const runtime)
 
   m_shader->bind();
   m_shader->set_uniform_mat4("u_mvp", std::span<const GLfloat, 16>{glm::value_ptr(mvp), 16});
-  m_shader->set_uniform_mat4(
-      "u_model", std::span<const GLfloat, 16>{glm::value_ptr(identity), 16});
+  m_shader->set_uniform_mat4("u_model", std::span<const GLfloat, 16>{glm::value_ptr(identity), 16});
   m_shader->set_uniform_vec3("u_light_direction", std::span<const GLfloat, 3>{K_LIGHT_DIRECTION});
   m_shader->set_uniform_float("u_ambient", K_AMBIENT_STRENGTH);
 
@@ -491,8 +570,7 @@ void WorldRenderer::render(const Camera& camera, ScenarioRuntime* const runtime)
     }
   }
   if (runtime != nullptr) {
-    for (const Character::RuntimeCharacter& character :
-        runtime->character_runtime().characters()) {
+    for (const Character::RuntimeCharacter& character : runtime->character_runtime().characters()) {
       const auto found{m_character_models.find(character.instance_id)};
       if (!character.renderable() || found == m_character_models.end()) {
         continue;
@@ -528,8 +606,7 @@ void WorldRenderer::render(const Camera& camera, ScenarioRuntime* const runtime)
   glDepthMask(GL_FALSE);
   m_shader->bind();
   m_shader->set_uniform_mat4("u_mvp", std::span<const GLfloat, 16>{glm::value_ptr(mvp), 16});
-  m_shader->set_uniform_mat4(
-      "u_model", std::span<const GLfloat, 16>{glm::value_ptr(identity), 16});
+  m_shader->set_uniform_mat4("u_model", std::span<const GLfloat, 16>{glm::value_ptr(identity), 16});
   for (const std::size_t index : blended) {
     switch (m_group_modes.at(index)) {
       case Omikron::BlendMode::k_additive:
@@ -548,8 +625,7 @@ void WorldRenderer::render(const Camera& camera, ScenarioRuntime* const runtime)
     draw_group(index);
   }
   if (runtime != nullptr) {
-    for (const Character::RuntimeCharacter& character :
-        runtime->character_runtime().characters()) {
+    for (const Character::RuntimeCharacter& character : runtime->character_runtime().characters()) {
       const auto found{m_character_models.find(character.instance_id)};
       if (!character.renderable() || found == m_character_models.end()) {
         continue;
@@ -585,6 +661,9 @@ void WorldRenderer::render(const Camera& camera, ScenarioRuntime* const runtime)
   glBlendEquation(GL_FUNC_ADD);
   glDisable(GL_BLEND);
   glDepthMask(GL_TRUE);
+  if (m_geometry_wireframe) {
+    render_geometry_wireframe(camera, runtime);
+  }
   Shader::unbind();
 }
 

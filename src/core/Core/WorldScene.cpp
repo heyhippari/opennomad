@@ -179,8 +179,7 @@ class WorldLetterboxRenderer {
       return std::expected<std::unique_ptr<WorldLetterboxRenderer>, std::string>{
           std::unexpect, "failed to create cinematic letterbox vertex array"};
     }
-    return std::expected<std::unique_ptr<WorldLetterboxRenderer>, std::string>{
-        std::move(renderer)};
+    return std::expected<std::unique_ptr<WorldLetterboxRenderer>, std::string>{std::move(renderer)};
   }
 
   ~WorldLetterboxRenderer() {
@@ -332,8 +331,8 @@ std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state
       std::size_t group_count{0};
       float bounds_radius{0.0F};
       if (model_resource != nullptr) {
-        bounds_center = Runtime::transform_point(
-            model_resource->bounds_center, character.transform);
+        bounds_center =
+            Runtime::transform_point(model_resource->bounds_center, character.transform);
         group_count = character.posed_groups.size();
         bounds_radius = model_resource->bounds_radius;
       }
@@ -347,11 +346,10 @@ std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state
             model_resource->model.meshes.at(animation.selected_object_index)};
         selected_mesh_id = selected.mesh_id;
         selected_script_id = selected.script_id;
-        selected_is_root = std::cmp_equal(animation.selected_object_index,
-            model_resource->model.root_mesh_index);
+        selected_is_root =
+            std::cmp_equal(animation.selected_object_index, model_resource->model.root_mesh_index);
       }
-      Debug::RuntimeCharacterDebugState debug_character{
-          .instance_id = character.instance_id,
+      Debug::RuntimeCharacterDebugState debug_character{.instance_id = character.instance_id,
           .character_id = character.character_id,
           .area_id = character.area_id,
           .active = character.active,
@@ -391,10 +389,12 @@ std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state
           .sampled_path_position = {animation.sampled_path_position.x,
               animation.sampled_path_position.y,
               animation.sampled_path_position.z},
-          .authored_offset = {
-              animation.authored_offset.x, animation.authored_offset.y, animation.authored_offset.z},
-          .final_anchor = {
-              animation.final_anchor.x, animation.final_anchor.y, animation.final_anchor.z},
+          .authored_offset = {animation.authored_offset.x,
+              animation.authored_offset.y,
+              animation.authored_offset.z},
+          .final_anchor = {animation.final_anchor.x,
+              animation.final_anchor.y,
+              animation.final_anchor.z},
           .root_motion_delta = {animation.root_motion_delta.x,
               animation.root_motion_delta.y,
               animation.root_motion_delta.z},
@@ -404,9 +404,10 @@ std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state
           .object_poses = {}};
       if (model_resource != nullptr) {
         const Omikron::Model3DOData& model{model_resource->model};
-        for (std::size_t index{0}; index < character.object_poses.size() &&
-             index < model.meshes.size() && index < character.runtime_objects.size();
-             ++index) {
+        for (std::size_t index{0};
+            index < character.object_poses.size() && index < model.meshes.size() &&
+            index < character.runtime_objects.size();
+            ++index) {
           const Character::BodyAnimationObjectPose& pose{character.object_poses.at(index)};
           const Omikron::Model3DOData::RuntimeObjectState& object{
               character.runtime_objects.at(index)};
@@ -439,8 +440,8 @@ std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state
   state.viewport_height = m_height;
   state.letterbox_target_bar_height = WorldLetterboxState::target_bar_height(
       static_cast<float>(m_width), static_cast<float>(m_height));
-  state.letterbox_current_bar_height = m_letterbox.current_bar_height(
-      static_cast<float>(m_width), static_cast<float>(m_height));
+  state.letterbox_current_bar_height =
+      m_letterbox.current_bar_height(static_cast<float>(m_width), static_cast<float>(m_height));
 
   if (state.camera_has_pose) {
     const WorldCameraPose& pose{m_camera.pose()};
@@ -495,6 +496,17 @@ void WorldScene::set_sprite_grayscale_enabled(const bool enabled) {
   }
 }
 
+bool WorldScene::geometry_wireframe_enabled() const {
+  return m_geometry_wireframe_enabled;
+}
+
+void WorldScene::set_geometry_wireframe_enabled(const bool enabled) {
+  m_geometry_wireframe_enabled = enabled;
+  if (m_world_renderer != nullptr) {
+    m_world_renderer->set_geometry_wireframe(enabled);
+  }
+}
+
 void WorldScene::consume_fade_commands(const WorldSceneContext* const context) {
   if (m_scenarios == nullptr) {
     return;
@@ -536,8 +548,7 @@ void WorldScene::consume_letterbox_commands(const WorldSceneContext* const conte
   // avoids accepting a valid new-world command and then erasing it one frame
   // later during lifecycle synchronization.
   if (m_scenarios == nullptr || context == nullptr || !m_world_observed ||
-      context->scene_id != m_observed_scene_id ||
-      context->generation != m_observed_generation) {
+      context->scene_id != m_observed_scene_id || context->generation != m_observed_generation) {
     return;
   }
 
@@ -593,6 +604,7 @@ void WorldScene::update(const float delta_time, const Input::InputManager& input
           m_world_renderer.reset();
         } else {
           m_world_renderer = std::move(renderer).value();
+          m_world_renderer->set_geometry_wireframe(m_geometry_wireframe_enabled);
           // WorldRenderer bounds are presentation-local. Convert the centre
           // back through the involutive B basis for Runtime-native fallback state.
           m_camera.set_fallback_pose(

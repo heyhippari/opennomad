@@ -20,6 +20,7 @@ struct SoundVoice {
   SoundResourceId resource{};
   std::uint16_t scenario_sound_index{0xFFFFU};
   AudioOwnerToken owner{};
+  AudioProvenance provenance;
   std::optional<SoundEmitterState> emitter{};
   float previous_distance{-1.0F};
   float base_frequency_hz{0.0F};
@@ -82,9 +83,15 @@ class VoicePool {
 
   [[nodiscard]] std::size_t active_count() const;
   [[nodiscard]] std::size_t free_count() const;
-  [[nodiscard]] std::size_t size() const { return m_slots.size(); }
-  [[nodiscard]] const SoundVoice& at(std::size_t index) const { return m_slots.at(index); }
-  [[nodiscard]] SoundVoice& at(std::size_t index) { return m_slots.at(index); }
+  [[nodiscard]] std::size_t size() const {
+    return m_slots.size();
+  }
+  [[nodiscard]] const SoundVoice& at(std::size_t index) const {
+    return m_slots.at(index);
+  }
+  [[nodiscard]] SoundVoice& at(std::size_t index) {
+    return m_slots.at(index);
+  }
 
  private:
   [[nodiscard]] static std::size_t resolve_index(VoiceHandle handle);

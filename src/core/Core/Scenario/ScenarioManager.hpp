@@ -305,7 +305,6 @@ class ScenarioManager {
   }
 
  private:
-
   /// A fully loaded scenario package: the parsed data plus the backing byte
   /// buffer whose offsets the parsed data indexes into.
   struct LoadedScenario {
@@ -346,7 +345,7 @@ class ScenarioManager {
       const std::string& scenario_path);
 
   /// Builds a scenario runtime (script runtime, sprite pool, sound resources)
-  /// from a loaded package, with all script templates inactive. Returns an
+  /// from a loaded package, with no SCX runtime instances active. Returns an
   /// error without mutating anything when construction fails.
   [[nodiscard]] std::expected<std::unique_ptr<ScenarioRuntime>, std::string> prepare_runtime(
       const std::string& scenario_name, const LoadedScenario& loaded);

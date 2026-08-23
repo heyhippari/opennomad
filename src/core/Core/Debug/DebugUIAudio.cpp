@@ -39,34 +39,13 @@ void DebugUI::show_audio_inspector() {
   ImGui::Text("Requested: %s", snapshot.requested_format.c_str());
   ImGui::Text("Negotiated: %s", snapshot.negotiated_format.c_str());
 
-  ImGui::SeparatorText("Debug Overrides");
-  ImGui::TextDisabled("Gain and transport controls modify live audio state.");
-  float master{audio->master_gain()};
-  float sfx{audio->sfx_gain()};
-  float music{audio->music_gain()};
-  if (ImGui::SliderFloat("Master gain", &master, 0.0F, 2.0F)) {
-    audio->set_master_gain(master);
-  }
-  if (ImGui::SliderFloat("SFX gain", &sfx, 0.0F, 2.0F)) {
-    audio->set_sfx_gain(sfx);
-  }
-  if (ImGui::SliderFloat("Music gain", &music, 0.0F, 2.0F)) {
-    audio->set_music_gain(music);
-  }
+  ImGui::SeparatorText("Capacity / activity");
   ImGui::Text("Voices: %lu active / %lu free / 16 total",
       static_cast<unsigned long>(snapshot.active_voices),
       static_cast<unsigned long>(snapshot.free_voices));
   ImGui::Text("Cache: %lu / %lu resources",
       static_cast<unsigned long>(snapshot.cached_resources),
       static_cast<unsigned long>(snapshot.cache_capacity));
-  if (ImGui::Button("Stop all SFX")) {
-    audio->stop_all_sfx();
-  }
-  ImGui::SameLine();
-  if (ImGui::Button("Stop music")) {
-    audio->music().stop(0);
-  }
-
   // --- Listener ---
   ImGui::SeparatorText("Listener");
   ImGui::Text("Position: (%.2f, %.2f, %.2f)",
@@ -141,14 +120,12 @@ void DebugUI::show_audio_inspector() {
           state_name = "Stopping";
           break;
       }
-      ImGui::Text("slot %u gen %u [%s] sound %u '%s' idx %u owner '%s'",
+      ImGui::Text("slot %u gen %u [%s] resource %u '%s'",
           voice.index,
           voice.generation,
           state_name,
           voice.resource.index,
-          voice.sound_name.c_str(),
-          voice.scenario_sound_index,
-          voice.owner_description.c_str());
+          voice.sound_name.c_str());
       if (voice.state != Audio::VoiceState::k_free) {
         ImGui::SameLine();
         if (ImGui::SmallButton(fmt::format("Stop (debug override)##{}", voice.index).c_str())) {
@@ -156,6 +133,30 @@ void DebugUI::show_audio_inspector() {
               Audio::VoiceHandle{.index = voice.index, .generation = voice.generation}));
         }
         ImGui::Indent();
+        ImGui::Text("Provenance: %s",
+            fmt::format("{}", Audio::audio_origin_name(voice.provenance.origin)).c_str());
+        ImGui::Text("Scenario/source: %s -> SCX sound [%u] '%s' -> voice %u:%u -> owner %s",
+            voice.scenario_name.empty() ? "unavailable" : voice.scenario_name.c_str(),
+            voice.scenario_sound_index,
+            voice.sound_name.c_str(),
+            voice.index,
+            voice.generation,
+            voice.owner_description.c_str());
+        if (voice.provenance.origin == Audio::AudioOrigin::k_structured_script) {
+          ImGui::Text("Structured script: source %s, instance %s, function %s",
+              voice.provenance.source_script_index.has_value()
+                  ? fmt::format("{}", voice.provenance.source_script_index.value()).c_str()
+                  : "unavailable",
+              voice.provenance.script_instance_id.has_value()
+                  ? fmt::format("{}", voice.provenance.script_instance_id.value()).c_str()
+                  : "unavailable",
+              voice.provenance.function_id.has_value()
+                  ? fmt::format("{:#010x}", voice.provenance.function_id.value()).c_str()
+                  : "unavailable");
+        }
+        if (voice.provenance.origin == Audio::AudioOrigin::k_debug_audition) {
+          ImGui::TextDisabled("Debugger-originated playback; no gameplay script/opcode owner.");
+        }
         ImGui::Text(
             "%s%s%s pos %.0f/%.0f ms dist %.1f prev %.1f gain %.2f pan %.2f l/r "
             "%.2f/%.2f freq %.0f ratio %.3f",
@@ -192,6 +193,18 @@ void DebugUI::show_audio_inspector() {
   const Audio::MusicDebugInfo& music_info{snapshot.music};
   ImGui::Text(
       "Source: %s", music_info.source_name.empty() ? "(none)" : music_info.source_name.c_str());
+  ImGui::Text("Provenance: %s%s",
+      fmt::format("{}", Audio::audio_origin_name(music_info.origin)).c_str(),
+      music_info.source_opcode.has_value()
+          ? fmt::format(" opcode {:#04x}", music_info.source_opcode.value()).c_str()
+          : "");
+  if (music_info.track_id.has_value()) {
+    ImGui::Text("Track: %d  path: %s  loop: %s  raw mode operand: %d",
+        music_info.track_id.value(),
+        music_info.resolved_path.c_str(),
+        music_info.loop_flag ? "yes" : "no",
+        music_info.mode_flag);
+  }
   const char* music_state{"stopped"};
   if (music_info.playing) {
     music_state = music_info.paused ? "paused" : "playing";
@@ -219,6 +232,28 @@ void DebugUI::show_audio_inspector() {
     }
   }
   ImGui::EndChild();
+
+  ImGui::SeparatorText("Debug Overrides");
+  ImGui::TextDisabled("Gain and transport controls modify live audio state.");
+  float master{audio->master_gain()};
+  float sfx{audio->sfx_gain()};
+  float music{audio->music_gain()};
+  if (ImGui::SliderFloat("Master gain", &master, 0.0F, 2.0F)) {
+    audio->set_master_gain(master);
+  }
+  if (ImGui::SliderFloat("SFX gain", &sfx, 0.0F, 2.0F)) {
+    audio->set_sfx_gain(sfx);
+  }
+  if (ImGui::SliderFloat("Music gain", &music, 0.0F, 2.0F)) {
+    audio->set_music_gain(music);
+  }
+  if (ImGui::Button("Stop all SFX")) {
+    audio->stop_all_sfx();
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("Stop music")) {
+    audio->stop_music(0);
+  }
 
   ImGui::End();
 }

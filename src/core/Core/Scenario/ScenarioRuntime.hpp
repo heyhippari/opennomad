@@ -12,10 +12,10 @@
 
 #include "Core/Audio/AudioTypes.hpp"
 #include "Core/Character/CharacterRuntime.hpp"
-#include "Core/Omikron/IamArea.hpp"
-#include "Core/Omikron/SCX.hpp"
 #include "Core/Omikron/Animation3DA.hpp"
+#include "Core/Omikron/IamArea.hpp"
 #include "Core/Omikron/Path3DP.hpp"
+#include "Core/Omikron/SCX.hpp"
 #include "Core/Script/ScriptRuntime.hpp"
 #include "Core/Sprite/SpritePool.hpp"
 #include "Core/Sprite/SpriteRenderMode.hpp"
@@ -51,7 +51,8 @@ class ScenarioRuntime final : public Script::ScriptWorld {
   /// runtime. CPU-only: no GL work happens here. When
   /// `activate_startup_scripts` is true every script owning at least one
   /// command group is instantiated in file order (the standalone/SCX load
-  /// path); otherwise all templates stay inactive (the scenario-manager path).
+  /// path); otherwise parsed SCX source scripts remain inactive in OpenNomad's
+  /// current execution model (the scenario-manager path).
   [[nodiscard]] std::expected<void, std::string> initialize(const Omikron::ScxData& scx,
       std::span<const std::byte> scx_bytes,
       std::string_view scenario_name,
@@ -149,8 +150,7 @@ class ScenarioRuntime final : public Script::ScriptWorld {
   void stop_sound(Audio::SoundResourceId sound, const Audio::AudioOwnerToken& owner) override;
   [[nodiscard]] Audio::AudioContextInfo audio_context() const override;
   [[nodiscard]] std::expected<Script::RelativeBodyAnimationResult, std::string>
-  select_relative_body_animation(
-      const Script::RelativeBodyAnimationRequest& request) override;
+  select_relative_body_animation(const Script::RelativeBodyAnimationRequest& request) override;
   void reset_body_animation(std::int16_t character_id) override;
   [[nodiscard]] std::string_view scenario_name() const override;
 

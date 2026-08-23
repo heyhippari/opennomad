@@ -8,11 +8,12 @@
 #include <utility>
 #include <vector>
 
+#include "Core/Debug/DebugEvidence.hpp"
 #include "Core/Debug/DebugUI.hpp"
 #include "Core/Debug/DebugUIInternal.hpp"
+#include "Core/Interface/InterfaceDispatcher.hpp"
 #include "Core/Log.hpp"
 #include "Core/LogCategory.hpp"
-#include "Core/Omikron/IamArea.hpp"
 #include "Core/Omikron/SCX.hpp"
 #include "Core/Scenario/ScenarioEngine.hpp"
 #include "Core/Scenario/ScenarioManager.hpp"
@@ -25,7 +26,7 @@ namespace App::Debug {
 
 namespace {
 
-/// Human-readable run-state label for the script debugger.
+/// Human-readable run-state label for the SCX script inspector.
 const char* script_run_state_name(const Script::ScriptRunState state) {
   switch (state) {
     case Script::ScriptRunState::k_running:
@@ -91,21 +92,22 @@ void DebugUI::show_script_command(Script::ScriptInstance& instance,
     const bool is_root) {
   const Script::OpcodeInfo* info{Script::opcode_info(command.opcode)};
   const char* name{info == nullptr ? nullptr : info->name.data()};
-  ImGui::Text("%s%s: %s (%#010x)",
-      is_root ? "root " : "linked ",
+  ImGui::Text("%s %s: %s",
+      is_root ? "Root command" : "-> SyncFunction",
       fmt::format("{}", command_index).c_str(),
-      name == nullptr ? "unknown" : name,
-      command.opcode);
+      name == nullptr ? "unknown" : name);
   ImGui::Indent();
-  ImGui::Text("args[%u..%u) next %d limit %#x count %u offset %#lx",
+  ImGui::Text("Function ID: %#010x  execution: %u / %#x  source offset: %#lx",
+      command.opcode,
+      command.execution_count,
+      command.execution_limit,
+      static_cast<unsigned long>(command.source_file_offset));
+  ImGui::Text("Arguments: [%u..%u)  next linked: %d",
       command.first_value_index,
       command.first_value_index + command.value_count,
       command.next_linked_command_index.has_value()
           ? static_cast<int>(command.next_linked_command_index.value())
-          : -1,
-      command.execution_limit,
-      command.execution_count,
-      static_cast<unsigned long>(command.source_file_offset));
+          : -1);
   for (std::uint32_t arg{0}; arg < command.value_count; ++arg) {
     const std::size_t pool_index{command.first_value_index + arg};
     if (pool_index >= instance.value_pool.size()) {
@@ -133,8 +135,8 @@ void DebugUI::show_script_command(Script::ScriptInstance& instance,
   ImGui::Unindent();
 }
 
-void DebugUI::show_script_debugger() {
-  ImGui::Begin("Script Debugger", &m_show_script_debugger);
+void DebugUI::show_scx_script_inspector() {
+  ImGui::Begin("SCX Script Inspector", &m_show_scx_script_inspector);
 
   show_runtime_target_summary();
   ScenarioRuntime* scenario_runtime{m_runtime_context.resolved().runtime};
@@ -163,64 +165,29 @@ void DebugUI::show_script_debugger() {
       static_cast<double>(runtime->last_script_delta_frames()),
       runtime->last_script_delta_clamped() ? ", clamped to 3" : "");
 
-  // --- Runtime controls ---
-  ImGui::SeparatorText("Debug Overrides");
-  ImGui::TextDisabled("These controls change SCX execution state.");
-  const bool paused{runtime->run_state() != Script::ScriptRunState::k_running};
-  if (ImGui::Button(paused ? "Resume" : "Pause")) {
-    runtime->set_user_paused(!paused);
-  }
-  ImGui::SameLine();
-  if (ImGui::Button("Step tick")) {
-    runtime->step_tick(m_script_fixed_delta);
-  }
-  ImGui::SameLine();
-  if (ImGui::Button("Step command")) {
-    runtime->step_command();
-  }
-  ImGui::SameLine();
-  if (ImGui::Button("Reset instances")) {
-    runtime->reset_all();
-  }
-  ImGui::SliderFloat("Fixed delta (script frames)", &m_script_fixed_delta, 0.01F, 10.0F, "%.3f");
-  ImGui::TextDisabled("Manual stepping uses 30 Hz script-frame units (1.0 = one frame).");
-
-  bool trace{runtime->trace_enabled()};
-  if (ImGui::Checkbox("Command trace", &trace)) {
-    runtime->set_trace_enabled(trace);
+  if (ImGui::CollapsingHeader("Execution model", ImGuiTreeNodeFlags_DefaultOpen)) {
+    ImGui::TextUnformatted("Retail Runtime");
+    ImGui::BulletText("mutable primary loaded scripts execute directly");
+    ImGui::BulletText("additional clone slots are created by Script_MakeInstance");
+    ImGui::TextDisabled("[%s]", evidence_label(EvidenceConfidence::k_confirmed_runtime));
+    ImGui::TextUnformatted("OpenNomad");
+    ImGui::BulletText("parsed SCX definitions produce mutable ScriptInstance objects");
+    ImGui::BulletText("safe modern representation; ownership is not Runtime-identical");
+    ImGui::TextDisabled("[%s]", evidence_label(EvidenceConfidence::k_open_nomad_only));
+    ImGui::TextDisabled("Structured SCX Script_* records are separate from the compact AREA VM.");
   }
 
-  // Debug-only manual activation, clearly marked as an override.
-  ImGui::SeparatorText("Manual activation");
-  ImGui::TextDisabled("Not used by the normal startup path.");
   const auto& scripts{runtime->scx().scripts};
-  if (ImGui::BeginCombo("Source script",
-          !m_script_selected_source.has_value()
-              ? "(none)"
-              : fmt::format("{}: {}",
-                    m_script_selected_source.value(),
-                    scripts.at(m_script_selected_source.value()).name)
-                    .c_str())) {
+  if (ImGui::CollapsingHeader("SCX source scripts")) {
+    ImGui::TextDisabled("Parsed serialized definitions; not inactive retail runtime templates.");
     for (std::size_t index{0}; index < scripts.size(); ++index) {
-      const bool selected{m_script_selected_source == index};
-      if (ImGui::Selectable(
-              fmt::format("{}: {}", index, scripts.at(index).name).c_str(), selected)) {
-        m_script_selected_source = index;
-      }
-    }
-    ImGui::EndCombo();
-  }
-  ImGui::SameLine();
-  if (ImGui::Button("Activate")) {
-    if (m_script_selected_source.has_value()) {
-      if (auto created{scenario_runtime->spawn_script_instance(m_script_selected_source.value())};
-          created) {
-        App::Log::warn(LogCategory::Debug,
-            "manual debug activation of script {} (override)",
-            m_script_selected_source.value());
-      } else {
-        App::Log::error(LogCategory::Debug, "manual activation failed: {}", created.error());
-      }
+      const Omikron::ScxScript& script{scripts.at(index)};
+      ImGui::Text("%zu: '%s'  ID %u  roots %u  linked %u",
+          index,
+          script.name.c_str(),
+          script.script_id,
+          script.root_command_count,
+          script.linked_command_count);
     }
   }
 
@@ -294,7 +261,7 @@ void DebugUI::show_script_debugger() {
   }
 
   // --- Instance list ---
-  ImGui::SeparatorText("Instances");
+  ImGui::SeparatorText("OpenNomad runtime instances");
   const auto& instances{runtime->instances()};
   for (std::size_t index{0}; index < instances.size(); ++index) {
     const Script::ScriptInstance& instance{instances.at(index)};
@@ -322,10 +289,16 @@ void DebugUI::show_script_debugger() {
     ImGui::SeparatorText("Selected instance");
     const Omikron::ScxScript& source_script{
         runtime->scx().scripts.at(selected->source_script_index)};
-    ImGui::Text("Source script %lu, ID %u, field34 %d, sprite remaps %lu",
+    ImGui::Text("SCX source [%lu] '%s' (ID %u) -> OpenNomad runtime instance %lu",
         static_cast<unsigned long>(selected->source_script_index),
+        source_script.name.c_str(),
         source_script.script_id,
+        static_cast<unsigned long>(selected->instance_id));
+    ImGui::Text("Context field34 %d, elapsed %.3f script frames, %s%s, sprite remaps %lu",
         selected->execution_context_field_34,
+        static_cast<double>(selected->elapsed_script_frames),
+        selected->completed ? "completed" : "active",
+        selected->paused ? ", paused" : "",
         static_cast<unsigned long>(selected->sprite_remap.size()));
     if (selected->launch_context.character_id.has_value()) {
       ImGui::Text("Launch: Character  Character: %d  Parameter: %d",
@@ -337,17 +310,15 @@ void DebugUI::show_script_debugger() {
     for (const auto& [source, handle] : selected->sprite_remap) {
       ImGui::Text("  source sprite %u -> runtime %u:%u", source, handle.index, handle.generation);
     }
-    if (ImGui::Button("Reset this instance (debug override)")) {
-      if (auto result{runtime->reset_instance(selected->instance_id)}; !result) {
-        App::Log::warn(LogCategory::Debug, "reset failed: {}", result.error());
-      }
-    }
-
-    if (ImGui::CollapsingHeader("Groups and commands")) {
+    if (ImGui::CollapsingHeader("Groups & commands", ImGuiTreeNodeFlags_DefaultOpen)) {
+      ImGui::TextDisabled("Group root command -> SyncFunction / linked chain");
       for (std::size_t group{0}; group < selected->root_commands.size(); ++group) {
         const bool is_current{group == selected->current_group_index};
-        ImGui::Text("%sgroup %lu", is_current ? "> " : "  ", static_cast<unsigned long>(group));
-        ImGui::Indent();
+        const std::string group_label{
+            fmt::format("{}Group {}##ScriptGroup{}", is_current ? "> " : "", group, group)};
+        if (!ImGui::TreeNodeEx(group_label.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
+          continue;
+        }
         show_script_command(*selected, selected->root_commands.at(group), group, true);
         std::optional<std::uint32_t> next{
             selected->root_commands.at(group).next_linked_command_index};
@@ -359,7 +330,7 @@ void DebugUI::show_script_debugger() {
           show_script_command(*selected, selected->linked_commands.at(*next), *next, false);
           next = selected->linked_commands.at(*next).next_linked_command_index;
         }
-        ImGui::Unindent();
+        ImGui::TreePop();
       }
     }
   }
@@ -387,6 +358,72 @@ void DebugUI::show_script_debugger() {
     ImGui::EndChild();
   }
 
+  ImGui::SeparatorText("Debug Overrides");
+  ImGui::TextDisabled("These controls change SCX execution state.");
+  const bool paused{runtime->run_state() != Script::ScriptRunState::k_running};
+  if (ImGui::Button(paused ? "Resume" : "Pause")) {
+    runtime->set_user_paused(!paused);
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("Step tick")) {
+    runtime->step_tick(m_script_fixed_delta);
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("Step command")) {
+    runtime->step_command();
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("Reset instances")) {
+    runtime->reset_all();
+  }
+  if (selected != nullptr) {
+    ImGui::SameLine();
+    if (ImGui::Button("Reset selected instance")) {
+      if (auto result{runtime->reset_instance(selected->instance_id)}; !result) {
+        App::Log::warn(LogCategory::Debug, "reset failed: {}", result.error());
+      }
+    }
+  }
+  ImGui::SliderFloat("Fixed delta (script frames)", &m_script_fixed_delta, 0.01F, 10.0F, "%.3f");
+  ImGui::TextDisabled("Manual stepping uses 30 Hz script-frame units (1.0 = one frame).");
+
+  bool trace{runtime->trace_enabled()};
+  if (ImGui::Checkbox("Command trace", &trace)) {
+    runtime->set_trace_enabled(trace);
+  }
+
+  ImGui::TextUnformatted("Manual activation");
+  ImGui::TextDisabled("Not used by the normal startup path; creates OpenNomad runtime state.");
+  if (ImGui::BeginCombo("SCX source script",
+          !m_script_selected_source.has_value()
+              ? "(none)"
+              : fmt::format("{}: {}",
+                    m_script_selected_source.value(),
+                    scripts.at(m_script_selected_source.value()).name)
+                    .c_str())) {
+    for (std::size_t index{0}; index < scripts.size(); ++index) {
+      const bool source_selected{m_script_selected_source == index};
+      if (ImGui::Selectable(
+              fmt::format("{}: {}", index, scripts.at(index).name).c_str(), source_selected)) {
+        m_script_selected_source = index;
+      }
+    }
+    ImGui::EndCombo();
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("Activate")) {
+    if (m_script_selected_source.has_value()) {
+      if (auto created{scenario_runtime->spawn_script_instance(m_script_selected_source.value())};
+          created) {
+        App::Log::warn(LogCategory::Debug,
+            "manual debug activation of script {} (override)",
+            m_script_selected_source.value());
+      } else {
+        App::Log::error(LogCategory::Debug, "manual activation failed: {}", created.error());
+      }
+    }
+  }
+
   ImGui::End();
 }
 
@@ -400,115 +437,86 @@ void DebugUI::show_scenarios() {
     return;
   }
 
-  // --- Gameplay-mode slot ---
-  ImGui::SeparatorText("Gameplay-mode slot");
-  ImGui::Text("Mode: %s",
-      fmt::format("{}", App::gameplay_mode_name(manager->current_gameplay_mode())).c_str());
-  {
-    const Omikron::ScxData* scx{manager->gameplay_mode_scx()};
-    ImGui::Text("Path: %s",
-        scx == nullptr
-            ? "(not loaded)"
-            : fmt::format("{}", App::gameplay_mode_scenario_path(manager->current_gameplay_mode()))
-                  .c_str());
-    ImGui::Text("Loaded: %s", scx == nullptr ? "no" : "yes");
-    if (scx != nullptr) {
-      ImGui::Text(
-          "Scripts: %lu, active: %lu, sounds: %lu, sprites: %lu, models: %lu, shared values: %lu",
-          static_cast<unsigned long>(scx->scripts.size()),
-          static_cast<unsigned long>(manager->active_script_instances_total()),
-          static_cast<unsigned long>(scx->sounds.size()),
-          static_cast<unsigned long>(scx->sprites.size()),
-          static_cast<unsigned long>(scx->models.size()),
-          static_cast<unsigned long>(scx->shared_values.size()));
-      if (ImGui::CollapsingHeader("Script templates##gameplay")) {
-        for (std::size_t index{0}; index < scx->scripts.size(); ++index) {
-          const Omikron::ScxScript& script{scx->scripts.at(index)};
-          ImGui::Text("mode:%lu '%s' id %u — inactive",
-              static_cast<unsigned long>(index),
-              script.name.c_str(),
-              script.script_id);
-        }
-      }
+  ImGui::TextDisabled("Ownership and resources for the confirmed gameplay + two-world-slot model.");
+  const std::vector<LoadedScenarioView> inventory{manager->scenario_inventory()};
+  for (const LoadedScenarioView& scenario : inventory) {
+    const bool gameplay{scenario.identity.role == ScenarioRole::GameplayMode};
+    const std::string header{
+        gameplay
+            ? fmt::format(
+                  "Gameplay-mode slot 0 ({})", gameplay_mode_name(manager->current_gameplay_mode()))
+            : fmt::format("World slot {} (scene {})", scenario.identity.slot, scenario.scene_id)};
+    if (!ImGui::CollapsingHeader(header.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
+      continue;
     }
-  }
 
-  ImGui::SeparatorText("World contexts");
-  const auto contexts{manager->world_contexts()};
-  for (std::size_t index{0}; index < contexts.size(); ++index) {
-    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
-    const WorldSceneContext& context{contexts[index]};
-    const std::string header{fmt::format("Context {} (scene {})", index, context.scene_id)};
-    if (ImGui::CollapsingHeader(header.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
-      ImGui::Text("Residency: %s", residency_name(context.residency));
-      ImGui::Text("Cache index: %lu, generation: %u",
-          static_cast<unsigned long>(index),
-          context.generation);
-      const char* decor{
-          context.decor_path.has_value() ? context.decor_path->c_str() : "(not associated yet)"};
-      ImGui::Text("Decor: %s", decor);
-      if (!context.resolved_decor_path.empty()) {
-        ImGui::Text("Resolved decor: %s", context.resolved_decor_path.c_str());
-      }
+    ImGui::Text("Role: %s  slot: %u  generation: %u",
+        gameplay ? "Gameplay Mode" : "World",
+        scenario.identity.slot,
+        scenario.identity.generation);
+    const char* residency{residency_name(scenario.residency)};
+    if (gameplay) {
+      residency = scenario.loaded ? "Loaded" : "Not loaded";
+    }
+    ImGui::Text("Residency: %s", residency);
+    ImGui::Text("Scenario path: %s",
+        scenario.scenario_path.empty() ? "(none)" : scenario.scenario_path.c_str());
+    ImGui::Text("Resolved path: %s",
+        scenario.resolved_path.empty() ? "(unavailable)" : scenario.resolved_path.c_str());
+    if (!gameplay) {
       ImGui::Text(
-          "Scenario: %s", context.scenario_path.empty() ? "(none)" : context.scenario_path.c_str());
-      if (!context.resolved_scenario_path.empty()) {
-        ImGui::Text("Resolved scenario: %s", context.resolved_scenario_path.c_str());
-      }
-      ImGui::Text("File size: %lu bytes", static_cast<unsigned long>(context.file_size_bytes));
-      if (context.scx_data) {
-        ImGui::Text(
-            "Version: %u, scripts: %lu, sounds: %lu, sprites: %lu, models: %lu, shared values: %lu",
-            context.scx_data->header.version,
-            static_cast<unsigned long>(context.scx_data->scripts.size()),
-            static_cast<unsigned long>(context.scx_data->sounds.size()),
-            static_cast<unsigned long>(context.scx_data->sprites.size()),
-            static_cast<unsigned long>(context.scx_data->models.size()),
-            static_cast<unsigned long>(context.scx_data->shared_values.size()));
-        if (ImGui::CollapsingHeader(fmt::format("Script templates##world{}", index).c_str())) {
-          for (std::size_t script_index{0}; script_index < context.scx_data->scripts.size();
-              ++script_index) {
-            const Omikron::ScxScript& script{context.scx_data->scripts.at(script_index)};
-            ImGui::Text("world:%lu '%s' id %u — inactive",
-                static_cast<unsigned long>(script_index),
-                script.name.c_str(),
-                script.script_id);
-          }
-        }
-      }
-      if (!context.last_error.empty()) {
-        ImGui::TextColored(K_WARNING_COLOR, "Last error: %s", context.last_error.c_str());
-      }
+          "Decor path: %s", scenario.decor_path.empty() ? "(none)" : scenario.decor_path.c_str());
+      ImGui::Text("Resolved decor: %s",
+          scenario.resolved_decor_path.empty() ? "(unavailable)"
+                                               : scenario.resolved_decor_path.c_str());
+    }
+    ImGui::Text("SCX file: version %u, %zu bytes", scenario.file_version, scenario.file_size);
+    ImGui::Text("Runtime: %s  active instances: %zu  active voices: %zu",
+        scenario.loaded ? "available" : "unavailable",
+        scenario.active_script_instances,
+        scenario.active_voices);
+    ImGui::Text("Resources: SCX source scripts %zu | sounds %zu | sprites %zu | models %zu",
+        scenario.script_count,
+        scenario.sound_count,
+        scenario.sprite_count,
+        scenario.model_count);
+    ImGui::Text("Shared values: %zu  render instances: %zu",
+        scenario.shared_value_count,
+        scenario.render_instances);
+    if (!scenario.last_error.empty()) {
+      ImGui::TextColored(K_WARNING_COLOR, "Last error: %s", scenario.last_error.c_str());
+    }
 
-      const std::uint32_t scene_id{context.scene_id};
-      if (context.residency != WorldSceneResidencyState::Free) {
-        ImGui::TextDisabled("Debug Overrides");
-      }
-      if (context.residency == WorldSceneResidencyState::LoadedInactive) {
-        if (ImGui::Button(fmt::format("Activate##{}", index).c_str())) {
-          if (auto result{manager->activate_world_context(scene_id)}; !result) {
-            App::Log::error(
-                LogCategory::Debug, "activate context {} failed: {}", scene_id, result.error());
-          }
+    if (!gameplay && scenario.residency != WorldSceneResidencyState::Free) {
+      ImGui::SeparatorText("Debug Overrides");
+      if (scenario.residency == WorldSceneResidencyState::LoadedInactive &&
+          ImGui::Button(fmt::format("Activate##{}", scenario.identity.slot).c_str())) {
+        if (auto result{manager->activate_world_context(scenario.scene_id)}; !result) {
+          App::Log::error(LogCategory::Debug,
+              "activate context {} failed: {}",
+              scenario.scene_id,
+              result.error());
         }
       }
-      if (context.residency == WorldSceneResidencyState::LoadedActive) {
-        if (ImGui::Button(fmt::format("Deactivate##{}", index).c_str())) {
-          if (auto result{manager->deactivate_world_context(scene_id)}; !result) {
-            App::Log::error(
-                LogCategory::Debug, "deactivate context {} failed: {}", scene_id, result.error());
-          }
+      if (scenario.residency == WorldSceneResidencyState::LoadedActive &&
+          ImGui::Button(fmt::format("Deactivate##{}", scenario.identity.slot).c_str())) {
+        if (auto result{manager->deactivate_world_context(scenario.scene_id)}; !result) {
+          App::Log::error(LogCategory::Debug,
+              "deactivate context {} failed: {}",
+              scenario.scene_id,
+              result.error());
         }
       }
-      if (context.residency != WorldSceneResidencyState::Free) {
-        ImGui::SameLine();
-        if (ImGui::Button(fmt::format("Unload##{}", index).c_str())) {
-          if (context.residency == WorldSceneResidencyState::LoadedActive) {
-            App::Log::warn(LogCategory::Debug, "deactivate context {} before unloading", scene_id);
-          } else if (auto result{manager->unload_world_context(scene_id)}; !result) {
-            App::Log::error(
-                LogCategory::Debug, "unload context {} failed: {}", scene_id, result.error());
-          }
+      ImGui::SameLine();
+      if (ImGui::Button(fmt::format("Unload##{}", scenario.identity.slot).c_str())) {
+        if (scenario.residency == WorldSceneResidencyState::LoadedActive) {
+          App::Log::warn(
+              LogCategory::Debug, "deactivate context {} before unloading", scenario.scene_id);
+        } else if (auto result{manager->unload_world_context(scenario.scene_id)}; !result) {
+          App::Log::error(LogCategory::Debug,
+              "unload context {} failed: {}",
+              scenario.scene_id,
+              result.error());
         }
       }
     }
@@ -538,8 +546,8 @@ void DebugUI::show_scenarios() {
   ImGui::End();
 }
 
-void DebugUI::show_area_script() {
-  ImGui::Begin("Area Script", &m_show_area_script);
+void DebugUI::show_area_vm() {
+  ImGui::Begin("AREA VM", &m_show_area_vm);
 
   const ScenarioEngine* engine{m_context.scenario_engine};
   if (engine == nullptr) {
@@ -549,10 +557,17 @@ void DebugUI::show_area_script() {
   }
   const Script::AreaScriptRuntime* script{engine->area_script()};
   if (script == nullptr) {
-    ImGui::TextUnformatted("Area script not loaded.");
+    ImGui::TextUnformatted("AREA bytecode context not loaded.");
     ImGui::End();
     return;
   }
+
+  ImGui::TextDisabled(
+      "Compact u8 AREA bytecode VM; separate from structured SCX Script_* execution.");
+  ImGui::TextDisabled(
+      "OpenNomad currently exposes one active context, not Runtime's 32-context registry.");
+  ImGui::TextDisabled(
+      "[%s] current representation", evidence_label(EvidenceConfidence::k_open_nomad_only));
 
   const char* state_name{"Unknown"};
   switch (script->state()) {
@@ -576,7 +591,7 @@ void DebugUI::show_area_script() {
       break;
   }
 
-  ImGui::Text("State: %s  active: %s  wait: %u",
+  ImGui::Text("OpenNomad state: %s  active: %s  raw wait state: %u",
       state_name,
       script->active() ? "yes" : "no",
       static_cast<unsigned int>(script->wait_state()));
@@ -624,7 +639,7 @@ void DebugUI::show_area_script() {
     ImGui::Text("nearby: %s", pause.nearby_bytes.c_str());
   }
 
-  ImGui::SeparatorText("Instruction trace");
+  ImGui::SeparatorText("Trace");
   if (ImGui::BeginChild("##AreaTrace", ImVec2(0.0F, 240.0F), ImGuiChildFlags_Borders)) {
     for (const Script::AreaInstructionTrace& entry : script->trace()) {
       ImGui::Text("%zu %#010x %s",
@@ -644,8 +659,8 @@ void DebugUI::show_area_script() {
   ImGui::End();
 }
 
-void DebugUI::show_startup() {
-  ImGui::Begin("Startup / IAM", &m_show_startup);
+void DebugUI::show_runtime_overview() {
+  ImGui::Begin("Runtime Overview", &m_show_runtime_overview);
 
   const ScenarioEngine* engine{m_context.scenario_engine};
   if (engine == nullptr) {
@@ -654,84 +669,50 @@ void DebugUI::show_startup() {
     return;
   }
 
-  ImGui::SeparatorText("IAM/START");
+  ImGui::TextDisabled(
+      "Broad orchestration only; detailed ownership and execution have dedicated inspectors.");
+
+  ImGui::SeparatorText("IAM / START");
   ImGui::Text(
-      "Initial area: %d  linked area: %d", engine->initial_area_id(), engine->linked_area_id());
+      "Initial AREA: %d  linked AREA: %d", engine->initial_area_id(), engine->linked_area_id());
+  ImGui::Text(
+      "Current AREA record: %s", engine->area_record() == nullptr ? "unavailable" : "loaded");
 
-  ImGui::SeparatorText("Area mapping");
-  const auto& mapping{engine->area_mapping_entries()};
-  if (mapping.empty()) {
-    ImGui::TextUnformatted("(empty)");
-  } else {
-    for (const auto& [area_id, linked] : mapping) {
-      ImGui::Text("%d -> %d", area_id, linked);
-    }
-  }
+  ImGui::SeparatorText("Scenario engine");
+  ImGui::Text("Session scheduler: %s", engine->ticked() ? "ticking" : "not yet ticked");
+  ImGui::Text("Gameplay mode: %s",
+      fmt::format("{}", gameplay_mode_name(engine->manager().current_gameplay_mode())).c_str());
 
-  ImGui::SeparatorText("IAM/AREA record");
-  const Omikron::IamAreaRecord* record{engine->area_record()};
-  if (record == nullptr) {
-    ImGui::TextUnformatted("(not loaded)");
-  } else {
-    ImGui::Text("Size: %zu bytes  script offset: %#x",
-        record->record_size(),
-        static_cast<unsigned int>(record->script_offset()));
-    ImGui::Text("3DO: %s", record->model3do_name().c_str());
-    ImGui::Text("SCX: %s", record->scenario_scx_name().c_str());
-    ImGui::Text("MPT: %s", record->map_mpt_name().c_str());
-    ImGui::Text("OPT: %s", record->options_opt_name().c_str());
-    ImGui::Text("ANI: %s", record->animation_ani_name().c_str());
-    ImGui::Text("Sky: %s", record->sky_3do_name().c_str());
-    if (ImGui::CollapsingHeader("Tables")) {
-      for (std::size_t index{0}; index < Omikron::IamAreaRecord::k_table_count; ++index) {
-        const std::optional<std::size_t> stride{Omikron::IamAreaRecord::known_table_stride(index)};
-        ImGui::Text("table %zu: offset %#x count %u stride %s",
-            index,
-            static_cast<unsigned int>(record->table_offset(index)),
-            static_cast<unsigned int>(record->table_count(index)),
-            stride.has_value() ? fmt::format("{}", *stride).c_str() : "unknown");
-      }
-    }
-  }
-
-  ImGui::SeparatorText("Initial AREA dependencies");
-  ImGui::Text("Scenario SCX: %s", engine->initial_world_scenario_path().c_str());
-  ImGui::Text("Decor 3DO: %s (%s)",
-      engine->initial_world_decor_path().empty() ? "(none)"
-                                                 : engine->initial_world_decor_path().c_str(),
-      engine->initial_world_decor_state().empty() ? "not requested"
-                                                  : engine->initial_world_decor_state().c_str());
-
-  ImGui::SeparatorText("Active world context");
+  ImGui::SeparatorText("Active contexts");
   const ScenarioManager& scenarios{engine->manager()};
   const WorldSceneContext* active_world{scenarios.active_world_context()};
   if (active_world == nullptr) {
     ImGui::TextUnformatted("(none)");
   } else {
-    ImGui::Text("Scene ID: %u  generation: %u", active_world->scene_id, active_world->generation);
-    ImGui::Text("Residency: %s", residency_name(active_world->residency));
+    ImGui::Text("World: scene %u, generation %u, %s",
+        active_world->scene_id,
+        active_world->generation,
+        residency_name(active_world->residency));
     ImGui::Text("Scenario: %s",
         active_world->scenario_path.empty() ? "(none)" : active_world->scenario_path.c_str());
-    if (!active_world->resolved_scenario_path.empty()) {
-      ImGui::Text("Resolved scenario: %s", active_world->resolved_scenario_path.c_str());
-    }
-    ImGui::Text("Decor: %s",
-        active_world->decor_path.has_value() ? active_world->decor_path->c_str() : "(none)");
-    if (!active_world->resolved_decor_path.empty()) {
-      ImGui::Text("Resolved decor: %s", active_world->resolved_decor_path.c_str());
-    }
-    ImGui::Text("Decor parsed: %s", active_world->decor_model.has_value() ? "yes" : "no");
-    if (active_world->decor_model.has_value()) {
-      ImGui::Text("meshes %lu materials %lu",
-          static_cast<unsigned long>(active_world->decor_model->meshes.size()),
-          static_cast<unsigned long>(active_world->decor_model->materials.size()));
-    }
   }
+  ImGui::Text("Gameplay scenario: %s",
+      scenarios.gameplay_scenario_path().empty()
+          ? "(none)"
+          : fmt::format("{}", scenarios.gameplay_scenario_path()).c_str());
+
+  const InterfaceOpenRequest& request{engine->dispatcher().last_request()};
+  ImGui::SeparatorText("Interface summary");
+  ImGui::Text("Last request: ID %u, operands %d / %d",
+      static_cast<unsigned int>(request.interface_id),
+      request.operand_b,
+      request.operand_c);
+  ImGui::Text("Main menu: %s  preliminary interface 29: %s",
+      engine->main_menu_active() ? "active" : "inactive",
+      engine->preliminary_29_active() ? "active" : "inactive");
   if (!engine->last_error().empty()) {
     ImGui::TextColored(K_WARNING_COLOR, "Last error: %s", engine->last_error().c_str());
   }
-  ImGui::Text("Ticked: %s", engine->ticked() ? "yes" : "no");
-
   ImGui::End();
 }
 

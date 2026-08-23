@@ -22,8 +22,8 @@
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Log.hpp"
 #include "Core/LogCategory.hpp"
-#include "Core/Omikron/IamArea.hpp"
 #include "Core/Omikron/Animation3DA.hpp"
+#include "Core/Omikron/IamArea.hpp"
 #include "Core/Omikron/Model3DO.hpp"
 #include "Core/Omikron/Path3DP.hpp"
 #include "Core/Omikron/SCX.hpp"
@@ -95,9 +95,11 @@ std::expected<void, std::string> ScenarioRuntime::initialize(const Omikron::ScxD
         active,
         m_scx.scripts.size());
   } else {
-    // Boot configuration: all script templates are loaded but inactive.
-    App::Log::debug(
-        LogCategory::Scenario, "loaded {} script templates (all inactive)", m_scx.scripts.size());
+    // OpenNomad boot configuration: parsed SCX source scripts are available,
+    // but no mutable ScriptInstance objects have been activated.
+    App::Log::debug(LogCategory::Scenario,
+        "loaded {} SCX source scripts (no OpenNomad runtime instances active)",
+        m_scx.scripts.size());
   }
 
   App::Log::debug(
@@ -493,8 +495,8 @@ ScenarioRuntime::select_relative_body_animation(
   }
 
   const Omikron::Model3DOData& model{character->model_resource->model};
-  const auto selected{std::ranges::find(model.meshes, request.object_binding,
-      &Omikron::MeshDescriptor::name)};
+  const auto selected{
+      std::ranges::find(model.meshes, request.object_binding, &Omikron::MeshDescriptor::name)};
   if (selected == model.meshes.end()) {
     return std::expected<Script::RelativeBodyAnimationResult, std::string>{std::unexpect,
         fmt::format("binding A object '{}' does not exist in character {} model '{}'",
@@ -524,7 +526,7 @@ ScenarioRuntime::select_relative_body_animation(
       }
       const std::uint32_t script_id{model.meshes.at(object_index).script_id};
       for (std::size_t channel_index{0}; channel_index < animation.channels.size();
-           ++channel_index) {
+          ++channel_index) {
         const Omikron::Animation3DAChannel& channel{animation.channels.at(channel_index)};
         if (channel.channel_id != script_id) {
           continue;
@@ -572,17 +574,16 @@ ScenarioRuntime::select_relative_body_animation(
     playback.final_anchor = anchor;
   }
 
-  const float previous{std::clamp(
-      request.previous_progress, 0.0F, static_cast<float>(animation.max_frame_index))};
-  const float current{std::clamp(
-      request.current_progress, 0.0F, static_cast<float>(animation.max_frame_index))};
+  const float previous{
+      std::clamp(request.previous_progress, 0.0F, static_cast<float>(animation.max_frame_index))};
+  const float current{
+      std::clamp(request.current_progress, 0.0F, static_cast<float>(animation.max_frame_index))};
   for (std::size_t object_index{0}; object_index < character->object_poses.size(); ++object_index) {
     Character::BodyAnimationObjectPose& pose{character->object_poses.at(object_index)};
     if (!pose.channel_index.has_value()) {
       continue;
     }
-    const Omikron::Animation3DAChannel& channel{
-        animation.channels.at(pose.channel_index.value())};
+    const Omikron::Animation3DAChannel& channel{animation.channels.at(pose.channel_index.value())};
     const std::optional<Runtime::Quaternion> rotation{channel.sample_rotation(current)};
     if (rotation.has_value()) {
       pose.current_quaternion = rotation.value();
@@ -615,8 +616,8 @@ ScenarioRuntime::select_relative_body_animation(
     return std::expected<Script::RelativeBodyAnimationResult, std::string>{
         std::unexpect, std::move(resolved).error()};
   }
-  auto groups{Omikron::Model3DO::build_posed_geometry(
-      model, std::span<const Omikron::Model3DOData::RuntimeObjectState>{character->runtime_objects})};
+  auto groups{Omikron::Model3DO::build_posed_geometry(model,
+      std::span<const Omikron::Model3DOData::RuntimeObjectState>{character->runtime_objects})};
   if (!groups) {
     return std::expected<Script::RelativeBodyAnimationResult, std::string>{
         std::unexpect, std::move(groups).error()};

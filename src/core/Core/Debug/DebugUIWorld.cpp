@@ -10,8 +10,10 @@
 #include <variant>
 #include <vector>
 
+#include "Core/Debug/DebugEvidence.hpp"
 #include "Core/Debug/DebugUI.hpp"
 #include "Core/Debug/DebugUIInternal.hpp"
+#include "Core/Debug/Metrics.hpp"
 #include "Core/Debug/SceneDebugView.hpp"
 #include "Core/Interface/I2DModel.hpp"
 #include "Core/Interface/InterfaceDispatcher.hpp"
@@ -30,8 +32,8 @@
 
 namespace App::Debug {
 
-void DebugUI::show_overlays() {
-  ImGui::Begin("Overlays", &m_show_overlays);
+void DebugUI::show_world_inspector() {
+  ImGui::Begin("World Inspector", &m_show_world_inspector);
 
   auto* view{dynamic_cast<Debug::SceneDebugView*>(m_context.scene)};
   if (view == nullptr) {
@@ -41,8 +43,7 @@ void DebugUI::show_overlays() {
   }
 
   if (const auto world{view->world_render_debug_state()}; world.has_value()) {
-    ImGui::TextUnformatted("World renderer");
-    ImGui::Separator();
+    ImGui::SeparatorText("World / Renderer");
     ImGui::Text("Renderer: %s", world->renderer_ready ? "ready" : "not ready");
     ImGui::Text("Groups: %zu", world->group_count);
     ImGui::Text("Materials: %zu", world->material_count);
@@ -52,10 +53,18 @@ void DebugUI::show_overlays() {
         static_cast<double>(world->bounds_center.at(2)));
     ImGui::Text("Bounds radius: %.3f", static_cast<double>(world->bounds_radius));
 
+    ImGui::Text("Root mesh: %s",
+        world->root_mesh_id.has_value()
+            ? fmt::format(
+                  "{} (index {})", world->root_mesh_id.value(), world->root_mesh_index.value_or(0U))
+                  .c_str()
+            : "unavailable");
+
+    ImGui::SeparatorText("Geometry / hierarchy");
     constexpr ImGuiTableFlags k_hierarchy_flags{ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                                                 ImGuiTableFlags_ScrollY |
                                                 ImGuiTableFlags_SizingFixedFit};
-    if (ImGui::CollapsingHeader("3DO hierarchy") &&
+    if (ImGui::CollapsingHeader("3DO hierarchy", ImGuiTreeNodeFlags_DefaultOpen) &&
         ImGui::BeginTable("##3DOHierarchy", 7, k_hierarchy_flags, ImVec2{0.0F, 220.0F})) {
       ImGui::TableSetupColumn("ID");
       ImGui::TableSetupColumn("Name");
@@ -118,8 +127,77 @@ void DebugUI::show_overlays() {
       ImGui::EndTable();
     }
 
-    ImGui::Spacing();
-    ImGui::TextUnformatted("Mesh flags");
+    if (ImGui::CollapsingHeader("Mesh transform details")) {
+      ImGui::TextDisabled("Source -> Runtime local -> Runtime world");
+      for (const Debug::WorldMeshHierarchyDebugState& mesh : world->mesh_hierarchy) {
+        ImGui::PushID(static_cast<int>(mesh.mesh_id));
+        if (ImGui::TreeNode(mesh.name.c_str())) {
+          constexpr ImGuiTableFlags k_transform_flags{
+              ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg};
+          if (ImGui::BeginTable("##MeshTransforms", 3, k_transform_flags)) {
+            ImGui::TableSetupColumn("Stage");
+            ImGui::TableSetupColumn("Position / offset");
+            ImGui::TableSetupColumn("Basis");
+            ImGui::TableHeadersRow();
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted("Source");
+            ImGui::TableNextColumn();
+            ImGui::Text("%.3f, %.3f, %.3f",
+                static_cast<double>(mesh.position.at(0)),
+                static_cast<double>(mesh.position.at(1)),
+                static_cast<double>(mesh.position.at(2)));
+            ImGui::TableNextColumn();
+            ImGui::Text("bone %.3f, %.3f, %.3f",
+                static_cast<double>(mesh.bone_position.at(0)),
+                static_cast<double>(mesh.bone_position.at(1)),
+                static_cast<double>(mesh.bone_position.at(2)));
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted("Runtime local");
+            ImGui::TableNextColumn();
+            ImGui::Text("%.3f, %.3f, %.3f",
+                static_cast<double>(mesh.runtime_local_offset.at(0)),
+                static_cast<double>(mesh.runtime_local_offset.at(1)),
+                static_cast<double>(mesh.runtime_local_offset.at(2)));
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted("instance-local pose");
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted("Runtime world");
+            ImGui::TableNextColumn();
+            ImGui::Text("%.3f, %.3f, %.3f",
+                static_cast<double>(mesh.runtime_world_translation.at(0)),
+                static_cast<double>(mesh.runtime_world_translation.at(1)),
+                static_cast<double>(mesh.runtime_world_translation.at(2)));
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted("hierarchy-resolved pose");
+            ImGui::EndTable();
+          }
+          if (ImGui::TreeNode("Matrices")) {
+            ImGui::TextUnformatted("Runtime local matrix (rows):");
+            for (std::size_t row{0}; row < 3U; ++row) {
+              ImGui::Text("  %.3f %.3f %.3f",
+                  static_cast<double>(mesh.runtime_local_matrix.at(row * 3U)),
+                  static_cast<double>(mesh.runtime_local_matrix.at((row * 3U) + 1U)),
+                  static_cast<double>(mesh.runtime_local_matrix.at((row * 3U) + 2U)));
+            }
+            ImGui::TextUnformatted("Runtime world matrix (rows):");
+            for (std::size_t row{0}; row < 3U; ++row) {
+              ImGui::Text("  %.3f %.3f %.3f",
+                  static_cast<double>(mesh.runtime_world_matrix.at(row * 3U)),
+                  static_cast<double>(mesh.runtime_world_matrix.at((row * 3U) + 1U)),
+                  static_cast<double>(mesh.runtime_world_matrix.at((row * 3U) + 2U)));
+            }
+            ImGui::TreePop();
+          }
+          ImGui::TreePop();
+        }
+        ImGui::PopID();
+      }
+    }
+
+    ImGui::TextUnformatted("Special material / mesh flags");
     ImGui::Text("Mirror: %zu", world->mirror_group_count);
     ImGui::Text("UV scroll U: %zu", world->uv_scroll_u_group_count);
     ImGui::Text("UV scroll V: %zu", world->uv_scroll_v_group_count);
@@ -139,10 +217,42 @@ void DebugUI::show_overlays() {
           uv_scroll_groups);
     }
 
-    ImGui::Spacing();
-    ImGui::TextUnformatted("Runtime characters");
-    ImGui::Separator();
+    ImGui::SeparatorText("Characters");
     ImGui::Text("Count: %zu", world->runtime_characters.size());
+    constexpr ImGuiTableFlags k_character_flags{
+        ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingFixedFit};
+    if (ImGui::BeginTable("##Characters", 8, k_character_flags)) {
+      ImGui::TableSetupColumn("Instance");
+      ImGui::TableSetupColumn("ID");
+      ImGui::TableSetupColumn("AREA");
+      ImGui::TableSetupColumn("Active");
+      ImGui::TableSetupColumn("Loaded");
+      ImGui::TableSetupColumn("Renderable");
+      ImGui::TableSetupColumn("Definition");
+      ImGui::TableSetupColumn("Model");
+      ImGui::TableHeadersRow();
+      for (const Debug::RuntimeCharacterDebugState& character : world->runtime_characters) {
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::Text("%zu", character.instance_id);
+        ImGui::TableNextColumn();
+        ImGui::Text("%d", character.character_id);
+        ImGui::TableNextColumn();
+        ImGui::Text("%d", character.area_id);
+        ImGui::TableNextColumn();
+        ImGui::TextUnformatted(character.active ? "yes" : "no");
+        ImGui::TableNextColumn();
+        ImGui::TextUnformatted(character.loaded ? "yes" : "no");
+        ImGui::TableNextColumn();
+        ImGui::TextUnformatted(character.renderable ? "yes" : "no");
+        ImGui::TableNextColumn();
+        ImGui::Text("%u %s", character.definition_id, character.definition_name.c_str());
+        ImGui::TableNextColumn();
+        ImGui::TextUnformatted(character.model_resource.c_str());
+      }
+      ImGui::EndTable();
+    }
+    ImGui::TextDisabled("Expand a character for Source -> Runtime -> Presentation detail.");
     for (const Debug::RuntimeCharacterDebugState& character : world->runtime_characters) {
       const std::string label{fmt::format(
           "Character {}##RuntimeCharacter{}", character.character_id, character.instance_id)};
@@ -154,20 +264,44 @@ void DebugUI::show_overlays() {
       ImGui::Text("AREA: %d", character.area_id);
       ImGui::Text("Active: %s", character.active ? "yes" : "no");
       ImGui::Text("AREA present: %s", character.area_present ? "yes" : "no");
-      ImGui::Text("Serialized AREA position: %d, %d, %d",
-          character.serialized_position.at(0),
-          character.serialized_position.at(1),
-          character.serialized_position.at(2));
-      ImGui::Text("Runtime position: %.3f, %.3f, %.3f",
-          static_cast<double>(character.runtime_position.at(0)),
-          static_cast<double>(character.runtime_position.at(1)),
-          static_cast<double>(character.runtime_position.at(2)));
-      ImGui::Text("Render position: %.3f, %.3f, %.3f",
-          static_cast<double>(character.render_position.at(0)),
-          static_cast<double>(character.render_position.at(1)),
-          static_cast<double>(character.render_position.at(2)));
-      ImGui::Text("Serialized orientation: %d", character.serialized_orientation_units);
-      ImGui::Text("Runtime orientation: %d deg", character.runtime_orientation_degrees);
+      constexpr ImGuiTableFlags k_pose_flags{ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg};
+      if (ImGui::BeginTable("##CharacterPose", 3, k_pose_flags)) {
+        ImGui::TableSetupColumn("Stage");
+        ImGui::TableSetupColumn("Position");
+        ImGui::TableSetupColumn("Orientation");
+        ImGui::TableHeadersRow();
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::TextUnformatted("Source");
+        ImGui::TableNextColumn();
+        ImGui::Text("%d, %d, %d",
+            character.serialized_position.at(0),
+            character.serialized_position.at(1),
+            character.serialized_position.at(2));
+        ImGui::TableNextColumn();
+        ImGui::Text("%d units", character.serialized_orientation_units);
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::TextUnformatted("Runtime");
+        ImGui::TableNextColumn();
+        ImGui::Text("%.3f, %.3f, %.3f",
+            static_cast<double>(character.runtime_position.at(0)),
+            static_cast<double>(character.runtime_position.at(1)),
+            static_cast<double>(character.runtime_position.at(2)));
+        ImGui::TableNextColumn();
+        ImGui::Text("%d deg", character.runtime_orientation_degrees);
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::TextUnformatted("Presentation");
+        ImGui::TableNextColumn();
+        ImGui::Text("%.3f, %.3f, %.3f",
+            static_cast<double>(character.render_position.at(0)),
+            static_cast<double>(character.render_position.at(1)),
+            static_cast<double>(character.render_position.at(2)));
+        ImGui::TableNextColumn();
+        ImGui::TextDisabled("not exposed");
+        ImGui::EndTable();
+      }
       ImGui::Text("Definition: %u %s",
           static_cast<unsigned int>(character.definition_id),
           character.definition_name.c_str());
@@ -181,7 +315,8 @@ void DebugUI::show_overlays() {
           static_cast<double>(character.runtime_bounds_center.at(2)),
           static_cast<double>(character.bounds_radius));
       if (!character.selected_object.empty()) {
-        ImGui::SeparatorText("Body animation");
+        ImGui::SeparatorText("Animation");
+        ImGui::TextUnformatted("Source / selection");
         ImGui::Text("Selected: %s (mesh %u, script %u, %s)",
             character.selected_object.c_str(),
             character.selected_mesh_id,
@@ -192,13 +327,15 @@ void DebugUI::show_overlays() {
             character.animation_name.c_str(),
             character.animation_id,
             character.animation_max_frame);
+        ImGui::TextUnformatted("Playback");
         ImGui::Text("Progress: %.3f -> %.3f, execution %u/%u (%s)",
             static_cast<double>(character.animation_previous_progress),
             static_cast<double>(character.animation_current_progress),
             character.animation_execution_count,
             character.animation_execution_limit,
             character.body_animation_completed ? "completed" : "active");
-        ImGui::Text("Path: [%u] %s / [%u] %s",
+        ImGui::TextUnformatted("Path");
+        ImGui::Text("Selection: [%u] %s / [%u] %s",
             character.path_index,
             character.path_name.c_str(),
             character.subpath_index,
@@ -215,14 +352,15 @@ void DebugUI::show_overlays() {
             static_cast<double>(character.final_anchor.at(0)),
             static_cast<double>(character.final_anchor.at(1)),
             static_cast<double>(character.final_anchor.at(2)));
-        ImGui::Text("Root delta: %.3f, %.3f, %.3f (accum %.3f, %.3f, %.3f)",
+        ImGui::TextUnformatted("Root motion");
+        ImGui::Text("Delta: %.3f, %.3f, %.3f (accum %.3f, %.3f, %.3f)",
             static_cast<double>(character.root_motion_delta.at(0)),
             static_cast<double>(character.root_motion_delta.at(1)),
             static_cast<double>(character.root_motion_delta.at(2)),
             static_cast<double>(character.accumulated_root_translation.at(0)),
             static_cast<double>(character.accumulated_root_translation.at(1)),
             static_cast<double>(character.accumulated_root_translation.at(2)));
-        if (ImGui::TreeNode("Per-object pose")) {
+        if (ImGui::TreeNode("Object pose")) {
           for (std::size_t pose_index{0}; pose_index < character.object_poses.size();
               ++pose_index) {
             const Debug::RuntimeCharacterObjectPoseDebugState& pose{
@@ -269,23 +407,7 @@ void DebugUI::show_overlays() {
       ImGui::Unindent();
     }
 
-    ImGui::Spacing();
-    ImGui::TextUnformatted("Cinematic presentation");
-    ImGui::Separator();
-    ImGui::Text("Letterbox requested: %s", world->letterbox_requested ? "yes" : "no");
-    ImGui::Text("Current amount: %.3f", static_cast<double>(world->letterbox_amount));
-    ImGui::Text("Transitioning: %s", world->letterbox_transitioning ? "yes" : "no");
-    ImGui::TextUnformatted("Target aspect: 1.85:1 (OpenNomad modernization)");
-    ImGui::TextUnformatted("Runtime original: 2/15 height per bar (~1.818:1 @ 640x480)");
-    ImGui::Text("Viewport: %d x %d", world->viewport_width, world->viewport_height);
-    ImGui::Text(
-        "Full target bar: %.2f px", static_cast<double>(world->letterbox_target_bar_height));
-    ImGui::Text("Current bar: %.2f px", static_cast<double>(world->letterbox_current_bar_height));
-    ImGui::TextUnformatted("Transition duration: 60 Runtime units / 2.0 s");
-
-    ImGui::Spacing();
-    ImGui::TextUnformatted("Camera");
-    ImGui::Separator();
+    ImGui::SeparatorText("Camera");
     ImGui::Text("Pose: %s", world->camera_has_pose ? "yes" : "no");
     ImGui::Text("Source: %s", world->camera_scripted ? "scripted" : "fallback");
     ImGui::Text("Transitioning: %s", world->camera_transitioning ? "yes" : "no");
@@ -295,32 +417,55 @@ void DebugUI::show_overlays() {
       ImGui::TextUnformatted("AREA camera: none");
     }
     if (world->camera_has_pose) {
-      if (world->camera_scripted) {
-        ImGui::Text("Serialized eye: %d, %d, %d",
-            world->camera_serialized_eye.at(0),
-            world->camera_serialized_eye.at(1),
-            world->camera_serialized_eye.at(2));
-        ImGui::Text("Serialized target: %d, %d, %d",
-            world->camera_serialized_target.at(0),
-            world->camera_serialized_target.at(1),
-            world->camera_serialized_target.at(2));
+      constexpr ImGuiTableFlags k_camera_flags{ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg};
+      if (ImGui::BeginTable("##CameraPose", 3, k_camera_flags)) {
+        ImGui::TableSetupColumn("Stage");
+        ImGui::TableSetupColumn("Eye");
+        ImGui::TableSetupColumn("Target");
+        ImGui::TableHeadersRow();
+        if (world->camera_scripted) {
+          ImGui::TableNextRow();
+          ImGui::TableNextColumn();
+          ImGui::TextUnformatted("Source");
+          ImGui::TableNextColumn();
+          ImGui::Text("%d, %d, %d",
+              world->camera_serialized_eye.at(0),
+              world->camera_serialized_eye.at(1),
+              world->camera_serialized_eye.at(2));
+          ImGui::TableNextColumn();
+          ImGui::Text("%d, %d, %d",
+              world->camera_serialized_target.at(0),
+              world->camera_serialized_target.at(1),
+              world->camera_serialized_target.at(2));
+        }
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::TextUnformatted("Runtime (in)");
+        ImGui::TableNextColumn();
+        ImGui::Text("%.3f, %.3f, %.3f",
+            static_cast<double>(world->camera_runtime_eye.at(0)),
+            static_cast<double>(world->camera_runtime_eye.at(1)),
+            static_cast<double>(world->camera_runtime_eye.at(2)));
+        ImGui::TableNextColumn();
+        ImGui::Text("%.3f, %.3f, %.3f",
+            static_cast<double>(world->camera_runtime_target.at(0)),
+            static_cast<double>(world->camera_runtime_target.at(1)),
+            static_cast<double>(world->camera_runtime_target.at(2)));
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::TextUnformatted("Presentation");
+        ImGui::TableNextColumn();
+        ImGui::Text("%.3f, %.3f, %.3f",
+            static_cast<double>(world->camera_render_eye.at(0)),
+            static_cast<double>(world->camera_render_eye.at(1)),
+            static_cast<double>(world->camera_render_eye.at(2)));
+        ImGui::TableNextColumn();
+        ImGui::Text("%.3f, %.3f, %.3f",
+            static_cast<double>(world->camera_render_target.at(0)),
+            static_cast<double>(world->camera_render_target.at(1)),
+            static_cast<double>(world->camera_render_target.at(2)));
+        ImGui::EndTable();
       }
-      ImGui::Text("Runtime eye (in): %.3f, %.3f, %.3f",
-          static_cast<double>(world->camera_runtime_eye.at(0)),
-          static_cast<double>(world->camera_runtime_eye.at(1)),
-          static_cast<double>(world->camera_runtime_eye.at(2)));
-      ImGui::Text("Runtime target (in): %.3f, %.3f, %.3f",
-          static_cast<double>(world->camera_runtime_target.at(0)),
-          static_cast<double>(world->camera_runtime_target.at(1)),
-          static_cast<double>(world->camera_runtime_target.at(2)));
-      ImGui::Text("Render eye: %.3f, %.3f, %.3f",
-          static_cast<double>(world->camera_render_eye.at(0)),
-          static_cast<double>(world->camera_render_eye.at(1)),
-          static_cast<double>(world->camera_render_eye.at(2)));
-      ImGui::Text("Render target: %.3f, %.3f, %.3f",
-          static_cast<double>(world->camera_render_target.at(0)),
-          static_cast<double>(world->camera_render_target.at(1)),
-          static_cast<double>(world->camera_render_target.at(2)));
       ImGui::Text("Roll: %.1f deg", static_cast<double>(world->camera_roll_degrees));
       ImGui::Text(
           "Horizontal FOV: %.1f deg", static_cast<double>(world->camera_horizontal_fov_degrees));
@@ -331,35 +476,77 @@ void DebugUI::show_overlays() {
           static_cast<double>(world->camera_far_inches),
           static_cast<double>(world->camera_far_inches * 0.0254F));
     }
-    ImGui::Spacing();
+    ImGui::SeparatorText("Presentation / cinematic");
+    ImGui::Text("Letterbox requested: %s", world->letterbox_requested ? "yes" : "no");
+    ImGui::Text("Current amount: %.3f", static_cast<double>(world->letterbox_amount));
+    ImGui::Text("Transitioning: %s", world->letterbox_transitioning ? "yes" : "no");
+    ImGui::Text("Runtime behavior: 2/15 height per bar (~1.818:1 at 640x480)");
+    ImGui::SameLine();
+    ImGui::TextDisabled("[%s]", evidence_label(EvidenceConfidence::k_confirmed_runtime));
+    ImGui::Text("OpenNomad presentation: 1.85:1 target");
+    ImGui::SameLine();
+    ImGui::TextDisabled("[%s]", evidence_label(EvidenceConfidence::k_open_nomad_only));
+    ImGui::Text("Viewport: %d x %d", world->viewport_width, world->viewport_height);
+    ImGui::Text(
+        "Full target bar: %.2f px", static_cast<double>(world->letterbox_target_bar_height));
+    ImGui::Text("Current bar: %.2f px", static_cast<double>(world->letterbox_current_bar_height));
+    ImGui::TextUnformatted("Transition duration: 60 Runtime units / 2.0 s");
   }
 
-  const bool has_light_overlay{view->light_overlay_supported()};
-  const bool has_sprite_overlay{view->sprite_overlay_supported()};
-  if (has_light_overlay || has_sprite_overlay) {
-    ImGui::SeparatorText("Debug Overrides");
-    ImGui::TextDisabled("Drawing overlays changes presentation, not runtime state.");
+  ImGui::End();
+}
 
-    if (has_light_overlay) {
-      bool lights{view->light_overlay_enabled()};
-      if (ImGui::Checkbox("Lights", &lights)) {
-        view->set_light_overlay_enabled(lights);
-      }
-      ImGui::SameLine();
-      ImGui::TextDisabled("markers, spot lines, attenuation spheres");
-    }
+void DebugUI::show_visualizers() {
+  ImGui::Begin("Visualizers", &m_show_visualizers);
 
-    if (has_sprite_overlay) {
-      bool sprites{view->sprite_overlay_enabled()};
-      if (ImGui::Checkbox("Sprites", &sprites)) {
-        view->set_sprite_overlay_enabled(sprites);
-      }
-      ImGui::SameLine();
-      ImGui::TextDisabled("billboard outlines, colour-coded by render mode");
+  auto* view{dynamic_cast<Debug::SceneDebugView*>(m_context.scene)};
+  if (view == nullptr) {
+    ImGui::TextUnformatted("The active scene exposes no visualization capabilities.");
+    ImGui::End();
+    return;
+  }
+
+  ImGui::TextDisabled("Debugger-only presentation aids; runtime simulation data is unchanged.");
+
+  if (view->light_overlay_supported()) {
+    bool enabled{view->light_overlay_enabled()};
+    if (ImGui::Checkbox("Light overlay", &enabled)) {
+      view->set_light_overlay_enabled(enabled);
     }
   } else {
-    ImGui::TextDisabled(
-        "World-space drawing overlays have not yet been extracted into WorldRenderer.");
+    ImGui::TextDisabled("Light overlay: unavailable for the active scene");
+  }
+
+  if (view->sprite_overlay_supported()) {
+    bool enabled{view->sprite_overlay_enabled()};
+    if (ImGui::Checkbox("Sprite overlay", &enabled)) {
+      view->set_sprite_overlay_enabled(enabled);
+    }
+  } else {
+    ImGui::TextDisabled("Sprite overlay: unavailable for the active scene");
+  }
+
+  if (view->geometry_wireframe_supported()) {
+    bool enabled{view->geometry_wireframe_enabled()};
+    if (ImGui::Checkbox("Geometry wireframe", &enabled)) {
+      view->set_geometry_wireframe_enabled(enabled);
+    }
+    if (ImGui::IsItemHovered()) {
+      ImGui::SetTooltip(
+          "Draws a solid-colour, depth-tested wireframe over every triangle mesh, independent "
+          "of its texture or material transparency.");
+    }
+  } else {
+    ImGui::TextDisabled("Geometry wireframe: unavailable for the active scene");
+  }
+
+  if (view->sprite_grayscale_supported()) {
+    bool enabled{view->sprite_grayscale_enabled()};
+    if (ImGui::Checkbox("Sprite grayscale", &enabled)) {
+      view->set_sprite_grayscale_enabled(enabled);
+    }
+  } else {
+    ImGui::TextDisabled("Sprite grayscale: unavailable for the active scene");
   }
 
   ImGui::End();
@@ -642,10 +829,6 @@ void DebugUI::show_sprite_instances_tab(
         runtime.set_sprite_position(handle, focus.value());
       }
     }
-    bool grayscale{scene_view->sprite_grayscale_enabled()};
-    if (ImGui::Checkbox("Grayscale (3D scene)", &grayscale)) {
-      scene_view->set_sprite_grayscale_enabled(grayscale);
-    }
   }
 }
 
@@ -758,7 +941,7 @@ void DebugUI::show_sprite_queue_tab(const SpriteRenderDebugState& state) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void DebugUI::show_interface() {
-  ImGui::Begin("Interface", &m_show_interface);
+  ImGui::Begin("Interface Inspector", &m_show_interface);
 
   const ScenarioEngine* engine{m_context.scenario_engine};
   if (engine == nullptr) {
@@ -767,30 +950,22 @@ void DebugUI::show_interface() {
     return;
   }
   const InterfaceDispatcher& dispatcher{engine->dispatcher()};
-  ImGui::Text("Main menu active: %s", engine->main_menu_active() ? "yes" : "no");
-  ImGui::Text("Preliminary 29 active: %s", engine->preliminary_29_active() ? "yes" : "no");
   const InterfaceOpenRequest& request{dispatcher.last_request()};
-  ImGui::Text("Last request: id %u b %d c %d",
+  ImGui::SeparatorText("Request");
+  ImGui::Text("Interface_Open: ID %u  operands %d / %d",
       static_cast<unsigned int>(request.interface_id),
       request.operand_b,
       request.operand_c);
+  ImGui::TextDisabled("Caller/origin: not recorded by the current dispatcher");
+  ImGui::Text("Main menu: %s  preliminary interface 29: %s",
+      engine->main_menu_active() ? "active" : "inactive",
+      engine->preliminary_29_active() ? "active" : "inactive");
 
   const Interface::InterfaceManager* manager{m_context.interface_manager};
   if (manager == nullptr) {
+    ImGui::TextUnformatted("Interface manager not available.");
     ImGui::End();
     return;
-  }
-
-  ImGui::SeparatorText("I2D Inspector");
-  {
-    // Stepped = authentic 30 Hz updates only; interpolated (default) inserts
-    // smooth presentation frames between endpoints.
-    Interface::InterfaceManager* mutable_manager{m_context.interface_manager};
-    bool interpolated{mutable_manager->background_interpolated()};
-    ImGui::TextDisabled("Debug Override");
-    if (ImGui::Checkbox("Interpolate background", &interpolated)) {
-      mutable_manager->set_background_interpolated(interpolated);
-    }
   }
   const Interface::InterfaceInstance* instance{manager->focused_instance()};
   if (instance == nullptr || instance->descriptor == nullptr) {
@@ -799,31 +974,36 @@ void DebugUI::show_interface() {
     return;
   }
 
-  ImGui::Text("id %d  \"%s\"",
+  ImGui::SeparatorText("Instance");
+  ImGui::Text("Focused instance: %u:%u  descriptor %d \"%s\"",
+      instance->handle.interface_id,
+      instance->handle.generation,
       instance->descriptor->id,
       fmt::format("{}", instance->descriptor->name).c_str());
   ImGui::Text("bitmap: %s", fmt::format("{}", instance->descriptor->bitmap_name).c_str());
   ImGui::Text("string table: %s (%zu entries)",
       fmt::format("{}", instance->descriptor->string_table_name).c_str(),
       instance->strings.size());
-  ImGui::Text("selected element: %zu",
-      instance->current_state != nullptr ? instance->current_state->selected_element
-                                         : std::size_t{0});
+  ImGui::Text("Resident instances: %zu", manager->instance_count());
 
   const Interface::I2DState* state{instance->current_state};
   const char* state_name{"none"};
   if (state != nullptr) {
     state_name = state == instance->root_state ? "root" : "child";
   }
-  ImGui::Text("state: %s", state_name);
+  ImGui::Text("Active logical state: %s  selected element: %zu",
+      state_name,
+      state != nullptr ? state->selected_element : std::size_t{0});
 
   if (state != nullptr) {
+    ImGui::SeparatorText("I2D source");
+    ImGui::TextDisabled("Authored 640x480 logical descriptors and recovered raw flags.");
     std::size_t selectable_ordinal{0};
     for (const Interface::I2DGroup& group : state->groups) {
       ImGui::Text("group flags 0x%08X", group.runtime_flags);
       for (const Interface::I2DElement& element : group.elements) {
         if (const auto* bitmap{std::get_if<Interface::I2DBitmapElement>(&element.data)}) {
-          ImGui::Text("  bitmap src(%d,%d,%d,%d) dst(%d,%d,%d,%d) flags 0x%08X",
+          ImGui::Text("Bitmap  source(%d,%d,%d,%d)  authored destination(%d,%d,%d,%d)",
               bitmap->source.x,
               bitmap->source.y,
               bitmap->source.width,
@@ -831,15 +1011,17 @@ void DebugUI::show_interface() {
               bitmap->destination.x,
               bitmap->destination.y,
               bitmap->destination.width,
-              bitmap->destination.height,
-              bitmap->runtime_flags);
+              bitmap->destination.height);
+          ImGui::TextDisabled("  flags 0x%08X  blit mode 0x%02X  selectable no",
+              bitmap->runtime_flags,
+              bitmap->runtime_blit_mode);
         } else if (const auto* text{std::get_if<Interface::I2DTextElement>(&element.data)}) {
           const bool selected{state != nullptr && text->selectable() &&
                               selectable_ordinal == state->selected_element};
           if (text->selectable()) {
             ++selectable_ordinal;
           }
-          ImGui::Text("  text[%u] \"%s\" key '%c' rect(%d,%d,%d,%d) flags 0x%08X%s",
+          ImGui::Text("Text[%u] \"%s\"  font '%c'  authored bounds(%d,%d,%d,%d)%s",
               text->string_index,
               fmt::format("{}", instance->strings.at(text->string_index)).c_str(),
               text->font_key,
@@ -847,11 +1029,43 @@ void DebugUI::show_interface() {
               text->bounds.y,
               text->bounds.width,
               text->bounds.height,
-              text->runtime_flags,
               selected ? "  <selected>" : "");
+          ImGui::TextDisabled("  flags 0x%08X  selectable %s",
+              text->runtime_flags,
+              text->selectable() ? "yes" : "no");
         }
       }
     }
+  }
+
+  const I2DCounters& counters{Metrics::get().i2d_counters()};
+  ImGui::SeparatorText("Runtime state - logical 30 Hz");
+  ImGui::Text("Background endpoint tick: %llu  ticks crossed this update: %llu",
+      static_cast<unsigned long long>(counters.background_tick),
+      static_cast<unsigned long long>(counters.background_ticks));
+  ImGui::TextDisabled("Authored interface logic advances on 30 Hz endpoints.");
+
+  ImGui::SeparatorText("Presentation - display frame");
+  ImGui::Text("Draw calls %zu | quads %zu | glyphs %zu",
+      counters.draw_calls,
+      counters.quads,
+      counters.glyphs);
+  ImGui::Text("Interpolation alpha %.3f (%s)",
+      static_cast<double>(counters.background_alpha),
+      counters.background_interpolated ? "interpolated" : "stepped");
+  ImGui::Text("Background: endpoint passes %zu | bytes uploaded %zu | GPU draws %zu",
+      counters.background_warp_passes,
+      counters.background_bytes_uploaded,
+      counters.background_draw_calls);
+  ImGui::Text("OpenNomad presentation phase: %d", static_cast<int>(instance->presentation.phase));
+  ImGui::SameLine();
+  ImGui::TextDisabled("[%s]", evidence_label(EvidenceConfidence::k_open_nomad_only));
+
+  ImGui::SeparatorText("Debug Overrides");
+  ImGui::TextDisabled("This changes presentation interpolation, not the logical 30 Hz state.");
+  bool interpolated{manager->background_interpolated()};
+  if (ImGui::Checkbox("Interpolate background", &interpolated)) {
+    m_context.interface_manager->set_background_interpolated(interpolated);
   }
 
   ImGui::End();

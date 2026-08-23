@@ -37,7 +37,8 @@ void write_bytes(const std::filesystem::path& path, const Buffer& buffer) {
   std::ofstream stream{path, std::ios::binary};
   const std::vector<std::byte>& data{buffer.data()};
   // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
-  stream.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size()));
+  stream.write(
+      reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size()));
 }
 
 /// Wraps a descriptor block in a full SCX container (no appended stream).
@@ -56,8 +57,7 @@ Buffer& command(Buffer& buffer,
     const std::uint32_t value_count,
     const std::uint32_t first_value_index,
     const std::int32_t next_command_index) {
-  buffer.u32(opcode).u32(value_count).u32(first_value_index).i32(next_command_index)
-      .u32(1).u32(0);
+  buffer.u32(opcode).u32(value_count).u32(first_value_index).i32(next_command_index).u32(1).u32(0);
   return buffer;
 }
 
@@ -107,7 +107,7 @@ Buffer make_script_scx_descriptor(const std::size_t count) {
   return descriptor;
 }
 
-/// Builds a valid script-bearing SCX with the given number of templates.
+/// Builds a valid script-bearing SCX with the given number of source scripts.
 Buffer make_script_scx(const std::size_t count) {
   return make_scx(make_script_scx_descriptor(count));
 }
@@ -129,8 +129,7 @@ Buffer make_sounds_scx_descriptor(const std::size_t count) {
 /// per sound record, in descriptor order.
 Buffer make_sounds_scx(const std::size_t count) {
   Buffer descriptor{make_sounds_scx_descriptor(count)};
-  const std::uint32_t stream_offset{
-      static_cast<std::uint32_t>(16U + descriptor.data().size())};
+  const std::uint32_t stream_offset{static_cast<std::uint32_t>(16U + descriptor.data().size())};
 
   Buffer stream;
   for (std::size_t index{0}; index < count; ++index) {
@@ -159,20 +158,23 @@ Buffer make_malformed_scx() {
 /// Scratch directory wiped on construction and destruction.
 class TempDirectory {
  public:
-  TempDirectory()
-      : m_root{std::filesystem::temp_directory_path() / "opennomad-scenario-test"} {
+  TempDirectory() : m_root{std::filesystem::temp_directory_path() / "opennomad-scenario-test"} {
     std::filesystem::remove_all(m_root);
     std::filesystem::create_directories(m_root);
   }
 
-  ~TempDirectory() { std::filesystem::remove_all(m_root); }
+  ~TempDirectory() {
+    std::filesystem::remove_all(m_root);
+  }
 
   TempDirectory(const TempDirectory&) = delete;
   TempDirectory(TempDirectory&&) = delete;
   TempDirectory& operator=(const TempDirectory&) = delete;
   TempDirectory& operator=(TempDirectory&&) = delete;
 
-  [[nodiscard]] const std::filesystem::path& root() const { return m_root; }
+  [[nodiscard]] const std::filesystem::path& root() const {
+    return m_root;
+  }
 
  private:
   std::filesystem::path m_root;
@@ -182,15 +184,13 @@ class TempDirectory {
 class ScopedGameDataRoot {
  public:
   explicit ScopedGameDataRoot(const std::filesystem::path& root) {
-    static_cast<void>(SDL_SetEnvironmentVariable(SDL_GetEnvironment(),
-        "OPENNOMAD_GAME_DATA_ROOT",
-        root.string().c_str(),
-        true));
+    static_cast<void>(SDL_SetEnvironmentVariable(
+        SDL_GetEnvironment(), "OPENNOMAD_GAME_DATA_ROOT", root.string().c_str(), true));
   }
 
   ~ScopedGameDataRoot() {
-    static_cast<void>(SDL_UnsetEnvironmentVariable(
-        SDL_GetEnvironment(), "OPENNOMAD_GAME_DATA_ROOT"));
+    static_cast<void>(
+        SDL_UnsetEnvironmentVariable(SDL_GetEnvironment(), "OPENNOMAD_GAME_DATA_ROOT"));
   }
 
   ScopedGameDataRoot(const ScopedGameDataRoot&) = delete;
@@ -419,7 +419,7 @@ TEST_SUITE("Core::Scenario::ScenarioManager") {
     CHECK(manager.find_world_context(7) == &manager.world_contexts()[1]);
   }
 
-  TEST_CASE("Loading templates schedules zero scripts; sounds create zero voices") {
+  TEST_CASE("Loading source scripts schedules zero instances; sounds create zero voices") {
     const TempDirectory temp;
     write_boot_fixtures(temp);
     write_bytes(temp.root() / "SCPTDATA" / "Snd.SCX", make_sounds_scx(4));
@@ -552,7 +552,7 @@ TEST_SUITE("Core::Scenario::ScenarioManager") {
     CHECK(manager.gameplay_runtime() != nullptr);
     CHECK(manager.world_runtime(0) != nullptr);
     CHECK(manager.world_runtime(1) == nullptr);
-    CHECK_EQ(manager.active_script_instances_total(), 0U);  // All templates inactive.
+    CHECK_EQ(manager.active_script_instances_total(), 0U);  // No runtime instances activated.
   }
 
   TEST_CASE("Replacing the gameplay mode rebuilds the gameplay runtime, not the world runtime") {
@@ -633,8 +633,7 @@ TEST_SUITE("Core::Scenario::ScenarioManager") {
     context.set_selected_target(App::Debug::DebugRuntimeTarget::k_gameplay_mode);
     CHECK(context.refresh(&manager));
     CHECK(context.selection_epoch() >= initial_epoch + 2U);
-    CHECK(context.resolved().identity.requested ==
-          App::Debug::DebugRuntimeTarget::k_gameplay_mode);
+    CHECK(context.resolved().identity.requested == App::Debug::DebugRuntimeTarget::k_gameplay_mode);
   }
 
   TEST_CASE("Debugger resolves gameplay, active world, explicit slots and Free residency") {

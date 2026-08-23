@@ -75,12 +75,13 @@ class DebugUI {
   void toggle_log();
   void toggle_opengl_state();
   void toggle_sprite_inspector();
-  void toggle_overlays();
-  void toggle_script_debugger();
+  void toggle_world_inspector();
+  void toggle_visualizers();
+  void toggle_scx_script_inspector();
   void toggle_audio_inspector();
   void toggle_scenarios();
-  void toggle_area_script();
-  void toggle_startup();
+  void toggle_area_vm();
+  void toggle_runtime_overview();
   void toggle_interface();
   void toggle_startup_trace();
 
@@ -92,7 +93,8 @@ class DebugUI {
   void show_profiler();
   void show_log();
   void show_opengl_state();
-  void show_overlays();
+  void show_world_inspector();
+  void show_visualizers();
 
   /// Global target selector shared by every scenario-runtime inspector.
   void show_runtime_target_selector();
@@ -108,11 +110,11 @@ class DebugUI {
       ScenarioRuntime& runtime, SceneDebugView* scene_view, float delta_time);
   void show_sprite_frames_tab(ScenarioRuntime& runtime);
   static void show_sprite_queue_tab(const SpriteRenderDebugState& state);
-  void show_script_debugger();
+  void show_scx_script_inspector();
   void show_audio_inspector();
   void show_scenarios();
-  void show_area_script();
-  void show_startup();
+  void show_area_vm();
+  void show_runtime_overview();
   void show_interface();
   void show_startup_trace();
   static void show_script_command(Script::ScriptInstance& instance,
@@ -130,13 +132,14 @@ class DebugUI {
   bool m_show_profiler{false};
   bool m_show_log{false};
   bool m_show_opengl_state{false};
-  bool m_show_overlays{false};
+  bool m_show_world_inspector{false};
+  bool m_show_visualizers{false};
   bool m_show_sprite_inspector{false};
-  bool m_show_script_debugger{false};
+  bool m_show_scx_script_inspector{false};
   bool m_show_audio_inspector{false};
   bool m_show_scenarios{false};
-  bool m_show_area_script{false};
-  bool m_show_startup{false};
+  bool m_show_area_vm{false};
+  bool m_show_runtime_overview{false};
   bool m_show_interface{false};
   bool m_show_startup_trace{false};
 
@@ -163,7 +166,7 @@ class DebugUI {
   float m_sprite_play_rate{8.0F};
   float m_sprite_play_accumulator{0.0F};
 
-  // --- Script debugger state ---
+  // --- SCX Script Inspector state ---
   std::size_t m_script_selected_instance{0};
   std::optional<std::size_t> m_script_selected_source;
   float m_script_fixed_delta{1.0F};

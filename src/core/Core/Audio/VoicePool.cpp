@@ -35,12 +35,12 @@ std::expected<VoiceHandle, std::string> VoicePool::allocate() {
       // Mark the slot occupied immediately so subsequent allocations skip it
       // (configure() then fills the per-use fields).
       m_slots.at(index).state = VoiceState::k_queued;
-      return VoiceHandle{.index = static_cast<std::uint32_t>(index),
-          .generation = m_slots.at(index).generation};
+      return VoiceHandle{
+          .index = static_cast<std::uint32_t>(index), .generation = m_slots.at(index).generation};
     }
   }
-  return std::expected<VoiceHandle, std::string>{std::unexpect,
-      "VoicePoolExhausted: all 16 SFX voices are occupied"};
+  return std::expected<VoiceHandle, std::string>{
+      std::unexpect, "VoicePoolExhausted: all 16 SFX voices are occupied"};
 }
 
 void VoicePool::configure(const VoiceHandle handle, const SoundPlayRequest& request) {
@@ -54,6 +54,7 @@ void VoicePool::configure(const VoiceHandle handle, const SoundPlayRequest& requ
   voice.resource = request.resource;
   voice.scenario_sound_index = request.scenario_sound_index;
   voice.owner = request.owner;
+  voice.provenance = request.provenance;
   voice.emitter = request.emitter;
   voice.previous_distance = -1.0F;
   voice.base_frequency_hz = 0.0F;
@@ -85,6 +86,7 @@ void VoicePool::release(const VoiceHandle handle) {
   voice.resource = SoundResourceId{};
   voice.scenario_sound_index = 0xFFFFU;
   voice.owner = AudioOwnerToken{};
+  voice.provenance = AudioProvenance{};
   voice.emitter.reset();
   voice.previous_distance = -1.0F;
   voice.base_frequency_hz = 0.0F;
@@ -108,8 +110,8 @@ std::optional<VoiceHandle> VoicePool::find_first_active(
       continue;
     }
     if (voice.resource == sound && voice.owner == owner) {
-      return VoiceHandle{.index = static_cast<std::uint32_t>(index),
-          .generation = voice.generation};
+      return VoiceHandle{
+          .index = static_cast<std::uint32_t>(index), .generation = voice.generation};
     }
   }
   return std::nullopt;
@@ -166,6 +168,8 @@ std::size_t VoicePool::active_count() const {
   return count;
 }
 
-std::size_t VoicePool::free_count() const { return m_slots.size() - active_count(); }
+std::size_t VoicePool::free_count() const {
+  return m_slots.size() - active_count();
+}
 
 }  // namespace App::Audio

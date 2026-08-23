@@ -77,7 +77,7 @@ struct AreaWaitState {
 };
 
 /// AREA opcode 0x39 request. Runtime resolves operand 0 against the active
-/// SCX template's +0x1A script ID; the other operands are preserved until
+/// parsed SCX source script's +0x1A ID; the other operands are preserved until
 /// their semantics are fully recovered.
 struct AreaScxScriptRequest {
   std::uint16_t script_id{0};
@@ -182,8 +182,7 @@ class AreaScriptRuntime {
   using PresentationSink = std::function<void(const AreaPresentationRequest&)>;
 
   /// Presentation bridge for the cinematic top/bottom mask (0x84/0x85).
-  using CinematicLetterboxSink =
-      std::function<void(const AreaCinematicLetterboxRequest&)>;
+  using CinematicLetterboxSink = std::function<void(const AreaCinematicLetterboxRequest&)>;
 
   /// Sink invoked before each instruction executes, with the decoded opcode
   /// and operands. Used to emit ordered per-instruction startup trace events.
@@ -265,7 +264,6 @@ class AreaScriptRuntime {
     return m_wait_state;
   }
 
-
   /// Runtime-facing numeric scenario-context state.
   ///
   /// This deliberately exposes only states whose meaning is recovered:
@@ -309,8 +307,8 @@ class AreaScriptRuntime {
   last_character_activation_request() const {
     return m_last_character_activation_request;
   }
-  [[nodiscard]] const std::optional<AreaCharacterScriptRequest>&
-  last_character_script_request() const {
+  [[nodiscard]] const std::optional<AreaCharacterScriptRequest>& last_character_script_request()
+      const {
     return m_last_character_script_request;
   }
   [[nodiscard]] const std::optional<AreaCameraRequest>& last_camera_request() const {

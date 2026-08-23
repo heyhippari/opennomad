@@ -1,9 +1,11 @@
 #pragma once
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace App::Audio {
@@ -61,6 +63,42 @@ struct SoundEmitterState {
   float maximum_distance{1170.0F};
 };
 
+/// Best known initiating subsystem for an audio request. This is diagnostic
+/// provenance, not an attempt to reproduce a retail memory field.
+enum class AudioOrigin : std::uint8_t {
+  k_unknown,
+  k_structured_script,
+  k_area_vm,
+  k_interface,
+  k_debug_audition,
+};
+
+[[nodiscard]] constexpr std::string_view audio_origin_name(const AudioOrigin origin) {
+  switch (origin) {
+    case AudioOrigin::k_unknown:
+      return "Unknown";
+    case AudioOrigin::k_structured_script:
+      return "Structured SCX script";
+    case AudioOrigin::k_area_vm:
+      return "AREA VM";
+    case AudioOrigin::k_interface:
+      return "Interface";
+    case AudioOrigin::k_debug_audition:
+      return "Debug audition";
+  }
+  return "Unknown";
+}
+
+/// Optional request provenance populated only when the initiating caller owns
+/// the corresponding identity. Missing fields remain explicitly unavailable.
+struct AudioProvenance {
+  AudioOrigin origin{AudioOrigin::k_unknown};
+  std::string scenario_name;
+  std::optional<std::size_t> source_script_index;
+  std::optional<std::size_t> script_instance_id;
+  std::optional<std::uint32_t> function_id;
+};
+
 /// Typed play request submitted by script handlers to the audio system.
 /// Absent `emitter` means nonspatial (centered, full gain, normal pitch).
 struct SoundPlayRequest {
@@ -71,6 +109,7 @@ struct SoundPlayRequest {
   /// Scenario sound-table index and name, retained for diagnostics only.
   std::uint16_t scenario_sound_index{0xFFFFU};
   std::string sound_name;
+  AudioProvenance provenance;
   /// Raw recovered command flags, preserved for diagnostics. Bit 0 is the
   /// confirmed infinite-loop flag; bit 3 (0x08) is retained as an explicit
   /// unknown/unsupported representation.
@@ -148,6 +187,8 @@ struct VoiceDebugInfo {
   std::uint16_t scenario_sound_index{0xFFFFU};
   std::string sound_name;
   std::string owner_description;
+  std::string scenario_name;
+  AudioProvenance provenance;
   bool looping{false};
   bool nonspatial{false};
   bool unknown_flag{false};
@@ -215,6 +256,8 @@ struct MusicDebugInfo {
   int sample_rate{0};
   std::uint64_t total_frames{0};
   std::string load_error;
+  AudioOrigin origin{AudioOrigin::k_unknown};
+  std::optional<std::uint32_t> source_opcode;
 };
 
 /// Stable, main-thread snapshot consumed by the ImGui inspector.

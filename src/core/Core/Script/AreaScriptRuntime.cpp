@@ -150,7 +150,7 @@ constexpr std::array<AreaOpcodeInfo, 25> K_AREA_OPCODE_TABLE{
         .name = "StartScxScript",
         .support = OpcodeSupport::k_supported,
         .provisional = false,
-        .notes = "resolves operand 0 against active SCX script template +0x1A and waits",
+        .notes = "resolves operand 0 against active SCX source script +0x1A and waits",
         .operands = K_OPERANDS_3X_I16.data(),
         .operand_count = K_OPERANDS_3X_I16.size()},
     AreaOpcodeInfo{.opcode = K_OP_START_CHARACTER_SCRIPT,
@@ -811,9 +811,8 @@ void AreaScriptRuntime::execute_instruction() {
           m_pause_info = AreaPauseInfo{.offset = instruction_offset,
               .opcode = opcode,
               .opcode_name = std::string{info->name},
-              .reason_text = fmt::format("failed to activate character {}: {}",
-                  request.character_id,
-                  activated.error()),
+              .reason_text = fmt::format(
+                  "failed to activate character {}: {}", request.character_id, activated.error()),
               .nearby_bytes = nearby_bytes_hex(instruction_offset)};
           m_state = AreaScriptState::k_failed;
           return;

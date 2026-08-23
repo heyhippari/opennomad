@@ -81,6 +81,12 @@ TEST_SUITE("Core::Audio::VoicePool") {
     req.resource = SoundResourceId{3};
     req.loop = true;
     req.raw_flags = 0x08U;
+    req.provenance =
+        App::Audio::AudioProvenance{.origin = App::Audio::AudioOrigin::k_structured_script,
+            .scenario_name = "Grid.SCX",
+            .source_script_index = 2U,
+            .script_instance_id = 7U,
+            .function_id = 0x05000014U};
     pool.configure(handle, req);
 
     const App::Audio::SoundVoice* voice{pool.find(handle)};
@@ -93,6 +99,10 @@ TEST_SUITE("Core::Audio::VoicePool") {
     CHECK_EQ(voice->pan, doctest::Approx(0.0F));
     CHECK_EQ(voice->frequency_ratio, doctest::Approx(1.0F));
     CHECK_EQ(voice->previous_distance, doctest::Approx(-1.0F));
+    CHECK_EQ(voice->provenance.origin, App::Audio::AudioOrigin::k_structured_script);
+    CHECK_EQ(voice->provenance.scenario_name, "Grid.SCX");
+    REQUIRE(voice->provenance.script_instance_id.has_value());
+    CHECK_EQ(voice->provenance.script_instance_id.value(), 7U);
   }
 
   TEST_CASE("find_first_active matches (soundId, owner) and skips free slots") {
@@ -109,9 +119,10 @@ TEST_SUITE("Core::Audio::VoicePool") {
     REQUIRE(match.has_value());
     CHECK_EQ(match->index, second.index);
 
-    CHECK_FALSE(pool.find_first_active(SoundResourceId{1},
-        AudioOwnerToken{.scenario = reinterpret_cast<const void*>(1), .object_index = 7})
-                    .has_value());
+    CHECK_FALSE(
+        pool.find_first_active(SoundResourceId{1},
+                AudioOwnerToken{.scenario = reinterpret_cast<const void*>(1), .object_index = 7})
+            .has_value());
   }
 
   TEST_CASE("release_owned_by releases only the matching owner") {
@@ -119,8 +130,7 @@ TEST_SUITE("Core::Audio::VoicePool") {
     const VoiceHandle a{pool.allocate().value()};
     pool.configure(a, request(SoundResourceId{1}, AudioOwnerToken{}));
     const VoiceHandle b{pool.allocate().value()};
-    const AudioOwnerToken owner{
-        .scenario = reinterpret_cast<const void*>(2), .object_index = 3};
+    const AudioOwnerToken owner{.scenario = reinterpret_cast<const void*>(2), .object_index = 3};
     pool.configure(b, request(SoundResourceId{2}, owner));
 
     pool.release_owned_by(owner);

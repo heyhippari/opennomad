@@ -47,17 +47,21 @@ class WorldScene final : public Scene, public Debug::SceneDebugView {
   void render() override;
   void resize(int width, int height) override;
 
-  [[nodiscard]] std::optional<Debug::WorldRenderDebugState>
-  world_render_debug_state() const override;
-  [[nodiscard]] std::optional<Debug::SpriteRenderDebugState>
-  sprite_render_debug_state() const override;
-  [[nodiscard]] std::optional<std::array<float, 3>>
-  sprite_debug_focus_position() const override;
+  [[nodiscard]] std::optional<Debug::WorldRenderDebugState> world_render_debug_state()
+      const override;
+  [[nodiscard]] std::optional<Debug::SpriteRenderDebugState> sprite_render_debug_state()
+      const override;
+  [[nodiscard]] std::optional<std::array<float, 3>> sprite_debug_focus_position() const override;
   [[nodiscard]] bool sprite_grayscale_supported() const override;
   [[nodiscard]] bool sprite_grayscale_enabled() const override;
   void set_sprite_grayscale_enabled(bool enabled) override;
+  [[nodiscard]] bool geometry_wireframe_supported() const override {
+    return true;
+  }
+  [[nodiscard]] bool geometry_wireframe_enabled() const override;
+  void set_geometry_wireframe_enabled(bool enabled) override;
 
-  private:
+ private:
   WorldScene(ScenarioManager& scenarios, Interface::InterfaceManager& interfaces);
 
   void consume_fade_commands(const WorldSceneContext* context);
@@ -82,6 +86,7 @@ class WorldScene final : public Scene, public Debug::SceneDebugView {
   std::uint32_t m_observed_scene_id{0};
   std::uint32_t m_observed_generation{0};
   bool m_world_observed{false};
+  bool m_geometry_wireframe_enabled{false};
 };
 
 }  // namespace App

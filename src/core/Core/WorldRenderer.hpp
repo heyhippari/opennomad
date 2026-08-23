@@ -69,14 +69,20 @@ class WorldRenderer {
   [[nodiscard]] bool sprite_grayscale() const {
     return m_sprite_grayscale;
   }
+  void set_geometry_wireframe(bool enabled) {
+    m_geometry_wireframe = enabled;
+  }
+  [[nodiscard]] bool geometry_wireframe() const {
+    return m_geometry_wireframe;
+  }
 
  private:
   WorldRenderer() = default;
 
   void draw_group(std::size_t index);
-  void draw_character_group(const Character::RuntimeCharacter& character,
-      const Camera& camera,
-      std::size_t group_index);
+  void draw_character_group(
+      const Character::RuntimeCharacter& character, const Camera& camera, std::size_t group_index);
+  void render_geometry_wireframe(const Camera& camera, const ScenarioRuntime* runtime);
   void sync_character_models(const ScenarioRuntime& runtime);
 
   struct CharacterGpuModel {
@@ -90,6 +96,7 @@ class WorldRenderer {
   };
 
   std::unique_ptr<Shader> m_shader;
+  std::unique_ptr<Shader> m_wireframe_shader;
   std::deque<Mesh> m_meshes;
   std::vector<std::int32_t> m_group_material_ids;
   std::vector<std::uint32_t> m_group_flags;
@@ -100,6 +107,7 @@ class WorldRenderer {
   Sprite::SpriteRenderer m_sprite_renderer;
   ScenarioRuntime* m_last_sprite_runtime{nullptr};
   bool m_sprite_grayscale{false};
+  bool m_geometry_wireframe{false};
   std::unordered_map<std::size_t, std::unique_ptr<CharacterGpuModel>> m_character_models;
   std::vector<std::string> m_failed_character_models;
 

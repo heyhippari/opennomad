@@ -153,8 +153,7 @@ class FakeWorld final : public App::Script::ScriptWorld {
       return std::expected<App::Script::RelativeBodyAnimationResult, std::string>{
           std::unexpect, "body animation failed"};
     }
-    return App::Script::RelativeBodyAnimationResult{
-        .max_frame_index = body_animation_max_frame};
+    return App::Script::RelativeBodyAnimationResult{.max_frame_index = body_animation_max_frame};
   }
   void reset_body_animation(const std::int16_t character_id) override {
     body_animation_resets.push_back(character_id);
@@ -205,11 +204,9 @@ App::Omikron::ScxScript single_root_script(const App::Omikron::ScxScriptCommand&
   return script;
 }
 
-App::Omikron::ScxScript relative_body_animation_script(
-    const std::uint32_t execution_limit = 1) {
-  App::Omikron::ScxScript script{
-      single_root_script(command(K_SELECT_RELATIVE_BODY_ANIMATION, 0, 12, std::nullopt,
-          execution_limit))};
+App::Omikron::ScxScript relative_body_animation_script(const std::uint32_t execution_limit = 1) {
+  App::Omikron::ScxScript script{single_root_script(
+      command(K_SELECT_RELATIVE_BODY_ANIMATION, 0, 12, std::nullopt, execution_limit))};
   script.binding_table_a.entries.push_back(App::Omikron::ScxBindingEntry{.name = "RootBody"});
   return script;
 }
@@ -272,8 +269,8 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
   TEST_CASE("SelectRelativeBodyAnimation reinitializes only mutable progress arguments") {
     RuntimeFixture fixture{{relative_body_animation_script()}, relative_body_animation_values()};
     const std::size_t id{fixture.runtime
-            ->create_instance(0,
-                App::Script::ScriptLaunchContext{.character_id = 310, .parameter = 0})
+            ->create_instance(
+                0, App::Script::ScriptLaunchContext{.character_id = 310, .parameter = 0})
             .value()};
     const App::Script::ScriptInstance* instance{fixture.runtime->instance(id)};
     REQUIRE(instance != nullptr);
@@ -290,12 +287,13 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
     CHECK_EQ(fixture.world.body_animation_resets.at(0), 310);
   }
 
-  TEST_CASE("SelectRelativeBodyAnimation advances exact progress windows and completes at endpoint") {
+  TEST_CASE(
+      "SelectRelativeBodyAnimation advances exact progress windows and completes at endpoint") {
     RuntimeFixture fixture{{relative_body_animation_script()}, relative_body_animation_values()};
     REQUIRE(fixture.runtime
-                ->create_instance(0,
-                    App::Script::ScriptLaunchContext{.character_id = 310, .parameter = 0})
-                .has_value());
+            ->create_instance(
+                0, App::Script::ScriptLaunchContext{.character_id = 310, .parameter = 0})
+            .has_value());
 
     fixture.runtime->step_tick(1.0F);
     fixture.runtime->step_tick(0.5F);
@@ -827,6 +825,13 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
     CHECK(request.owner.is_null());
     CHECK_EQ(request.scenario_sound_index, 9U);
     CHECK_EQ(request.sound_name, "fx");
+    CHECK_EQ(request.provenance.origin, App::Audio::AudioOrigin::k_structured_script);
+    REQUIRE(request.provenance.source_script_index.has_value());
+    CHECK_EQ(request.provenance.source_script_index.value(), 0U);
+    REQUIRE(request.provenance.script_instance_id.has_value());
+    CHECK_EQ(request.provenance.script_instance_id.value(), 1U);
+    REQUIRE(request.provenance.function_id.has_value());
+    CHECK_EQ(request.provenance.function_id.value(), K_PLAY_SOUND);
     CHECK_EQ(fixture.runtime->instances().at(0).value_pool.at(2).raw, 1U);  // latch set.
   }
 

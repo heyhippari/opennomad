@@ -704,9 +704,8 @@ ScriptCommandStatus ScriptRuntime::dispatch_command(ScriptInstance& instance,
   return result.status;
 }
 
-HandlerResult ScriptRuntime::handle_select_relative_body_animation(ScriptInstance& instance,
-    RuntimeScriptCommand& command,
-    const float script_delta_frames) {
+HandlerResult ScriptRuntime::handle_select_relative_body_animation(
+    ScriptInstance& instance, RuntimeScriptCommand& command, const float script_delta_frames) {
   if (!instance.launch_context.character_id.has_value()) {
     return HandlerResult{.status = ScriptCommandStatus::k_error,
         .pause_reason = ScriptPauseReason::k_missing_resource,
@@ -855,8 +854,9 @@ void ScriptRuntime::pause(ScriptInstance& instance,
 
 bool ScriptRuntime::precheck_completed(
     const ScriptInstance& instance, const RuntimeScriptCommand& command) {
-  // Runtime 0x004A0260 precheck: gate on the unresolved execution-context
-  // field, skip for an unlimited execution limit.
+  // OpenNomad's current eligibility model gates on the unresolved context
+  // field and skips unlimited limits. Retail performs the limit check inside
+  // Script_PlayScript; 0x004A0260 is Script_MakeInstance.
   return instance.execution_context_field_34 != -1 &&
          command.execution_count >= command.execution_limit &&
          command.execution_limit != K_INFINITE_EXECUTION_LIMIT;
@@ -1150,6 +1150,11 @@ HandlerResult ScriptRuntime::handle_play_sound(
   request.loop = loop;
   request.scenario_sound_index = static_cast<std::uint16_t>(sound_index);
   request.sound_name = sound->name;
+  request.provenance = Audio::AudioProvenance{.origin = Audio::AudioOrigin::k_structured_script,
+      .scenario_name = std::string{m_world->scenario_name()},
+      .source_script_index = instance.source_script_index,
+      .script_instance_id = instance.instance_id,
+      .function_id = command.opcode};
   request.raw_flags = flags;
 
   if (object_index == -1) {
@@ -1245,6 +1250,11 @@ HandlerResult ScriptRuntime::handle_play_sync_sound(
   request.loop = (flags & 1U) != 0U;
   request.scenario_sound_index = static_cast<std::uint16_t>(sound_index);
   request.sound_name = sound->name;
+  request.provenance = Audio::AudioProvenance{.origin = Audio::AudioOrigin::k_structured_script,
+      .scenario_name = std::string{m_world->scenario_name()},
+      .source_script_index = instance.source_script_index,
+      .script_instance_id = instance.instance_id,
+      .function_id = command.opcode};
   request.raw_flags = flags;
 
   if (object_index == -1) {
@@ -1469,12 +1479,12 @@ std::expected<void, std::string> ScriptRuntime::reset_instance(const std::size_t
     if (instance.launch_context.character_id.has_value()) {
       bool owns_body_animation{false};
       for (const RuntimeScriptCommand& command : instance.root_commands) {
-        owns_body_animation = owns_body_animation ||
-                              command.opcode == K_SELECT_RELATIVE_BODY_ANIMATION;
+        owns_body_animation =
+            owns_body_animation || command.opcode == K_SELECT_RELATIVE_BODY_ANIMATION;
       }
       for (const RuntimeScriptCommand& command : instance.linked_commands) {
-        owns_body_animation = owns_body_animation ||
-                              command.opcode == K_SELECT_RELATIVE_BODY_ANIMATION;
+        owns_body_animation =
+            owns_body_animation || command.opcode == K_SELECT_RELATIVE_BODY_ANIMATION;
       }
       if (owns_body_animation) {
         m_world->reset_body_animation(instance.launch_context.character_id.value_or(0));
@@ -1511,12 +1521,12 @@ void ScriptRuntime::reset_all() {
     if (instance.launch_context.character_id.has_value()) {
       bool owns_body_animation{false};
       for (const RuntimeScriptCommand& command : instance.root_commands) {
-        owns_body_animation = owns_body_animation ||
-                              command.opcode == K_SELECT_RELATIVE_BODY_ANIMATION;
+        owns_body_animation =
+            owns_body_animation || command.opcode == K_SELECT_RELATIVE_BODY_ANIMATION;
       }
       for (const RuntimeScriptCommand& command : instance.linked_commands) {
-        owns_body_animation = owns_body_animation ||
-                              command.opcode == K_SELECT_RELATIVE_BODY_ANIMATION;
+        owns_body_animation =
+            owns_body_animation || command.opcode == K_SELECT_RELATIVE_BODY_ANIMATION;
       }
       if (owns_body_animation) {
         m_world->reset_body_animation(instance.launch_context.character_id.value_or(0));

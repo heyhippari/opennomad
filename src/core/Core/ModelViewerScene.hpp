@@ -150,24 +150,28 @@ class ModelViewerScene final : public Scene, public Debug::SceneDebugView {
   // --- Debug overlays -------------------------------------------------------
 
   /// Light debug overlay visibility (markers, spot lines, attenuation
-  /// spheres). Toggled from the Overlays debug window.
+  /// spheres). Toggled from the Visualizers debug window.
   [[nodiscard]] bool light_overlay_enabled() const override;
   void set_light_overlay_enabled(bool enabled) override;
   [[nodiscard]] bool light_overlay_supported() const override {
     return true;
   }
   /// Sprite overlay visibility: one outline per drawn billboard,
-  /// colour-coded by render mode. Toggled from the Overlays debug window.
+  /// colour-coded by render mode. Toggled from the Visualizers debug window.
   [[nodiscard]] bool sprite_overlay_enabled() const override;
   void set_sprite_overlay_enabled(bool enabled) override;
   [[nodiscard]] bool sprite_overlay_supported() const override {
     return true;
   }
+  [[nodiscard]] bool geometry_wireframe_enabled() const override;
+  void set_geometry_wireframe_enabled(bool enabled) override;
+  [[nodiscard]] bool geometry_wireframe_supported() const override {
+    return true;
+  }
 
-  [[nodiscard]] std::optional<Debug::SpriteRenderDebugState>
-  sprite_render_debug_state() const override;
-  [[nodiscard]] std::optional<std::array<float, 3>>
-  sprite_debug_focus_position() const override;
+  [[nodiscard]] std::optional<Debug::SpriteRenderDebugState> sprite_render_debug_state()
+      const override;
+  [[nodiscard]] std::optional<std::array<float, 3>> sprite_debug_focus_position() const override;
   [[nodiscard]] bool sprite_grayscale_supported() const override {
     return true;
   }
@@ -260,6 +264,9 @@ class ModelViewerScene final : public Scene, public Debug::SceneDebugView {
   /// Draws the sprite overlay: one outlined quad per billboard drawn in the
   /// last frame, colour-coded by render mode. Depth-tested, no depth writes.
   void render_sprite_overlay(const glm::mat4& view, const glm::mat4& projection);
+  /// Draws every triangle mesh as an untextured, depth-tested wireframe.
+  void render_geometry_wireframe(
+      const glm::mat4& view, const glm::mat4& projection, const glm::mat4& model);
 
   static constexpr std::array<float, 3> k_light_direction{0.35F, 0.75F, 0.55F};
   static constexpr float k_ambient_strength{0.35F};
@@ -297,10 +304,12 @@ class ModelViewerScene final : public Scene, public Debug::SceneDebugView {
   VertexArray m_sprite_overlay_array;
   /// Scene lights on (true) or flat ambient tint only (false). Toggled by L.
   bool m_lights_enabled{true};
-  /// Light debug overlay visible. Toggled from the Overlays debug window.
+  /// Light debug overlay visible. Toggled from the Visualizers debug window.
   bool m_light_overlay_enabled{false};
-  /// Sprite billboard outline overlay visible (Overlays debug window).
+  /// Sprite billboard outline overlay visible (Visualizers debug window).
   bool m_sprite_overlay_enabled{false};
+  /// Solid-colour mesh wireframe visible (Visualizers debug window).
+  bool m_geometry_wireframe_enabled{false};
   // One mesh per material group (Mesh is neither movable nor copyable, so a
   // deque keeps the elements stable).
   std::deque<Mesh> m_meshes;

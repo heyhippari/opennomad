@@ -1,5 +1,11 @@
 #include "Core/Audio/AudioSystem.hpp"
 
+#include <SDL3/SDL_audio.h>
+#include <SDL3/SDL_error.h>
+#include <SDL3/SDL_iostream.h>
+#include <SDL3/SDL_properties.h>
+#include <SDL3/SDL_stdinc.h>
+#include <SDL3_mixer/SDL_mixer.h>
 #include <fmt/format.h>
 
 #include <algorithm>
@@ -18,13 +24,6 @@
 #include <string_view>
 #include <utility>
 #include <vector>
-
-#include <SDL3/SDL_audio.h>
-#include <SDL3/SDL_error.h>
-#include <SDL3/SDL_iostream.h>
-#include <SDL3/SDL_properties.h>
-#include <SDL3/SDL_stdinc.h>
-#include <SDL3_mixer/SDL_mixer.h>
 
 #include "Core/Audio/AudioTypes.hpp"
 #include "Core/Audio/LegacySpatializer.hpp"
@@ -49,11 +48,16 @@ namespace {
 /// Human-readable event severity label.
 [[nodiscard]] const char* severity_name(const AudioEventSeverity severity) {
   switch (severity) {
-    case AudioEventSeverity::k_debug: return "debug";
-    case AudioEventSeverity::k_info:  return "info";
-    case AudioEventSeverity::k_warn:  return "warn";
-    case AudioEventSeverity::k_error: return "error";
-    default:                          return "info";
+    case AudioEventSeverity::k_debug:
+      return "debug";
+    case AudioEventSeverity::k_info:
+      return "info";
+    case AudioEventSeverity::k_warn:
+      return "warn";
+    case AudioEventSeverity::k_error:
+      return "error";
+    default:
+      return "info";
   }
 }
 
@@ -119,15 +123,11 @@ std::expected<std::unique_ptr<AudioSystem>, std::string> AudioSystem::create() {
         std::unexpect, fmt::format("MIX_Init failed: {}", SDL_GetError())};
   }
 
-  auto system{std::unique_ptr<AudioSystem>{
-      // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
+  auto system{std::unique_ptr<AudioSystem>{// NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
       new AudioSystem()}};
   system->m_initialized = true;
-  system->m_mixer_version =
-      fmt::format("{}.{}.{}",
-          SDL_MIXER_MAJOR_VERSION,
-          SDL_MIXER_MINOR_VERSION,
-          SDL_MIXER_MICRO_VERSION);
+  system->m_mixer_version = fmt::format(
+      "{}.{}.{}", SDL_MIXER_MAJOR_VERSION, SDL_MIXER_MINOR_VERSION, SDL_MIXER_MICRO_VERSION);
 
   // Request a modern stereo format hint; SDL3_mixer negotiates/ converts to
   // the actual device format (a nullptr hint is also valid).
@@ -161,7 +161,8 @@ std::expected<std::unique_ptr<AudioSystem>, std::string> AudioSystem::create() {
   }
   const char* device_name{SDL_GetAudioDeviceName(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK)};
   system->m_device_name = device_name != nullptr ? device_name : "default";
-  App::Log::info(LogCategory::Audio, "initialized SDL3_mixer {}, device '{}', requested {}, negotiated {}",
+  App::Log::info(LogCategory::Audio,
+      "initialized SDL3_mixer {}, device '{}', requested {}, negotiated {}",
       system->m_mixer_version,
       system->m_device_name,
       system->m_requested_format,
@@ -183,7 +184,8 @@ std::expected<std::unique_ptr<AudioSystem>, std::string> AudioSystem::create() {
     system->m_tracks.at(index) = track;
     system->m_contexts.at(index).system = system.get();
     system->m_contexts.at(index).index = static_cast<std::uint32_t>(index);
-    MIX_SetTrackStoppedCallback(track, &AudioSystem::stopped_callback, &system->m_contexts.at(index));
+    MIX_SetTrackStoppedCallback(
+        track, &AudioSystem::stopped_callback, &system->m_contexts.at(index));
   }
 
   system->m_cache = std::make_unique<SoundResourceCache>(mixer);
@@ -260,8 +262,7 @@ std::expected<SoundResourceId, std::string> AudioSystem::load_sound(
     return std::expected<SoundResourceId, std::string>{
         std::unexpect, "audio subsystem unavailable"};
   }
-  return m_cache->load(
-      canonical_key, scenario_name, record_index, name, h_id, wav_bytes);
+  return m_cache->load(canonical_key, scenario_name, record_index, name, h_id, wav_bytes);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -293,13 +294,14 @@ std::optional<VoiceHandle> AudioSystem::play_sound(const SoundPlayRequest& reque
   const VoiceHandle handle{allocated.value()};
   m_pool.configure(handle, request);
   append_event(AudioEventSeverity::k_info,
-      fmt::format("queued {}:{} sound '{}' resource {} {} {}",
+      fmt::format("queued {}:{} sound '{}' resource {} {} {} origin {}",
           handle.index,
           handle.generation,
           request.sound_name,
           request.resource.index,
           request.loop ? "loop" : "once",
-          request.emitter.has_value() ? "spatial" : "nonspatial"));
+          request.emitter.has_value() ? "spatial" : "nonspatial",
+          audio_origin_name(request.provenance.origin)));
   return handle;
 }
 
@@ -388,6 +390,11 @@ std::optional<VoiceHandle> AudioSystem::audition(const SoundResourceId resource)
       .owner = AudioOwnerToken{},
       .scenario_sound_index = 0xFFFFU,
       .sound_name = "audition",
+      .provenance = AudioProvenance{.origin = AudioOrigin::k_debug_audition,
+          .scenario_name = {},
+          .source_script_index = std::nullopt,
+          .script_instance_id = std::nullopt,
+          .function_id = std::nullopt},
       .raw_flags = 0});
 }
 
@@ -395,7 +402,9 @@ std::optional<VoiceHandle> AudioSystem::audition(const SoundResourceId resource)
 // Listener / emitters / update
 // ─────────────────────────────────────────────────────────────────────────────
 
-void AudioSystem::set_listener(const AudioListenerState& listener) { m_listener = listener; }
+void AudioSystem::set_listener(const AudioListenerState& listener) {
+  m_listener = listener;
+}
 
 void AudioSystem::set_emitter_resolver(EmitterResolver resolver) {
   m_emitter_resolver = std::move(resolver);
@@ -419,11 +428,8 @@ void AudioSystem::release_slot(const VoiceHandle handle, const char* reason) {
     m_cache->remove_reference(voice->resource);
   }
   append_event(AudioEventSeverity::k_info,
-      fmt::format("{} {}:{} (sound {})",
-          reason,
-          handle.index,
-          handle.generation,
-          voice->resource.index));
+      fmt::format(
+          "{} {}:{} (sound {})", reason, handle.index, handle.generation, voice->resource.index));
   m_pool.release(handle);
 }
 
@@ -447,8 +453,8 @@ void AudioSystem::update(const float real_delta_seconds) {
     if (voice.state != VoiceState::k_queued) {
       continue;
     }
-    const VoiceHandle slot_handle{.index = static_cast<std::uint32_t>(index),
-        .generation = voice.generation};
+    const VoiceHandle slot_handle{
+        .index = static_cast<std::uint32_t>(index), .generation = voice.generation};
     MIX_Track* track{m_tracks.at(index)};
     MIX_Audio* audio{m_cache->audio(voice.resource)};
     if (track == nullptr || audio == nullptr) {
@@ -462,7 +468,8 @@ void AudioSystem::update(const float real_delta_seconds) {
     MIX_SetTrackFrequencyRatio(track, 1.0F);
     MIX_SetTrackPlaybackPosition(track, 0);
     if (!MIX_SetTrackAudio(track, audio)) {
-      App::Log::warn(LogCategory::Audio, "MIX_SetTrackAudio failed for slot {}: {}", index, SDL_GetError());
+      App::Log::warn(
+          LogCategory::Audio, "MIX_SetTrackAudio failed for slot {}: {}", index, SDL_GetError());
       m_pool.release(slot_handle);
       continue;
     }
@@ -474,12 +481,12 @@ void AudioSystem::update(const float real_delta_seconds) {
     }
 
     const SDL_PropertiesID props{SDL_CreateProperties()};
-    SDL_SetNumberProperty(
-        props, MIX_PROP_PLAY_LOOPS_NUMBER, voice.looping ? -1 : 0);
+    SDL_SetNumberProperty(props, MIX_PROP_PLAY_LOOPS_NUMBER, voice.looping ? -1 : 0);
     const bool started{MIX_PlayTrack(track, props)};
     SDL_DestroyProperties(props);
     if (!started) {
-      App::Log::warn(LogCategory::Audio, "MIX_PlayTrack failed for slot {}: {}", index, SDL_GetError());
+      App::Log::warn(
+          LogCategory::Audio, "MIX_PlayTrack failed for slot {}: {}", index, SDL_GetError());
       m_pool.release(slot_handle);
       continue;
     }
@@ -525,10 +532,10 @@ void AudioSystem::update(const float real_delta_seconds) {
         }
         if (voice.emitter.has_value()) {
           if (delta_valid) {
-            voice.emitter->velocity = Vec3{
-                (position->at(0) - voice.emitter->position.at(0)) / delta,
-                (position->at(1) - voice.emitter->position.at(1)) / delta,
-                (position->at(2) - voice.emitter->position.at(2)) / delta};
+            voice.emitter->velocity =
+                Vec3{(position->at(0) - voice.emitter->position.at(0)) / delta,
+                    (position->at(1) - voice.emitter->position.at(1)) / delta,
+                    (position->at(2) - voice.emitter->position.at(2)) / delta};
           } else {
             voice.emitter->velocity = Vec3{0.0F, 0.0F, 0.0F};
           }
@@ -580,8 +587,8 @@ void AudioSystem::update(const float real_delta_seconds) {
     }
     MIX_Track* track{m_tracks.at(index)};
     if (track == nullptr || !MIX_TrackPlaying(track)) {
-      release_slot(VoiceHandle{.index = static_cast<std::uint32_t>(index),
-                       .generation = voice.generation},
+      release_slot(
+          VoiceHandle{.index = static_cast<std::uint32_t>(index), .generation = voice.generation},
           "stopped");
     }
   }
@@ -614,19 +621,28 @@ void AudioSystem::set_music_gain(const float gain) {
   }
 }
 
-float AudioSystem::master_gain() const { return m_master_gain; }
-float AudioSystem::sfx_gain() const { return m_sfx_gain; }
-float AudioSystem::music_gain() const { return m_music_gain; }
+float AudioSystem::master_gain() const {
+  return m_master_gain;
+}
+float AudioSystem::sfx_gain() const {
+  return m_sfx_gain;
+}
+float AudioSystem::music_gain() const {
+  return m_music_gain;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Music / inspection
 // ─────────────────────────────────────────────────────────────────────────────
 
-MusicPlayer& AudioSystem::music() { return m_music; }
-const MusicPlayer& AudioSystem::music() const { return m_music; }
+MusicPlayer& AudioSystem::music() {
+  return m_music;
+}
+const MusicPlayer& AudioSystem::music() const {
+  return m_music;
+}
 
-std::expected<void, std::string> AudioSystem::play_music_track(
-    const MusicTrackRequest& request) {
+std::expected<void, std::string> AudioSystem::play_music_track(const MusicTrackRequest& request) {
   APP_PROFILE_FUNCTION();
 
   // Runtime does not restart the current track when the numeric ID matches.
@@ -669,8 +685,8 @@ std::expected<void, std::string> AudioSystem::play_music_track(
 
   // First vertical slice: decode the complete track to interleaved S16 PCM
   // and hand it to the mixer (incremental streaming is a later milestone).
-  const std::size_t sample_count{
-      static_cast<std::size_t>(decoder->total_frames() * static_cast<std::uint64_t>(decoder->channels()))};
+  const std::size_t sample_count{static_cast<std::size_t>(
+      decoder->total_frames() * static_cast<std::uint64_t>(decoder->channels()))};
   std::vector<std::int16_t> pcm;
   pcm.resize(sample_count);
   const std::size_t decoded{decoder->decode_frames(std::span<std::int16_t>{pcm})};
@@ -685,8 +701,7 @@ std::expected<void, std::string> AudioSystem::play_music_track(
   spec.channels = decoder->channels();
   spec.freq = decoder->sample_rate();
 
-  RawPcmMusicSource source{
-      .display_name = relative_path, .spec = spec, .samples = std::move(pcm)};
+  RawPcmMusicSource source{.display_name = relative_path, .spec = spec, .samples = std::move(pcm)};
   const MusicPlayOptions options{.loop = request.loop};
 
   const bool replacing{m_current_track_id.has_value() && m_music.is_playing()};
@@ -735,8 +750,8 @@ std::optional<std::int16_t> AudioSystem::current_music_track() const {
 void AudioSystem::append_event(const AudioEventSeverity severity, std::string message) {
   m_events.push_back(AudioEvent{.severity = severity, .message = std::move(message)});
   if (m_events.size() > k_event_capacity) {
-    m_events.erase(m_events.begin(), m_events.begin() + static_cast<std::ptrdiff_t>(
-        m_events.size() - k_event_capacity));
+    m_events.erase(m_events.begin(),
+        m_events.begin() + static_cast<std::ptrdiff_t>(m_events.size() - k_event_capacity));
   }
 }
 
@@ -755,7 +770,8 @@ void AudioSystem::rebuild_snapshot() {
   snapshot.active_voices = m_pool.active_count();
   snapshot.free_voices = m_pool.free_count();
   snapshot.cached_resources = m_cache != nullptr ? m_cache->count() : 0;
-  snapshot.cache_capacity = m_cache != nullptr ? m_cache->capacity() : SoundResourceTable::k_capacity;
+  snapshot.cache_capacity =
+      m_cache != nullptr ? m_cache->capacity() : SoundResourceTable::k_capacity;
   snapshot.last_update_delta_seconds = m_last_update_delta_seconds;
   snapshot.listener_position = m_listener.position;
   snapshot.listener_velocity = m_listener.velocity;
@@ -773,8 +789,8 @@ void AudioSystem::rebuild_snapshot() {
     right = Vec3{1.0F, 0.0F, 0.0F};
     snapshot.listener_degenerate = true;
   } else {
-    right = Vec3{right.at(0) / right_length, right.at(1) / right_length,
-        right.at(2) / right_length};
+    right =
+        Vec3{right.at(0) / right_length, right.at(1) / right_length, right.at(2) / right_length};
   }
   snapshot.listener_right = right;
 
@@ -791,9 +807,11 @@ void AudioSystem::rebuild_snapshot() {
       if (const SoundResourceTable::Entry* entry{m_cache->find_entry(voice.resource)};
           entry != nullptr) {
         info.sound_name = entry->name;
+        info.scenario_name = entry->scenario_name;
       }
     }
     info.owner_description = voice.owner.describe();
+    info.provenance = voice.provenance;
     info.looping = voice.looping;
     info.nonspatial = voice.nonspatial;
     info.unknown_flag = voice.unknown_flag;
@@ -812,8 +830,8 @@ void AudioSystem::rebuild_snapshot() {
     info.base_frequency_hz = voice.base_frequency_hz;
     info.frequency_ratio = voice.frequency_ratio;
 
-    if (available() && (voice.state == VoiceState::k_playing ||
-                        voice.state == VoiceState::k_stopping)) {
+    if (available() &&
+        (voice.state == VoiceState::k_playing || voice.state == VoiceState::k_stopping)) {
       MIX_Track* track{m_tracks.at(index)};
       if (track != nullptr) {
         const Sint64 frames{MIX_GetTrackPlaybackPosition(track)};
@@ -838,11 +856,17 @@ void AudioSystem::rebuild_snapshot() {
   snapshot.music.loop_flag = m_music_loop;
   snapshot.music.mode_flag = m_music_mode_flag;
   snapshot.music.load_error = m_music_load_error;
+  snapshot.music.origin =
+      m_current_track_id.has_value() ? AudioOrigin::k_area_vm : AudioOrigin::k_unknown;
+  snapshot.music.source_opcode =
+      m_current_track_id.has_value() ? std::optional<std::uint32_t>{0x67U} : std::nullopt;
   snapshot.events = m_events;
   m_snapshot = std::move(snapshot);
 }
 
-const AudioDebugSnapshot& AudioSystem::debug_snapshot() const { return m_snapshot; }
+const AudioDebugSnapshot& AudioSystem::debug_snapshot() const {
+  return m_snapshot;
+}
 
 AudioContextInfo AudioSystem::context_info() const {
   const AudioDebugSnapshot& snapshot{m_snapshot};
@@ -862,9 +886,8 @@ AudioContextInfo AudioSystem::context_info() const {
   const std::size_t start{event_count > 8 ? event_count - 8 : 0};
   for (std::size_t index{start}; index < event_count; ++index) {
     const AudioEvent& event{snapshot.events.at(index)};
-    info.recent_events.push_back(fmt::format("[{}] {}",
-        severity_name(event.severity),
-        event.message));
+    info.recent_events.push_back(
+        fmt::format("[{}] {}", severity_name(event.severity), event.message));
   }
   return info;
 }

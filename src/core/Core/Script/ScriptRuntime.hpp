@@ -111,8 +111,8 @@ struct ScriptPauseInfo {
   std::string reason_text;
 };
 
-/// Mutable runtime copy of one command. Never aliases the immutable parsed
-/// definition; execution counters are owned here.
+/// One command in OpenNomad's mutable execution representation. It never
+/// aliases the parsed SCX definition; execution counters are owned here.
 struct RuntimeScriptCommand {
   std::uint32_t opcode{0};
   std::uint32_t value_count{0};
@@ -131,9 +131,10 @@ struct ScriptLaunchContext {
   std::int16_t parameter{0};
 };
 
-/// One runtime script instance: a deep copy of a parsed script definition
-/// with mutable argument storage, counters and an instance-local sprite
-/// source-to-runtime remap.
+/// One OpenNomad runtime instance produced from a parsed SCX definition, with
+/// mutable argument storage, counters and an instance-local sprite remap.
+/// Retail Runtime instead executes mutable primary loaded records directly and
+/// separately owns clones created by Script_MakeInstance.
 struct ScriptInstance {
   std::size_t instance_id{0};
   std::size_t source_script_index{0};
@@ -271,8 +272,11 @@ class ScriptWorld {
   [[nodiscard]] virtual std::string_view scenario_name() const = 0;
 };
 
-/// Runtime-style SCX script execution: immutable parsed definitions are deep
-/// copied into mutable instances, serviced by a bounded per-frame scheduler.
+/// Safe modern SCX execution model: parsed definitions produce mutable
+/// ScriptInstance objects serviced by a bounded per-frame scheduler. Retail
+/// Runtime ownership is different: mutable primary loaded records execute
+/// directly, alongside a separate Script_MakeInstance clone pool. See
+/// docs/reverse-engineering/script-runtime.md.
 class ScriptRuntime {
  public:
   ScriptRuntime() = default;
@@ -287,8 +291,9 @@ class ScriptRuntime {
   static std::expected<std::unique_ptr<ScriptRuntime>, std::string> create(
       const Omikron::ScxData& scx, ScriptWorld& world, std::string scenario_name);
 
-  /// Deep-copies the parsed script definition into a fresh mutable instance
-  /// and reinitialises mutable command arguments. Returns the instance id.
+  /// Creates OpenNomad's mutable execution representation from one parsed SCX
+  /// definition and reinitialises mutable command arguments. This is not a
+  /// literal implementation of retail Script_MakeInstance. Returns the ID.
   [[nodiscard]] std::expected<std::size_t, std::string> create_instance(
       std::size_t source_script_index);
 
@@ -346,51 +351,47 @@ class ScriptRuntime {
 
   /// Dispatches one command through the opcode registry and its handler.
   ScriptCommandStatus dispatch_command(ScriptInstance& instance,
-                                       RuntimeScriptCommand& command,
-                                       float script_delta_frames,
-                                       std::size_t group_index,
-                                       std::size_t chain_position,
-                                       std::size_t linked_index,
-                                       bool is_root);
+      RuntimeScriptCommand& command,
+      float script_delta_frames,
+      std::size_t group_index,
+      std::size_t chain_position,
+      std::size_t linked_index,
+      bool is_root);
 
   /// Pauses the scenario with full command context.
   void pause(ScriptInstance& instance,
-             const RuntimeScriptCommand& command,
-             std::size_t group_index,
-             std::size_t chain_position,
-             std::size_t linked_index,
-             bool is_root,
-             ScriptPauseReason reason,
-             std::string reason_text);
+      const RuntimeScriptCommand& command,
+      std::size_t group_index,
+      std::size_t chain_position,
+      std::size_t linked_index,
+      bool is_root,
+      ScriptPauseReason reason,
+      std::string reason_text);
 
-  /// Shared execution-limit precheck (Runtime 0x004A0260 region).
-  [[nodiscard]] static bool precheck_completed(const ScriptInstance& instance,
-                                               const RuntimeScriptCommand& command);
+  /// OpenNomad execution-limit eligibility helper. Retail performs this check
+  /// inside Script_PlayScript around 0x0044C9D2; 0x004A0260 is
+  /// Script_MakeInstance.
+  [[nodiscard]] static bool precheck_completed(
+      const ScriptInstance& instance, const RuntimeScriptCommand& command);
 
   /// Explicit exhaustion predicate: an unlimited (0xFFFFFFFF) limit is never
   /// exhausted; a finite limit is exhausted once the count reaches it.
   [[nodiscard]] static bool is_command_exhausted(const RuntimeScriptCommand& command);
 
   /// Handler implementations.
-  HandlerResult handle_set_sprite_type(
-      ScriptInstance& instance, RuntimeScriptCommand& command);
-  HandlerResult handle_set_sprite_frame(
-      ScriptInstance& instance, RuntimeScriptCommand& command);
+  HandlerResult handle_set_sprite_type(ScriptInstance& instance, RuntimeScriptCommand& command);
+  HandlerResult handle_set_sprite_frame(ScriptInstance& instance, RuntimeScriptCommand& command);
   HandlerResult handle_interpolated(
       ScriptInstance& instance, RuntimeScriptCommand& command, float script_delta_frames);
   HandlerResult handle_display_3d_sprite(
       ScriptInstance& instance, RuntimeScriptCommand& command, float script_delta_frames);
   static HandlerResult handle_wait(
       ScriptInstance& instance, RuntimeScriptCommand& command, float script_delta_frames);
-  HandlerResult handle_play_sound(
-      ScriptInstance& instance, RuntimeScriptCommand& command);
-  HandlerResult handle_play_sync_sound(
-      ScriptInstance& instance, RuntimeScriptCommand& command);
-  HandlerResult handle_stop_sound(
-      ScriptInstance& instance, RuntimeScriptCommand& command);
-  HandlerResult handle_select_relative_body_animation(ScriptInstance& instance,
-      RuntimeScriptCommand& command,
-      float script_delta_frames);
+  HandlerResult handle_play_sound(ScriptInstance& instance, RuntimeScriptCommand& command);
+  HandlerResult handle_play_sync_sound(ScriptInstance& instance, RuntimeScriptCommand& command);
+  HandlerResult handle_stop_sound(ScriptInstance& instance, RuntimeScriptCommand& command);
+  HandlerResult handle_select_relative_body_animation(
+      ScriptInstance& instance, RuntimeScriptCommand& command, float script_delta_frames);
 
   /// Stops the matching (soundId, owner) voice for every started audio
   /// command of an instance (replay/reset hook, called before the pool reset).
@@ -403,10 +404,8 @@ class ScriptRuntime {
   /// Applies one interpolated value to a sprite (0 = scale X, 1 = scale Y,
   /// 2 = roll). `is_completion` selects the Runtime-faithful roll call
   /// boundary (raw target without the degrees-to-radians conversion).
-  void apply_interpolated_value(Sprite::SpriteHandle handle,
-                                float value,
-                                std::uint16_t kind,
-                                bool is_completion);
+  void apply_interpolated_value(
+      Sprite::SpriteHandle handle, float value, std::uint16_t kind, bool is_completion);
 
   /// Appends one trace entry, bounded.
   void append_trace(CommandTraceEntry entry);
