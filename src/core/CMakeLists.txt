@@ -7,6 +7,8 @@ add_library(${NAME} STATIC
   Core/Debug/Metrics.hpp Core/Debug/Metrics.cpp
   Core/Debug/LogSink.hpp
   Core/Debug/LogFilter.hpp
+  Core/Debug/AreaVmDebugState.hpp Core/Debug/AreaVmDebugState.cpp
+  Core/Debug/RuntimeTimingDebug.hpp
   Core/Debug/DebugRuntimeContext.hpp Core/Debug/DebugRuntimeContext.cpp
   Core/Debug/SceneDebugView.hpp Core/Debug/SceneDebugView.cpp
   Core/Debug/DebugUI.hpp Core/Debug/DebugUIInternal.hpp

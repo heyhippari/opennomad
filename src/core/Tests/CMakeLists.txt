@@ -93,6 +93,10 @@ add_executable(AreaScriptRuntimeTest AreaScriptRuntime.spec.cpp $<TARGET_OBJECTS
 add_test(NAME AreaScriptRuntimeTest COMMAND AreaScriptRuntimeTest)
 target_link_libraries(AreaScriptRuntimeTest PRIVATE doctest::doctest Core)
 
+add_executable(AreaVmDebugStateTest AreaVmDebugState.spec.cpp $<TARGET_OBJECTS:TestRunner>)
+add_test(NAME AreaVmDebugStateTest COMMAND AreaVmDebugStateTest)
+target_link_libraries(AreaVmDebugStateTest PRIVATE doctest::doctest Core)
+
 add_executable(ScenarioStartupTest ScenarioStartup.spec.cpp $<TARGET_OBJECTS:TestRunner>)
 add_test(NAME ScenarioStartupTest COMMAND ScenarioStartupTest)
 target_link_libraries(ScenarioStartupTest PRIVATE doctest::doctest Core)

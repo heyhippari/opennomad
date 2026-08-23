@@ -21,6 +21,8 @@ class InterfaceManager;
 
 namespace App::Debug {
 
+class RuntimeTimingDebugSource;
+
 /// Bundle of non-owning pointers to the subsystems the debug UI inspects.
 /// Passed once from Application; every debug window reads only what it needs,
 /// so the tools no longer hardwire themselves to a particular Scene subclass.
@@ -32,6 +34,7 @@ struct DebugContext {
   Audio::AudioSystem* audio_system{nullptr};
   Startup::StartupCoordinator* startup_coordinator{nullptr};
   Startup::StartupTraceRecorder* startup_trace{nullptr};
+  RuntimeTimingDebugSource* runtime_timing{nullptr};
 };
 
 }  // namespace App::Debug

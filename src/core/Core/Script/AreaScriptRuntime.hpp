@@ -293,6 +293,25 @@ class AreaScriptRuntime {
     return m_ip;
   }
 
+  /// Immutable execution span currently used by OpenNomad. Its base is the
+  /// startup context's selected event entry, not a process pointer.
+  [[nodiscard]] std::span<const std::byte> bytecode() const {
+    return m_script;
+  }
+
+  /// OpenNomad event currently executing, waiting, or paused. This is
+  /// observability state corresponding conceptually (but not layout-wise) to
+  /// RuntimeScenarioContext::activeEvent.
+  [[nodiscard]] std::optional<std::uint16_t> active_event() const {
+    return m_active_event;
+  }
+
+  /// Pending OpenNomad events in FIFO order. OpenNomad's queue is not claimed
+  /// to reproduce the recovered four-u8 retail storage.
+  [[nodiscard]] const std::deque<std::uint16_t>& queued_events() const {
+    return m_queued_events;
+  }
+
   /// Value of a START/global variable set by opcodes 0x0D/0x0E, or nullopt.
   [[nodiscard]] std::optional<std::int32_t> variable(std::uint16_t id) const;
   /// All START/global variables set by opcodes 0x0D/0x0E (diagnostics).
@@ -302,6 +321,15 @@ class AreaScriptRuntime {
 
   [[nodiscard]] std::size_t evaluation_stack_depth() const {
     return m_evaluation_stack.size();
+  }
+  /// Actual signed dword values in the OpenNomad evaluation stack.
+  [[nodiscard]] const std::vector<std::int32_t>& evaluation_stack() const {
+    return m_evaluation_stack;
+  }
+  /// True when the most recent run stopped on the explicit dispatcher-yield
+  /// flag. Typed waits remain separately observable through wait_info().
+  [[nodiscard]] bool last_run_yielded() const {
+    return m_last_run_yielded;
   }
   [[nodiscard]] const std::optional<AreaCharacterActivationRequest>&
   last_character_activation_request() const {
@@ -357,6 +385,7 @@ class AreaScriptRuntime {
 
   std::span<const std::byte> m_script;
   std::deque<std::uint16_t> m_queued_events;
+  std::optional<std::uint16_t> m_active_event;
   bool m_active{false};
   AreaScriptState m_state{AreaScriptState::k_ready};
   std::size_t m_ip{0};
@@ -382,6 +411,7 @@ class AreaScriptRuntime {
   /// Runtime side-effect handlers set context flag 0x10; the central AREA
   /// dispatcher observes it and yields until the next scenario tick.
   bool m_yield_requested{false};
+  bool m_last_run_yielded{false};
   AreaPauseInfo m_pause_info;
   std::deque<AreaInstructionTrace> m_trace;
   std::size_t m_executed_instruction_count{0};

@@ -445,6 +445,8 @@ std::optional<std::int32_t> AreaScriptRuntime::variable(const std::uint16_t id) 
 AreaScriptState AreaScriptRuntime::run(const float real_delta_seconds) {
   APP_PROFILE_FUNCTION();
 
+  m_last_run_yielded = false;
+
   if (!m_active) {
     return m_state;
   }
@@ -472,6 +474,7 @@ AreaScriptState AreaScriptRuntime::run(const float real_delta_seconds) {
     if (m_queued_events.empty()) {
       return m_state;
     }
+    m_active_event = m_queued_events.front();
     m_queued_events.pop_front();
     m_ip = 0;
     m_evaluation_stack.clear();
@@ -483,11 +486,13 @@ AreaScriptState AreaScriptRuntime::run(const float real_delta_seconds) {
   while (m_state == AreaScriptState::k_running && budget > 0U) {
     if (m_ip >= m_script.size()) {
       m_state = AreaScriptState::k_completed;
+      m_active_event.reset();
       break;
     }
     --budget;
     execute_instruction();
     if (m_yield_requested) {
+      m_last_run_yielded = true;
       break;
     }
   }
@@ -602,6 +607,7 @@ void AreaScriptRuntime::execute_instruction() {
     case K_OP_END_EVENT:
       entry.effect = "terminate current AREA event";
       m_evaluation_stack.clear();
+      m_active_event.reset();
       m_state = AreaScriptState::k_ready;
       break;
     case K_OP_JUMP_RELATIVE: {

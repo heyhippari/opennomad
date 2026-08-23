@@ -2,6 +2,7 @@
 
 #include <SDL3/SDL_video.h>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -9,6 +10,7 @@
 #include "Core/Debug/DebugContext.hpp"
 #include "Core/Debug/DebugRuntimeContext.hpp"
 #include "Core/Debug/LogFilter.hpp"
+#include "Core/Debug/Metrics.hpp"
 #include "Core/Debug/SceneDebugView.hpp"
 #include "Core/Scene.hpp"
 
@@ -63,13 +65,18 @@ class DebugUI {
     m_context = context;
   }
 
+  /// Rebinds the Application-owned timing capability after Application moves.
+  void set_runtime_timing(RuntimeTimingDebugSource* timing) {
+    m_context.runtime_timing = timing;
+  }
+
   /// Render all active debug windows. Call each frame.
   /// @param delta_time  Frame delta in seconds.
   void update(float delta_time);
 
   // --- Toggles ---
 
-  void toggle_performance();
+  void toggle_frame_timing();
   void toggle_system_info();
   void toggle_profiler();
   void toggle_log();
@@ -88,7 +95,7 @@ class DebugUI {
  private:
   // --- Window renderers ---
   void show_menu_bar();
-  void show_performance(float delta_time);
+  void show_frame_timing();
   void show_system_info();
   void show_profiler();
   void show_log();
@@ -127,7 +134,7 @@ class DebugUI {
   DebugContext m_context{};
 
   // Visibility toggles
-  bool m_show_performance{false};  // FPS window hidden by default; F3 re-opens it.
+  bool m_show_frame_timing{false};  // Hidden by default; F3 re-opens it.
   bool m_show_system_info{false};
   bool m_show_profiler{false};
   bool m_show_log{false};
@@ -155,6 +162,13 @@ class DebugUI {
   // Internal frame counter for periodic queries
   std::uint64_t m_frame_count{0};
 
+  // --- Frame & Timing history/override state ---
+  std::array<float, Metrics::kHistorySize> m_runtime_frame_time_history{};
+  std::size_t m_runtime_frame_time_history_head{0};
+  std::size_t m_runtime_frame_time_history_count{0};
+  std::uint64_t m_runtime_frame_time_last_sequence{0};
+  float m_forced_delta_override_value{1.0F};
+
   // --- Shared SCX runtime inspector target ---
   DebugRuntimeContext m_runtime_context;
   std::uint64_t m_applied_runtime_selection_epoch{0};
@@ -173,6 +187,11 @@ class DebugUI {
 
   // --- Scenarios view state ---
   std::uint32_t m_scenarios_selected_scene_id{0};
+
+  // --- AREA VM context inspector state ---
+  std::optional<std::uint64_t> m_area_vm_selected_context;
+  char m_area_vm_trace_filter[64]{};
+  bool m_area_vm_trace_auto_scroll{true};
 
   // --- Startup trace view state ---
   char m_startup_trace_filter[64]{};

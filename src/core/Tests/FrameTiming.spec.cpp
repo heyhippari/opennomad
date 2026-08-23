@@ -7,7 +7,9 @@
 #include <cstdint>
 #include <vector>
 
+#include "Core/Debug/RuntimeTimingDebug.hpp"
 #include "Core/FrameTiming.hpp"
+#include "Core/RuntimeActivityState.hpp"
 
 namespace {
 
@@ -35,15 +37,18 @@ TEST_SUITE("Core::FrameTiming") {
 
   TEST_CASE("The engine callback sees the previous frame's effective delta") {
     FrameTimingState timing;
+    App::Debug::EngineCallbackDebugObservation callback_observation;
     FakeClock clock{100};
     std::vector<float> deltas_seen{};
 
     // Frame 1: clock reset; the callback observes the initial delta (1.0)
     // and executes for 16 ms.
+    callback_observation.begin_timed_frame();
     run_timed_frame(timing, true, false,
         [&clock]() { return clock.now(); },
         []() {},
-        [&clock, &timing, &deltas_seen]() {
+        [&clock, &timing, &deltas_seen, &callback_observation]() {
+          callback_observation.record_callback(timing.effective_delta);
           deltas_seen.push_back(timing.effective_delta);
           clock.advance(16);
         });
@@ -54,10 +59,12 @@ TEST_SUITE("Core::FrameTiming") {
     // callback sees the delta calculated at the END of frame 1, not a
     // freshly measured one.
     clock.advance(8);
+    callback_observation.begin_timed_frame();
     run_timed_frame(timing, false, false,
         [&clock]() { return clock.now(); },
         []() {},
-        [&clock, &timing, &deltas_seen]() {
+        [&clock, &timing, &deltas_seen, &callback_observation]() {
+          callback_observation.record_callback(timing.effective_delta);
           deltas_seen.push_back(timing.effective_delta);
           clock.advance(16);
         });
@@ -68,6 +75,45 @@ TEST_SUITE("Core::FrameTiming") {
     // -> 30/62.5 = 0.48, available only after the callback returned.
     CHECK_EQ(timing.effective_delta, doctest::Approx(0.48F));
     CHECK_EQ(timing.frame_time_ms, 24U);
+
+    App::RuntimeActivityState activity;
+    activity.on_render_window_active(true);
+    activity.on_application_active(true);
+    const auto snapshot{App::Debug::make_runtime_timing_debug_snapshot(
+        timing, activity, false, callback_observation)};
+    REQUIRE(snapshot.last_engine_callback.consumed_delta_units.has_value());
+    CHECK_EQ(snapshot.last_engine_callback.consumed_delta_units.value(), doctest::Approx(0.24F));
+    CHECK_EQ(snapshot.next_effective_delta_units, doctest::Approx(0.48F));
+  }
+
+  TEST_CASE("Timing debug snapshot distinguishes pause, skip, and activity gates") {
+    FrameTimingState timing;
+    timing.time_scale_mode = TimeScaleMode::k_fixed_30hz;
+    timing.base_delta = 1.0F;
+    timing.effective_delta = 0.0F;
+    timing.gameplay_paused = true;
+
+    App::RuntimeActivityState activity;
+    activity.on_render_window_active(true);
+    activity.on_application_active(true);
+    activity.set_updates_suspended(true);
+    activity.reset_frame_timing_on_next_update = true;
+
+    App::Debug::EngineCallbackDebugObservation callback_observation;
+    callback_observation.begin_timed_frame();
+    const auto snapshot{App::Debug::make_runtime_timing_debug_snapshot(
+        timing, activity, true, callback_observation)};
+
+    CHECK(snapshot.gameplay_paused);
+    CHECK_EQ(snapshot.next_base_delta_units, doctest::Approx(1.0F));
+    CHECK_EQ(snapshot.next_effective_delta_units, doctest::Approx(0.0F));
+    CHECK_FALSE(snapshot.last_engine_callback.ran);
+    CHECK(snapshot.skip_engine_frame);
+    CHECK(snapshot.render_window_active);
+    CHECK(snapshot.application_active);
+    CHECK(snapshot.updates_suspended);
+    CHECK_FALSE(snapshot.may_run_frame);
+    CHECK(snapshot.timing_reset_pending);
   }
 
   TEST_CASE("Callback execution time contributes to the measured frame duration") {

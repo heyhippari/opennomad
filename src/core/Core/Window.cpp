@@ -323,9 +323,10 @@ void Window::on_keyboard_event(const SDL_KeyboardEvent& event) {
     return;
   }
 
-  // F3 toggles the performance overlay.
+  // F3 preserves the timing-diagnostic shortcut established by the former
+  // performance overlay.
   if (event.key == SDLK_F3) {
-    m_debug_ui.toggle_performance();
+    m_debug_ui.toggle_frame_timing();
     return;
   }
 }

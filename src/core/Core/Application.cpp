@@ -29,6 +29,7 @@
 #include "Core/Debug/DebugContext.hpp"
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Debug/Metrics.hpp"
+#include "Core/Debug/RuntimeTimingDebug.hpp"
 #include "Core/FrameTiming.hpp"
 #include "Core/Input/ControlScheme.hpp"
 #include "Core/Input/HeldInputState.hpp"
@@ -127,8 +128,13 @@ Application::Application(Application&& other) noexcept
       m_held_input(other.m_held_input),
       m_text_input(other.m_text_input),
       m_frame_timing(other.m_frame_timing),
+      m_last_engine_callback(other.m_last_engine_callback),
       m_skip_engine_frame(other.m_skip_engine_frame),
-      m_accumulator(other.m_accumulator) {}
+      m_accumulator(other.m_accumulator) {
+  if (m_window != nullptr) {
+    m_window->debug_ui().set_runtime_timing(this);
+  }
+}
 
 std::expected<Application, std::string> Application::create(const std::string& title) {
   APP_PROFILE_FUNCTION();
@@ -306,7 +312,8 @@ std::expected<Application, std::string> Application::create(const std::string& t
       .interface_manager = app.m_interface_manager.get(),
       .audio_system = app.m_audio.get(),
       .startup_coordinator = app.m_coordinator.get(),
-      .startup_trace = app.m_trace.get()});
+      .startup_trace = app.m_trace.get(),
+      .runtime_timing = &app});
   app.m_splash_seconds_left = kSplashDuration;
 
   // Initialise the activation gates optimistically: a freshly created,
@@ -429,13 +436,17 @@ void App::Application::run() {
     // calculated. The clock is the monotonic millisecond SDL_GetTicks();
     // the reset request re-baselines it immediately before input and the
     // callback so inactive waiting time is never measured as frame time.
+    m_last_engine_callback.begin_timed_frame();
     FrameTiming::run_timed_frame(
         m_frame_timing,
         decision.reset_frame_timing,
         m_skip_engine_frame,
         []() -> std::uint64_t { return SDL_GetTicks(); },
         [this] { snapshot_input(); },
-        [this] { run_engine_frame(); });
+        [this] {
+          m_last_engine_callback.record_callback(m_frame_timing.effective_delta);
+          run_engine_frame();
+        });
 
     // A frame executed: the timing-reset request has been served. Only now
     // may the flag be cleared — event processing alone must never clear it.
@@ -644,6 +655,11 @@ void Application::set_gameplay_paused(const bool paused) {
   APP_PROFILE_FUNCTION();
 
   m_frame_timing.gameplay_paused = paused;
+}
+
+Debug::RuntimeTimingDebugSnapshot Application::timing_debug_snapshot() const {
+  return Debug::make_runtime_timing_debug_snapshot(
+      m_frame_timing, m_activity, m_skip_engine_frame, m_last_engine_callback);
 }
 
 void Application::set_skip_engine_frame(const bool skip) {

@@ -9,6 +9,7 @@
 #include <string>
 
 #include "Core/Audio/AudioSystem.hpp"
+#include "Core/Debug/RuntimeTimingDebug.hpp"
 #include "Core/FrameTiming.hpp"
 #include "Core/Input/HeldInputState.hpp"
 #include "Core/Input/InputManager.hpp"
@@ -27,7 +28,7 @@ namespace Interface {
 class InterfaceManager;
 }
 
-class Application {
+class Application final : public Debug::RuntimeTimingDebugSource {
  public:
   /// Initialises SDL, creates the window and audio device, and builds the
   /// default scene. Audio failure is non-fatal (logged and skipped); any
@@ -60,20 +61,23 @@ class Application {
   void set_text_capture_enabled(bool enabled);
 
   /// Sets the time-scale mode of the recovered frame timing
-  /// (FrameTiming::TimeScaleMode). Debug/test control; no UI is wired yet.
-  void set_time_scale_mode(FrameTiming::TimeScaleMode mode);
+  /// (FrameTiming::TimeScaleMode). Debug/test control used by Frame & Timing.
+  void set_time_scale_mode(FrameTiming::TimeScaleMode mode) override;
 
   /// Forces every timed frame's delta (Omikron units, 1.0 = 1/30 s) until
   /// cleared — the recovered g_forcedDeltaTime without the -1.0 sentinel.
-  /// Debug/test control; no UI is wired yet.
-  void set_forced_delta(std::optional<float> delta);
+  /// Debug/test control used by Frame & Timing.
+  void set_forced_delta(std::optional<float> delta) override;
   void clear_forced_delta();
 
   /// Gameplay pause, distinct from focus loss, backgrounding and update
   /// suspension: the engine callback keeps running, but the effective delta
   /// produced at the end of the current timed frame becomes zero
   /// (base_delta keeps the unpaused value).
-  void set_gameplay_paused(bool paused);
+  void set_gameplay_paused(bool paused) override;
+
+  /// Authoritative read-only timing/activity projection for DebugUI.
+  [[nodiscard]] Debug::RuntimeTimingDebugSnapshot timing_debug_snapshot() const override;
 
   /// Suppresses only the engine-frame callback of the timed frame
   /// (recovered skipEngineFrame / DAT_0090ef2e): input polling, pressed
@@ -187,6 +191,9 @@ class Application {
   /// Recovered UpdateFrameTiming state: millisecond frame clocks, FPS,
   /// base/effective delta in Omikron units (1.0 = 1/30 s).
   FrameTiming::FrameTimingState m_frame_timing{};
+  /// Value captured at the real callback boundary. This is intentionally
+  /// separate from FrameTimingState's delta for the following callback.
+  Debug::EngineCallbackDebugObservation m_last_engine_callback{};
   /// Recovered skipEngineFrame (DAT_0090ef2e): suppresses only the
   /// engine-frame callback inside the timed frame.
   bool m_skip_engine_frame{false};

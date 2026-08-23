@@ -23,8 +23,8 @@ DebugUI::DebugUI(SDL_Window* window) : m_window(window) {}
 // Toggles
 // ─────────────────────────────────────────────────────────────────────────────
 
-void DebugUI::toggle_performance() {
-  m_show_performance = !m_show_performance;
+void DebugUI::toggle_frame_timing() {
+  m_show_frame_timing = !m_show_frame_timing;
 }
 void DebugUI::toggle_system_info() {
   m_show_system_info = !m_show_system_info;
@@ -122,8 +122,8 @@ void DebugUI::update(const float delta_time) {
   }
 
   // --- Render active windows ---
-  if (m_show_performance) {
-    show_performance(delta_time);
+  if (m_show_frame_timing) {
+    show_frame_timing();
   }
   if (m_show_system_info) {
     show_system_info();
@@ -194,7 +194,7 @@ void DebugUI::show_menu_bar() {
       ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Diagnostics")) {
-      ImGui::MenuItem("Performance", nullptr, &m_show_performance);
+      ImGui::MenuItem("Frame & Timing", nullptr, &m_show_frame_timing);
       ImGui::MenuItem("Profiler", nullptr, &m_show_profiler);
       ImGui::MenuItem("Log", nullptr, &m_show_log);
       ImGui::MenuItem("Startup Trace", nullptr, &m_show_startup_trace);

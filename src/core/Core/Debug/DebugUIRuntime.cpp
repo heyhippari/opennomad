@@ -1,6 +1,7 @@
 #include <fmt/format.h>
 #include <imgui.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -8,6 +9,7 @@
 #include <utility>
 #include <vector>
 
+#include "Core/Debug/AreaVmDebugState.hpp"
 #include "Core/Debug/DebugEvidence.hpp"
 #include "Core/Debug/DebugUI.hpp"
 #include "Core/Debug/DebugUIInternal.hpp"
@@ -82,6 +84,79 @@ std::string argument_text(const std::uint32_t raw) {
       value.as_signed(),
       value.as_unsigned(),
       static_cast<double>(value.as_float()));
+}
+
+const char* area_lifecycle_name(const Script::AreaScriptState state) {
+  switch (state) {
+    case Script::AreaScriptState::k_ready:
+      return "Ready";
+    case Script::AreaScriptState::k_running:
+      return "Running";
+    case Script::AreaScriptState::k_waiting:
+      return "Waiting";
+    case Script::AreaScriptState::k_paused_unsupported:
+      return "Paused unsupported";
+    case Script::AreaScriptState::k_completed:
+      return "Completed";
+    case Script::AreaScriptState::k_failed:
+      return "Failed";
+  }
+  return "Unknown";
+}
+
+const char* area_wait_kind_name(const Script::AreaWaitKind kind) {
+  switch (kind) {
+    case Script::AreaWaitKind::k_none:
+      return "None";
+    case Script::AreaWaitKind::k_interface:
+      return "Interface";
+    case Script::AreaWaitKind::k_scx_script:
+      return "SCX script";
+    case Script::AreaWaitKind::k_character_script:
+      return "Explicit-character script";
+    case Script::AreaWaitKind::k_camera:
+      return "Camera/timed native";
+  }
+  return "Unknown";
+}
+
+const char* recovered_area_state_name(const std::uint16_t state) {
+  switch (state) {
+    case 0:
+      return "inactive / event ended / dispatch eligible";
+    case 1:
+      return "executing bytecode";
+    case 4:
+      return "tracked native/child wait";
+    case 6:
+      return "interface wait";
+    case 7:
+      return "camera/timed native wait";
+    default:
+      return nullptr;
+  }
+}
+
+std::string area_bytes_text(const std::vector<std::uint8_t>& bytes) {
+  std::string result;
+  for (const std::uint8_t byte : bytes) {
+    if (!result.empty()) {
+      result += ' ';
+    }
+    result += fmt::format("{:02x}", byte);
+  }
+  return result;
+}
+
+std::string area_trace_operands_text(const std::vector<std::int32_t>& operands) {
+  std::string result;
+  for (const std::int32_t operand : operands) {
+    if (!result.empty()) {
+      result += ", ";
+    }
+    result += fmt::format("{}", operand);
+  }
+  return result;
 }
 
 }  // namespace
@@ -547,7 +622,10 @@ void DebugUI::show_scenarios() {
 }
 
 void DebugUI::show_area_vm() {
-  ImGui::Begin("AREA VM", &m_show_area_vm);
+  if (!ImGui::Begin("AREA VM", &m_show_area_vm)) {
+    ImGui::End();
+    return;
+  }
 
   const ScenarioEngine* engine{m_context.scenario_engine};
   if (engine == nullptr) {
@@ -555,104 +633,352 @@ void DebugUI::show_area_vm() {
     ImGui::End();
     return;
   }
-  const Script::AreaScriptRuntime* script{engine->area_script()};
-  if (script == nullptr) {
+  const AreaVmRegistryDebugState registry{build_area_vm_registry_debug_state(*engine)};
+  ImGui::Text("OpenNomad contexts: %zu", registry.contexts.size());
+  ImGui::SameLine();
+  ImGui::TextDisabled("| Retail registry capacity: %zu", registry.retail_capacity);
+  ImGui::TextDisabled(
+      "Actual OpenNomad contexts only; the recovered retail registry is not allocated here.");
+  if (registry.contexts.empty()) {
+    m_area_vm_selected_context.reset();
     ImGui::TextUnformatted("AREA bytecode context not loaded.");
     ImGui::End();
     return;
   }
 
-  ImGui::TextDisabled(
-      "Compact u8 AREA bytecode VM; separate from structured SCX Script_* execution.");
-  ImGui::TextDisabled(
-      "OpenNomad currently exposes one active context, not Runtime's 32-context registry.");
-  ImGui::TextDisabled(
-      "[%s] current representation", evidence_label(EvidenceConfidence::k_open_nomad_only));
-
-  const char* state_name{"Unknown"};
-  switch (script->state()) {
-    case Script::AreaScriptState::k_ready:
-      state_name = "Ready";
-      break;
-    case Script::AreaScriptState::k_running:
-      state_name = "Running";
-      break;
-    case Script::AreaScriptState::k_waiting:
-      state_name = "Waiting";
-      break;
-    case Script::AreaScriptState::k_paused_unsupported:
-      state_name = "Paused (unsupported opcode)";
-      break;
-    case Script::AreaScriptState::k_completed:
-      state_name = "Completed";
-      break;
-    case Script::AreaScriptState::k_failed:
-      state_name = "Failed";
-      break;
+  const auto selected_matches = [this](const AreaVmContextDebugState& context) {
+    return m_area_vm_selected_context.has_value() &&
+           m_area_vm_selected_context.value() == context.source.identity;
+  };
+  auto selected{std::ranges::find_if(registry.contexts, selected_matches)};
+  if (selected == registry.contexts.end()) {
+    m_area_vm_selected_context = registry.contexts.front().source.identity;
+    selected = registry.contexts.begin();
   }
 
-  ImGui::Text("OpenNomad state: %s  active: %s  raw wait state: %u",
-      state_name,
-      script->active() ? "yes" : "no",
-      static_cast<unsigned int>(script->wait_state()));
-  if (script->wait_info().interface.has_value()) {
-    ImGui::Text("Wait interface: id=%u gen=%u",
-        static_cast<unsigned int>(script->wait_info().interface->interface_id),
-        script->wait_info().interface->generation);
-  }
-  if (script->wait_info().kind == Script::AreaWaitKind::k_character_script) {
-    if (script->wait_info().character_script_instance.has_value()) {
-      ImGui::Text("Waiting on character script instance %zu",
-          script->wait_info().character_script_instance.value());
+  const float list_width{std::min(240.0F, ImGui::GetContentRegionAvail().x * 0.35F)};
+  if (ImGui::BeginChild("##AreaVmContexts", ImVec2{list_width, 0.0F}, ImGuiChildFlags_Borders)) {
+    ImGui::SeparatorText("Contexts");
+    for (const AreaVmContextDebugState& context : registry.contexts) {
+      const std::string label{fmt::format("[{}] AREA {}\n{}",
+          context.source.open_nomad_context_index,
+          context.source.area_id,
+          area_lifecycle_name(context.lifecycle_state))};
+      const bool is_selected{selected_matches(context)};
+      if (ImGui::Selectable(label.c_str(), is_selected)) {
+        m_area_vm_selected_context = context.source.identity;
+      }
     }
-    if (script->wait_info().character_script.has_value()) {
-      const Script::AreaCharacterScriptRequest& request{
-          script->wait_info().character_script.value()};
-      ImGui::Text("Character: %d  Script ID: %u  Parameter: %d  Tracked: yes",
+  }
+  ImGui::EndChild();
+  ImGui::SameLine();
+
+  if (ImGui::BeginChild("##AreaVmDetail", ImVec2{0.0F, 0.0F}, ImGuiChildFlags_Borders)) {
+    // Selection may have changed in the left pane this frame.
+    selected = std::ranges::find_if(registry.contexts, selected_matches);
+    if (selected == registry.contexts.end()) {
+      selected = registry.contexts.begin();
+    }
+    const AreaVmContextDebugState& context{*selected};
+
+    ImGui::SeparatorText("Identity / source");
+    ImGui::Text("OpenNomad context index: %zu", context.source.open_nomad_context_index);
+    ImGui::Text("AREA ID: %d", context.source.area_id);
+    if (context.source.owner_area_slot.has_value()) {
+      ImGui::Text("Owner AREA slot: %u",
+          static_cast<unsigned int>(context.source.owner_area_slot.value()));
+    } else {
+      ImGui::TextUnformatted("Owner AREA slot: unknown");
+    }
+    if (context.source.retail_registry_slot.has_value()) {
+      ImGui::Text("Retail registry slot: %u",
+          static_cast<unsigned int>(context.source.retail_registry_slot.value()));
+    } else {
+      ImGui::TextUnformatted("Retail registry slot: not modeled");
+    }
+    ImGui::Text("Source record: IAM/AREA record %d", context.source.area_id);
+    if (context.source.source_primary_event_offset.has_value()) {
+      ImGui::Text("Source primary/default event offset: +%#zx",
+          static_cast<std::size_t>(context.source.source_primary_event_offset.value()));
+    } else {
+      ImGui::TextUnformatted("Source primary/default event offset: unavailable");
+    }
+    for (std::size_t event_index{0}; event_index < context.source.source_event_entry_offsets.size();
+         ++event_index) {
+      const auto& entry{context.source.source_event_entry_offsets.at(event_index)};
+      if (entry.has_value()) {
+        ImGui::Text("Event %zu source entry: +%#zx (startup mapping)",
+            event_index + 1U,
+            static_cast<std::size_t>(entry.value()));
+      } else {
+        ImGui::Text("Event %zu source entry: not modeled for this context", event_index + 1U);
+      }
+    }
+    ImGui::Text("OpenNomad execution span: record +%#zx, %zu bytes",
+        context.source.open_nomad_execution_base_offset,
+        context.bytecode_size);
+    ImGui::Text("Context active: %s", context.active ? "yes" : "no");
+    ImGui::TextDisabled("[%s] safe C++ ownership; no Runtime.exe pointers are fabricated",
+        evidence_label(EvidenceConfidence::k_open_nomad_only));
+
+    ImGui::SeparatorText("Execution");
+    ImGui::Text("OpenNomad lifecycle: %s", area_lifecycle_name(context.lifecycle_state));
+    if (context.recovered_runtime_state.has_value()) {
+      const std::uint16_t numeric_state{context.recovered_runtime_state.value()};
+      const char* const numeric_name{recovered_area_state_name(numeric_state)};
+      ImGui::Text("Recovered Runtime numeric state: %u%s%s",
+          static_cast<unsigned int>(numeric_state),
+          numeric_name == nullptr ? "" : " - ",
+          numeric_name == nullptr ? "" : numeric_name);
+      ImGui::SameLine();
+      ImGui::TextDisabled("[%s]", evidence_label(EvidenceConfidence::k_confirmed_runtime));
+    } else {
+      ImGui::TextUnformatted("Recovered Runtime numeric state: unknown / not asserted");
+    }
+    if (context.active_event.has_value()) {
+      ImGui::Text("OpenNomad active event: Event %u",
+          static_cast<unsigned int>(context.active_event.value()));
+    } else {
+      ImGui::TextUnformatted("OpenNomad active event: none");
+    }
+    ImGui::Text("Instruction pointer: +%#zx / %#zx",
+        context.instruction_pointer,
+        context.bytecode_size);
+    if (context.instruction_pointer <= context.bytecode_size) {
+      ImGui::Text("Serialized record offset: +%#zx",
+          context.source.open_nomad_execution_base_offset + context.instruction_pointer);
+    }
+    ImGui::Text("Executed instructions: %zu", context.executed_instruction_count);
+    ImGui::Text("Last explicit dispatcher yield: %s", context.last_run_yielded ? "yes" : "no");
+    if (context.current_instruction.has_value()) {
+      const AreaVmInstructionDebugState& instruction{context.current_instruction.value()};
+      ImGui::Text("Current opcode: %#04x (%s)",
+          static_cast<unsigned int>(instruction.opcode),
+          instruction.opcode_name.c_str());
+      ImGui::Text("Nearby bytes: %s", area_bytes_text(instruction.nearby_bytes).c_str());
+    } else {
+      ImGui::TextUnformatted("Current opcode: IP at/outside execution-span end");
+    }
+
+    ImGui::SeparatorText("Event queue");
+    ImGui::Text("OpenNomad queue depth: %zu", context.queued_events.size());
+    ImGui::Text("Retail capacity: %zu u8 events", k_retail_area_vm_queue_capacity);
+    ImGui::TextDisabled(
+        "OpenNomad currently uses a safe uint16 FIFO; capacity/dedup parity is not claimed.");
+    if (context.queued_events.empty()) {
+      ImGui::TextUnformatted("Pending events: (none)");
+    } else if (ImGui::BeginTable("##AreaEventQueue", 2,
+                   ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+      ImGui::TableSetupColumn("Index");
+      ImGui::TableSetupColumn("Pending event");
+      ImGui::TableHeadersRow();
+      for (std::size_t index{0}; index < context.queued_events.size(); ++index) {
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::Text("%zu", index);
+        ImGui::TableSetColumnIndex(1);
+        ImGui::Text("Event %u", static_cast<unsigned int>(context.queued_events.at(index)));
+      }
+      ImGui::EndTable();
+    }
+
+    ImGui::SeparatorText("Evaluation stack");
+    ImGui::Text("Depth: %zu / %zu", context.evaluation_stack.size(), k_retail_area_vm_stack_capacity);
+    ImGui::TextDisabled(
+        "OpenNomad clears at event boundaries and fails safely; retail clearing is not observed.");
+    if (context.evaluation_stack.empty()) {
+      ImGui::TextUnformatted("(empty)");
+    } else if (ImGui::BeginTable("##AreaEvalStack", 3,
+                   ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+      ImGui::TableSetupColumn("Index");
+      ImGui::TableSetupColumn("Raw / signed value");
+      ImGui::TableSetupColumn("Marker");
+      ImGui::TableHeadersRow();
+      for (std::size_t index{0}; index < context.evaluation_stack.size(); ++index) {
+        const std::int32_t value{context.evaluation_stack.at(index)};
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::Text("%zu", index);
+        ImGui::TableSetColumnIndex(1);
+        ImGui::Text("%d / %#010x", value, static_cast<std::uint32_t>(value));
+        ImGui::TableSetColumnIndex(2);
+        ImGui::TextUnformatted(index + 1U == context.evaluation_stack.size() ? "TOP" : "");
+      }
+      ImGui::EndTable();
+    }
+
+    ImGui::SeparatorText("Current wait");
+    ImGui::Text("Typed OpenNomad wait: %s", area_wait_kind_name(context.wait.kind));
+    if (context.wait.runtime_state == 4U || context.wait.runtime_state == 6U ||
+        context.wait.runtime_state == 7U) {
+      ImGui::Text("Recovered Runtime wait state: %u - %s",
+          static_cast<unsigned int>(context.wait.runtime_state),
+          recovered_area_state_name(context.wait.runtime_state));
+    } else if (context.wait.kind != Script::AreaWaitKind::k_none) {
+      ImGui::TextUnformatted("Recovered Runtime wait state: not asserted");
+    }
+    if (context.wait.interface.has_value()) {
+      ImGui::Text("Interface handle: ID %u, generation %u",
+          static_cast<unsigned int>(context.wait.interface->interface_id),
+          context.wait.interface->generation);
+    }
+    if (context.wait.interface_result_variable.has_value()) {
+      ImGui::Text("Result variable: %u",
+          static_cast<unsigned int>(context.wait.interface_result_variable.value()));
+    }
+    if (context.wait.scx_script_instance.has_value()) {
+      ImGui::Text("Tracked SCX runtime instance: %zu",
+          context.wait.scx_script_instance.value());
+    }
+    if (context.wait.character_script.has_value()) {
+      const Script::AreaCharacterScriptRequest& request{context.wait.character_script.value()};
+      ImGui::Text("Character %d | Script ID %u | parameter %d",
           request.character_id,
-          request.script_id,
+          static_cast<unsigned int>(request.script_id),
           request.parameter);
     }
-  }
-  ImGui::Text("Instruction pointer: %zu  executed: %zu",
-      script->instruction_pointer(),
-      script->executed_instruction_count());
-
-  ImGui::SeparatorText("Variables");
-  if (script->variables().empty()) {
-    ImGui::TextUnformatted("(none)");
-  } else {
-    for (const auto& [id, value] : script->variables()) {
-      ImGui::Text("%u = %d", static_cast<unsigned int>(id), value);
+    if (context.wait.character_script_instance.has_value()) {
+      ImGui::Text("Tracked ScriptRuntime instance: %zu",
+          context.wait.character_script_instance.value());
     }
-  }
-
-  if (script->state() == Script::AreaScriptState::k_paused_unsupported ||
-      script->state() == Script::AreaScriptState::k_failed) {
-    const Script::AreaPauseInfo& pause{script->pause_info()};
-    ImGui::SeparatorText("Pause");
-    ImGui::TextColored(K_WARNING_COLOR, "%s", pause.reason_text.c_str());
-    ImGui::Text("offset %zu opcode %#010x (%s)",
-        pause.offset,
-        static_cast<unsigned int>(pause.opcode),
-        pause.opcode_name.c_str());
-    ImGui::Text("nearby: %s", pause.nearby_bytes.c_str());
-  }
-
-  ImGui::SeparatorText("Trace");
-  if (ImGui::BeginChild("##AreaTrace", ImVec2(0.0F, 240.0F), ImGuiChildFlags_Borders)) {
-    for (const Script::AreaInstructionTrace& entry : script->trace()) {
-      ImGui::Text("%zu %#010x %s",
-          entry.offset,
-          static_cast<unsigned int>(entry.opcode),
-          entry.opcode_name.c_str());
-      for (const std::int32_t operand : entry.operands) {
-        ImGui::TextDisabled("    %d", operand);
+    if (context.wait.kind == Script::AreaWaitKind::k_camera) {
+      if (context.last_camera_request.has_value()) {
+        const Script::AreaCameraRequest& request{context.last_camera_request.value()};
+        ImGui::Text("Camera ID %u | authored duration %d | flags %d",
+            static_cast<unsigned int>(request.camera_id),
+            request.duration_units,
+            request.flags);
       }
-      if (!entry.effect.empty()) {
-        ImGui::TextDisabled("    %s", entry.effect.c_str());
+      ImGui::Text("Remaining: %.3f scenario frames @ 30 Hz (%.6f s)",
+          static_cast<double>(context.wait.remaining_scenario_frames),
+          static_cast<double>(context.wait.remaining_scenario_frames / 30.0F));
+    }
+
+    ImGui::SeparatorText("Global variables");
+    if (context.variables.empty()) {
+      ImGui::TextUnformatted("(none)");
+    } else if (ImGui::BeginTable("##AreaVariables", 3,
+                   ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                       ImGuiTableFlags_ScrollY,
+                   ImVec2{0.0F, 160.0F})) {
+      ImGui::TableSetupColumn("ID");
+      ImGui::TableSetupColumn("Value");
+      ImGui::TableSetupColumn("Hex");
+      ImGui::TableHeadersRow();
+      for (const AreaVmVariableDebugState& variable : context.variables) {
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::Text("%u", static_cast<unsigned int>(variable.id));
+        ImGui::TableSetColumnIndex(1);
+        ImGui::Text("%d", variable.value);
+        ImGui::TableSetColumnIndex(2);
+        ImGui::Text("%#010x", static_cast<std::uint32_t>(variable.value));
+      }
+      ImGui::EndTable();
+    }
+
+    if (context.lifecycle_state == Script::AreaScriptState::k_paused_unsupported ||
+        context.lifecycle_state == Script::AreaScriptState::k_failed) {
+      ImGui::SeparatorText("Pause / failure diagnostics");
+      ImGui::TextColored(K_WARNING_COLOR, "%s", context.pause.reason_text.c_str());
+      ImGui::Text("Offset +%#zx | opcode %#04x (%s)",
+          context.pause.offset,
+          static_cast<unsigned int>(context.pause.opcode),
+          context.pause.opcode_name.c_str());
+      ImGui::Text("Nearby bytes: %s", context.pause.nearby_bytes.c_str());
+      ImGui::Text("Active event: %s",
+          context.active_event.has_value()
+              ? fmt::format("Event {}", context.active_event.value()).c_str()
+              : "none");
+      ImGui::Text("Queue depth: %zu | stack depth: %zu",
+          context.queued_events.size(),
+          context.evaluation_stack.size());
+      if (ImGui::Button("Copy diagnostics")) {
+        const std::string diagnostics{fmt::format(
+            "AREA VM context {} / AREA {}\nstate={} runtimeState={}\nactiveEvent={} ip=+{:#x} "
+            "executed={}\nreason={}\nopcode={:#04x} {} at +{:#x}\nnearby={}\nqueueDepth={} "
+            "stackDepth={}",
+            context.source.open_nomad_context_index,
+            context.source.area_id,
+            area_lifecycle_name(context.lifecycle_state),
+            context.recovered_runtime_state.has_value()
+                ? fmt::format("{}", context.recovered_runtime_state.value())
+                : std::string{"unknown"},
+            context.active_event.has_value() ? fmt::format("{}", context.active_event.value())
+                                             : std::string{"none"},
+            context.instruction_pointer,
+            context.executed_instruction_count,
+            context.pause.reason_text,
+            context.pause.opcode,
+            context.pause.opcode_name,
+            context.pause.offset,
+            context.pause.nearby_bytes,
+            context.queued_events.size(),
+            context.evaluation_stack.size())};
+        ImGui::SetClipboardText(diagnostics.c_str());
       }
     }
+
+    ImGui::SeparatorText("Instruction trace");
+    ImGui::SetNextItemWidth(240.0F);
+    ImGui::InputTextWithHint("##AreaTraceFilter",
+        "Filter opcode, name, or effect",
+        m_area_vm_trace_filter,
+        sizeof(m_area_vm_trace_filter));
+    ImGui::SameLine();
+    ImGui::Checkbox("Auto-scroll", &m_area_vm_trace_auto_scroll);
+    std::vector<const Script::AreaInstructionTrace*> visible_trace;
+    visible_trace.reserve(context.trace.size());
+    const std::string filter{m_area_vm_trace_filter};
+    for (const Script::AreaInstructionTrace& entry : context.trace) {
+      if (filter.empty() || entry.opcode_name.contains(filter) || entry.effect.contains(filter) ||
+          fmt::format("{:#x}", entry.opcode).contains(filter)) {
+        visible_trace.push_back(&entry);
+      }
+    }
+    if (ImGui::BeginTable("##AreaTrace",
+            5,
+            ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY |
+                ImGuiTableFlags_Resizable,
+            ImVec2{0.0F, 260.0F})) {
+      ImGui::TableSetupScrollFreeze(0, 1);
+      ImGui::TableSetupColumn("Offset");
+      ImGui::TableSetupColumn("Opcode");
+      ImGui::TableSetupColumn("Name");
+      ImGui::TableSetupColumn("Operands");
+      ImGui::TableSetupColumn("Effect");
+      ImGui::TableHeadersRow();
+      ImGuiListClipper clipper;
+      clipper.Begin(static_cast<int>(visible_trace.size()));
+      while (clipper.Step()) {
+        for (int index{clipper.DisplayStart}; index < clipper.DisplayEnd; ++index) {
+          const Script::AreaInstructionTrace& entry{
+              *visible_trace.at(static_cast<std::size_t>(index))};
+          ImGui::TableNextRow();
+          if (entry.offset == context.instruction_pointer) {
+            ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0,
+                ImGui::GetColorU32(ImVec4{0.2F, 0.35F, 0.55F, 0.45F}));
+          }
+          ImGui::TableSetColumnIndex(0);
+          ImGui::Text("+%#zx", entry.offset);
+          ImGui::TableSetColumnIndex(1);
+          ImGui::Text("%#04x", static_cast<unsigned int>(entry.opcode));
+          ImGui::TableSetColumnIndex(2);
+          ImGui::TextUnformatted(entry.opcode_name.c_str());
+          ImGui::TableSetColumnIndex(3);
+          ImGui::TextUnformatted(area_trace_operands_text(entry.operands).c_str());
+          ImGui::TableSetColumnIndex(4);
+          ImGui::TextUnformatted(entry.effect.c_str());
+        }
+      }
+      if (m_area_vm_trace_auto_scroll && !visible_trace.empty()) {
+        ImGui::SetScrollHereY(1.0F);
+      }
+      ImGui::EndTable();
+    }
+
+    ImGui::SeparatorText("Debug Overrides");
+    ImGui::TextDisabled("Read-only in Phase 3; stepping and event injection are deferred.");
   }
   ImGui::EndChild();
 
