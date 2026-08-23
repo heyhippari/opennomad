@@ -20,6 +20,8 @@
 #include "Core/Character/CharacterRuntime.hpp"
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Debug/SceneDebugView.hpp"
+#include "Core/Dialog/DialogRuntime.hpp"
+#include "Core/Input/InputAction.hpp"
 #include "Core/Interface/InterfaceManager.hpp"
 #include "Core/Log.hpp"
 #include "Core/LogCategory.hpp"
@@ -633,6 +635,64 @@ void WorldScene::update_white_fade(const float delta_time) {
   m_white_fade_alpha = 1.0F - amount;
 }
 
+bool WorldScene::update_dialog_input(const Input::InputManager& input) {
+  if (m_scenarios == nullptr) {
+    return false;
+  }
+  Dialog::DialogRuntime& runtime{m_scenarios->dialog_runtime()};
+  if (!runtime.active()) {
+    m_dialog_observed = false;
+    m_selected_dialog_choice = 0;
+    return false;
+  }
+
+  const auto presentation{runtime.presentation()};
+  if (!presentation.has_value()) {
+    return true;
+  }
+  if (!m_dialog_observed || m_observed_dialog_generation != runtime.generation()) {
+    m_dialog_observed = true;
+    m_observed_dialog_generation = runtime.generation();
+    m_selected_dialog_choice = 0;
+    App::Log::debug(LogCategory::Scenario,
+        "Dialog node {}: face='{}' line cameras={}/{} response cameras={}/{}",
+        presentation->node_id,
+        presentation->face_motion_resource,
+        presentation->line_cameras.authored_ids.at(0),
+        presentation->line_cameras.authored_ids.at(1),
+        presentation->response_cameras.authored_ids.at(0),
+        presentation->response_cameras.authored_ids.at(1));
+    return true;  // Arm input on the frame after a new presentation appears.
+  }
+
+  if (presentation->state == Dialog::DialogState::k_waiting_for_choice) {
+    if (!presentation->choices.empty()) {
+      if (input.is_action_pressed(Input::Action::k_menu_up)) {
+        m_selected_dialog_choice = m_selected_dialog_choice == 0U
+                                       ? presentation->choices.size() - 1U
+                                       : m_selected_dialog_choice - 1U;
+      }
+      if (input.is_action_pressed(Input::Action::k_menu_down)) {
+        m_selected_dialog_choice = (m_selected_dialog_choice + 1U) % presentation->choices.size();
+      }
+      if (input.is_action_pressed(Input::Action::k_menu_confirm)) {
+        const std::size_t slot{presentation->choices.at(m_selected_dialog_choice).slot};
+        if (auto selected{runtime.select_choice(slot)}; !selected) {
+          App::Log::error(LogCategory::Scenario, "Dialog response failed: {}", selected.error());
+        }
+      }
+    }
+    return true;
+  }
+
+  if (input.is_action_pressed(Input::Action::k_menu_confirm)) {
+    if (auto acknowledged{runtime.acknowledge_line()}; !acknowledged) {
+      App::Log::error(LogCategory::Scenario, "Dialog advance failed: {}", acknowledged.error());
+    }
+  }
+  return true;
+}
+
 void WorldScene::update(const float delta_time, const Input::InputManager& input) {
   APP_PROFILE_FUNCTION();
 
@@ -733,7 +793,11 @@ void WorldScene::update(const float delta_time, const Input::InputManager& input
     }
   }
 
-  m_interfaces.update(delta_time, input);
+  if (update_dialog_input(input)) {
+    m_interfaces.update_without_input(delta_time);
+  } else {
+    m_interfaces.update(delta_time, input);
+  }
 }
 
 void WorldScene::render() {
@@ -806,6 +870,14 @@ void WorldScene::render() {
   // background therefore covers the world while the main menu is active,
   // exactly as the stable WorldScene architecture intends.
   m_interfaces.render(m_width, m_height);
+  if (m_scenarios != nullptr) {
+    if (const auto dialog{m_scenarios->dialog_runtime().presentation()}; dialog.has_value()) {
+      const std::size_t selected{dialog->choices.empty() ? 0U
+                                                         : std::min(m_selected_dialog_choice,
+                                                               dialog->choices.size() - 1U)};
+      m_interfaces.render_dialog(dialog.value(), selected, m_width, m_height);
+    }
+  }
 }
 
 void WorldScene::resize(const int width, const int height) {

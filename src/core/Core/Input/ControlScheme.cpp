@@ -1,5 +1,6 @@
 #include "ControlScheme.hpp"
 
+#include <SDL3/SDL_mouse.h>
 #include <SDL3/SDL_scancode.h>
 
 #include <cstdint>
@@ -87,6 +88,10 @@ ControlScheme ControlScheme::make_keyboard_mouse_default() {
       .add_binding({.action = Action::k_menu_confirm,
           .source = InputSource{.type = SourceType::k_key,
               .index = static_cast<std::uint32_t>(SDL_SCANCODE_RETURN)},
+          .scale = 1.0F})
+      .add_binding({.action = Action::k_menu_confirm,
+          .source = InputSource{.type = SourceType::k_mouse_button,
+              .index = static_cast<std::uint32_t>(SDL_BUTTON_LEFT)},
           .scale = 1.0F})
       .add_binding({.action = Action::k_menu_cancel,
           .source = InputSource{.type = SourceType::k_key,

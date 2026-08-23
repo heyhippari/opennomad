@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include "Core/Dialog/DialogRuntime.hpp"
 #include "Core/Interface/FontManager.hpp"
 #include "Core/Interface/I2DModel.hpp"
 #include "Core/Interface/InterfaceDescriptor.hpp"
@@ -149,9 +150,19 @@ class InterfaceManager {
   /// and handles menu navigation on the focused instance.
   void update(float delta_time, const Input::InputManager& input);
 
+  /// Advances resident presentation without routing navigation input. Used
+  /// while the gameplay dialog layer owns the shared confirm/navigation actions.
+  void update_without_input(float delta_time);
+
   /// Renders every resident instance in opening (presentation) order into the
   /// given drawable framebuffer size.
   void render(int pixel_width, int pixel_height);
+
+  /// Renders one active gameplay dialog above resident interfaces.
+  void render_dialog(const Dialog::DialogPresentation& dialog,
+      std::size_t selected_choice,
+      int pixel_width,
+      int pixel_height);
 
   /// Creates a state owned by `instance`; returns its address (nullptr when
   /// the allocation fails).

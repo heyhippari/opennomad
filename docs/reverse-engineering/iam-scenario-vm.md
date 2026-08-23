@@ -1100,6 +1100,12 @@ VM primitives.
 
 Do not implement their lifecycle based only on generic instruction flow.
 
+The recovered dialog record/archive format and the Phase D3 subsystem API are
+documented in [`iam-dialog.md`](iam-dialog.md). Phase D3 does not mark `0x3D`
+implemented: the ScenarioEngine mode-3 takeover, scheduler suspension, and
+resume of the already-advanced AREA context belong to Phase D4. In particular,
+`0x3D` must not be represented as an `AreaWaitKind` typed wait.
+
 ---
 
 # 37. Shared global-variable storage

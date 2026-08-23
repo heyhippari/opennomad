@@ -1,5 +1,8 @@
 #pragma once
 
+#include <cstddef>
+
+#include "Core/Dialog/DialogRuntime.hpp"
 #include "Core/Input/InputManager.hpp"
 
 namespace App::Interface {
@@ -22,8 +25,17 @@ class InterfacePresenter {
   /// Advances the interface presentation state and handles navigation.
   void update(float delta_seconds, const Input::InputManager& input);
 
+  /// Advances interface animation while another presentation layer owns input.
+  void update_without_input(float delta_seconds);
+
   /// Renders the presentable resident interfaces.
   void render(int pixel_width, int pixel_height);
+
+  /// Renders the gameplay dialog layer after ordinary interfaces.
+  void render_dialog(const Dialog::DialogPresentation& dialog,
+      std::size_t selected_choice,
+      int pixel_width,
+      int pixel_height);
 
  private:
   InterfaceManager* m_manager{nullptr};

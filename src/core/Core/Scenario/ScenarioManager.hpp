@@ -11,6 +11,7 @@
 #include <string_view>
 #include <vector>
 
+#include "Core/Dialog/DialogRuntime.hpp"
 #include "Core/Omikron/Model3DO.hpp"
 #include "Core/Omikron/SCX.hpp"
 #include "Core/Omikron/SFX.hpp"
@@ -317,6 +318,19 @@ class ScenarioManager {
     return m_world_presentation;
   }
 
+  // --- Session-level dialog subsystem --------------------------------------
+
+  /// Loads IAM/DIALOG once on first use, selects `dialog_id`, and starts its
+  /// CPU runtime at node 0. AREA opcode 0x3D wiring is deliberately deferred.
+  [[nodiscard]] std::expected<void, std::string> start_dialog(std::uint16_t dialog_id);
+
+  [[nodiscard]] Dialog::DialogRuntime& dialog_runtime() {
+    return m_dialog_runtime;
+  }
+  [[nodiscard]] const Dialog::DialogRuntime& dialog_runtime() const {
+    return m_dialog_runtime;
+  }
+
  private:
   /// A fully loaded scenario package: the parsed data plus the backing byte
   /// buffer whose offsets the parsed data indexes into.
@@ -352,6 +366,10 @@ class ScenarioManager {
   /// CPU-only command mailbox between AREA/scenario execution and the stable
   /// WorldScene presentation layer.
   WorldPresentationState m_world_presentation;
+
+  /// Session-level immutable IAM/DIALOG archive cache and active progression.
+  std::vector<std::byte> m_dialog_archive;
+  Dialog::DialogRuntime m_dialog_runtime;
 
   Audio::AudioSystem* m_audio_system{nullptr};  ///< Non-owning.
 

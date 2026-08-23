@@ -69,6 +69,7 @@ class WorldScene final : public Scene, public Debug::SceneDebugView {
   void consume_fade_commands(const WorldSceneContext* context);
   void consume_letterbox_commands(const WorldSceneContext* context);
   void update_white_fade(float delta_time);
+  [[nodiscard]] bool update_dialog_input(const Input::InputManager& input);
 
   ScenarioManager* m_scenarios{nullptr};
   Interface::InterfacePresenter m_interfaces;
@@ -91,6 +92,9 @@ class WorldScene final : public Scene, public Debug::SceneDebugView {
   std::uint32_t m_observed_generation{0};
   bool m_world_observed{false};
   bool m_geometry_wireframe_enabled{false};
+  std::uint64_t m_observed_dialog_generation{0};
+  std::size_t m_selected_dialog_choice{0};
+  bool m_dialog_observed{false};
   std::string m_color_pipeline_error;
 };
 

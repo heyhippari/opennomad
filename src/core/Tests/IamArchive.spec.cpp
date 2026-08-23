@@ -84,6 +84,17 @@ TEST_SUITE("Core::Omikron::IamIndexedArchive") {
     CHECK(result.error().find("118") != std::string::npos);
   }
 
+  TEST_CASE("A readable early entry still fails when its containing page is truncated") {
+    std::vector<std::byte> data(0x100, std::byte{});
+    write_u32(data, 0, 0x20);
+    write_u32(data, 4, 1);
+    data.at(0x20) = std::byte{0x7F};
+    const IamIndexedArchive archive{data};
+    const auto result{archive.read_record(0)};
+    REQUIRE_FALSE(result.has_value());
+    CHECK(result.error().find("page") != std::string::npos);
+  }
+
   TEST_CASE("Out-of-range data range fails safely") {
     const std::array<std::byte, 1> record{std::byte{0x01}};
     const std::vector<std::byte> data{make_archive(118, 0x7FC, 0x1000, record)};

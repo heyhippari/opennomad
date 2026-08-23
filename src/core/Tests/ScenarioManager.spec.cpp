@@ -162,6 +162,26 @@ Buffer make_empty_sfx() {
   return bytes;
 }
 
+/// Minimal indexed IAM/DIALOG archive with one terminal record at ID 0.
+Buffer make_dialog_archive() {
+  Buffer record;
+  record.u16(310).u16(1).u16(0).u16(0);
+  record.zeros(0x20U);  // Four condition and four action offsets.
+  record.u32(0x48U);    // Six-string block follows the node.
+  record.u16(0xFFFFU).u16(0xFFFFU).u16(0xFFFFU).u16(0xFFFFU);
+  record.u16(0).chars("FACE", 10);
+  record.u16(0xFFFFU).u16(0xFFFFU).u16(0xFFFFU).u16(0xFFFFU);
+  record.chars("Session dialog", 15);
+  record.zeros(5U);  // Five remaining empty strings.
+
+  Buffer archive;
+  archive.u32(0x800U).u32(static_cast<std::uint32_t>(record.data().size())).zeros(0x7F8U);
+  for (const std::byte byte : record.data()) {
+    archive.u8(std::to_integer<std::uint8_t>(byte));
+  }
+  return archive;
+}
+
 /// Scratch directory wiped on construction and destruction.
 class TempDirectory {
  public:
@@ -223,6 +243,24 @@ void initialize_grid_fixture(App::ScenarioManager& manager) {
 }  // namespace
 
 TEST_SUITE("Core::Scenario::ScenarioManager") {
+  TEST_CASE("Dialog API loads case-insensitively, caches the archive and resets active state") {
+    const TempDirectory temp;
+    const std::filesystem::path dialog_path{temp.root() / "iam" / "dialog"};
+    write_bytes(dialog_path, make_dialog_archive());
+    const ScopedGameDataRoot root{temp.root()};
+
+    App::ScenarioManager manager;
+    REQUIRE(manager.start_dialog(0).has_value());
+    CHECK(manager.dialog_runtime().active());
+    REQUIRE(manager.dialog_runtime().presentation().has_value());
+    CHECK_EQ(manager.dialog_runtime().presentation()->main_line, "Session dialog");
+
+    REQUIRE(std::filesystem::remove(dialog_path));
+    REQUIRE(manager.start_dialog(0).has_value());  // Served from the session cache.
+    REQUIRE(manager.reset_for_new_session().has_value());
+    CHECK_FALSE(manager.dialog_runtime().active());
+  }
+
   TEST_CASE("Exposes one mode slot plus exactly two world contexts after boot") {
     const TempDirectory temp;
     write_boot_fixtures(temp);

@@ -20,6 +20,7 @@
 
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Debug/Metrics.hpp"
+#include "Core/Dialog/DialogRuntime.hpp"
 #include "Core/GameDataLoader.hpp"
 #include "Core/Input/InputAction.hpp"
 #include "Core/Input/InputManager.hpp"
@@ -55,10 +56,10 @@ constexpr InterfaceFadePresentationHint K_START_MENU_ENTER_FADE{.color = {0.0F, 
 /// native 0x77 white->transparent fade then takes over unchanged.
 constexpr std::array<InterfaceCompletionPresentationHint, 1> K_START_MENU_COMPLETION_TRANSITIONS{
     InterfaceCompletionPresentationHint{.result = 3,
-        .pre_delay_seconds = 0.12F,
+        .pre_delay_seconds = 0.25F,
         .fade = InterfaceFadePresentationHint{.color = {1.0F, 1.0F, 1.0F},
-            .duration_seconds = 0.18F,
-            .easing = InterfacePresentationEasing::k_smoothstep}}};
+            .duration_seconds = 0.25F,
+            .easing = InterfacePresentationEasing::k_quadratic_in}}};
 
 void initialize_start_menu(InterfaceManager& manager, InterfaceInstance& instance);
 void destroy_start_menu(InterfaceManager& manager, InterfaceInstance& instance);
@@ -486,6 +487,13 @@ void InterfaceManager::update_presentation(InterfaceInstance& instance, const fl
 void InterfaceManager::update(const float delta_time, const Input::InputManager& input) {
   APP_PROFILE_FUNCTION();
 
+  update_without_input(delta_time);
+  handle_navigation(input);
+}
+
+void InterfaceManager::update_without_input(const float delta_time) {
+  APP_PROFILE_FUNCTION();
+
   // A completion overlay latched by the previous update only needs to survive
   // that update's render. A newly completed transition below may latch again.
   m_completion_overlay_latch.reset();
@@ -496,7 +504,6 @@ void InterfaceManager::update(const float delta_time, const Input::InputManager&
     }
     update_presentation(*instance, delta_time);
   }
-  handle_navigation(input);
 }
 
 void InterfaceManager::render(const int pixel_width, const int pixel_height) {
@@ -514,6 +521,17 @@ void InterfaceManager::render(const int pixel_width, const int pixel_height) {
     counters.draw_calls += 1U;
   }
   Debug::Metrics::get().set_i2d_counters(counters);
+}
+
+void InterfaceManager::render_dialog(const Dialog::DialogPresentation& dialog,
+    const std::size_t selected_choice,
+    const int pixel_width,
+    const int pixel_height) {
+  if (m_renderer == nullptr) {
+    return;
+  }
+  Debug::I2DCounters counters;
+  m_renderer->render_dialog(dialog, selected_choice, m_fonts, pixel_width, pixel_height, counters);
 }
 
 void InterfaceManager::set_background_interpolated(const bool interpolated) {

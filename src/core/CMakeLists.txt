@@ -29,6 +29,7 @@ add_library(${NAME} STATIC
   Core/Camera.cpp Core/Camera.hpp
   Core/RuntimeMath.hpp Core/RuntimeMath.cpp
   Core/RuntimePresentation.hpp Core/RuntimePresentation.cpp
+  Core/Dialog/DialogRuntime.hpp Core/Dialog/DialogRuntime.cpp
   Core/Character/CharacterRuntime.hpp Core/Character/CharacterRuntime.cpp
   Core/CameraController.cpp Core/CameraController.hpp
   Core/Input/InputAction.hpp
@@ -65,9 +66,11 @@ add_library(${NAME} STATIC
   Core/Omikron/IndexedBmp8.hpp Core/Omikron/IndexedBmp8.cpp
   Core/Omikron/SCX.hpp Core/Omikron/SCX.cpp
   Core/Omikron/SFX.hpp Core/Omikron/SFX.cpp
+  Core/Omikron/IamCamera.hpp Core/Omikron/IamCamera.cpp
   Core/Omikron/IamArchive.hpp Core/Omikron/IamArchive.cpp
   Core/Omikron/IamStart.hpp Core/Omikron/IamStart.cpp
   Core/Omikron/IamArea.hpp Core/Omikron/IamArea.cpp
+  Core/Omikron/IamDialog.hpp Core/Omikron/IamDialog.cpp
   Core/Sprite/SpriteInstance.hpp
   Core/Sprite/SpriteRenderMode.hpp
   Core/Sprite/SpriteFrame.hpp Core/Sprite/SpriteFrame.cpp

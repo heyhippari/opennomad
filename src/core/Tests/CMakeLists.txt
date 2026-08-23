@@ -97,6 +97,10 @@ add_executable(IamAreaTest IamArea.spec.cpp $<TARGET_OBJECTS:TestRunner>)
 add_test(NAME IamAreaTest COMMAND IamAreaTest)
 target_link_libraries(IamAreaTest PRIVATE doctest::doctest Core)
 
+add_executable(IamDialogTest IamDialog.spec.cpp $<TARGET_OBJECTS:TestRunner>)
+add_test(NAME IamDialogTest COMMAND IamDialogTest)
+target_link_libraries(IamDialogTest PRIVATE doctest::doctest Core)
+
 add_executable(AreaScriptRuntimeTest AreaScriptRuntime.spec.cpp $<TARGET_OBJECTS:TestRunner>)
 add_test(NAME AreaScriptRuntimeTest COMMAND AreaScriptRuntimeTest)
 target_link_libraries(AreaScriptRuntimeTest PRIVATE doctest::doctest Core)
@@ -198,6 +202,11 @@ target_link_libraries(LogCategoryTest PRIVATE doctest::doctest Core)
 # the game data through the OPENNOMAD_GAME_DATA_ROOT environment variable.
 option(OPENNOMAD_GAME_DATA_TESTS "Register tests that require original game data" OFF)
 if(OPENNOMAD_GAME_DATA_TESTS)
+  add_executable(IamDialogIntegrationTest
+      IamDialogIntegration.spec.cpp $<TARGET_OBJECTS:TestRunner>)
+  add_test(NAME IamDialogIntegrationTest COMMAND IamDialogIntegrationTest)
+  target_link_libraries(IamDialogIntegrationTest PRIVATE doctest::doctest Core)
+
   add_executable(SCXIntegrationTest SCXIntegration.spec.cpp $<TARGET_OBJECTS:TestRunner>)
   add_test(NAME SCXIntegrationTest COMMAND SCXIntegrationTest)
   target_link_libraries(SCXIntegrationTest PRIVATE doctest::doctest Core)

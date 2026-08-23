@@ -1,5 +1,7 @@
 #pragma once
 
+#include <glad/glad.h>
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -8,10 +10,9 @@
 #include <string>
 #include <vector>
 
-#include <glad/glad.h>
-
 #include "Core/Buffers.hpp"
 #include "Core/Debug/Metrics.hpp"
+#include "Core/Dialog/DialogRuntime.hpp"
 #include "Core/Interface/I2DModel.hpp"
 #include "Core/Interface/I2DPresentation.hpp"
 #include "Core/Shader.hpp"
@@ -60,6 +61,15 @@ class I2DRenderer {
   /// I2D content. Used only when an interface descriptor explicitly opts in.
   void render_overlay(
       const std::array<float, 3>& color, float alpha, int pixel_width, int pixel_height);
+
+  /// Renders the active gameplay dialog as a modest resolution-independent
+  /// subtitle/choice layer. This is ordinary I2D presentation, not ImGui.
+  void render_dialog(const Dialog::DialogPresentation& dialog,
+      std::size_t selected_choice,
+      FontManager& fonts,
+      int pixel_width,
+      int pixel_height,
+      Debug::I2DCounters& counters);
 
  private:
   /// One contiguous run of quads sharing a texture and source-key state.

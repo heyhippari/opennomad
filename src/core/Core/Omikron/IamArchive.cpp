@@ -56,6 +56,17 @@ std::expected<std::span<const std::byte>, std::string> IamIndexedArchive::read_r
   }
 
   const std::size_t entry_position{*entry_offset};
+  const std::size_t page_position{
+      (entry_position / k_index_page_size) * k_index_page_size};
+  if (page_position > m_data.size() ||
+      k_index_page_size > (m_data.size() - page_position)) {
+    return std::expected<std::span<const std::byte>, std::string>{std::unexpect,
+        fmt::format("IAM archive: index page for record {} at {:#x} is truncated in the {} byte "
+                    "archive",
+            id,
+            page_position,
+            m_data.size())};
+  }
   if ((entry_position + k_index_entry_size) > m_data.size()) {
     return std::expected<std::span<const std::byte>, std::string>{std::unexpect,
         fmt::format("IAM archive: index entry for record {} at {:#x} is outside the {} byte "

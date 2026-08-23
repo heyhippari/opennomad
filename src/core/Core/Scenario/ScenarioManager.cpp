@@ -17,9 +17,11 @@
 
 #include "Core/Audio/AudioSystem.hpp"
 #include "Core/Debug/Instrumentor.hpp"
+#include "Core/Dialog/DialogRuntime.hpp"
 #include "Core/GameDataLoader.hpp"
 #include "Core/Log.hpp"
 #include "Core/LogCategory.hpp"
+#include "Core/Omikron/IamDialog.hpp"
 #include "Core/Omikron/Model3DO.hpp"
 #include "Core/Omikron/SCX.hpp"
 #include "Core/Omikron/SFX.hpp"
@@ -57,6 +59,33 @@ std::expected<void, std::string> ScenarioManager::reset_for_new_session() {
     }
   }
   m_world_presentation.clear();
+  m_dialog_runtime.reset();
+  return {};
+}
+
+std::expected<void, std::string> ScenarioManager::start_dialog(const std::uint16_t dialog_id) {
+  APP_PROFILE_FUNCTION();
+
+  if (m_dialog_archive.empty()) {
+    auto loaded{load_game_file("IAM/DIALOG")};
+    if (!loaded) {
+      m_dialog_runtime.reset();
+      return std::expected<void, std::string>{
+          std::unexpect, fmt::format("Cannot load IAM/DIALOG: {}", loaded.error())};
+    }
+    m_dialog_archive = std::move(loaded->bytes);
+  }
+
+  auto record{Omikron::IamDialogRecord::load_from_archive(m_dialog_archive, dialog_id)};
+  if (!record) {
+    m_dialog_runtime.reset();
+    return std::expected<void, std::string>{std::unexpect, record.error()};
+  }
+  auto started{m_dialog_runtime.start(std::move(record).value())};
+  if (!started) {
+    return started;
+  }
+  App::Log::info(LogCategory::Scenario, "Dialog {} started", dialog_id);
   return {};
 }
 

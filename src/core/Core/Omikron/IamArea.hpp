@@ -9,6 +9,8 @@
 #include <string>
 #include <vector>
 
+#include "Core/Omikron/IamCamera.hpp"
+
 namespace App::Omikron {
 
 /// One 0x14-byte AREA table-0 character-placement record.
@@ -42,17 +44,7 @@ struct IamAreaCharacterDefinitionRecord {
 /// Runtime's camera selection handlers copy the first two 3-vectors into the
 /// active camera definition. +0x1C is roll and +0x1E is horizontal FOV, both
 /// in signed Runtime angle units. Remaining attachment fields stay unresolved.
-struct IamAreaCameraRecord {
-  std::array<std::int32_t, 3> serialized_eye{};     ///< +0x00..+0x08 raw integers.
-  std::array<std::int32_t, 3> serialized_target{};  ///< +0x0C..+0x14 raw integers.
-  std::int16_t camera_id{0};                        ///< +0x18.
-  std::uint16_t camera_type{0};                     ///< +0x1A.
-  std::int16_t roll_units{0};                       ///< +0x1C, signed angle units.
-  std::int16_t horizontal_fov_units{0};             ///< +0x1E, signed angle units.
-  std::int16_t field_20{0};                         ///< +0x20.
-  std::int16_t field_22{0};                         ///< +0x22.
-  std::array<std::uint16_t, 4> tail_fields{};       ///< +0x24..+0x2A.
-};
+using IamAreaCameraRecord = IamCameraRecord;
 
 /// Parsed, owning representation of one IAM/AREA record. Serialized offsets
 /// remain immutable; runtime values (script span, table views) are computed

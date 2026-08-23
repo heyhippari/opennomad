@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "Core/Debug/Instrumentor.hpp"
+#include "Core/Omikron/IamCamera.hpp"
 
 namespace App::Omikron {
 
@@ -276,22 +277,12 @@ std::optional<IamAreaCameraRecord> IamAreaRecord::camera_by_id(const std::int16_
   for (std::size_t index{0}; index < table_count(k_camera_table_index); ++index) {
     const std::span<const std::byte> record{
         table->subspan(index * k_camera_stride, k_camera_stride)};
-    IamAreaCameraRecord camera;
-    for (std::size_t axis{0}; axis < 3U; ++axis) {
-      camera.serialized_eye.at(axis) = read_i32_at(record, axis * 4U);
-      camera.serialized_target.at(axis) = read_i32_at(record, 0x0CU + (axis * 4U));
+    const auto camera{parse_iam_camera(record)};
+    if (!camera) {
+      return std::nullopt;
     }
-    camera.camera_id = read_i16_at(record, 0x18U);
-    camera.camera_type = read_u16_at(record, 0x1AU);
-    camera.roll_units = read_i16_at(record, 0x1CU);
-    camera.horizontal_fov_units = read_i16_at(record, 0x1EU);
-    camera.field_20 = read_i16_at(record, 0x20U);
-    camera.field_22 = read_i16_at(record, 0x22U);
-    for (std::size_t slot{0}; slot < camera.tail_fields.size(); ++slot) {
-      camera.tail_fields.at(slot) = read_u16_at(record, 0x24U + (slot * 2U));
-    }
-    if (camera.camera_id == camera_id) {
-      return camera;
+    if (camera->camera_id == camera_id) {
+      return camera.value();
     }
   }
   return std::nullopt;
