@@ -116,6 +116,8 @@ const char* area_wait_kind_name(const Script::AreaWaitKind kind) {
       return "Explicit-character script";
     case Script::AreaWaitKind::k_camera:
       return "Camera/timed native";
+    case Script::AreaWaitKind::k_area_transition:
+      return "AREA transition";
   }
   return "Unknown";
 }
@@ -132,6 +134,8 @@ const char* recovered_area_state_name(const std::uint16_t state) {
       return "interface wait";
     case 7:
       return "camera/timed native wait";
+    case 10:
+      return "AREA transition wait";
     default:
       return nullptr;
   }
@@ -820,7 +824,7 @@ void DebugUI::show_area_vm() {
     ImGui::SeparatorText("Current wait");
     ImGui::Text("Typed OpenNomad wait: %s", area_wait_kind_name(context.wait.kind));
     if (context.wait.runtime_state == 4U || context.wait.runtime_state == 6U ||
-        context.wait.runtime_state == 7U) {
+        context.wait.runtime_state == 7U || context.wait.runtime_state == 10U) {
       ImGui::Text("Recovered Runtime wait state: %u - %s",
           static_cast<unsigned int>(context.wait.runtime_state),
           recovered_area_state_name(context.wait.runtime_state));
@@ -850,6 +854,17 @@ void DebugUI::show_area_vm() {
     if (context.wait.character_script_instance.has_value()) {
       ImGui::Text("Tracked ScriptRuntime instance: %zu",
           context.wait.character_script_instance.value());
+    }
+    if (context.wait.area_transition.has_value()) {
+      const Script::AreaTransitionRequest& request{context.wait.area_transition.value()};
+      ImGui::Text("Target AREA %d | operands (%d, %d)",
+          request.target_area_id,
+          request.operand_b,
+          request.operand_c);
+    }
+    if (context.wait.area_transition_handle.has_value()) {
+      ImGui::Text("Transition generation: %llu",
+          static_cast<unsigned long long>(context.wait.area_transition_handle->generation));
     }
     if (context.wait.kind == Script::AreaWaitKind::k_camera) {
       if (context.last_camera_request.has_value()) {

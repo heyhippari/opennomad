@@ -100,10 +100,66 @@ std::vector<std::byte> make_area_archive(const std::vector<std::byte>& prefix) {
   return data;
 }
 
+std::vector<std::byte> make_transition_area_archive(const std::vector<std::byte>& source_prefix) {
+  constexpr std::size_t k_source_offset{0x800};
+  constexpr std::uint32_t k_source_size{0x9C0};
+  constexpr std::size_t k_target_offset{0x1200};
+  constexpr std::uint32_t k_target_size{0x300};
+
+  std::vector<std::byte> data(k_target_offset + k_target_size, std::byte{});
+  const std::size_t source_entry{118U * 8U};
+  write_u32(data, source_entry, static_cast<std::uint32_t>(k_source_offset));
+  write_u32(data, source_entry + 4U, k_source_size);
+  write_u32(data, k_source_offset + 0x04, 0x3FC);
+  write_name(data, k_source_offset + 0x58, "GRID");
+  write_name(data, k_source_offset + 0x61, "GRID");
+  std::memcpy(data.data() + k_source_offset + 0x3FC, source_prefix.data(), source_prefix.size());
+
+  const std::size_t target_entry{222U * 8U};
+  write_u32(data, target_entry, static_cast<std::uint32_t>(k_target_offset));
+  write_u32(data, target_entry + 4U, k_target_size);
+  write_u32(data, k_target_offset + 0x04, 0x100);
+  write_name(data, k_target_offset + 0x58, "AIMPASSE");
+  write_name(data, k_target_offset + 0x61, "IMPASSE");
+  write_name(data, k_target_offset + 0x85, "ASKY");
+  data.at(k_target_offset + 0x100) = std::byte{0x03};
+  return data;
+}
+
 std::vector<std::byte> make_minimal_scx() {
   Buffer bytes;
   bytes.u32(K_SCX_MAGIC).u32(5).u32(8).u32(4).u32(K_END_TAG);
   return bytes.data();
+}
+
+/// Minimal IAM/DIALOG archive with record 0. When action_choice is true the
+/// one visible response owns non-empty action bytecode, allowing the test to
+/// drive DialogRuntime into a post-start failure without private hooks.
+std::vector<std::byte> make_dialog_archive(const bool action_choice = false) {
+  Buffer record;
+  record.u16(310).u16(1).u16(0).u16(0);
+  record.zeros(0x10U);  // Four condition offsets.
+  if (action_choice) {
+    record.u32(0x58U).zeros(0x0CU);
+  } else {
+    record.zeros(0x10U);
+  }
+  record.u32(0x48U);
+  record.u16(0xFFFFU).u16(0xFFFFU).u16(0xFFFFU).u16(0xFFFFU);
+  record.u16(0).chars("FACE", 10);
+  record.u16(0xFFFFU).u16(0xFFFFU).u16(0xFFFFU).u16(0xFFFFU);
+  if (action_choice) {
+    record.chars("Line", 5).chars("Choice", 7).zeros(4U).u8(0x03);
+  } else {
+    record.chars("Session dialog", 15).zeros(5U);
+  }
+
+  Buffer archive;
+  archive.u32(0x800U).u32(static_cast<std::uint32_t>(record.data().size())).zeros(0x7F8U);
+  for (const std::byte byte : record.data()) {
+    archive.u8(std::to_integer<std::uint8_t>(byte));
+  }
+  return archive.data();
 }
 
 /// Minimal valid header-only .3DO (OD3X + version 4, all sections empty),
@@ -173,6 +229,30 @@ void write_boot_fixtures(const TempDirectory& temp) {
   write_bytes(temp.root() / "IAM" / "AREA", make_area_archive(make_prefix()));
   write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
   write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_minimal_scx());
+}
+
+void write_dialog_boot_fixtures(const TempDirectory& temp, const bool action_choice = false) {
+  Buffer script;
+  script.u8(0x3D).u16(0).u8(0x68).u8(0x03);
+  write_bytes(temp.root() / "IAM" / "START", make_start());
+  write_bytes(temp.root() / "IAM" / "AREA", make_area_archive(script.data()));
+  write_bytes(temp.root() / "IAM" / "DIALOG", make_dialog_archive(action_choice));
+  write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
+  write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_minimal_scx());
+}
+
+void write_transition_boot_fixtures(const TempDirectory& temp, const bool include_target_scx) {
+  Buffer script;
+  script.u8(0x2F).u16(222).u16(0xFFFF).u16(0xFFFF);
+  script.u8(0x47).u16(222).u16(55);
+  write_bytes(temp.root() / "IAM" / "START", make_start());
+  write_bytes(
+      temp.root() / "IAM" / "AREA", make_transition_area_archive(script.data()));
+  write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
+  write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_minimal_scx());
+  if (include_target_scx) {
+    write_bytes(temp.root() / "SCPTDATA" / "IMPASSE.SCX", make_minimal_scx());
+  }
 }
 
 std::optional<std::uint32_t> seq_of(
@@ -414,6 +494,186 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
     REQUIRE(engine.update(1.0F / 30.0F).has_value());
     REQUIRE(engine.update(1.0F / 30.0F).has_value());
     CHECK_EQ(manager.world_contexts()[0].residency, WorldSceneResidencyState::LoadedActive);
+  }
+
+  TEST_CASE("AREA-started dialog takeover gates both tick paths and resumes the advanced IP") {
+    const TempDirectory temp;
+    write_dialog_boot_fixtures(temp);
+    const ScopedGameDataRoot root{temp.root()};
+
+    App::Startup::StartupTraceRecorder recorder;
+    App::ScenarioManager manager;
+    App::ScenarioEngine engine{manager, recorder};
+
+    REQUIRE(engine.select_permanent_mode_script().has_value());
+    REQUIRE(engine.enter_mode(App::ScenarioMode::k_new_session, 0).has_value());
+    REQUIRE(engine.enter_mode(App::ScenarioMode::k_tick, 0).has_value());
+
+    REQUIRE(engine.area_script() != nullptr);
+    CHECK(engine.dialog_takeover_active());
+    CHECK_EQ(engine.dialog_takeover_id(), std::optional<std::int16_t>{0});
+    CHECK(manager.dialog_runtime().active());
+    CHECK(engine.area_script()->state() == AreaScriptState::k_running);
+    CHECK_EQ(engine.area_script()->runtime_state(), 1U);
+    CHECK_EQ(engine.area_script()->instruction_pointer(), 3U);
+    CHECK(engine.area_script()->last_run_yielded());
+    CHECK(engine.area_script()->wait_info().kind == App::Script::AreaWaitKind::k_none);
+
+    // Both the explicit mode-1 route and the per-frame update route use the
+    // same gate. Neither may execute the following 0x68 while dialog is active.
+    REQUIRE(engine.enter_mode(App::ScenarioMode::k_tick, 0).has_value());
+    REQUIRE(engine.update(1.0F / 30.0F).has_value());
+    REQUIRE(engine.update(1.0F / 30.0F).has_value());
+    CHECK_EQ(engine.area_script()->instruction_pointer(), 3U);
+    REQUIRE_EQ(engine.area_script()->trace().size(), 1U);
+
+    REQUIRE(manager.dialog_runtime().acknowledge_line().has_value());
+    CHECK(manager.dialog_runtime().completed());
+
+    // Completion is consumed at the start of the next update. The same AREA
+    // context resumes at +3, executes 0x68, then reaches its event terminator;
+    // 0x3D is not dispatched a second time.
+    REQUIRE(engine.update(1.0F / 30.0F).has_value());
+    CHECK_FALSE(engine.dialog_takeover_active());
+    CHECK_FALSE(manager.dialog_runtime().active());
+    CHECK_FALSE(manager.dialog_runtime().completed());
+    CHECK(engine.area_script()->state() == AreaScriptState::k_ready);
+    CHECK_EQ(engine.area_script()->instruction_pointer(), 5U);
+    REQUIRE_EQ(engine.area_script()->trace().size(), 3U);
+    CHECK_EQ(engine.area_script()->trace().at(0).opcode, 0x3DU);
+    CHECK_EQ(engine.area_script()->trace().at(1).opcode, 0x68U);
+    CHECK_EQ(engine.area_script()->trace().at(2).opcode, 0x03U);
+    CHECK(seq_of(recorder, "DialogTakeover.Entered", "id=0").has_value());
+    CHECK(seq_of(recorder, "DialogTakeover.Completed", "id=0").has_value());
+    CHECK(seq_of(recorder, "AreaScript.ResumedAfterDialog", "ip=0x3").has_value());
+  }
+
+  TEST_CASE("a dialog failure during takeover remains fatal and keeps AREA stopped") {
+    const TempDirectory temp;
+    write_dialog_boot_fixtures(temp, true);
+    const ScopedGameDataRoot root{temp.root()};
+
+    App::Startup::StartupTraceRecorder recorder;
+    App::ScenarioManager manager;
+    App::ScenarioEngine engine{manager, recorder};
+
+    REQUIRE(engine.select_permanent_mode_script().has_value());
+    REQUIRE(engine.enter_mode(App::ScenarioMode::k_new_session, 0).has_value());
+    REQUIRE(engine.enter_mode(App::ScenarioMode::k_tick, 0).has_value());
+    REQUIRE(engine.area_script() != nullptr);
+    CHECK_EQ(engine.area_script()->instruction_pointer(), 3U);
+
+    REQUIRE(manager.dialog_runtime().acknowledge_line().has_value());
+    REQUIRE_FALSE(manager.dialog_runtime().select_choice(0).has_value());
+    const auto update{engine.update(1.0F / 30.0F)};
+    REQUIRE_FALSE(update.has_value());
+    CHECK(update.error().find("dialog takeover failed") != std::string::npos);
+    CHECK(update.error().find("action bytecode execution is unsupported") != std::string::npos);
+    CHECK(engine.dialog_takeover_active());
+    CHECK_EQ(engine.area_script()->instruction_pointer(), 3U);
+    REQUIRE_EQ(engine.area_script()->trace().size(), 1U);
+  }
+
+  TEST_CASE("0x2F transaction commits the alternate AREA/world slot and resumes at 0x47") {
+    const TempDirectory temp;
+    write_transition_boot_fixtures(temp, true);
+    const ScopedGameDataRoot root{temp.root()};
+
+    App::Startup::StartupTraceRecorder recorder;
+    App::ScenarioManager manager;
+    App::ScenarioEngine engine{manager, recorder};
+    REQUIRE(engine.select_permanent_mode_script().has_value());
+    REQUIRE(engine.enter_mode(App::ScenarioMode::k_new_session, 0).has_value());
+    REQUIRE(engine.enter_mode(App::ScenarioMode::k_tick, 0).has_value());
+
+    REQUIRE(engine.area_script() != nullptr);
+    CHECK(engine.area_transition_pending());
+    CHECK_EQ(engine.active_area_slot(), 0U);
+    CHECK_EQ(engine.active_area_id(), 118);
+    CHECK(engine.area_script()->state() == AreaScriptState::k_waiting);
+    CHECK_EQ(engine.area_script()->runtime_state(), 10U);
+    CHECK_EQ(engine.area_script()->instruction_pointer(), 7U);
+    CHECK(engine.area_script()->wait_info().kind == App::Script::AreaWaitKind::k_area_transition);
+    REQUIRE(engine.runtime_area_slot(0) != nullptr);
+    REQUIRE(engine.runtime_area_slot(1) != nullptr);
+    CHECK_EQ(engine.runtime_area_slot(0)->primary_area_id, 118);
+    CHECK_FALSE(engine.runtime_area_slot(1)->primary.has_value());
+    CHECK(manager.world_contexts()[0].residency == WorldSceneResidencyState::LoadedActive);
+    CHECK(manager.world_contexts()[1].residency == WorldSceneResidencyState::Free);
+
+    // The next scheduler tick prepares the destination transactionally,
+    // commits the residency swap, completes generation 1 exactly once, then
+    // resumes the old AREA 118 context at its post-0x2F successor.
+    REQUIRE(engine.update(1.0F / 30.0F).has_value());
+    CHECK_FALSE(engine.area_transition_pending());
+    CHECK_EQ(engine.active_area_slot(), 1U);
+    CHECK_EQ(engine.active_area_id(), 222);
+    REQUIRE(engine.runtime_area_slot(0)->primary.has_value());
+    REQUIRE(engine.runtime_area_slot(1)->primary.has_value());
+    CHECK_EQ(engine.runtime_area_slot(0)->primary_area_id, 118);
+    CHECK_EQ(engine.runtime_area_slot(1)->primary_area_id, 222);
+    CHECK_EQ(engine.runtime_area_slot(1)->primary->model3do_name(), "AIMPASSE");
+    CHECK_EQ(engine.runtime_area_slot(1)->primary->scenario_scx_name(), "IMPASSE");
+    CHECK_EQ(engine.runtime_area_slot(1)->primary->sky_3do_name(), "ASKY");
+    CHECK(manager.world_contexts()[0].residency == WorldSceneResidencyState::LoadedInactive);
+    CHECK_EQ(manager.world_contexts()[0].scenario_path, "SCPTDATA/GRID.SCX");
+    CHECK(manager.world_contexts()[1].residency == WorldSceneResidencyState::LoadedActive);
+    CHECK_EQ(manager.world_contexts()[1].scenario_path, "SCPTDATA/IMPASSE.SCX");
+    REQUIRE(manager.active_world_context() != nullptr);
+    CHECK_EQ(manager.active_world_context()->scene_id, 1U);
+
+    CHECK(engine.area_script()->state() == AreaScriptState::k_paused_unsupported);
+    CHECK_EQ(engine.area_script()->instruction_pointer(), 7U);
+    CHECK_EQ(engine.area_script()->pause_info().opcode, 0x47U);
+    CHECK(seq_of(recorder, "AreaTransition.Accepted", "target=222").has_value());
+    CHECK(seq_of(recorder, "AreaTransition.TargetPrepared", "model='AIMPASSE'").has_value());
+    CHECK(seq_of(recorder, "AreaTransition.Committed", "resumeIp=0x7").has_value());
+
+    const std::size_t trace_size{engine.area_script()->trace().size()};
+    REQUIRE(engine.update(1.0F / 30.0F).has_value());
+    CHECK_EQ(engine.area_script()->trace().size(), trace_size);
+  }
+
+  TEST_CASE("failed 0x2F target preparation preserves the source AREA and active world") {
+    const TempDirectory temp;
+    write_transition_boot_fixtures(temp, false);
+    const ScopedGameDataRoot root{temp.root()};
+
+    App::Startup::StartupTraceRecorder recorder;
+    App::ScenarioManager manager;
+    App::ScenarioEngine engine{manager, recorder};
+    REQUIRE(engine.select_permanent_mode_script().has_value());
+    REQUIRE(engine.enter_mode(App::ScenarioMode::k_new_session, 0).has_value());
+    REQUIRE(engine.enter_mode(App::ScenarioMode::k_tick, 0).has_value());
+
+    REQUIRE(engine.area_script() != nullptr);
+    CHECK(engine.area_transition_pending());
+    CHECK_EQ(engine.area_script()->instruction_pointer(), 7U);
+
+    const auto update{engine.update(1.0F / 30.0F)};
+    REQUIRE_FALSE(update.has_value());
+    CHECK(update.error().find("AREA transition to 222 failed") != std::string::npos);
+    CHECK(update.error().find("IMPASSE.SCX") != std::string::npos);
+    CHECK(engine.area_transition_pending());
+    CHECK_EQ(engine.active_area_slot(), 0U);
+    CHECK_EQ(engine.active_area_id(), 118);
+    REQUIRE(engine.runtime_area_slot(0) != nullptr);
+    REQUIRE(engine.runtime_area_slot(1) != nullptr);
+    CHECK_EQ(engine.runtime_area_slot(0)->primary_area_id, 118);
+    CHECK_FALSE(engine.runtime_area_slot(1)->primary.has_value());
+    CHECK(manager.world_contexts()[0].residency == WorldSceneResidencyState::LoadedActive);
+    CHECK_EQ(manager.world_contexts()[0].scenario_path, "SCPTDATA/GRID.SCX");
+    CHECK(manager.world_contexts()[1].residency == WorldSceneResidencyState::Free);
+    CHECK(engine.area_script()->state() == AreaScriptState::k_waiting);
+    CHECK_EQ(engine.area_script()->runtime_state(), 10U);
+    CHECK_EQ(engine.area_script()->instruction_pointer(), 7U);
+
+    // A failed coordinator is sticky: later ticks surface the same failure
+    // without redispatching 0x2F or mutating the source.
+    const auto retry{engine.update(1.0F / 30.0F)};
+    REQUIRE_FALSE(retry.has_value());
+    CHECK_EQ(retry.error(), update.error());
+    REQUIRE_EQ(engine.area_script()->trace().size(), 1U);
   }
 }
 

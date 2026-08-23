@@ -48,6 +48,22 @@ struct AreaCharacterScriptRequest {
   AreaCharacterScriptLaunchMode mode{AreaCharacterScriptLaunchMode::k_fire_and_forget};
 };
 
+/// Native two-slot AREA transition requested by compact opcode 0x2F.
+/// operand_b/operand_c are preserved neutrally until their variants are
+/// recovered; the confirmed startup path uses -1 for both.
+struct AreaTransitionRequest {
+  std::int16_t target_area_id{0};
+  std::int16_t operand_b{0};
+  std::int16_t operand_c{0};
+};
+
+/// Stable identity of one accepted session-level AREA transition.
+struct AreaTransitionHandle {
+  std::uint64_t generation{0};
+
+  bool operator==(const AreaTransitionHandle&) const = default;
+};
+
 /// Typed reason an area context is waiting. The recovered legacy wait-state
 /// value is preserved separately for diagnostics.
 enum class AreaWaitKind : std::uint8_t {
@@ -56,6 +72,7 @@ enum class AreaWaitKind : std::uint8_t {
   k_scx_script,
   k_character_script,
   k_camera,
+  k_area_transition,
 };
 
 /// Typed wait state for the currently suspended AREA context.
@@ -72,6 +89,9 @@ struct AreaWaitState {
   std::optional<AreaCharacterScriptRequest> character_script;
   /// Exact ScriptRuntime instance spawned for a tracked 0x3C request.
   std::optional<std::size_t> character_script_instance;
+  /// Request and exact coordinator generation blocked by opcode 0x2F.
+  std::optional<AreaTransitionRequest> area_transition;
+  std::optional<AreaTransitionHandle> area_transition_handle;
   /// Remaining 30 Hz scenario units for the timed camera wait used by 0x60.
   float remaining_scenario_frames{0.0F};
 };
@@ -83,6 +103,12 @@ struct AreaScxScriptRequest {
   std::uint16_t script_id{0};
   std::int16_t operand_b{0};
   std::int16_t operand_c{0};
+};
+
+/// Dialog start requested by AREA opcode 0x3D after resolving its Scalar16
+/// operand. Dialog takeover is scheduler state, not an AREA typed wait.
+struct AreaDialogRequest {
+  std::int16_t dialog_id{0};
 };
 
 /// Recovered AREA opcode 0x4E character activation request.
@@ -169,6 +195,13 @@ class AreaScriptRuntime {
   using CharacterScriptSink =
       std::function<std::expected<std::size_t, std::string>(const AreaCharacterScriptRequest&)>;
 
+  /// Bridge from opcode 0x3D to the session-owned IAM/DIALOG runtime.
+  using DialogSink = std::function<std::expected<void, std::string>(const AreaDialogRequest&)>;
+
+  /// Bridge from opcode 0x2F to the session-level two-slot AREA coordinator.
+  using AreaTransitionSink = std::function<std::expected<AreaTransitionHandle, std::string>(
+      const AreaTransitionRequest&)>;
+
   /// Bridge from opcode 0x4E to the active world's character runtime.
   using CharacterActivationSink =
       std::function<std::expected<void, std::string>(const AreaCharacterActivationRequest&)>;
@@ -219,6 +252,12 @@ class AreaScriptRuntime {
   /// Wires AREA opcodes 0x3B/0x3C to explicit-character script handling.
   void set_character_script_sink(CharacterScriptSink sink);
 
+  /// Wires AREA opcode 0x3D to the session dialog runtime.
+  void set_dialog_sink(DialogSink sink);
+
+  /// Wires AREA opcode 0x2F to native AREA-transition coordination.
+  void set_area_transition_sink(AreaTransitionSink sink);
+
   /// Wires AREA opcode 0x4E to runtime-character activation.
   void set_character_activation_sink(CharacterActivationSink sink);
 
@@ -249,6 +288,11 @@ class AreaScriptRuntime {
   /// exactly match the concrete child returned by the launch bridge.
   [[nodiscard]] std::expected<void, std::string> complete_character_script_wait(
       std::size_t instance_id);
+
+  /// Completes the state-10 wait created by opcode 0x2F. Only the exact
+  /// transition generation returned by the sink can resume the context.
+  [[nodiscard]] std::expected<void, std::string> complete_area_transition(
+      AreaTransitionHandle handle);
 
   [[nodiscard]] AreaScriptState state() const {
     return m_state;
@@ -339,6 +383,12 @@ class AreaScriptRuntime {
       const {
     return m_last_character_script_request;
   }
+  [[nodiscard]] const std::optional<AreaDialogRequest>& last_dialog_request() const {
+    return m_last_dialog_request;
+  }
+  [[nodiscard]] const std::optional<AreaTransitionRequest>& last_area_transition_request() const {
+    return m_last_area_transition_request;
+  }
   [[nodiscard]] const std::optional<AreaCameraRequest>& last_camera_request() const {
     return m_last_camera_request;
   }
@@ -398,6 +448,8 @@ class AreaScriptRuntime {
   MusicSink m_music_sink;
   ScxScriptSink m_scx_script_sink;
   CharacterScriptSink m_character_script_sink;
+  DialogSink m_dialog_sink;
+  AreaTransitionSink m_area_transition_sink;
   CharacterActivationSink m_character_activation_sink;
   CameraSink m_camera_sink;
   PresentationSink m_presentation_sink;
@@ -405,6 +457,8 @@ class AreaScriptRuntime {
   InstructionSink m_instruction_sink;
   std::optional<AreaCharacterActivationRequest> m_last_character_activation_request;
   std::optional<AreaCharacterScriptRequest> m_last_character_script_request;
+  std::optional<AreaDialogRequest> m_last_dialog_request;
+  std::optional<AreaTransitionRequest> m_last_area_transition_request;
   std::optional<AreaCameraRequest> m_last_camera_request;
   std::optional<AreaPresentationRequest> m_last_presentation_request;
   bool m_cinematic_letterbox_requested{false};

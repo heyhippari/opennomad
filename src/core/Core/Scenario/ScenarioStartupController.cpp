@@ -18,6 +18,7 @@
 #include "Core/Audio/AudioTypes.hpp"
 #include "Core/Character/CharacterRuntime.hpp"
 #include "Core/Debug/Instrumentor.hpp"
+#include "Core/Dialog/DialogRuntime.hpp"
 #include "Core/GameDataLoader.hpp"
 #include "Core/Interface/InterfaceDispatcher.hpp"
 #include "Core/Log.hpp"
@@ -57,6 +58,44 @@ std::string dependency_path(const std::string_view directory,
   path += name;
   path += extension;
   return path;
+}
+
+struct PreparedAreaWorld {
+  WorldSceneContext* context{nullptr};
+  std::optional<std::string> decor_path;
+  std::string scenario_path;
+  std::string sky_name;
+};
+
+/// Derives authored AREA dependencies and prepares one inactive world context.
+/// Both initial startup and native transitions use this single path.
+std::expected<PreparedAreaWorld, std::string> prepare_area_world(ScenarioManager& manager,
+    const std::uint32_t world_scene_id,
+    const std::int32_t area_id,
+    const Omikron::IamAreaRecord& area_record) {
+  const std::string scx_name{area_record.scenario_scx_name()};
+  if (scx_name.empty()) {
+    return std::expected<PreparedAreaWorld, std::string>{std::unexpect,
+        fmt::format("IAM/AREA record {} has no scenario SCX name", area_id)};
+  }
+
+  const std::string model_name{area_record.model3do_name()};
+  std::optional<std::string> decor_path;
+  if (!model_name.empty()) {
+    decor_path = dependency_path(K_DECOR_DIRECTORY, model_name, K_3DO_EXTENSION);
+  }
+  const std::string scenario_path{
+      dependency_path(K_SCPTDATA_DIRECTORY, scx_name, K_SCX_EXTENSION)};
+
+  auto world{manager.load_world_context(world_scene_id, decor_path, scenario_path)};
+  if (!world) {
+    return std::expected<PreparedAreaWorld, std::string>{std::unexpect,
+        fmt::format("world scenario load for AREA {}: {}", area_id, world.error())};
+  }
+  return PreparedAreaWorld{.context = world.value(),
+      .decor_path = std::move(decor_path),
+      .scenario_path = scenario_path,
+      .sky_name = area_record.sky_3do_name()};
 }
 
 /// Opcodes recorded as provisional bootstrap actions in the startup trace.
@@ -115,6 +154,11 @@ void ScenarioStartupController::reset_session() {
   m_start.reset();
   m_area_archive.reset();
   m_area_slots = {};
+  m_area_slots.at(0).world_scene_id = 0;
+  m_area_slots.at(1).world_scene_id = 1;
+  m_active_area_slot = 0;
+  m_area_transition.reset();
+  m_next_area_transition_generation = 1;
   m_area_script.reset();
   m_start_bytes.clear();
   m_area_archive_bytes.clear();
@@ -129,6 +173,8 @@ void ScenarioStartupController::reset_session() {
   m_last_error.clear();
   m_initialized = false;
   m_manager = nullptr;
+  m_dialog_takeover_active = false;
+  m_dialog_takeover_id.reset();
   m_ticked = false;
   m_event_started = false;
   m_waiting_recorded = false;
@@ -196,15 +242,13 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
     App::Log::error(LogCategory::Startup, "Startup failed: {}", m_last_error);
     return std::expected<void, std::string>{std::unexpect, m_last_error};
   }
-  RuntimeAreaSlot& area_slot{m_area_slots.at(0)};
+  RuntimeAreaSlot& area_slot{m_area_slots.at(m_active_area_slot)};
   area_slot.primary.emplace(std::move(parsed_record).value());
   area_slot.primary_area_id = m_initial_area_id;
   area_slot.secondary_area_id = m_linked_area_id;
   const Omikron::IamAreaRecord& area_record_view{*area_slot.primary};
   const std::size_t record_size{area_record_view.record_size()};
   const std::uint32_t script_offset{area_record_view.script_offset()};
-  const std::string scx_name{area_record_view.scenario_scx_name()};
-  const std::string model_name{area_record_view.model3do_name()};
   record("IAM_AREA.RecordLoaded", fmt::format("id={} size={:#x}", area_id, record_size));
   record("IAM_AREA.Parsed", fmt::format("scriptOffset={:#x}", script_offset));
 
@@ -214,34 +258,24 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
 
   // Decor CPU ownership lives in the world context. Startup retains only the
   // initial dependency path/state for historical diagnostics.
-  m_initial_world_decor_path.clear();
-  if (model_name.empty()) {
+  auto prepared{prepare_area_world(
+      manager, area_slot.world_scene_id, m_initial_area_id, area_record_view)};
+  if (!prepared) {
+    m_last_error = prepared.error();
+    App::Log::error(LogCategory::Startup, "Startup failed: {}", m_last_error);
+    return std::expected<void, std::string>{std::unexpect, m_last_error};
+  }
+  m_initial_world_scenario_path = prepared->scenario_path;
+  m_initial_world_decor_path = prepared->decor_path.value_or(std::string{});
+  if (m_initial_world_decor_path.empty()) {
     m_initial_world_decor_state = "absent: no model 3DO name in the area record";
     record("AreaDependency.Decor.SkippedUnavailable");
   } else {
-    m_initial_world_decor_path = dependency_path(K_DECOR_DIRECTORY, model_name, K_3DO_EXTENSION);
     m_initial_world_decor_state = "requested";
     record("AreaDependency.Decor.Requested", m_initial_world_decor_path);
   }
 
-  if (scx_name.empty()) {
-    m_last_error = fmt::format("IAM/AREA record {} has no scenario SCX name", area_id);
-    App::Log::error(LogCategory::Startup, "Startup failed: {}", m_last_error);
-    return std::expected<void, std::string>{std::unexpect, m_last_error};
-  }
-
-  m_initial_world_scenario_path = dependency_path(K_SCPTDATA_DIRECTORY, scx_name, K_SCX_EXTENSION);
-
-  const std::optional<std::string> decor_path{
-      m_initial_world_decor_path.empty() ? std::nullopt
-                                         : std::optional<std::string>{m_initial_world_decor_path}};
-  auto world{manager.load_world_context(0, decor_path, m_initial_world_scenario_path)};
-  if (!world) {
-    m_last_error = fmt::format("world scenario load: {}", world.error());
-    App::Log::error(LogCategory::Startup, "Startup failed: {}", m_last_error);
-    return std::expected<void, std::string>{std::unexpect, m_last_error};
-  }
-  if (auto result{manager.activate_world_context(0)}; !result) {
+  if (auto result{manager.activate_world_context(area_slot.world_scene_id)}; !result) {
     m_last_error = fmt::format("world activation: {}", result.error());
     App::Log::error(LogCategory::Startup, "Startup failed: {}", m_last_error);
     return std::expected<void, std::string>{std::unexpect, m_last_error};
@@ -251,8 +285,7 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
   // retaining a duplicate parsed model: the model object lives in the world
   // context and is exposed through ScenarioManager.
   if (!m_initial_world_decor_path.empty()) {
-    const WorldSceneContext* world_context{manager.find_world_context(0)};
-    if (world_context != nullptr && world_context->decor_model.has_value()) {
+    if (prepared->context != nullptr && prepared->context->decor_model.has_value()) {
       m_initial_world_decor_state = "loaded";
       record("AreaDependency.Decor.Loaded", m_initial_world_decor_path);
     } else {
@@ -264,12 +297,74 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
     }
   }
   record("AreaDependency.Scenario.Loaded",
-      fmt::format("slot=world0 path={}", m_initial_world_scenario_path));
+      fmt::format("slot=world{} path={}", m_active_area_slot, m_initial_world_scenario_path));
 
   // 4. Area script context: create, queue event/state 1, activate. The
   // first interpreter tick runs in tick().
   m_area_script.emplace(area_record_view.script_bytes());
   Script::AreaScriptRuntime& area_script{*m_area_script};
+
+  area_script.set_area_transition_sink(
+      [this](const Script::AreaTransitionRequest& request)
+          -> std::expected<Script::AreaTransitionHandle, std::string> {
+        if (m_manager == nullptr || !m_area_archive.has_value()) {
+          return std::expected<Script::AreaTransitionHandle, std::string>{
+              std::unexpect, "AREA transition coordinator is not initialized"};
+        }
+        if (m_area_transition.has_value()) {
+          return std::expected<Script::AreaTransitionHandle, std::string>{
+              std::unexpect, "AREA transition coordinator is busy"};
+        }
+        if (request.target_area_id < 0) {
+          return std::expected<Script::AreaTransitionHandle, std::string>{std::unexpect,
+              fmt::format("target AREA ID {} is negative", request.target_area_id)};
+        }
+        if (!m_area_slots.at(m_active_area_slot).primary.has_value()) {
+          return std::expected<Script::AreaTransitionHandle, std::string>{
+              std::unexpect, "active resident AREA slot is empty"};
+        }
+
+        const std::size_t destination_slot{m_active_area_slot == 0U ? 1U : 0U};
+        const Script::AreaTransitionHandle handle{
+            .generation = m_next_area_transition_generation++};
+        m_area_transition.emplace(PendingAreaTransition{.handle = handle,
+            .request = request,
+            .source_slot = m_active_area_slot,
+            .destination_slot = destination_slot,
+            .error = {}});
+        record("AreaTransition.Accepted",
+            fmt::format("generation={} sourceSlot={} destinationSlot={} target={}",
+                handle.generation,
+                m_active_area_slot,
+                destination_slot,
+                request.target_area_id));
+        App::Log::info(LogCategory::Scenario,
+            "AREA opcode 0x2F — accepted transition to AREA {} as generation {}",
+            request.target_area_id,
+            handle.generation);
+        return handle;
+      });
+
+  area_script.set_dialog_sink(
+      [this](const Script::AreaDialogRequest& request) -> std::expected<void, std::string> {
+        if (m_manager == nullptr) {
+          return std::expected<void, std::string>{
+              std::unexpect, "scenario manager is not available"};
+        }
+
+        if (auto started{m_manager->start_dialog(static_cast<std::uint16_t>(request.dialog_id))};
+            !started) {
+          return std::expected<void, std::string>{std::unexpect, started.error()};
+        }
+
+        m_dialog_takeover_active = true;
+        m_dialog_takeover_id = request.dialog_id;
+        record("AreaScript.DialogStarted", fmt::format("id={}", request.dialog_id));
+        record("DialogTakeover.Entered", fmt::format("id={}", request.dialog_id));
+        App::Log::info(
+            LogCategory::Script, "AREA opcode 0x3D — started dialog {}", request.dialog_id);
+        return {};
+      });
 
   area_script.set_music_sink([this](const Audio::MusicTrackRequest& request) {
     record("Music.TrackRequested",
@@ -392,7 +487,8 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
   area_script.set_character_activation_sink(
       [this](const Script::AreaCharacterActivationRequest& request)
           -> std::expected<void, std::string> {
-        if (m_manager == nullptr || !m_area_slots.at(0).primary.has_value()) {
+        const RuntimeAreaSlot& active_slot{m_area_slots.at(m_active_area_slot)};
+        if (m_manager == nullptr || !active_slot.primary.has_value()) {
           return std::expected<void, std::string>{
               std::unexpect, "no active AREA/world owner for character activation"};
         }
@@ -403,7 +499,7 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
         }
 
         auto activated{context->runtime->activate_character(
-            m_area_slots.at(0).primary_area_id, *m_area_slots.at(0).primary, request)};
+            active_slot.primary_area_id, *active_slot.primary, request)};
         if (!activated) {
           return activated;
         }
@@ -481,7 +577,8 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
       });
 
   area_script.set_camera_sink([this](const Script::AreaCameraRequest& request) {
-    if (m_manager == nullptr || !m_area_slots.at(0).primary.has_value()) {
+    const RuntimeAreaSlot& active_slot{m_area_slots.at(m_active_area_slot)};
+    if (m_manager == nullptr || !active_slot.primary.has_value()) {
       App::Log::warn(LogCategory::Scenario,
           "AREA camera {} requested without an active AREA/world owner",
           request.camera_id);
@@ -489,7 +586,7 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
     }
 
     const auto camera{
-        m_area_slots.at(0).primary->camera_by_id(static_cast<std::int16_t>(request.camera_id))};
+        active_slot.primary->camera_by_id(static_cast<std::int16_t>(request.camera_id))};
     if (!camera.has_value()) {
       App::Log::warn(
           LogCategory::Scenario, "AREA camera {} not found in table 6", request.camera_id);
@@ -609,6 +706,108 @@ std::expected<void, std::string> ScenarioStartupController::initialize(ScenarioM
   return initialize_new_session(manager);
 }
 
+std::expected<void, std::string> ScenarioStartupController::service_area_transition() {
+  if (!m_area_transition.has_value()) {
+    return {};
+  }
+
+  PendingAreaTransition& transition{m_area_transition.value()};
+  if (!transition.error.empty()) {
+    return std::expected<void, std::string>{std::unexpect, transition.error};
+  }
+
+  const auto fail_transition = [this, &transition](std::string error)
+      -> std::expected<void, std::string> {
+    transition.error = fmt::format(
+        "AREA transition to {} failed: {}", transition.request.target_area_id, error);
+    m_last_error = transition.error;
+    record("AreaTransition.Failed", transition.error);
+    App::Log::error(LogCategory::Scenario, "{}", transition.error);
+    return std::expected<void, std::string>{std::unexpect, transition.error};
+  };
+
+  if (m_manager == nullptr || !m_area_archive.has_value() || !m_area_script.has_value()) {
+    return fail_transition("coordinator ownership is unavailable");
+  }
+  if (transition.source_slot != m_active_area_slot) {
+    return fail_transition("active resident AREA slot changed before commit");
+  }
+
+  Script::AreaScriptRuntime& area_script{m_area_script.value()};
+  if (area_script.state() != Script::AreaScriptState::k_waiting ||
+      area_script.wait_info().kind != Script::AreaWaitKind::k_area_transition ||
+      !area_script.wait_info().area_transition_handle.has_value() ||
+      area_script.wait_info().area_transition_handle.value() != transition.handle) {
+    return fail_transition("requesting AREA context is not waiting on the accepted generation");
+  }
+
+  auto record_span{m_area_archive->read_record(
+      static_cast<std::uint32_t>(transition.request.target_area_id))};
+  if (!record_span) {
+    return fail_transition(record_span.error());
+  }
+  auto parsed_record{Omikron::IamAreaRecord::load(record_span.value())};
+  if (!parsed_record) {
+    return fail_transition(parsed_record.error());
+  }
+
+  Omikron::IamAreaRecord destination_record{std::move(parsed_record).value()};
+  const RuntimeAreaSlot& source_slot{m_area_slots.at(transition.source_slot)};
+  RuntimeAreaSlot& destination_slot{m_area_slots.at(transition.destination_slot)};
+  auto prepared{prepare_area_world(*m_manager,
+      destination_slot.world_scene_id,
+      transition.request.target_area_id,
+      destination_record)};
+  if (!prepared) {
+    return fail_transition(prepared.error());
+  }
+
+  record("AreaTransition.TargetPrepared",
+      fmt::format("generation={} area={} slot={} model='{}' scx='{}' sky='{}'",
+          transition.handle.generation,
+          transition.request.target_area_id,
+          transition.destination_slot,
+          destination_record.model3do_name(),
+          destination_record.scenario_scx_name(),
+          destination_record.sky_3do_name()));
+  if (!prepared->sky_name.empty()) {
+    record("AreaTransition.SkyPreserved", prepared->sky_name);
+  }
+
+  if (auto switched{m_manager->switch_active_world_context(
+          source_slot.world_scene_id, destination_slot.world_scene_id)};
+      !switched) {
+    return fail_transition(switched.error());
+  }
+
+  destination_slot.primary.emplace(std::move(destination_record));
+  destination_slot.primary_area_id = transition.request.target_area_id;
+  destination_slot.secondary_area_id = -1;
+  m_active_area_slot = transition.destination_slot;
+
+  const Script::AreaTransitionHandle completed_handle{transition.handle};
+  const std::int16_t target_area_id{transition.request.target_area_id};
+  if (auto completed{area_script.complete_area_transition(completed_handle)}; !completed) {
+    return fail_transition(completed.error());
+  }
+
+  record("AreaTransition.Committed",
+      fmt::format("generation={} sourceSlot={} destinationSlot={} target={} resumeIp={:#x}",
+          completed_handle.generation,
+          transition.source_slot,
+          transition.destination_slot,
+          target_area_id,
+          area_script.instruction_pointer()));
+  App::Log::info(LogCategory::Scenario,
+      "AREA transition generation {} committed — active AREA {} slot {}, resume ip={:#x}",
+      completed_handle.generation,
+      target_area_id,
+      m_active_area_slot,
+      area_script.instruction_pointer());
+  m_area_transition.reset();
+  return {};
+}
+
 std::expected<void, std::string> ScenarioStartupController::tick(const float delta_seconds) {
   APP_PROFILE_FUNCTION();
 
@@ -623,6 +822,47 @@ std::expected<void, std::string> ScenarioStartupController::tick(const float del
 
   Script::AreaScriptRuntime& area_script{*m_area_script};
   m_ticked = true;
+
+  // AREA opcode 0x3D leaves its context running at the advanced IP. Runtime's
+  // dialog mode is a global scheduling takeover, so suppress only normal AREA
+  // servicing here; ScenarioEngine continues gameplay/world runtime ticks.
+  bool resumed_after_dialog{false};
+  if (m_dialog_takeover_active) {
+    if (m_manager == nullptr) {
+      m_last_error = "dialog takeover has no scenario manager";
+      return std::expected<void, std::string>{std::unexpect, m_last_error};
+    }
+
+    Dialog::DialogRuntime& dialog{m_manager->dialog_runtime()};
+    if (dialog.state() == Dialog::DialogState::k_failed) {
+      m_last_error = fmt::format("dialog takeover failed: {}", dialog.last_error());
+      return std::expected<void, std::string>{std::unexpect, m_last_error};
+    }
+    if (dialog.completed()) {
+      if (!dialog.take_completion()) {
+        m_last_error = "dialog takeover completion could not be consumed";
+        return std::expected<void, std::string>{std::unexpect, m_last_error};
+      }
+      const std::int16_t completed_id{m_dialog_takeover_id.value_or(-1)};
+      m_dialog_takeover_active = false;
+      m_dialog_takeover_id.reset();
+      resumed_after_dialog = true;
+      record("DialogTakeover.Completed", fmt::format("id={}", completed_id));
+      App::Log::info(
+          LogCategory::Scenario, "Dialog {} completed — restoring AREA scheduling", completed_id);
+    } else if (dialog.active()) {
+      return {};
+    } else {
+      m_last_error = "dialog takeover lost its active dialog without completion";
+      return std::expected<void, std::string>{std::unexpect, m_last_error};
+    }
+  }
+
+  if (m_area_transition.has_value()) {
+    if (auto transitioned{service_area_transition()}; !transitioned) {
+      return transitioned;
+    }
+  }
 
   // Opcode 0x39 bridges into the active world's SCX runtime and yields the
   // AREA VM until that concrete ScriptRuntime instance completes.
@@ -717,6 +957,14 @@ std::expected<void, std::string> ScenarioStartupController::tick(const float del
     m_waiting_recorded = false;
   }
 
+  if (resumed_after_dialog) {
+    record("AreaScript.ResumedAfterDialog",
+        fmt::format("ip={:#x}", area_script.instruction_pointer()));
+    App::Log::info(LogCategory::Script,
+        "AREA resumed after dialog — ip={:#x}",
+        area_script.instruction_pointer());
+  }
+
   const Script::AreaScriptState state{area_script.run(delta_seconds)};
 
   if (state == Script::AreaScriptState::k_failed) {
@@ -776,8 +1024,16 @@ void ScenarioStartupController::record(std::string name, std::string detail) {
 }
 
 const Omikron::IamAreaRecord* ScenarioStartupController::area_record() const {
-  const RuntimeAreaSlot& slot{m_area_slots.at(0)};
+  const RuntimeAreaSlot& slot{m_area_slots.at(m_active_area_slot)};
   return slot.primary.has_value() ? &*slot.primary : nullptr;
+}
+
+std::int32_t ScenarioStartupController::active_area_id() const {
+  return m_area_slots.at(m_active_area_slot).primary_area_id;
+}
+
+const RuntimeAreaSlot* ScenarioStartupController::runtime_area_slot(const std::size_t index) const {
+  return index < m_area_slots.size() ? &m_area_slots.at(index) : nullptr;
 }
 
 std::optional<std::int32_t> ScenarioStartupController::area_mapping(

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <optional>
@@ -112,11 +113,30 @@ class ScenarioEngine {
   [[nodiscard]] const Omikron::IamAreaRecord* area_record() const {
     return m_startup.area_record();
   }
+  [[nodiscard]] std::size_t active_area_slot() const {
+    return m_startup.active_area_slot();
+  }
+  [[nodiscard]] std::int32_t active_area_id() const {
+    return m_startup.active_area_id();
+  }
+  [[nodiscard]] const RuntimeAreaSlot* runtime_area_slot(const std::size_t index) const {
+    return m_startup.runtime_area_slot(index);
+  }
+  [[nodiscard]] bool area_transition_pending() const {
+    return m_startup.area_transition_pending();
+  }
   [[nodiscard]] const Script::AreaScriptRuntime* area_script() const {
     return m_startup.area_script();
   }
   [[nodiscard]] bool ticked() const {
     return m_startup.ticked();
+  }
+  /// True while an AREA-started dialog suppresses normal AREA VM servicing.
+  [[nodiscard]] bool dialog_takeover_active() const {
+    return m_startup.dialog_takeover_active();
+  }
+  [[nodiscard]] std::optional<std::int16_t> dialog_takeover_id() const {
+    return m_startup.dialog_takeover_id();
   }
   [[nodiscard]] const std::string& initial_world_scenario_path() const {
     return m_startup.initial_world_scenario_path();

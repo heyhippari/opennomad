@@ -311,6 +311,48 @@ std::expected<void, std::string> ScenarioManager::deactivate_world_context(
   return {};
 }
 
+std::expected<void, std::string> ScenarioManager::switch_active_world_context(
+    const std::uint32_t source_scene_id, const std::uint32_t target_scene_id) {
+  if (source_scene_id == target_scene_id) {
+    return std::expected<void, std::string>{
+        std::unexpect, "Cannot switch world residency to the same scene identity"};
+  }
+
+  WorldSceneContext* source{find_world_context(source_scene_id)};
+  WorldSceneContext* target{find_world_context(target_scene_id)};
+  if (source == nullptr || source->residency != WorldSceneResidencyState::LoadedActive) {
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format("Cannot switch world residency: source context {} is not active",
+            source_scene_id)};
+  }
+  if (target == nullptr || target->residency != WorldSceneResidencyState::LoadedInactive) {
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format("Cannot switch world residency: target context {} is not prepared inactive",
+            target_scene_id)};
+  }
+
+  for (const WorldSceneContext& context : m_world_contexts) {
+    if (&context != source && context.residency == WorldSceneResidencyState::LoadedActive) {
+      return std::expected<void, std::string>{std::unexpect,
+          fmt::format("Cannot switch world residency: unexpected active context {}",
+              context.scene_id)};
+    }
+  }
+
+  // Both preconditions are validated before either state changes. The loaded
+  // packages remain owned by their original context entries.
+  source->residency = WorldSceneResidencyState::LoadedInactive;
+  target->residency = WorldSceneResidencyState::LoadedActive;
+
+  App::Log::info(LogCategory::Scenario,
+      "world residency switched — source={} '{}' inactive, target={} '{}' active",
+      source_scene_id,
+      scenario_basename(source->scenario_path),
+      target_scene_id,
+      scenario_basename(target->scenario_path));
+  return {};
+}
+
 std::expected<void, std::string> ScenarioManager::unload_world_context(
     const std::uint32_t scene_id) {
   WorldSceneContext* context{find_world_context(scene_id)};

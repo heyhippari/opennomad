@@ -113,9 +113,24 @@ response text is empty, so normal terminal progression does not execute it.
 
 AREA opcode `0x3D` consumes one 16-bit dialog ID, advances the AREA instruction
 pointer, starts dialog mode, and explicitly yields the dispatcher. It is not a
-typed `AreaWaitKind` wait. Phase D3 supplies parsing, session caching,
-`DialogRuntime`, and gameplay presentation APIs; opcode `0x3D` and global
-ScenarioEngine takeover/resume remain Phase D4.
+typed `AreaWaitKind` wait. Phase D4 implements the mapping as:
+
+```text
+AREA 0x3D StartDialog
+  -> ScenarioManager::start_dialog(dialog_id)
+  -> session DialogRuntime becomes active
+  -> AREA dispatcher yields at the already-advanced instruction pointer
+  -> ScenarioStartupController gates later normal AREA ticks
+  -> DialogRuntime::take_completion() removes the gate
+  -> the same running AREA context resumes from that instruction pointer
+```
+
+Literal Scalar16 IDs are supported. Parameter-indirected operands carrying bit
+`0x4000` fail explicitly until OpenNomad models the scenario parameter block;
+they are never misinterpreted as literal dialog IDs.
 
 This compact opcode is also unrelated to the 32-bit SCX `ScenarioControl`
 command range `0x34..0x3f`; the two opcode namespaces must not be conflated.
+Runtime's live numeric dialog-takeover state 3 is likewise separate from
+OpenNomad's one-shot `ScenarioMode::k_teardown` startup operation. Starting a
+dialog never invokes that teardown mode.

@@ -87,9 +87,10 @@ std::expected<void, std::string> ScenarioEngine::update(const float delta_second
     return {};
   }
 
-  // AREA/event runtime first (recovered order), then the gameplay-mode
-  // runtime, then every LoadedActive world runtime. LoadedInactive contexts
-  // are never ticked by default.
+  // StartupController::tick centralizes normal AREA servicing and the global
+  // dialog-takeover gate for this path and ScenarioMode::k_tick. It may skip
+  // AREA while a dialog is active; gameplay/world runtimes still advance so
+  // character animation and presentation remain alive.
   if (auto result{m_startup.tick(delta_seconds)}; !result) {
     return result;
   }

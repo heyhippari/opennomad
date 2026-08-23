@@ -12,6 +12,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -35,10 +36,12 @@ constexpr std::uint32_t K_OP_PUSH_GLOBAL_VARIABLE{0x0A};
 constexpr std::uint32_t K_OP_SET_GLOBAL_VARIABLE_ONE{0x0D};
 constexpr std::uint32_t K_OP_SET_GLOBAL_VARIABLE{0x0E};
 constexpr std::uint32_t K_OP_EQUAL{0x19};
+constexpr std::uint32_t K_OP_BEGIN_AREA_TRANSITION{0x2F};
 constexpr std::uint32_t K_OP_CHARACTER_LOOKUP{0x38};
 constexpr std::uint32_t K_OP_START_SCX_SCRIPT{0x39};
 constexpr std::uint32_t K_OP_START_CHARACTER_SCRIPT{0x3B};
 constexpr std::uint32_t K_OP_START_CHARACTER_SCRIPT_TRACKED{0x3C};
+constexpr std::uint32_t K_OP_START_DIALOG{0x3D};
 constexpr std::uint32_t K_OP_ACTIVATE_CHARACTER{0x4E};
 constexpr std::uint32_t K_OP_CHARACTER_SELECTION_RESET{0x4F};
 constexpr std::uint32_t K_OP_ACTIVATE_SUBSYSTEM{0x68};
@@ -59,8 +62,13 @@ constexpr std::uint16_t K_OPEN_INTERFACE_WAIT_STATE{6};
 constexpr std::uint16_t K_CHARACTER_SCRIPT_WAIT_STATE{4};
 /// Wait state assigned by camera opcode 0x60 when its duration is non-zero.
 constexpr std::uint16_t K_CAMERA_WAIT_STATE{7};
+/// Runtime context state while native AREA transition coordination is active.
+constexpr std::uint16_t K_AREA_TRANSITION_WAIT_STATE{10};
 /// Runtime's script/scenario time base (1.0 unit = 1/30 second).
 constexpr float K_AREA_FRAMES_PER_SECOND{30.0F};
+/// Runtime Scalar16 parameter-reference marker. The parameter block is not
+/// modeled yet, so 0x3D diagnoses these operands instead of treating them as IDs.
+constexpr std::uint16_t K_SCALAR16_PARAMETER_REFERENCE{0x4000U};
 
 constexpr std::array<AreaOperandWidth, 0> K_OPERANDS_NONE{};
 constexpr std::array<AreaOperandWidth, 1> K_OPERANDS_I8{AreaOperandWidth::k_int8};
@@ -82,7 +90,7 @@ constexpr std::array<AreaOperandWidth, 3> K_OPERANDS_67{
 constexpr std::array<AreaOperandWidth, 3> K_OPERANDS_PRESENTATION{
     AreaOperandWidth::k_int32, AreaOperandWidth::k_int16, AreaOperandWidth::k_int16};
 
-constexpr std::array<AreaOpcodeInfo, 25> K_AREA_OPCODE_TABLE{
+constexpr std::array<AreaOpcodeInfo, 27> K_AREA_OPCODE_TABLE{
     AreaOpcodeInfo{.opcode = K_OP_END_EVENT,
         .name = "EndEvent",
         .support = OpcodeSupport::k_supported,
@@ -132,6 +140,15 @@ constexpr std::array<AreaOpcodeInfo, 25> K_AREA_OPCODE_TABLE{
         .notes = "pops rhs/lhs and pushes 1 when equal, otherwise 0",
         .operands = K_OPERANDS_NONE.data(),
         .operand_count = K_OPERANDS_NONE.size()},
+    AreaOpcodeInfo{.opcode = K_OP_BEGIN_AREA_TRANSITION,
+        .name = "BeginAreaTransition",
+        .support = OpcodeSupport::k_supported,
+        .provisional = false,
+        .notes = "begins a two-slot AREA transition and blocks the calling context in recovered "
+                 "Runtime state 10 until the destination area is ready; operands 1/2 variants "
+                 "remain unresolved",
+        .operands = K_OPERANDS_3X_I16.data(),
+        .operand_count = K_OPERANDS_3X_I16.size()},
     AreaOpcodeInfo{.opcode = K_OP_SET_GLOBAL_VARIABLE,
         .name = "SetGlobalVariable",
         .support = OpcodeSupport::k_supported,
@@ -168,6 +185,14 @@ constexpr std::array<AreaOpcodeInfo, 25> K_AREA_OPCODE_TABLE{
             "requests an explicit-character script and blocks the AREA context in Runtime state 4",
         .operands = K_OPERANDS_3X_I16.data(),
         .operand_count = K_OPERANDS_3X_I16.size()},
+    AreaOpcodeInfo{.opcode = K_OP_START_DIALOG,
+        .name = "StartDialog",
+        .support = OpcodeSupport::k_supported,
+        .provisional = false,
+        .notes = "starts an IAM/DIALOG conversation and forces dispatcher yield without "
+                 "entering a typed AREA wait",
+        .operands = K_OPERANDS_I16.data(),
+        .operand_count = K_OPERANDS_I16.size()},
     AreaOpcodeInfo{.opcode = K_OP_ACTIVATE_CHARACTER,
         .name = "ActivateCharacter",
         .support = OpcodeSupport::k_supported,
@@ -287,6 +312,20 @@ std::int32_t read_i32_at(const std::span<const std::byte> data, const std::size_
   return value;
 }
 
+std::expected<std::int16_t, std::string> resolve_scalar16(
+    const std::int32_t operand, const std::string_view semantic) {
+  const std::int16_t serialized{static_cast<std::int16_t>(operand)};
+  const std::uint16_t bits{static_cast<std::uint16_t>(serialized)};
+  if (serialized != -1 && (bits & K_SCALAR16_PARAMETER_REFERENCE) != 0U) {
+    return std::expected<std::int16_t, std::string>{std::unexpect,
+        fmt::format("{} parameter-indirected Scalar16 {:#06x} is unsupported because the AREA "
+                    "parameter block is not modeled",
+            semantic,
+            bits)};
+  }
+  return serialized;
+}
+
 }  // namespace
 
 const AreaOpcodeInfo* area_opcode_info(const std::uint32_t opcode) {
@@ -328,6 +367,14 @@ void AreaScriptRuntime::set_scx_script_sink(ScxScriptSink sink) {
 
 void AreaScriptRuntime::set_character_script_sink(CharacterScriptSink sink) {
   m_character_script_sink = std::move(sink);
+}
+
+void AreaScriptRuntime::set_dialog_sink(DialogSink sink) {
+  m_dialog_sink = std::move(sink);
+}
+
+void AreaScriptRuntime::set_area_transition_sink(AreaTransitionSink sink) {
+  m_area_transition_sink = std::move(sink);
 }
 
 void AreaScriptRuntime::set_character_activation_sink(CharacterActivationSink sink) {
@@ -431,6 +478,31 @@ std::expected<void, std::string> AreaScriptRuntime::complete_character_script_wa
       instance_id,
       m_ip);
 
+  return {};
+}
+
+std::expected<void, std::string> AreaScriptRuntime::complete_area_transition(
+    const AreaTransitionHandle handle) {
+  if (m_state != AreaScriptState::k_waiting) {
+    return std::expected<void, std::string>{std::unexpect, "area script is not waiting"};
+  }
+  if (m_wait.kind != AreaWaitKind::k_area_transition) {
+    return std::expected<void, std::string>{
+        std::unexpect, "area script is not waiting on an AREA transition"};
+  }
+  if (!m_wait.area_transition_handle.has_value() ||
+      m_wait.area_transition_handle.value() != handle) {
+    return std::expected<void, std::string>{
+        std::unexpect, "AREA transition completion does not match the waiting generation"};
+  }
+
+  m_wait = AreaWaitState{};
+  m_wait_state = 0;
+  m_state = AreaScriptState::k_running;
+  App::Log::debug(LogCategory::Script,
+      "area script resumed after AREA transition generation {} at +{:#x}",
+      handle.generation,
+      m_ip);
   return {};
 }
 
@@ -692,6 +764,80 @@ void AreaScriptRuntime::execute_instruction() {
       entry.effect = fmt::format("{} == {} -> {}", lhs.value(), rhs.value(), result);
       break;
     }
+    case K_OP_BEGIN_AREA_TRANSITION: {
+      std::array<std::int16_t, 3> resolved{};
+      constexpr std::array<std::string_view, 3> k_semantics{
+          "BeginAreaTransition target", "BeginAreaTransition operand_b", "BeginAreaTransition operand_c"};
+      for (std::size_t index{0}; index < resolved.size(); ++index) {
+        auto value{resolve_scalar16(operands.at(index), k_semantics.at(index))};
+        if (!value) {
+          m_pause_info = AreaPauseInfo{.offset = instruction_offset,
+              .opcode = opcode,
+              .opcode_name = std::string{info->name},
+              .reason_text = value.error(),
+              .nearby_bytes = nearby_bytes_hex(instruction_offset)};
+          m_state = AreaScriptState::k_failed;
+          return;
+        }
+        resolved.at(index) = value.value();
+      }
+
+      const AreaTransitionRequest request{.target_area_id = resolved.at(0),
+          .operand_b = resolved.at(1),
+          .operand_c = resolved.at(2)};
+      m_last_area_transition_request = request;
+      if (request.operand_b != -1 || request.operand_c != -1) {
+        m_pause_info = AreaPauseInfo{.offset = instruction_offset,
+            .opcode = opcode,
+            .opcode_name = std::string{info->name},
+            .reason_text = fmt::format(
+                "AREA transition variant ({}, {}) is not yet implemented",
+                request.operand_b,
+                request.operand_c),
+            .nearby_bytes = nearby_bytes_hex(instruction_offset)};
+        m_state = AreaScriptState::k_failed;
+        return;
+      }
+      if (!m_area_transition_sink) {
+        m_pause_info = AreaPauseInfo{.offset = instruction_offset,
+            .opcode = opcode,
+            .opcode_name = std::string{info->name},
+            .reason_text = "AREA transition bridge is not wired",
+            .nearby_bytes = nearby_bytes_hex(instruction_offset)};
+        m_state = AreaScriptState::k_failed;
+        return;
+      }
+
+      auto accepted{m_area_transition_sink(request)};
+      if (!accepted) {
+        m_pause_info = AreaPauseInfo{.offset = instruction_offset,
+            .opcode = opcode,
+            .opcode_name = std::string{info->name},
+            .reason_text = fmt::format(
+                "failed to begin AREA transition to {}: {}", request.target_area_id, accepted.error()),
+            .nearby_bytes = nearby_bytes_hex(instruction_offset)};
+        m_state = AreaScriptState::k_failed;
+        return;
+      }
+
+      m_wait_state = K_AREA_TRANSITION_WAIT_STATE;
+      m_wait = AreaWaitState{.kind = AreaWaitKind::k_area_transition,
+          .runtime_state = K_AREA_TRANSITION_WAIT_STATE,
+          .interface = std::nullopt,
+          .interface_result_variable = std::nullopt,
+          .scx_script_instance = std::nullopt,
+          .character_script = std::nullopt,
+          .character_script_instance = std::nullopt,
+          .area_transition = request,
+          .area_transition_handle = accepted.value(),
+          .remaining_scenario_frames = 0.0F};
+      wait_after_instruction = true;
+      entry.effect = fmt::format("begin AREA transition to {} as generation {} and wait in "
+                                 "Runtime state 10",
+          request.target_area_id,
+          accepted->generation);
+      break;
+    }
     case K_OP_START_SCX_SCRIPT: {
       if (!m_scx_script_sink) {
         m_pause_info = AreaPauseInfo{.offset = instruction_offset,
@@ -723,6 +869,8 @@ void AreaScriptRuntime::execute_instruction() {
           .scx_script_instance = instance.value(),
           .character_script = std::nullopt,
           .character_script_instance = std::nullopt,
+          .area_transition = std::nullopt,
+          .area_transition_handle = std::nullopt,
           .remaining_scenario_frames = 0.0F};
       wait_after_instruction = true;
       entry.effect = fmt::format(
@@ -774,6 +922,8 @@ void AreaScriptRuntime::execute_instruction() {
             .scx_script_instance = std::nullopt,
             .character_script = request,
             .character_script_instance = instance.value(),
+            .area_transition = std::nullopt,
+            .area_transition_handle = std::nullopt,
             .remaining_scenario_frames = 0.0F};
         wait_after_instruction = true;
         entry.effect = fmt::format(
@@ -791,6 +941,47 @@ void AreaScriptRuntime::execute_instruction() {
             request.parameter,
             instance.value());
       }
+      break;
+    }
+    case K_OP_START_DIALOG: {
+      auto dialog_id{resolve_scalar16(operands.at(0), "StartDialog")};
+      if (!dialog_id) {
+        m_pause_info = AreaPauseInfo{.offset = instruction_offset,
+            .opcode = opcode,
+            .opcode_name = std::string{info->name},
+            .reason_text = dialog_id.error(),
+            .nearby_bytes = nearby_bytes_hex(instruction_offset)};
+        m_state = AreaScriptState::k_failed;
+        return;
+      }
+      if (!m_dialog_sink) {
+        m_pause_info = AreaPauseInfo{.offset = instruction_offset,
+            .opcode = opcode,
+            .opcode_name = std::string{info->name},
+            .reason_text = "dialog bridge is not wired",
+            .nearby_bytes = nearby_bytes_hex(instruction_offset)};
+        m_state = AreaScriptState::k_failed;
+        return;
+      }
+
+      const AreaDialogRequest request{.dialog_id = dialog_id.value()};
+      m_last_dialog_request = request;
+      if (auto started{m_dialog_sink(request)}; !started) {
+        m_pause_info = AreaPauseInfo{.offset = instruction_offset,
+            .opcode = opcode,
+            .opcode_name = std::string{info->name},
+            .reason_text =
+                fmt::format("failed to start dialog {}: {}", request.dialog_id, started.error()),
+            .nearby_bytes = nearby_bytes_hex(instruction_offset)};
+        m_state = AreaScriptState::k_failed;
+        return;
+      }
+
+      entry.effect = fmt::format("start dialog {} and yield", request.dialog_id);
+      // Runtime returns from the outer AREA dispatcher immediately after
+      // 0x3D. The context remains running at the already-advanced IP; global
+      // dialog takeover suppresses later AREA ticks until completion.
+      m_yield_requested = true;
       break;
     }
     case K_OP_ACTIVATE_CHARACTER: {
@@ -879,6 +1070,8 @@ void AreaScriptRuntime::execute_instruction() {
           .scx_script_instance = std::nullopt,
           .character_script = std::nullopt,
           .character_script_instance = std::nullopt,
+          .area_transition = std::nullopt,
+          .area_transition_handle = std::nullopt,
           .remaining_scenario_frames = 0.0F};
       wait_after_instruction = true;
       entry.effect = fmt::format(
@@ -913,6 +1106,8 @@ void AreaScriptRuntime::execute_instruction() {
             .scx_script_instance = std::nullopt,
             .character_script = std::nullopt,
             .character_script_instance = std::nullopt,
+            .area_transition = std::nullopt,
+            .area_transition_handle = std::nullopt,
             .remaining_scenario_frames = duration_frames};
         wait_after_instruction = true;
       }

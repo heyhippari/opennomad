@@ -3482,3 +3482,51 @@ The most important conceptual correction is:
 > `+0x04`. It contains a **shared event bytecode pool** with multiple
 > record-relative entrypoints selected by the AREA context, zones, and area
 > links.
+
+---
+
+# 111. OpenNomad two-slot transition mapping (`AREA 0x2F`)
+
+Compact AREA opcode `0x2F` uses handler `0x00402D20` and consumes three
+Scalar16 operands (six bytes). Operand 0 is an `AREAS` ID. On an accepted
+transition, the calling context advances past the instruction and waits in
+recovered Runtime state 10 until the session coordinator completes the
+destination handoff.
+
+OpenNomad maps Runtime's two resident AREA slots directly onto:
+
+```text
+ScenarioStartupController::RuntimeAreaSlot[2]
+ScenarioManager::WorldSceneContext[2]
+```
+
+The coordinator preserves the active source while parsing the destination
+record and preparing its authored decor/SCX dependencies. Commit changes the
+source world from `LoadedActive` to `LoadedInactive`, leaves its resources
+resident, and makes the prepared destination the sole `LoadedActive`
+presentation world. The old AREA bytecode context then resumes from the IP
+already following `0x2F`; the destination's primary event is not substituted
+for that handoff.
+
+The concrete New Game transition is:
+
+```text
+AREA 118 Introduction Kay'l
+  +0x10D  0x2F (222, -1, -1)
+  -> AREA 222 Anekbah Impasse
+     model3doName = AIMPASSE
+     scenarioScxName = IMPASSE
+     sky3doName = ASKY (preserved diagnostically; no sky renderer yet)
+```
+
+After the transition releases AREA 118, the authored handoff remains:
+
+```text
++0x114  0x47 (222, 55)  not yet implemented
++0x119  0x49 (654)      not yet implemented
++0x11C  0x30 (118)      not yet implemented
++0x11F  0x03 EndEvent
+```
+
+Opcode `0x2F` does not activate scene 55, position the player at address 654,
+release AREA 118, or skip any of those subsequent instructions.

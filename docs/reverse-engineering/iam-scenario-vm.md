@@ -1089,22 +1089,31 @@ Recovered examples:
 
 - opcode `0x3D` causes the outer interpreter to return after dispatch rather
   than immediately looping again;
-- opcodes `0x2D` and `0x2F` interact with global state around
-  `0x004C0130`;
+- opcode `0x2F` advances past its three Scalar16 operands and enters recovered
+  context state 10 after the native transition coordinator accepts it;
 - in one gated condition Runtime can rewind the current opcode byte before
-  leaving;
-- `0x2F` participates in a path that can set context state 9.
+  leaving when the coordinator does not accept the request;
+- opcode `0x2D` remains a separate unresolved native area operation.
 
 These opcodes are native area/transition operations rather than pure arithmetic
 VM primitives.
 
 Do not implement their lifecycle based only on generic instruction flow.
 
-The recovered dialog record/archive format and the Phase D3 subsystem API are
-documented in [`iam-dialog.md`](iam-dialog.md). Phase D3 does not mark `0x3D`
-implemented: the ScenarioEngine mode-3 takeover, scheduler suspension, and
-resume of the already-advanced AREA context belong to Phase D4. In particular,
-`0x3D` must not be represented as an `AreaWaitKind` typed wait.
+The recovered dialog record/archive format and subsystem API are documented in
+[`iam-dialog.md`](iam-dialog.md). Phase D4 implements `0x3D` as one signed
+Scalar16 operand, a typed bridge to `ScenarioManager::start_dialog()`, and an
+immediate dispatcher yield. The AREA context remains running in Runtime state 1
+with its IP already past the operand. `ScenarioStartupController` then gates
+normal AREA servicing while the session `DialogRuntime` is active; gameplay and
+world `ScenarioRuntime` ticks continue. At completion it consumes
+`DialogRuntime::take_completion()` and permits the same AREA context to resume
+from its advanced IP.
+
+This live dialog scheduling gate is separate from both the SCX
+`ScenarioControl` command namespace (`0x34..0x3F`) and OpenNomad's one-shot
+`ScenarioMode::k_teardown` value 3. It is not an `AreaWaitKind` typed wait and
+does not call the startup teardown path.
 
 ---
 
@@ -2917,16 +2926,38 @@ Handler:
 0x00402D20
 ```
 
-is another area/transition operation and participates in special interpreter
-gating.
-
-Working name:
+consumes exactly six operand bytes: three Runtime Scalar16 values. Operand 0 is
+an `AREAS` ID; operands 1 and 2 select transition variants whose generic names
+remain unresolved. The confirmed startup instruction is:
 
 ```text
-AreaOperation2
++0x10D  2F DE 00 FF FF FF FF
+         target AREA 222, operand_b -1, operand_c -1
 ```
 
-only.
+Accepted execution advances the instruction pointer by all seven bytes and
+blocks the calling AREA context in recovered Runtime state 10. A session-level
+native coordinator prepares the destination using the alternate resident AREA
+slot, switches presentation residency, then releases the old context to resume
+from its post-instruction IP.
+
+OpenNomad implements this as:
+
+```text
+BeginAreaTransition request
+  -> generation-tagged ScenarioStartupController coordinator
+  -> alternate RuntimeAreaSlot and WorldSceneContext preparation
+  -> source LoadedActive -> LoadedInactive (still resident)
+  -> destination LoadedInactive -> LoadedActive
+  -> exact handle completes AreaWaitKind::k_area_transition
+  -> old AREA context resumes in Runtime state 1
+```
+
+The current loader performs resource preparation synchronously when the
+coordinator is serviced on the next scenario tick; the accepted request and
+state-10 boundary are nevertheless persistent and externally observable.
+Unsupported non-`-1` operand variants and unresolved Scalar16 parameter
+references fail explicitly rather than being guessed.
 
 ---
 
@@ -3173,7 +3204,7 @@ High-confidence or useful current names:
 | `0x2C` | compare top vs int32 + branch | Runtime |
 | `0x2D` | `AreaOperation` | provisional |
 | `0x2E` | tracked native operation | provisional |
-| `0x2F` | `AreaOperation2` | provisional |
+| `0x2F` | `BeginAreaTransition` | implemented; state-10 two-slot native wait |
 | `0x30` | `CameraOperation` | provisional |
 | `0x38` | `CharacterLookup` | provisional |
 | `0x39` | `StartScxScript` | strongly recovered |

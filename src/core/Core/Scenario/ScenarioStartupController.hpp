@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <optional>
@@ -34,6 +35,9 @@ struct RuntimeAreaSlot {
   std::optional<Omikron::IamAreaRecord> primary;
   std::int32_t primary_area_id{-1};
   std::int32_t secondary_area_id{-1};
+  /// Stable ScenarioManager world-scene identity owned by this resident slot.
+  /// This is not an IAM AREA ID or an array index.
+  std::uint32_t world_scene_id{0};
 };
 
 /// Staged startup that follows the recovered Runtime.exe path:
@@ -139,11 +143,28 @@ class ScenarioStartupController {
   /// All recovered area-mapping entries (diagnostics).
   [[nodiscard]] const std::unordered_map<std::int32_t, std::int32_t>& area_mapping_entries() const;
   [[nodiscard]] const Omikron::IamAreaRecord* area_record() const;
+  /// Index of the currently presented resident AREA slot.
+  [[nodiscard]] std::size_t active_area_slot() const {
+    return m_active_area_slot;
+  }
+  [[nodiscard]] std::int32_t active_area_id() const;
+  [[nodiscard]] const RuntimeAreaSlot* runtime_area_slot(std::size_t index) const;
+  [[nodiscard]] bool area_transition_pending() const {
+    return m_area_transition.has_value();
+  }
   [[nodiscard]] const Script::AreaScriptRuntime* area_script() const;
   [[nodiscard]] bool ticked() const {
     return m_ticked;
   }
-/// Scenario dependency selected by the initial IAM/AREA record.
+  /// True while an AREA-started dialog owns the global AREA scheduling gate.
+  [[nodiscard]] bool dialog_takeover_active() const {
+    return m_dialog_takeover_active;
+  }
+  /// Dialog ID that entered takeover, retained only for diagnostics.
+  [[nodiscard]] std::optional<std::int16_t> dialog_takeover_id() const {
+    return m_dialog_takeover_id;
+  }
+  /// Scenario dependency selected by the initial IAM/AREA record.
   [[nodiscard]] const std::string& initial_world_scenario_path() const {
     return m_initial_world_scenario_path;
   }
@@ -167,14 +188,37 @@ class ScenarioStartupController {
   /// Records one fine-grained startup trace event (no-op without a recorder).
   void record(std::string name, std::string detail = {});
 
+  /// Advances one accepted native AREA transition through target preparation,
+  /// transactional residency commit, and exact VM completion.
+  [[nodiscard]] std::expected<void, std::string> service_area_transition();
+
+  struct PendingAreaTransition {
+    Script::AreaTransitionHandle handle;
+    Script::AreaTransitionRequest request;
+    std::size_t source_slot{0};
+    std::size_t destination_slot{0};
+    std::string error;
+  };
+
   std::vector<std::byte> m_start_bytes;
   std::vector<std::byte> m_area_archive_bytes;
 
   std::optional<Omikron::IamStart> m_start;
   std::optional<Omikron::IamIndexedArchive> m_area_archive;
-  /// Two runtime area slots; slot 0 holds the initial area, slot 1 is empty
-  /// unless the linked/secondary area is populated.
-  std::array<RuntimeAreaSlot, 2> m_area_slots{};
+  /// Two resident Runtime AREA slots. Slot 0 holds the initial area; opcode
+  /// 0x2F prepares the inactive alternate slot and switches active ownership.
+  std::array<RuntimeAreaSlot, 2> m_area_slots{
+      RuntimeAreaSlot{.primary = std::nullopt,
+          .primary_area_id = -1,
+          .secondary_area_id = -1,
+          .world_scene_id = 0},
+      RuntimeAreaSlot{.primary = std::nullopt,
+          .primary_area_id = -1,
+          .secondary_area_id = -1,
+          .world_scene_id = 1}};
+  std::size_t m_active_area_slot{0};
+  std::optional<PendingAreaTransition> m_area_transition;
+  std::uint64_t m_next_area_transition_generation{1};
   std::optional<Script::AreaScriptRuntime> m_area_script;
 
   /// Reproduces Runtime's `areaMapping[areaId] = linkedAreaId` assignment.
@@ -201,6 +245,9 @@ class ScenarioStartupController {
   Audio::AudioSystem* m_audio{nullptr};
   /// Scenario owner used by the AREA -> SCX ScriptRuntime bridge.
   ScenarioManager* m_manager{nullptr};
+  /// Global scheduling takeover entered only by a successful AREA 0x3D.
+  bool m_dialog_takeover_active{false};
+  std::optional<std::int16_t> m_dialog_takeover_id;
   /// UI dispatch; pure transport, no lifecycle policy.
   InterfaceDispatcher m_dispatcher;
   /// Preliminary splash interface 29 phase (startup-order fidelity only).

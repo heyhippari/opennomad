@@ -28,10 +28,13 @@ using App::Script::AreaCharacterActivationRequest;
 using App::Script::AreaCinematicLetterboxRequest;
 using App::Script::AreaCharacterScriptLaunchMode;
 using App::Script::AreaCharacterScriptRequest;
+using App::Script::AreaDialogRequest;
 using App::Script::AreaPresentationRequest;
 using App::Script::AreaScriptRuntime;
 using App::Script::AreaScriptState;
 using App::Script::AreaScxScriptRequest;
+using App::Script::AreaTransitionHandle;
+using App::Script::AreaTransitionRequest;
 using App::Script::AreaWaitKind;
 
 /// The confirmed area-118 startup prefix (script-relative offsets 0..0x2C).
@@ -497,6 +500,234 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     REQUIRE_FALSE(runtime.complete_character_script_wait(77U).has_value());
   }
 
+  TEST_CASE("0x2F waits in Runtime state 10 and resumes only for its exact transition") {
+    const App::Script::AreaOpcodeInfo* info{App::Script::area_opcode_info(0x2F)};
+    REQUIRE(info != nullptr);
+    CHECK(info->support == App::Script::OpcodeSupport::k_supported);
+    CHECK_FALSE(info->provisional);
+    CHECK_EQ(info->operand_count, 3U);
+
+    Buffer bytes;
+    bytes.u8(0x2F).u16(222).u16(0xFFFF).u16(0xFFFF).u8(0x03);
+
+    AreaScriptRuntime runtime{bytes.data()};
+    std::vector<AreaTransitionRequest> requests;
+    runtime.set_area_transition_sink(
+        [&requests](const AreaTransitionRequest& request)
+            -> std::expected<AreaTransitionHandle, std::string> {
+          requests.push_back(request);
+          return AreaTransitionHandle{.generation = 42};
+        });
+    runtime.queue_event(1);
+    runtime.activate();
+
+    REQUIRE(runtime.run() == AreaScriptState::k_waiting);
+    REQUIRE_EQ(requests.size(), 1U);
+    CHECK_EQ(requests.front().target_area_id, 222);
+    CHECK_EQ(requests.front().operand_b, -1);
+    CHECK_EQ(requests.front().operand_c, -1);
+    CHECK_EQ(runtime.instruction_pointer(), 7U);
+    CHECK_EQ(runtime.runtime_state(), 10U);
+    CHECK_EQ(runtime.wait_state(), 10U);
+    CHECK(runtime.wait_info().kind == AreaWaitKind::k_area_transition);
+    CHECK_EQ(runtime.wait_info().area_transition_handle,
+        std::optional<AreaTransitionHandle>{AreaTransitionHandle{.generation = 42}});
+    REQUIRE(runtime.last_area_transition_request().has_value());
+    CHECK_EQ(runtime.last_area_transition_request()->target_area_id, 222);
+
+    // Waiting ticks do not redispatch the accepted request or execute 0x03.
+    CHECK(runtime.run() == AreaScriptState::k_waiting);
+    CHECK_EQ(requests.size(), 1U);
+    REQUIRE_EQ(runtime.trace().size(), 1U);
+
+    REQUIRE_FALSE(runtime.complete_area_transition(AreaTransitionHandle{.generation = 41})
+                      .has_value());
+    CHECK(runtime.state() == AreaScriptState::k_waiting);
+    REQUIRE(runtime.complete_area_transition(AreaTransitionHandle{.generation = 42}).has_value());
+    CHECK(runtime.state() == AreaScriptState::k_running);
+    CHECK_EQ(runtime.instruction_pointer(), 7U);
+    CHECK(runtime.wait_info().kind == AreaWaitKind::k_none);
+
+    CHECK(runtime.run() == AreaScriptState::k_ready);
+    CHECK_EQ(runtime.instruction_pointer(), 8U);
+    CHECK_EQ(requests.size(), 1U);
+  }
+
+  TEST_CASE("0x2F without a transition bridge fails without advancing") {
+    Buffer bytes;
+    bytes.u8(0x2F).u16(222).u16(0xFFFF).u16(0xFFFF).u8(0x03);
+    AreaScriptRuntime runtime{bytes.data()};
+    runtime.queue_event(1);
+    runtime.activate();
+
+    CHECK(runtime.run() == AreaScriptState::k_failed);
+    CHECK_EQ(runtime.instruction_pointer(), 0U);
+    CHECK(runtime.pause_info().reason_text.find("AREA transition bridge is not wired") !=
+          std::string::npos);
+  }
+
+  TEST_CASE("0x2F propagates coordinator rejection without executing its successor") {
+    Buffer bytes;
+    bytes.u8(0x2F).u16(222).u16(0xFFFF).u16(0xFFFF).u8(0x03);
+    AreaScriptRuntime runtime{bytes.data()};
+    std::size_t calls{0};
+    runtime.set_area_transition_sink(
+        [&calls](const AreaTransitionRequest&)
+            -> std::expected<AreaTransitionHandle, std::string> {
+          ++calls;
+          return std::expected<AreaTransitionHandle, std::string>{
+              std::unexpect, "coordinator is busy"};
+        });
+    runtime.queue_event(1);
+    runtime.activate();
+
+    CHECK(runtime.run() == AreaScriptState::k_failed);
+    CHECK_EQ(calls, 1U);
+    CHECK_EQ(runtime.instruction_pointer(), 0U);
+    CHECK(runtime.pause_info().reason_text.find("failed to begin AREA transition to 222") !=
+          std::string::npos);
+    CHECK(runtime.pause_info().reason_text.find("coordinator is busy") != std::string::npos);
+    CHECK(runtime.trace().empty());
+  }
+
+  TEST_CASE("0x2F rejects unresolved transition variants and parameter references") {
+    SUBCASE("non-default variant") {
+      Buffer bytes;
+      bytes.u8(0x2F).u16(222).u16(0).u16(0xFFFF);
+      AreaScriptRuntime runtime{bytes.data()};
+      runtime.queue_event(1);
+      runtime.activate();
+      CHECK(runtime.run() == AreaScriptState::k_failed);
+      CHECK(runtime.pause_info().reason_text.find("transition variant (0, -1)") !=
+            std::string::npos);
+    }
+    SUBCASE("parameter-indirected target") {
+      Buffer bytes;
+      bytes.u8(0x2F).u16(0x4002).u16(0xFFFF).u16(0xFFFF);
+      AreaScriptRuntime runtime{bytes.data()};
+      runtime.queue_event(1);
+      runtime.activate();
+      CHECK(runtime.run() == AreaScriptState::k_failed);
+      CHECK(runtime.pause_info().reason_text.find("parameter-indirected Scalar16") !=
+            std::string::npos);
+    }
+  }
+
+  TEST_CASE("0x2F reports truncated three-Scalar16 operands") {
+    Buffer bytes;
+    bytes.u8(0x2F).u16(222).u16(0xFFFF);
+    AreaScriptRuntime runtime{bytes.data()};
+    runtime.queue_event(1);
+    runtime.activate();
+
+    CHECK(runtime.run() == AreaScriptState::k_failed);
+    CHECK_EQ(runtime.instruction_pointer(), 0U);
+    CHECK(runtime.pause_info().reason_text.find("truncated operands") != std::string::npos);
+  }
+
+  TEST_CASE("0x3D starts one dialog, yields while running, and resumes at the advanced IP") {
+    const App::Script::AreaOpcodeInfo* info{App::Script::area_opcode_info(0x3D)};
+    REQUIRE(info != nullptr);
+    CHECK(info->support == App::Script::OpcodeSupport::k_supported);
+    CHECK_FALSE(info->provisional);
+    CHECK_EQ(info->operand_count, 1U);
+    const std::span<const App::Script::AreaOperandWidth> widths{
+        info->operands, info->operand_count};
+    CHECK(widths.front() == App::Script::AreaOperandWidth::k_int16);
+
+    Buffer bytes;
+    bytes.u8(0x3D).u16(272).u8(0x68).u8(0x03);
+
+    AreaScriptRuntime runtime{bytes.data()};
+    std::vector<AreaDialogRequest> requests;
+    runtime.set_dialog_sink(
+        [&requests](const AreaDialogRequest& request) -> std::expected<void, std::string> {
+          requests.push_back(request);
+          return {};
+        });
+    runtime.queue_event(1);
+    runtime.activate();
+
+    REQUIRE(runtime.run() == AreaScriptState::k_running);
+    REQUIRE_EQ(requests.size(), 1U);
+    CHECK_EQ(requests.front().dialog_id, 272);
+    CHECK_EQ(runtime.instruction_pointer(), 3U);
+    CHECK_EQ(runtime.runtime_state(), 1U);
+    CHECK(runtime.last_run_yielded());
+    CHECK(runtime.wait_info().kind == AreaWaitKind::k_none);
+    CHECK_EQ(runtime.wait_state(), 0U);
+    REQUIRE_EQ(runtime.trace().size(), 1U);
+    CHECK_EQ(runtime.trace().back().effect, "start dialog 272 and yield");
+
+    // No VM wait completion is needed: the next invocation naturally starts
+    // at +3, executes 0x68 exactly once, then terminates the event at +4.
+    REQUIRE(runtime.run() == AreaScriptState::k_ready);
+    CHECK_EQ(runtime.instruction_pointer(), 5U);
+    CHECK_FALSE(runtime.last_run_yielded());
+    CHECK_EQ(requests.size(), 1U);
+    REQUIRE_EQ(runtime.trace().size(), 3U);
+    CHECK_EQ(runtime.trace().at(1).offset, 3U);
+    CHECK_EQ(runtime.trace().at(1).opcode, 0x68U);
+  }
+
+  TEST_CASE("0x3D without a dialog bridge is a structured execution failure") {
+    Buffer bytes;
+    bytes.u8(0x3D).u16(272).u8(0x68);
+
+    AreaScriptRuntime runtime{bytes.data()};
+    runtime.queue_event(1);
+    runtime.activate();
+
+    CHECK(runtime.run() == AreaScriptState::k_failed);
+    CHECK_EQ(runtime.instruction_pointer(), 0U);
+    CHECK_EQ(runtime.pause_info().opcode, 0x3DU);
+    CHECK(runtime.pause_info().reason_text.find("dialog bridge is not wired") != std::string::npos);
+    CHECK(runtime.pause_info().reason_text.find("unsupported opcode") == std::string::npos);
+  }
+
+  TEST_CASE("0x3D propagates dialog-start failure without executing the next instruction") {
+    Buffer bytes;
+    bytes.u8(0x3D).u16(272).u8(0x68);
+
+    AreaScriptRuntime runtime{bytes.data()};
+    std::size_t calls{0};
+    runtime.set_dialog_sink([&calls](const AreaDialogRequest&) -> std::expected<void, std::string> {
+      ++calls;
+      return std::expected<void, std::string>{std::unexpect, "IAM/DIALOG record 272 is corrupt"};
+    });
+    runtime.queue_event(1);
+    runtime.activate();
+
+    CHECK(runtime.run() == AreaScriptState::k_failed);
+    CHECK_EQ(calls, 1U);
+    CHECK_EQ(runtime.instruction_pointer(), 0U);
+    CHECK(runtime.pause_info().reason_text.find("failed to start dialog 272") != std::string::npos);
+    CHECK(runtime.pause_info().reason_text.find("IAM/DIALOG record 272 is corrupt") !=
+          std::string::npos);
+    CHECK(runtime.trace().empty());
+  }
+
+  TEST_CASE("0x3D rejects an unresolved parameter-indirected Scalar16") {
+    Buffer bytes;
+    bytes.u8(0x3D).u16(0x4002).u8(0x68);
+
+    AreaScriptRuntime runtime{bytes.data()};
+    std::size_t calls{0};
+    runtime.set_dialog_sink([&calls](const AreaDialogRequest&) -> std::expected<void, std::string> {
+      ++calls;
+      return {};
+    });
+    runtime.queue_event(1);
+    runtime.activate();
+
+    CHECK(runtime.run() == AreaScriptState::k_failed);
+    CHECK_EQ(calls, 0U);
+    CHECK(runtime.pause_info().reason_text.find("parameter-indirected Scalar16") !=
+          std::string::npos);
+    CHECK(runtime.pause_info().reason_text.find("parameter block is not modeled") !=
+          std::string::npos);
+  }
+
   TEST_CASE("The result-zero AREA branch executes through its first event terminator") {
     const Buffer bytes{make_new_game_event_script()};
     AreaScriptRuntime runtime{bytes.data()};
@@ -658,9 +889,11 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     CHECK(App::Script::area_opcode_name(0x0A) != nullptr);
     CHECK(App::Script::area_opcode_name(0x0D) != nullptr);
     CHECK(App::Script::area_opcode_name(0x19) != nullptr);
+    CHECK(App::Script::area_opcode_name(0x2F) != nullptr);
     CHECK(App::Script::area_opcode_name(0x39) != nullptr);
     CHECK(App::Script::area_opcode_name(0x3B) != nullptr);
     CHECK(App::Script::area_opcode_name(0x3C) != nullptr);
+    CHECK(App::Script::area_opcode_name(0x3D) != nullptr);
     CHECK(App::Script::area_opcode_name(0x4E) != nullptr);
     CHECK(App::Script::area_opcode_name(0x46) != nullptr);
     CHECK(App::Script::area_opcode_name(0x5F) != nullptr);

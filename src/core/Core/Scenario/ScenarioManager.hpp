@@ -245,6 +245,12 @@ class ScenarioManager {
   /// context is Free. Does not destroy the loaded scenario.
   [[nodiscard]] std::expected<void, std::string> deactivate_world_context(std::uint32_t scene_id);
 
+  /// Atomically switches presentation residency from one prepared world to
+  /// another. Both contexts remain loaded; source becomes inactive and target
+  /// becomes the sole active world.
+  [[nodiscard]] std::expected<void, std::string> switch_active_world_context(
+      std::uint32_t source_scene_id, std::uint32_t target_scene_id);
+
   /// Completely unloads a world context, freeing its scenario, world model,
   /// audio voices and sprite instances. Transitions to Free. Fails if the
   /// context is LoadedActive (use deactivate first).
@@ -321,7 +327,8 @@ class ScenarioManager {
   // --- Session-level dialog subsystem --------------------------------------
 
   /// Loads IAM/DIALOG once on first use, selects `dialog_id`, and starts its
-  /// CPU runtime at node 0. AREA opcode 0x3D wiring is deliberately deferred.
+  /// CPU runtime at node 0. AREA opcode 0x3D reaches this through the startup
+  /// controller's typed bridge.
   [[nodiscard]] std::expected<void, std::string> start_dialog(std::uint16_t dialog_id);
 
   [[nodiscard]] Dialog::DialogRuntime& dialog_runtime() {
