@@ -9,6 +9,7 @@
 
 #include "Core/Debug/SceneDebugView.hpp"
 #include "Core/Interface/InterfacePresenter.hpp"
+#include "Core/Interface/DialogTextLayout.hpp"
 #include "Core/Scene.hpp"
 #include "Core/WorldCamera.hpp"
 #include "Core/WorldPresentation.hpp"
@@ -68,7 +69,7 @@ class WorldScene final : public Scene, public Debug::SceneDebugView {
 
   void consume_fade_commands(const WorldSceneContext* context);
   void consume_letterbox_commands(const WorldSceneContext* context);
-  [[nodiscard]] bool update_dialog_input(const Input::InputManager& input);
+  [[nodiscard]] bool update_dialog_input(float delta_time, const Input::InputManager& input);
 
   ScenarioManager* m_scenarios{nullptr};
   Interface::InterfacePresenter m_interfaces;
@@ -92,6 +93,7 @@ class WorldScene final : public Scene, public Debug::SceneDebugView {
   std::uint64_t m_observed_dialog_generation{0};
   std::size_t m_selected_dialog_choice{0};
   bool m_dialog_observed{false};
+  Interface::DialogScrollState m_dialog_scroll;
   std::string m_color_pipeline_error;
 };
 

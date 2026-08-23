@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -25,6 +26,7 @@
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Debug/Metrics.hpp"
 #include "Core/Dialog/DialogRuntime.hpp"
+#include "Core/Interface/DialogTextLayout.hpp"
 #include "Core/Interface/FontManager.hpp"
 #include "Core/Interface/I2DBumpBackground.hpp"
 #include "Core/Interface/I2DModel.hpp"
@@ -166,47 +168,6 @@ unsigned int decode_utf8(const char*& cursor, const char* end) {
   }
   ++cursor;
   return codepoint;
-}
-
-std::vector<std::string> wrap_text(
-    const FontResource& font, const std::string_view text, const float maximum_width) {
-  std::vector<std::string> lines;
-  std::string current;
-  std::size_t cursor{0};
-  while (cursor < text.size()) {
-    if (text.at(cursor) == '\n') {
-      lines.push_back(current);
-      current.clear();
-      ++cursor;
-      continue;
-    }
-    while (cursor < text.size() && text.at(cursor) == ' ') {
-      ++cursor;
-    }
-    const std::size_t word_begin{cursor};
-    while (cursor < text.size() && text.at(cursor) != ' ' && text.at(cursor) != '\n') {
-      ++cursor;
-    }
-    if (word_begin == cursor) {
-      continue;
-    }
-    const std::string_view word{text.substr(word_begin, cursor - word_begin)};
-    std::string candidate{current};
-    if (!candidate.empty()) {
-      candidate.push_back(' ');
-    }
-    candidate.append(word);
-    if (!current.empty() && font.measure(candidate) > maximum_width) {
-      lines.push_back(std::move(current));
-      current.assign(word);
-    } else {
-      current = std::move(candidate);
-    }
-  }
-  if (!current.empty() || lines.empty()) {
-    lines.push_back(std::move(current));
-  }
-  return lines;
 }
 
 }  // namespace
@@ -512,8 +473,9 @@ void I2DRenderer::render_overlay(const std::array<float, 3>& color,
   Shader::unbind();
 }
 
-void I2DRenderer::render_dialog(const Dialog::DialogPresentation& dialog,
+float I2DRenderer::render_dialog(const Dialog::DialogPresentation& dialog,
     const std::size_t selected_choice,
+    const float scroll_offset,
     FontManager& fonts,
     const int pixel_width,
     const int pixel_height,
@@ -521,17 +483,14 @@ void I2DRenderer::render_dialog(const Dialog::DialogPresentation& dialog,
   APP_PROFILE_FUNCTION();
 
   if (!m_initialized || pixel_width <= 0 || pixel_height <= 0) {
-    return;
+    return 0.0F;
   }
 
-  render_overlay({0.0F, 0.0F, 0.0F}, 0.38F, pixel_width, pixel_height);
-  counters.draw_calls += 1U;
-
   const I2DPresentationTransform transform{make_presentation_transform(pixel_width, pixel_height)};
-  const FontResource* dialog_font{fonts.ensure_font('D', transform.pixels_per_reference_unit)};
-  const FontResource* response_font{fonts.ensure_font('R', transform.pixels_per_reference_unit)};
-  if (dialog_font == nullptr || response_font == nullptr) {
-    return;
+  const FontResource* dialog_font{
+      fonts.ensure_font(dialog_font_key(), transform.pixels_per_reference_unit)};
+  if (dialog_font == nullptr) {
+    return 0.0F;
   }
 
   glViewport(0, 0, pixel_width, pixel_height);
@@ -545,6 +504,7 @@ void I2DRenderer::render_dialog(const Dialog::DialogPresentation& dialog,
       "u_mvp", std::span<const GLfloat, 16>{glm::value_ptr(transform.projection), 16});
   m_shader->set_uniform_int("u_texture0", 0);
   reset();
+  float maximum_scroll{0.0F};
 
   const auto draw_line = [this, &counters](const FontResource& font,
                              const std::string_view line,
@@ -552,11 +512,9 @@ void I2DRenderer::render_dialog(const Dialog::DialogPresentation& dialog,
                              const float origin_y,
                              const std::array<float, 4>& tint) {
     float cursor_x{origin_x};
-    const char* cursor{line.data()};
-    const char* end{line.data() + line.size()};
-    while (cursor < end) {
-      const unsigned int codepoint{decode_utf8(cursor, end)};
-      const auto glyph{font.glyph_for(static_cast<char32_t>(codepoint))};
+    std::size_t byte_offset{0};
+    while (byte_offset < line.size()) {
+      const auto glyph{font.next_glyph(line, byte_offset)};
       if (!glyph.has_value()) {
         continue;
       }
@@ -579,31 +537,100 @@ void I2DRenderer::render_dialog(const Dialog::DialogPresentation& dialog,
     }
   };
 
-  constexpr float k_canvas_width{640.0F};
-  constexpr float k_text_width{560.0F};
-  const std::vector<std::string> main_lines{
-      wrap_text(*dialog_font, dialog.displayed_line, k_text_width)};
-  const float main_height{static_cast<float>(main_lines.size()) * dialog_font->line_height()};
-  float origin_y{std::max(28.0F, 340.0F - main_height)};
-  for (const std::string& line : main_lines) {
-    const float origin_x{(k_canvas_width - dialog_font->measure(line)) * 0.5F};
-    draw_line(*dialog_font, line, origin_x, origin_y, {1.0F, 1.0F, 1.0F, 1.0F});
-    origin_y += dialog_font->line_height();
+  if (dialog.state == Dialog::DialogState::k_presenting_line ||
+      dialog.state == Dialog::DialogState::k_presenting_automatic_player_line) {
+    const DialogTextLayout layout{format_dialog_text(dialog.displayed_line,
+        k_dialog_text_width,
+        k_dialog_main_viewport_height,
+        dialog_font->line_height(),
+        [dialog_font](const std::string_view text) { return dialog_font->measure(text); })};
+    maximum_scroll = layout.max_scroll();
+    float origin_y{k_dialog_main_viewport_top -
+        std::clamp(scroll_offset, 0.0F, layout.max_scroll())};
+    for (const DialogTextLine& line : layout.lines) {
+      draw_line(*dialog_font,
+          line.text,
+          k_dialog_text_left,
+          origin_y,
+          dialog_main_tint(dialog.state));
+      origin_y += dialog_font->line_height();
+    }
+
+    std::array<GLint, 4> previous_scissor{};
+    glGetIntegerv(GL_SCISSOR_BOX, previous_scissor.data());
+    const GLboolean scissor_was_enabled{glIsEnabled(GL_SCISSOR_TEST)};
+    const float scale{transform.pixels_per_reference_unit};
+    const int scissor_x{std::clamp(static_cast<int>(std::lround(
+                                        (k_dialog_text_left - transform.logical_left) * scale)),
+        0,
+        pixel_width)};
+    const int scissor_right{std::clamp(static_cast<int>(std::lround(
+                                            ((k_dialog_text_left + k_dialog_text_width) -
+                                                transform.logical_left) *
+                                            scale)),
+        0,
+        pixel_width)};
+    const int scissor_y{std::clamp(static_cast<int>(std::lround(
+                                        (k_reference_height - (k_dialog_main_viewport_top +
+                                                                  k_dialog_main_viewport_height)) *
+                                        scale)),
+        0,
+        pixel_height)};
+    const int scissor_top{std::clamp(static_cast<int>(std::lround(
+                                          (k_reference_height - k_dialog_main_viewport_top) * scale)),
+        0,
+        pixel_height)};
+    glEnable(GL_SCISSOR_TEST);
+    glScissor(scissor_x,
+        scissor_y,
+        std::max(0, scissor_right - scissor_x),
+        std::max(0, scissor_top - scissor_y));
+    flush();
+    counters.draw_calls += m_commands.size();
+    reset();
+    if (scissor_was_enabled == GL_TRUE) {
+      glScissor(previous_scissor.at(0),
+          previous_scissor.at(1),
+          previous_scissor.at(2),
+          previous_scissor.at(3));
+    } else {
+      glDisable(GL_SCISSOR_TEST);
+    }
   }
 
   if (dialog.state == Dialog::DialogState::k_waiting_for_choice) {
-    origin_y = std::max(origin_y + 8.0F, 354.0F);
-    for (std::size_t choice_index{0}; choice_index < dialog.choices.size(); ++choice_index) {
-      const bool selected{choice_index == selected_choice};
-      const std::string label{selected ? fmt::format("> {}", dialog.choices.at(choice_index).text)
-                                       : fmt::format("  {}", dialog.choices.at(choice_index).text)};
-      const std::vector<std::string> lines{wrap_text(*response_font, label, k_text_width)};
-      const std::array<float, 4> tint{
-          selected ? 1.0F : 0.58F, selected ? 0.84F : 0.58F, selected ? 0.28F : 0.58F, 1.0F};
-      for (const std::string& line : lines) {
-        const float origin_x{(k_canvas_width - response_font->measure(line)) * 0.5F};
-        draw_line(*response_font, line, origin_x, origin_y, tint);
-        origin_y += response_font->line_height();
+    const std::size_t response_count{std::min<std::size_t>(4U, dialog.choices.size())};
+    std::vector<DialogTextLayout> response_layouts;
+    std::vector<float> response_heights;
+    response_layouts.reserve(response_count);
+    response_heights.reserve(response_count);
+    const std::size_t maximum_response_lines{static_cast<std::size_t>(
+        std::floor(k_dialog_response_max_height / dialog_font->line_height()))};
+    for (std::size_t choice_index{0}; choice_index < response_count; ++choice_index) {
+      response_layouts.push_back(format_dialog_text(dialog.choices.at(choice_index).text,
+          k_dialog_text_width,
+          k_dialog_response_max_height,
+          dialog_font->line_height(),
+          [dialog_font](const std::string_view text) { return dialog_font->measure(text); }));
+      const std::size_t visible_line_count{
+          std::min(maximum_response_lines, response_layouts.back().lines.size())};
+      response_heights.push_back(
+          static_cast<float>(visible_line_count) * dialog_font->line_height());
+    }
+    const DialogResponseBlockLayout block{layout_dialog_responses(response_heights)};
+    for (std::size_t choice_index{0}; choice_index < response_count; ++choice_index) {
+      float origin_y{block.response_tops.at(choice_index)};
+      const float response_bottom{origin_y + response_heights.at(choice_index)};
+      for (const DialogTextLine& line : response_layouts.at(choice_index).lines) {
+        if (origin_y + dialog_font->line_height() > response_bottom) {
+          break;
+        }
+        draw_line(*dialog_font,
+            line.text,
+            k_dialog_text_left,
+            origin_y,
+            dialog_response_tint(choice_index == selected_choice));
+        origin_y += dialog_font->line_height();
       }
     }
   }
@@ -616,6 +643,7 @@ void I2DRenderer::render_dialog(const Dialog::DialogPresentation& dialog,
   Shader::unbind();
   Texture2D::unbind();
   VertexArray::unbind();
+  return maximum_scroll;
 }
 
 void I2DRenderer::reset() {

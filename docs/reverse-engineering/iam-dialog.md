@@ -134,3 +134,30 @@ command range `0x34..0x3f`; the two opcode namespaces must not be conflated.
 Runtime's live numeric dialog-takeover state 3 is likewise separate from
 OpenNomad's one-shot `ScenarioMode::k_teardown` startup operation. Starting a
 dialog never invokes that teardown mode.
+
+## Retail text presentation
+
+The gameplay dialog presenter uses the recovered 640x480 logical coordinate
+space and the retail bitmap-font rules documented in [`fnt.md`](fnt.md). It
+does not add a dimming overlay or text panels.
+
+Main and automatic lines use key `D` (`DIALOGUE.FNT`) in a fixed viewport at
+`x=32`, width `576`, effective top `412`, and effective bottom `476`. This is a
+64-unit-high viewport with a four-unit presentation margin below it. Text is
+left aligned and wraps at spaces or explicit newlines using exact FNT
+advances. Content taller than the viewport scrolls vertically; dialog
+confirmation remains progression input, independent of scroll position.
+Ordinary main text is white. The automatic player-side line uses encoded tint
+`#8080C0` and the same geometry.
+
+Up to four visible responses are formatted independently at `x=32`, width
+`576`, and at most 96 units high. Their actual formatted heights are stacked
+in authored order and bottom-aligned to `y=448`, leaving a 32-unit bottom
+margin. The selected response is white and the others are `#808080`. Selection
+is represented only by colour: no marker or prefix is inserted, so authored
+text and measurements remain unchanged.
+
+All three text roles in this specific presenter—main, automatic, and
+responses—use `DIALOGUE.FNT`. Registry key `R` still resolves to
+`DIALSELE.FNT` for Runtime consumers that explicitly request it; its filename
+does not make it the intro response font.

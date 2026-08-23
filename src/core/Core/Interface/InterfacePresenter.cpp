@@ -34,15 +34,18 @@ void InterfacePresenter::render(const int pixel_width, const int pixel_height) {
   }
 }
 
-void InterfacePresenter::render_dialog(const Dialog::DialogPresentation& dialog,
+float InterfacePresenter::render_dialog(const Dialog::DialogPresentation& dialog,
     const std::size_t selected_choice,
+    const float scroll_offset,
     const int pixel_width,
     const int pixel_height) {
   APP_PROFILE_FUNCTION();
 
   if (m_manager != nullptr) {
-    m_manager->render_dialog(dialog, selected_choice, pixel_width, pixel_height);
+    return m_manager->render_dialog(
+        dialog, selected_choice, scroll_offset, pixel_width, pixel_height);
   }
+  return 0.0F;
 }
 
 }  // namespace App::Interface

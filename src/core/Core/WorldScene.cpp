@@ -621,7 +621,8 @@ void WorldScene::consume_letterbox_commands(const WorldSceneContext* const conte
   }
 }
 
-bool WorldScene::update_dialog_input(const Input::InputManager& input) {
+bool WorldScene::update_dialog_input(
+    const float delta_time, const Input::InputManager& input) {
   if (m_scenarios == nullptr) {
     return false;
   }
@@ -629,6 +630,7 @@ bool WorldScene::update_dialog_input(const Input::InputManager& input) {
   if (!runtime.active()) {
     m_dialog_observed = false;
     m_selected_dialog_choice = 0;
+    m_dialog_scroll.reset();
     return false;
   }
 
@@ -640,6 +642,7 @@ bool WorldScene::update_dialog_input(const Input::InputManager& input) {
     m_dialog_observed = true;
     m_observed_dialog_generation = runtime.generation();
     m_selected_dialog_choice = 0;
+    static_cast<void>(m_dialog_scroll.observe_generation(runtime.generation()));
     App::Log::debug(LogCategory::Scenario,
         "Dialog node {}: face='{}' line cameras={}/{} response cameras={}/{}",
         presentation->node_id,
@@ -670,6 +673,10 @@ bool WorldScene::update_dialog_input(const Input::InputManager& input) {
     }
     return true;
   }
+
+  m_dialog_scroll.update(delta_time,
+      input.get_action_value(Input::Action::k_menu_up) > 0.5F,
+      input.get_action_value(Input::Action::k_menu_down) > 0.5F);
 
   if (input.is_action_pressed(Input::Action::k_menu_confirm)) {
     if (auto acknowledged{runtime.acknowledge_line()}; !acknowledged) {
@@ -781,7 +788,7 @@ void WorldScene::update(const float delta_time, const Input::InputManager& input
     }
   }
 
-  if (update_dialog_input(input)) {
+  if (update_dialog_input(delta_time, input)) {
     m_interfaces.update_without_input(delta_time);
   } else {
     m_interfaces.update(delta_time, input);
@@ -863,7 +870,9 @@ void WorldScene::render() {
       const std::size_t selected{dialog->choices.empty() ? 0U
                                                          : std::min(m_selected_dialog_choice,
                                                                dialog->choices.size() - 1U)};
-      m_interfaces.render_dialog(dialog.value(), selected, m_width, m_height);
+      const float maximum_scroll{m_interfaces.render_dialog(
+          dialog.value(), selected, m_dialog_scroll.offset(), m_width, m_height)};
+      m_dialog_scroll.set_maximum(maximum_scroll);
     }
   }
 }

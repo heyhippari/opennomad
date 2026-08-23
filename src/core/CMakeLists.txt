@@ -57,6 +57,7 @@ add_library(${NAME} STATIC
   Core/TextureCube.hpp Core/TextureCube.cpp
   Core/Reflection.hpp
   Core/Omikron/BinaryReader.hpp
+  Core/Omikron/FontFNT.hpp Core/Omikron/FontFNT.cpp
   Core/Omikron/Animation3DA.hpp Core/Omikron/Animation3DA.cpp
   Core/Omikron/Path3DP.hpp Core/Omikron/Path3DP.cpp
   Core/Omikron/Model3DO.hpp Core/Omikron/Model3DO.cpp
@@ -90,6 +91,7 @@ add_library(${NAME} STATIC
   Core/Interface/I2DBumpTimeline.hpp
   Core/Interface/InterfaceDescriptor.hpp
   Core/Interface/StartMenuLayout.hpp
+  Core/Interface/DialogTextLayout.hpp Core/Interface/DialogTextLayout.cpp
   Core/Interface/FontManager.hpp Core/Interface/FontManager.cpp
   Core/Interface/I2DBumpBackground.hpp Core/Interface/I2DBumpBackground.cpp
   Core/Interface/I2DBumpEffect.hpp Core/Interface/I2DBumpEffect.cpp

@@ -61,6 +61,10 @@ add_executable(Texture3DTTest Texture3DT.spec.cpp $<TARGET_OBJECTS:TestRunner>)
 add_test(NAME Texture3DTTest COMMAND Texture3DTTest)
 target_link_libraries(Texture3DTTest PRIVATE doctest::doctest Core)
 
+add_executable(FontFNTTest FontFNT.spec.cpp $<TARGET_OBJECTS:TestRunner>)
+add_test(NAME FontFNTTest COMMAND FontFNTTest)
+target_link_libraries(FontFNTTest PRIVATE doctest::doctest Core)
+
 add_executable(QdAdpTest QdAdp.spec.cpp $<TARGET_OBJECTS:TestRunner>)
 add_test(NAME QdAdpTest COMMAND QdAdpTest)
 target_link_libraries(QdAdpTest PRIVATE doctest::doctest Core)
@@ -161,6 +165,10 @@ add_executable(I2DPresentationTest I2DPresentation.spec.cpp $<TARGET_OBJECTS:Tes
 add_test(NAME I2DPresentationTest COMMAND I2DPresentationTest)
 target_link_libraries(I2DPresentationTest PRIVATE doctest::doctest Core)
 
+add_executable(DialogTextLayoutTest DialogTextLayout.spec.cpp $<TARGET_OBJECTS:TestRunner>)
+add_test(NAME DialogTextLayoutTest COMMAND DialogTextLayoutTest)
+target_link_libraries(DialogTextLayoutTest PRIVATE doctest::doctest Core)
+
 add_executable(I2DBlitModeTest I2DBlitMode.spec.cpp $<TARGET_OBJECTS:TestRunner>)
 add_test(NAME I2DBlitModeTest COMMAND I2DBlitModeTest)
 target_link_libraries(I2DBlitModeTest PRIVATE doctest::doctest Core)
@@ -206,6 +214,11 @@ target_link_libraries(LogCategoryTest PRIVATE doctest::doctest Core)
 # the game data through the OPENNOMAD_GAME_DATA_ROOT environment variable.
 option(OPENNOMAD_GAME_DATA_TESTS "Register tests that require original game data" OFF)
 if(OPENNOMAD_GAME_DATA_TESTS)
+  add_executable(FontFNTIntegrationTest
+      FontFNTIntegration.spec.cpp $<TARGET_OBJECTS:TestRunner>)
+  add_test(NAME FontFNTIntegrationTest COMMAND FontFNTIntegrationTest)
+  target_link_libraries(FontFNTIntegrationTest PRIVATE doctest::doctest Core)
+
   add_executable(IamDialogIntegrationTest
       IamDialogIntegration.spec.cpp $<TARGET_OBJECTS:TestRunner>)
   add_test(NAME IamDialogIntegrationTest COMMAND IamDialogIntegrationTest)

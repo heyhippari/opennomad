@@ -32,8 +32,9 @@ class InterfacePresenter {
   void render(int pixel_width, int pixel_height);
 
   /// Renders the gameplay dialog layer after ordinary interfaces.
-  void render_dialog(const Dialog::DialogPresentation& dialog,
+  [[nodiscard]] float render_dialog(const Dialog::DialogPresentation& dialog,
       std::size_t selected_choice,
+      float scroll_offset,
       int pixel_width,
       int pixel_height);
 

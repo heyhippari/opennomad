@@ -64,8 +64,9 @@ class I2DRenderer {
 
   /// Renders the active gameplay dialog as a modest resolution-independent
   /// subtitle/choice layer. This is ordinary I2D presentation, not ImGui.
-  void render_dialog(const Dialog::DialogPresentation& dialog,
+  [[nodiscard]] float render_dialog(const Dialog::DialogPresentation& dialog,
       std::size_t selected_choice,
+      float scroll_offset,
       FontManager& fonts,
       int pixel_width,
       int pixel_height,

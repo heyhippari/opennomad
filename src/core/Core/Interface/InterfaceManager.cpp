@@ -523,15 +523,17 @@ void InterfaceManager::render(const int pixel_width, const int pixel_height) {
   Debug::Metrics::get().set_i2d_counters(counters);
 }
 
-void InterfaceManager::render_dialog(const Dialog::DialogPresentation& dialog,
+float InterfaceManager::render_dialog(const Dialog::DialogPresentation& dialog,
     const std::size_t selected_choice,
+    const float scroll_offset,
     const int pixel_width,
     const int pixel_height) {
   if (m_renderer == nullptr) {
-    return;
+    return 0.0F;
   }
   Debug::I2DCounters counters;
-  m_renderer->render_dialog(dialog, selected_choice, m_fonts, pixel_width, pixel_height, counters);
+  return m_renderer->render_dialog(
+      dialog, selected_choice, scroll_offset, m_fonts, pixel_width, pixel_height, counters);
 }
 
 void InterfaceManager::set_background_interpolated(const bool interpolated) {

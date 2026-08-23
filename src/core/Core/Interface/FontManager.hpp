@@ -1,6 +1,8 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
+#include <cstdint>
 #include <expected>
 #include <filesystem>
 #include <map>
@@ -9,6 +11,7 @@
 #include <string>
 #include <string_view>
 
+#include "Core/Omikron/FontFNT.hpp"
 #include "Core/Texture.hpp"
 
 struct ImFont;
@@ -17,10 +20,8 @@ struct ImFontBaked;
 
 namespace App::Interface {
 
-/// A rasterized font ready for glyph-quad rendering. The current backend is
-/// a TTF/OTF atlas built through ImGui's FreeType loader; it is a temporary
-/// fallback used while the original .FNT format (FONTS/MENUINTR.FNT) is not
-/// yet decoded. Callers only depend on this interface.
+/// A rasterized font ready for glyph-quad rendering. Retail .FNT resources
+/// retain byte-indexed Runtime metrics; TTF/OTF is a warned fallback only.
 ///
 /// Glyph metrics are exposed in the recovered 640x480 reference units so
 /// interface layout is resolution-independent: the atlas may be rasterized at
@@ -59,6 +60,14 @@ class FontResource {
   [[nodiscard]] static std::expected<FontResource, std::string> load_ttf_fallback(
       const std::filesystem::path& ttf_path, float size_pixels, float logical_size);
 
+  /// Builds a nearest-filtered white/alpha atlas from retail five-bit glyphs.
+  /// Requires a current GL context.
+  [[nodiscard]] static std::expected<FontResource, std::string> load_retail_fnt(
+      const Omikron::FontFntData& font,
+      int letter_spacing,
+      int blank_width,
+      int line_height);
+
   FontResource(FontResource&& other) noexcept;
   FontResource& operator=(FontResource&& other) noexcept;
   ~FontResource();
@@ -72,12 +81,22 @@ class FontResource {
   /// reference units.
   [[nodiscard]] std::optional<Glyph> glyph_for(char32_t codepoint) const;
 
+  /// Decodes the next glyph according to this resource's encoding. Retail
+  /// resources consume exactly one byte; the fallback consumes one UTF-8
+  /// sequence. Returns nullopt at end of input or for a missing glyph.
+  [[nodiscard]] std::optional<Glyph> next_glyph(
+      std::string_view text, std::size_t& byte_offset) const;
+
   /// Total advance width of `text` in reference units (no wrapping, no
   /// newlines).
   [[nodiscard]] float measure(std::string_view text) const;
 
   /// Nominal line height in reference units (equals the logical font size).
   [[nodiscard]] float line_height() const;
+
+  [[nodiscard]] bool is_retail_fnt() const {
+    return m_is_retail_fnt;
+  }
 
   /// The physical atlas raster size (for diagnostics).
   [[nodiscard]] float raster_size_pixels() const {
@@ -99,16 +118,26 @@ class FontResource {
   float m_size_pixels{0.0F};
   /// Ratio physical pixel -> reference unit (size_pixels / logical_size).
   float m_reference_scale{1.0F};
+  std::array<Glyph, 256> m_retail_glyphs;
+  float m_line_height{0.0F};
+  bool m_is_retail_fnt{false};
+};
+
+/// Recovered Runtime font-registry entry and exact logical metrics.
+struct FontRegistryEntry {
+  std::string_view logical_name;
+  int letter_spacing{0};
+  int blank_width{0};
+  int line_height{0};
 };
 
 /// Resolves interface font keys to logical font names and owns the loaded
 /// font resources. The key->name mapping is recovered from Runtime's font
 /// registry; 'I' resolves the main-menu font to MENUINTR.
 ///
-/// MENUINTR.FNT is the authoritative original resource, but its format is
-/// not decoded yet. load_font() therefore falls back to FONTS/OMIKRON.TTF
-/// inside this backend and logs the substitution; no interface/menu code
-/// knows about the fallback file.
+/// DIALOGUE.FNT and DIALSELE.FNT use the authoritative retail backend. A
+/// missing or corrupt retail file falls back to FONTS/OMIKRON.TTF inside this
+/// manager, with a warning; presentation code does not know the fallback.
 ///
 /// The manager caches each key at multiple raster-size buckets so a window
 /// resize (which changes the presentation scale) rebuilds the atlas only when
@@ -123,8 +152,9 @@ class FontManager {
   FontManager& operator=(const FontManager&) = delete;
   FontManager& operator=(FontManager&&) = delete;
 
-  /// The recovered logical font size in reference units (30 reference pixels).
-  static constexpr float k_logical_font_size{30.0F};
+  /// High-resolution raster basis for the TTF fallback. Exposed layout height
+  /// still comes from the selected registry entry.
+  static constexpr float k_ttf_fallback_logical_size{30.0F};
 
   /// Quantizes a desired physical raster size to the nearest 2 px bucket so
   /// resizing a window does not rebuild atlases dozens of times per second.
@@ -148,8 +178,15 @@ class FontManager {
   /// Empty for an unmapped key.
   [[nodiscard]] static std::string_view font_logical_name(char key);
 
+  /// Full recovered registry entry for a key, including spacing metrics.
+  [[nodiscard]] static std::optional<FontRegistryEntry> font_registry_entry(char key);
+
  private:
+  [[nodiscard]] static std::expected<FontResource, std::string> load_retail_font(
+      char key, const FontRegistryEntry& entry);
+
   std::map<char, std::map<std::size_t, FontResource>> m_fonts;
+  std::map<char, FontResource> m_retail_fonts;
 };
 
 }  // namespace App::Interface

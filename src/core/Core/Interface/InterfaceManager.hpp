@@ -159,8 +159,9 @@ class InterfaceManager {
   void render(int pixel_width, int pixel_height);
 
   /// Renders one active gameplay dialog above resident interfaces.
-  void render_dialog(const Dialog::DialogPresentation& dialog,
+  [[nodiscard]] float render_dialog(const Dialog::DialogPresentation& dialog,
       std::size_t selected_choice,
+      float scroll_offset,
       int pixel_width,
       int pixel_height);
 
