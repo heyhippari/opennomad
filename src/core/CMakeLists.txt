@@ -22,6 +22,8 @@ add_library(${NAME} STATIC
   Core/Audio/VoicePool.hpp Core/Audio/VoicePool.cpp
   Core/Audio/SoundResourceCache.hpp Core/Audio/SoundResourceCache.cpp
   Core/Audio/MusicPlayer.hpp Core/Audio/MusicPlayer.cpp
+  Core/Audio/DialogVoiceCodec.hpp Core/Audio/DialogVoiceCodec.cpp
+  Core/Audio/DialogVoicePlayer.hpp Core/Audio/DialogVoicePlayer.cpp
   Core/Audio/AudioSystem.hpp Core/Audio/AudioSystem.cpp
   Core/Renderer.cpp Core/Renderer.hpp
   Core/ColorManagement.hpp Core/ColorManagement.cpp
@@ -30,6 +32,7 @@ add_library(${NAME} STATIC
   Core/RuntimeMath.hpp Core/RuntimeMath.cpp
   Core/RuntimePresentation.hpp Core/RuntimePresentation.cpp
   Core/Dialog/DialogRuntime.hpp Core/Dialog/DialogRuntime.cpp
+  Core/Dialog/DialogPerformanceRuntime.hpp Core/Dialog/DialogPerformanceRuntime.cpp
   Core/Character/CharacterRuntime.hpp Core/Character/CharacterRuntime.cpp
   Core/CameraController.cpp Core/CameraController.hpp
   Core/Input/InputAction.hpp
@@ -61,6 +64,7 @@ add_library(${NAME} STATIC
   Core/Omikron/Animation3DA.hpp Core/Omikron/Animation3DA.cpp
   Core/Omikron/Path3DP.hpp Core/Omikron/Path3DP.cpp
   Core/Omikron/Model3DO.hpp Core/Omikron/Model3DO.cpp
+  Core/Omikron/ThreeDM.hpp Core/Omikron/ThreeDM.cpp
   Core/Omikron/Texture3DT.hpp Core/Omikron/Texture3DT.cpp
   Core/Omikron/QdAdp.hpp Core/Omikron/QdAdp.cpp
   Core/Omikron/BmpImage.hpp Core/Omikron/BmpImage.cpp

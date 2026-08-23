@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "Core/Dialog/DialogRuntime.hpp"
+#include "Core/Dialog/DialogPerformanceRuntime.hpp"
 #include "Core/Omikron/Model3DO.hpp"
 #include "Core/Omikron/SCX.hpp"
 #include "Core/Omikron/SFX.hpp"
@@ -338,6 +339,13 @@ class ScenarioManager {
     return m_dialog_runtime;
   }
 
+  /// Services the synchronized 3DM layer after ordinary world runtimes tick.
+  void service_dialog_performance(float real_delta_seconds);
+
+  [[nodiscard]] const Dialog::DialogPerformanceRuntime& dialog_performance() const {
+    return m_dialog_performance;
+  }
+
  private:
   /// A fully loaded scenario package: the parsed data plus the backing byte
   /// buffer whose offsets the parsed data indexes into.
@@ -377,6 +385,7 @@ class ScenarioManager {
   /// Session-level immutable IAM/DIALOG archive cache and active progression.
   std::vector<std::byte> m_dialog_archive;
   Dialog::DialogRuntime m_dialog_runtime;
+  Dialog::DialogPerformanceRuntime m_dialog_performance;
 
   Audio::AudioSystem* m_audio_system{nullptr};  ///< Non-owning.
 

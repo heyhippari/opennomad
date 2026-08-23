@@ -190,6 +190,7 @@ std::expected<std::unique_ptr<AudioSystem>, std::string> AudioSystem::create() {
 
   system->m_cache = std::make_unique<SoundResourceCache>(mixer);
   system->m_music.attach(mixer);
+  system->m_dialog_voice.attach(mixer);
   system->set_master_gain(1.0F);
   system->set_sfx_gain(1.0F);
   system->set_music_gain(1.0F);
@@ -208,6 +209,7 @@ AudioSystem::~AudioSystem() {
   //    owner; script/scene code is torn down before this runs).
   // 2. Stop music and every SFX track.
   m_music.stop(0);
+  m_dialog_voice.stop();
   for (MIX_Track* track : m_tracks) {
     if (track != nullptr) {
       MIX_StopTrack(track, 0);
@@ -232,6 +234,7 @@ AudioSystem::~AudioSystem() {
     }
   }
   m_music.shutdown();
+  m_dialog_voice.shutdown();
 
   // 6. Destroy cached MIX_Audio objects.
   m_cache.reset();
@@ -381,6 +384,26 @@ void AudioSystem::stop_all_sfx() {
     }
     voice.state = VoiceState::k_stopping;
   }
+}
+
+std::expected<void, std::string> AudioSystem::play_dialog_voice(
+    std::string display_name, std::vector<std::int16_t> stereo_samples) {
+  if (!available()) {
+    return std::expected<void, std::string>{std::unexpect, "audio subsystem unavailable"};
+  }
+  if (!m_dialog_voice.play(std::move(display_name), std::move(stereo_samples))) {
+    return std::expected<void, std::string>{
+        std::unexpect, fmt::format("dialogue voice playback failed: {}", SDL_GetError())};
+  }
+  return {};
+}
+
+void AudioSystem::stop_dialog_voice() {
+  m_dialog_voice.stop();
+}
+
+bool AudioSystem::dialog_voice_playing() const {
+  return m_dialog_voice.is_playing();
 }
 
 std::optional<VoiceHandle> AudioSystem::audition(const SoundResourceId resource) {
@@ -611,6 +634,7 @@ void AudioSystem::set_sfx_gain(const float gain) {
   m_sfx_gain = clamp_gain(gain);
   if (available()) {
     MIX_SetTagGain(m_mixer.get(), "sfx", m_sfx_gain);
+    MIX_SetTagGain(m_mixer.get(), "dialog", m_sfx_gain);
   }
 }
 

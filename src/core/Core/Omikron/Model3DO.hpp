@@ -351,6 +351,15 @@ class Model3DO {
       const Model3DOData& model,
       std::span<const Model3DOData::RuntimeObjectState> runtime_objects);
 
+  /// Builds posed geometry from instance-local object transforms and an
+  /// instance-local source vertex array. The override array must remain in
+  /// global 3DO vertex order and may replace position/normal while preserving
+  /// every other serialized vertex field.
+  [[nodiscard]] static std::expected<std::vector<MaterialGroup>, std::string> build_posed_geometry(
+      const Model3DOData& model,
+      std::span<const Model3DOData::RuntimeObjectState> runtime_objects,
+      std::span<const RawVertex> source_vertices);
+
   /// Re-resolves Runtime object transforms from the current local/animation
   /// matrices while preserving serialized descriptor data.
   [[nodiscard]] static std::expected<void, std::string> resolve_runtime_transforms(

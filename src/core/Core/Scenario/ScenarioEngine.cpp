@@ -78,6 +78,7 @@ std::expected<void, std::string> ScenarioEngine::select_permanent_mode_script() 
 
 void ScenarioEngine::set_audio_system(Audio::AudioSystem* audio) {
   m_startup.set_audio_system(audio);
+  m_manager.set_audio_system(audio);
 }
 
 std::expected<void, std::string> ScenarioEngine::update(const float delta_seconds) {
@@ -100,6 +101,7 @@ std::expected<void, std::string> ScenarioEngine::update(const float delta_second
   for (auto* runtime : m_manager.active_world_runtimes()) {
     runtime->tick(delta_seconds);
   }
+  m_manager.service_dialog_performance(delta_seconds);
   return {};
 }
 

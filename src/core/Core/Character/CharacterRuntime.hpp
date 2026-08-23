@@ -71,6 +71,20 @@ struct BodyAnimationPlayback {
   App::Runtime::Vec3 body_animation_vector{};
 };
 
+struct DialogFaceVertexOverride {
+  App::Runtime::Vec3 position{};
+  App::Runtime::Vec3 normal{};
+};
+
+/// One temporary 3DM sample composed over the character's current base pose.
+struct DialogPerformanceOverlay {
+  std::vector<std::optional<App::Runtime::Quaternion>> object_rotations;
+  std::size_t root_object_index{0};
+  App::Runtime::Vec3 root_translation_delta{};
+  std::optional<std::size_t> face_mesh_index;
+  std::vector<DialogFaceVertexOverride> face_vertices;
+};
+
 /// Persistent logical character materialized in one world runtime.
 struct RuntimeCharacter {
   std::size_t instance_id{0};
@@ -92,6 +106,7 @@ struct RuntimeCharacter {
   std::vector<Omikron::MaterialGroup> posed_groups;
   std::uint64_t pose_revision{0};
   BodyAnimationPlayback body_animation;
+  std::optional<DialogPerformanceOverlay> dialog_performance;
 
   [[nodiscard]] bool loaded() const {
     return model_resource != nullptr;
@@ -130,6 +145,13 @@ class Runtime {
 
   /// Restores one character's mutable pose from its immutable shared model.
   void reset_pose(std::int16_t character_id);
+
+  /// Composes a temporary dialogue sample over the current base animation.
+  [[nodiscard]] std::expected<void, std::string> apply_dialog_performance(
+      std::int16_t character_id, DialogPerformanceOverlay overlay);
+
+  /// Removes only the dialogue overlay and rebuilds the current base pose.
+  void clear_dialog_performance(std::int16_t character_id);
 
  private:
   [[nodiscard]] static std::expected<std::shared_ptr<const ModelResource>, std::string>

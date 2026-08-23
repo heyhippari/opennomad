@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "Core/Audio/AudioTypes.hpp"
+#include "Core/Audio/DialogVoicePlayer.hpp"
 #include "Core/Audio/MusicPlayer.hpp"
 #include "Core/Audio/SoundResourceCache.hpp"
 #include "Core/Audio/VoicePool.hpp"
@@ -80,6 +81,13 @@ class AudioSystem {
 
   /// Stops every active SFX voice.
   void stop_all_sfx();
+
+  /// Replaces the dedicated nonspatial dialogue lane with one 22080 Hz
+  /// stereo signed-16 PCM stream. The player owns the samples until stopped.
+  [[nodiscard]] std::expected<void, std::string> play_dialog_voice(
+      std::string display_name, std::vector<std::int16_t> stereo_samples);
+  void stop_dialog_voice();
+  [[nodiscard]] bool dialog_voice_playing() const;
 
   /// Nonspatial debug audition through the normal 16-voice pool.
   [[nodiscard]] std::optional<VoiceHandle> audition(SoundResourceId resource);
@@ -183,6 +191,7 @@ class AudioSystem {
   std::array<SlotContext, VoicePool::k_voice_count> m_contexts{};
   VoicePool m_pool;
   MusicPlayer m_music;
+  DialogVoicePlayer m_dialog_voice;
   AudioListenerState m_listener{};
   EmitterResolver m_emitter_resolver;
   StopEventQueue m_stop_events;

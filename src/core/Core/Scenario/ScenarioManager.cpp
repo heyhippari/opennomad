@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "Core/Audio/AudioSystem.hpp"
+#include "Core/Character/CharacterRuntime.hpp"
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Dialog/DialogRuntime.hpp"
 #include "Core/GameDataLoader.hpp"
@@ -59,6 +60,7 @@ std::expected<void, std::string> ScenarioManager::reset_for_new_session() {
     }
   }
   m_world_presentation.clear();
+  m_dialog_performance.reset();
   m_dialog_runtime.reset();
   return {};
 }
@@ -590,6 +592,17 @@ void ScenarioManager::set_audio_system(Audio::AudioSystem* audio_system) {
   }
 }
 
+void ScenarioManager::service_dialog_performance(const float real_delta_seconds) {
+  const WorldSceneContext* context{active_world_context()};
+  ScenarioRuntime* runtime{context == nullptr ? nullptr : context->runtime.get()};
+  Character::Runtime* characters{runtime == nullptr ? nullptr : &runtime->character_runtime()};
+  const std::uint64_t identity{context == nullptr
+          ? 0U
+          : (static_cast<std::uint64_t>(context->generation) << 32U) | context->scene_id};
+  m_dialog_performance.tick(
+      real_delta_seconds, m_dialog_runtime, characters, identity, m_audio_system);
+}
+
 std::string ScenarioManager::normalize_asset_path(std::string path) {
   for (char& character : path) {
     if (character == '\\') {
@@ -761,6 +774,7 @@ void ScenarioManager::install_world_context(WorldSceneContext& context,
 
 // NOLINTNEXTLINE(readability-convert-member-functions-to-static) — slot-teardown responsibilities
 void ScenarioManager::teardown_world_context(WorldSceneContext& context) {
+  m_dialog_performance.stop_for_world_change();
   // Destroy the context-owned runtime and decor before releasing its SCX
   // backing bytes, so no runtime object outlives its slot's data.
   context.runtime.reset();

@@ -52,6 +52,19 @@ add_executable(Model3DOTest Model3DO.spec.cpp $<TARGET_OBJECTS:TestRunner>)
 add_test(NAME Model3DOTest COMMAND Model3DOTest)
 target_link_libraries(Model3DOTest PRIVATE doctest::doctest Core)
 
+add_executable(ThreeDMTest ThreeDM.spec.cpp $<TARGET_OBJECTS:TestRunner>)
+add_test(NAME ThreeDMTest COMMAND ThreeDMTest)
+target_link_libraries(ThreeDMTest PRIVATE doctest::doctest Core)
+
+add_executable(DialogVoiceCodecTest DialogVoiceCodec.spec.cpp $<TARGET_OBJECTS:TestRunner>)
+add_test(NAME DialogVoiceCodecTest COMMAND DialogVoiceCodecTest)
+target_link_libraries(DialogVoiceCodecTest PRIVATE doctest::doctest Core)
+
+add_executable(DialogPerformanceRuntimeTest
+  DialogPerformanceRuntime.spec.cpp $<TARGET_OBJECTS:TestRunner>)
+add_test(NAME DialogPerformanceRuntimeTest COMMAND DialogPerformanceRuntimeTest)
+target_link_libraries(DialogPerformanceRuntimeTest PRIVATE doctest::doctest Core)
+
 add_executable(BodyAnimationResourcesTest
   BodyAnimationResources.spec.cpp $<TARGET_OBJECTS:TestRunner>)
 add_test(NAME BodyAnimationResourcesTest COMMAND BodyAnimationResourcesTest)
@@ -214,6 +227,11 @@ target_link_libraries(LogCategoryTest PRIVATE doctest::doctest Core)
 # the game data through the OPENNOMAD_GAME_DATA_ROOT environment variable.
 option(OPENNOMAD_GAME_DATA_TESTS "Register tests that require original game data" OFF)
 if(OPENNOMAD_GAME_DATA_TESTS)
+  add_executable(ThreeDMIntegrationTest
+      ThreeDMIntegration.spec.cpp $<TARGET_OBJECTS:TestRunner>)
+  add_test(NAME ThreeDMIntegrationTest COMMAND ThreeDMIntegrationTest)
+  target_link_libraries(ThreeDMIntegrationTest PRIVATE doctest::doctest Core)
+
   add_executable(FontFNTIntegrationTest
       FontFNTIntegration.spec.cpp $<TARGET_OBJECTS:TestRunner>)
   add_test(NAME FontFNTIntegrationTest COMMAND FontFNTIntegrationTest)

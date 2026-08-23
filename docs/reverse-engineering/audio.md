@@ -1461,3 +1461,17 @@ The key rule is:
 > Keep original content/behavior separate from the modern mixer backend. ADP
 > decoding, SCX sound identity and voice limits can be faithful even when the
 > output device, threading and memory ownership are modern.
+
+---
+
+# 65. Dialogue performance voice
+
+IAM/DIALOG face basenames resolve to synchronized `MORPH/<basename>.3dm`
+packages. Their speech is embedded in each full 30 Hz record; it is not a
+`VOICE/<basename>.ADP` lookup and does not use the music decoder. OpenNomad
+decodes all audio chunks continuously with the Runtime 3DM ADPCM variant and
+plays the resulting 22080 Hz stereo signed-16 stream on one dedicated,
+nonspatial, one-shot mixer track. This track is outside both the 16-voice SFX
+pool and the music lane, but follows master and SFX/dialog gain. See
+[`3dm.md`](3dm.md) for the exact nibble math, state continuity, and synchronized
+visual record layout.

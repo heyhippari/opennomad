@@ -433,6 +433,13 @@ std::expected<std::vector<MaterialGroup>, std::string> Model3DO::build_static_ge
 std::expected<std::vector<MaterialGroup>, std::string> Model3DO::build_posed_geometry(
     const Model3DOData& model,
     const std::span<const Model3DOData::RuntimeObjectState> runtime_objects) {
+  return build_posed_geometry(model, runtime_objects, std::span<const RawVertex>{model.vertices});
+}
+
+std::expected<std::vector<MaterialGroup>, std::string> Model3DO::build_posed_geometry(
+    const Model3DOData& model,
+    const std::span<const Model3DOData::RuntimeObjectState> runtime_objects,
+    const std::span<const RawVertex> source_vertices) {
   APP_PROFILE_FUNCTION();
 
   if (model.meshes.empty()) {
@@ -446,6 +453,10 @@ std::expected<std::vector<MaterialGroup>, std::string> Model3DO::build_posed_geo
   if (runtime_objects.size() != model.meshes.size()) {
     return std::expected<std::vector<MaterialGroup>, std::string>{
         std::unexpect, "posed Runtime object count does not match the model hierarchy"};
+  }
+  if (source_vertices.size() != model.vertices.size()) {
+    return std::expected<std::vector<MaterialGroup>, std::string>{
+        std::unexpect, "posed source vertex count does not match the model"};
   }
 
   std::vector<MaterialGroup> groups;
@@ -496,12 +507,13 @@ std::expected<std::vector<MaterialGroup>, std::string> Model3DO::build_posed_geo
     }
 
     const std::size_t global_index{vertex_owner.vertex_base + vertex_index};
-    if (global_index >= model.vertices.size()) {
+    if (global_index >= source_vertices.size()) {
       return std::expected<void, std::string>{std::unexpect,
           fmt::format(
-              "vertex index {} out of range ({} vertices)", global_index, model.vertices.size())};
+              "vertex index {} out of range ({} vertices)", global_index, source_vertices.size())};
     }
-    const RawVertex& raw{model.vertices.at(global_index)};
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access) -- checked above; span has no at().
+    const RawVertex& raw{source_vertices[global_index]};
     if (vertex_owner_index >= runtime_objects.size()) {
       return std::expected<void, std::string>{
           std::unexpect, "3DO vertex owner has no Runtime object transform"};

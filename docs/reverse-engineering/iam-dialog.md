@@ -109,6 +109,12 @@ Face basenames are `125338`, `125339`, and `12533A`. Line camera pairs are
 `2160 -> 2167`. Node 2 slot 0 contains action bytes `8a 36 01 03`, but its
 response text is empty, so normal terminal progression does not execute it.
 
+The face basename selects a synchronized `MORPH/<basename>.3dm` package, not an
+external voice ADP. Its object, facial, and embedded-speech streams share one
+30 Hz timeline; the format and binding rules are documented in
+[`3dm.md`](3dm.md). The media layer observes dialog generations but never owns
+or auto-advances graph progression.
+
 ## AREA opcode distinction and implementation status
 
 AREA opcode `0x3D` consumes one 16-bit dialog ID, advances the AREA instruction

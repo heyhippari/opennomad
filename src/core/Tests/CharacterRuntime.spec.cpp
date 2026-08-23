@@ -75,6 +75,44 @@ std::shared_ptr<const App::Character::ModelResource> fake_resource(const std::st
   return resource;
 }
 
+std::shared_ptr<const App::Character::ModelResource> fake_morph_resource(
+    const std::string_view name) {
+  auto resource{std::make_shared<App::Character::ModelResource>()};
+  resource->name = name;
+  auto& model{resource->model};
+  model.materials.emplace_back();
+  App::Omikron::MeshDescriptor mesh;
+  mesh.name = "face";
+  mesh.script_id = 30U;
+  mesh.flags = static_cast<std::uint32_t>(App::Omikron::MeshFlags::k_face_morph);
+  mesh.vertex_count = 3U;
+  model.meshes.push_back(mesh);
+  App::Omikron::Triangle triangle;
+  triangle.material_id = 0;
+  triangle.vertices.at(0).index = 0U;
+  triangle.vertices.at(1).index = 1U;
+  triangle.vertices.at(2).index = 2U;
+  App::Omikron::MeshPolygons polygons;
+  polygons.triangles.push_back(triangle);
+  model.polygons.push_back(std::move(polygons));
+  model.vertices = {
+      App::Omikron::RawVertex{.position = {0.0F, 0.0F, 0.0F}, .normal = {0.0F, 1.0F, 0.0F}},
+      App::Omikron::RawVertex{.position = {1.0F, 0.0F, 0.0F}, .normal = {0.0F, 1.0F, 0.0F}},
+      App::Omikron::RawVertex{.position = {0.0F, 1.0F, 0.0F}, .normal = {0.0F, 1.0F, 0.0F}}};
+  model.root_mesh_index = 0;
+  model.hierarchy_parent_index = {-1};
+  model.hierarchy_first_child_index = {-1};
+  model.hierarchy_next_sibling_index = {-1};
+  model.hierarchy_reachable = {1U};
+  model.skin_parent_index = {-1};
+  model.runtime_objects.emplace_back();
+  REQUIRE(App::Omikron::Model3DO::resolve_runtime_transforms(model).has_value());
+  auto groups{App::Omikron::Model3DO::build_static_geometry(model)};
+  REQUIRE(groups.has_value());
+  resource->groups = std::move(groups).value();
+  return resource;
+}
+
 }  // namespace
 
 TEST_SUITE("Core::Character::Runtime") {
@@ -163,6 +201,52 @@ TEST_SUITE("Core::Character::Runtime") {
     REQUIRE_FALSE(result.has_value());
     CHECK(result.error().find("current-character") != std::string::npos);
     CHECK(runtime.characters().empty());
+  }
+
+  TEST_CASE("dialogue overlay keeps shared vertices immutable and reveals latest base pose") {
+    const App::Omikron::IamAreaRecord area{make_area()};
+    App::Character::Runtime runtime{
+        [](const std::string_view name)
+            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
+          return fake_morph_resource(name);
+        }};
+    REQUIRE(runtime
+            .activate(118,
+                area,
+                App::Script::AreaCharacterActivationRequest{
+                    .character_id = 310, .apply_area_transform = true})
+            .has_value());
+    App::Character::RuntimeCharacter* character{runtime.find(310)};
+    REQUIRE(character != nullptr);
+    REQUIRE(character->model_resource != nullptr);
+    const float immutable_position{character->model_resource->model.vertices.at(0).position.x};
+
+    character->runtime_objects.at(0).local_offset.x = 7.0F;
+    REQUIRE(App::Omikron::Model3DO::resolve_runtime_transforms(
+                character->model_resource->model, std::span{character->runtime_objects})
+                .has_value());
+    App::Character::DialogPerformanceOverlay overlay;
+    overlay.object_rotations.resize(1U);
+    overlay.object_rotations.at(0) = App::Runtime::Quaternion{};
+    overlay.root_object_index = 0U;
+    overlay.root_translation_delta.x = 2.0F;
+    overlay.face_mesh_index = 0U;
+    overlay.face_vertices = {
+        {.position = {10.0F, 0.0F, 0.0F}, .normal = {0.0F, 0.0F, 1.0F}},
+        {.position = {11.0F, 0.0F, 0.0F}, .normal = {0.0F, 0.0F, 1.0F}},
+        {.position = {12.0F, 0.0F, 0.0F}, .normal = {0.0F, 0.0F, 1.0F}}};
+    REQUIRE(runtime.apply_dialog_performance(310, std::move(overlay)).has_value());
+    CHECK_EQ(character->model_resource->model.vertices.at(0).position.x, immutable_position);
+    REQUIRE_FALSE(character->posed_groups.empty());
+    CHECK_EQ(character->posed_groups.at(0).vertices.at(0).position.at(0), 19.0F);
+
+    character->runtime_objects.at(0).local_offset.x = 20.0F;
+    REQUIRE(App::Omikron::Model3DO::resolve_runtime_transforms(
+                character->model_resource->model, std::span{character->runtime_objects})
+                .has_value());
+    runtime.clear_dialog_performance(310);
+    CHECK_FALSE(character->dialog_performance.has_value());
+    CHECK_EQ(character->posed_groups.at(0).vertices.at(0).position.at(0), 20.0F);
   }
 }
 
