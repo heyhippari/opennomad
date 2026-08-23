@@ -45,7 +45,7 @@ class WorldRenderer {
   WorldRenderer& operator=(const WorldRenderer&) = delete;
   WorldRenderer& operator=(WorldRenderer&&) = delete;
 
-  void render(const Camera& camera, ScenarioRuntime* runtime);
+  void render(const Camera& camera, ScenarioRuntime* runtime, float uv_phase_u, float uv_phase_v);
 
   [[nodiscard]] const WorldBounds& bounds() const {
     return m_bounds;
@@ -79,9 +79,12 @@ class WorldRenderer {
  private:
   WorldRenderer() = default;
 
-  void draw_group(std::size_t index);
-  void draw_character_group(
-      const Character::RuntimeCharacter& character, const Camera& camera, std::size_t group_index);
+  void draw_group(std::size_t index, float uv_phase_u, float uv_phase_v);
+  void draw_character_group(const Character::RuntimeCharacter& character,
+      const Camera& camera,
+      std::size_t group_index,
+      float uv_phase_u,
+      float uv_phase_v);
   void render_geometry_wireframe(const Camera& camera, const ScenarioRuntime* runtime);
   void sync_character_models(const ScenarioRuntime& runtime);
 

@@ -13,6 +13,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "Core/Audio/AudioSystem.hpp"
 #include "Core/Audio/AudioTypes.hpp"
@@ -270,6 +271,8 @@ std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state
   Debug::WorldRenderDebugState state;
 
   state.renderer_ready = m_world_renderer != nullptr;
+  state.uv_phase_u = static_cast<float>(m_uv_phases.u_phase());
+  state.uv_phase_v = static_cast<float>(m_uv_phases.v_phase());
   if (m_world_renderer != nullptr) {
     state.group_count = m_world_renderer->group_count();
     state.material_count = m_world_renderer->material_count();
@@ -305,13 +308,49 @@ std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state
           index < model.runtime_objects.size() ? model.runtime_objects.at(index)
                                                : Omikron::Model3DOData::RuntimeObjectState{}};
 
-      state.mesh_hierarchy.push_back(Debug::WorldMeshHierarchyDebugState{.mesh_id = mesh.mesh_id,
+      std::vector<std::int32_t> material_ids;
+      const auto add_material = [&material_ids](const std::int32_t material_id) {
+        if (!std::ranges::contains(material_ids, material_id)) {
+          material_ids.push_back(material_id);
+        }
+      };
+      if (index < model.polygons.size()) {
+        const Omikron::MeshPolygons& polygons{model.polygons.at(index)};
+        for (const Omikron::Triangle& triangle : polygons.triangles) {
+          add_material(triangle.material_id);
+        }
+        for (const Omikron::Rectangle& rectangle : polygons.rectangles) {
+          add_material(rectangle.material_id);
+        }
+      }
+      std::vector<std::string> materials;
+      materials.reserve(material_ids.size());
+      for (const std::int32_t material_id : material_ids) {
+        std::string material{std::to_string(material_id)};
+        if (material_id >= 0 && static_cast<std::size_t>(material_id) < model.materials.size()) {
+          material += ": " + model.materials.at(static_cast<std::size_t>(material_id)).name;
+        } else {
+          material += ": <invalid>";
+        }
+        materials.push_back(std::move(material));
+      }
+
+      state.mesh_hierarchy.push_back(Debug::WorldMeshHierarchyDebugState{.descriptor_index = index,
+          .mesh_id = mesh.mesh_id,
+          .script_id = mesh.script_id,
+          .flags = mesh.flags,
+          .mover_flags = mesh.mover_flags,
           .name = mesh.name,
           .parent_id = mesh.parent_id,
           .first_child_id = mesh.first_child_id,
           .next_sibling_id = mesh.next_sibling_id,
           .reachable = reachable,
           .root = std::cmp_equal(model.root_mesh_index, index),
+          .top_level = mesh.parent_id == -1,
+          .vertex_count = mesh.vertex_count,
+          .triangle_count = mesh.triangle_count,
+          .rectangle_count = mesh.rectangle_count,
+          .materials = std::move(materials),
           .position = vec3(mesh.position),
           .bone_position = vec3(mesh.bone_position),
           .runtime_local_offset = vec3(object.local_offset),
@@ -654,6 +693,7 @@ void WorldScene::update(const float delta_time, const Input::InputManager& input
   consume_letterbox_commands(context);
   update_white_fade(delta_time);
   m_letterbox.update(delta_time);
+  m_uv_phases.update(delta_time);
 
   m_camera.update(delta_time);
 
@@ -697,7 +737,10 @@ void WorldScene::render() {
   // matches, skip one world frame and rebuild on the next update.
   if (m_world_renderer != nullptr && context != nullptr && m_world_observed &&
       context->scene_id == m_observed_scene_id && context->generation == m_observed_generation) {
-    m_world_renderer->render(m_camera.camera(), context->runtime.get());
+    m_world_renderer->render(m_camera.camera(),
+        context->runtime.get(),
+        static_cast<float>(m_uv_phases.u_phase()),
+        static_cast<float>(m_uv_phases.v_phase()));
   }
 
   if (m_fade_renderer != nullptr && m_white_fade_alpha > 0.0F) {

@@ -75,6 +75,7 @@ class WorldScene final : public Scene, public Debug::SceneDebugView {
   std::unique_ptr<WorldLetterboxRenderer> m_letterbox_renderer;
   WorldCameraSystem m_camera;
   WorldLetterboxState m_letterbox;
+  WorldUvPhaseState m_uv_phases;
   float m_white_fade_alpha{0.0F};
   float m_white_fade_elapsed{0.0F};
   float m_white_fade_duration{0.0F};

@@ -55,6 +55,13 @@ enum MeshFlags : std::uint32_t {
   return (flags & static_cast<std::uint32_t>(flag)) != 0U;
 }
 
+/// Per-draw Runtime UV translation selected by a mesh's independent U/V bits.
+[[nodiscard]] constexpr std::array<float, 2> uv_scroll_offset(
+    const std::uint32_t flags, const float u_phase, const float v_phase) {
+  return {has_flag(flags, MeshFlags::k_uv_scroll_u) ? u_phase : 0.0F,
+      has_flag(flags, MeshFlags::k_uv_scroll_v) ? v_phase : 0.0F};
+}
+
 /// How a mesh combines with the framebuffer, derived from its flags.
 ///
 /// Mirrors the reference importer's shader selection: alpha blending wins
@@ -293,8 +300,8 @@ struct Model3DOData {
   /// Descriptor index of each mesh's next sibling, or -1.
   std::vector<std::int32_t> hierarchy_next_sibling_index;
 
-  /// Whether the descriptor is reachable by Runtime's root -> child ->
-  /// sibling traversal. Parallel to meshes.
+  /// Whether the descriptor is reachable through the top-level sibling chain
+  /// headed by root_mesh_index and its child/sibling subtrees. Parallel to meshes.
   std::vector<std::uint8_t> hierarchy_reachable;
 
   /// Mutable Runtime object state derived from immutable serialized mesh

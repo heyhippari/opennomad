@@ -52,6 +52,7 @@ layout(location = 3) in vec4 a_color;
 
 uniform mat4 u_mvp;
 uniform mat4 u_model;
+uniform vec2 u_uv_offset;
 
 out vec3 v_normal;
 out vec2 v_uv;
@@ -59,7 +60,7 @@ out vec4 v_color;
 
 void main() {
     v_normal = mat3(u_model) * a_normal;
-    v_uv = a_uv;
+    v_uv = a_uv + u_uv_offset;
     v_color = a_color;
     gl_Position = u_mvp * vec4(a_position, 1.0);
 }
@@ -360,8 +361,12 @@ void WorldRenderer::set_sprite_grayscale(const bool enabled) {
   m_sprite_grayscale = enabled;
 }
 
-void WorldRenderer::draw_group(const std::size_t index) {
+void WorldRenderer::draw_group(
+    const std::size_t index, const float uv_phase_u, const float uv_phase_v) {
   m_shader->bind();
+  const std::array<float, 2> uv_offset{
+      Omikron::uv_scroll_offset(m_group_flags.at(index), uv_phase_u, uv_phase_v)};
+  m_shader->set_uniform_vec2("u_uv_offset", std::span<const GLfloat, 2>{uv_offset});
   const Omikron::BlendMode mode{m_group_modes.at(index)};
   const bool vertex_lit{
       Omikron::has_flag(m_group_flags.at(index), Omikron::MeshFlags::k_vertex_lit)};
@@ -441,7 +446,9 @@ void WorldRenderer::sync_character_models(const ScenarioRuntime& runtime) {
 
 void WorldRenderer::draw_character_group(const Character::RuntimeCharacter& character,
     const Camera& camera,
-    const std::size_t group_index) {
+    const std::size_t group_index,
+    const float uv_phase_u,
+    const float uv_phase_v) {
   const auto found{m_character_models.find(character.instance_id)};
   if (found == m_character_models.end()) {
     return;
@@ -458,6 +465,9 @@ void WorldRenderer::draw_character_group(const Character::RuntimeCharacter& char
   m_shader->bind();
   m_shader->set_uniform_mat4("u_mvp", std::span<const GLfloat, 16>{glm::value_ptr(mvp), 16});
   m_shader->set_uniform_mat4("u_model", std::span<const GLfloat, 16>{glm::value_ptr(model), 16});
+  const std::array<float, 2> uv_offset{
+      Omikron::uv_scroll_offset(gpu.group_flags.at(group_index), uv_phase_u, uv_phase_v)};
+  m_shader->set_uniform_vec2("u_uv_offset", std::span<const GLfloat, 2>{uv_offset});
 
   const Omikron::BlendMode mode{gpu.group_modes.at(group_index)};
   const bool vertex_lit{
@@ -525,7 +535,10 @@ void WorldRenderer::render_geometry_wireframe(
   glDisable(GL_BLEND);
 }
 
-void WorldRenderer::render(const Camera& camera, ScenarioRuntime* const runtime) {
+void WorldRenderer::render(const Camera& camera,
+    ScenarioRuntime* const runtime,
+    const float uv_phase_u,
+    const float uv_phase_v) {
   APP_PROFILE_FUNCTION();
 
   if (m_shader == nullptr) {
@@ -566,7 +579,7 @@ void WorldRenderer::render(const Camera& camera, ScenarioRuntime* const runtime)
   glDepthMask(GL_TRUE);
   for (std::size_t index{0}; index < m_meshes.size(); ++index) {
     if (!is_blended(m_group_modes.at(index))) {
-      draw_group(index);
+      draw_group(index, uv_phase_u, uv_phase_v);
     }
   }
   if (runtime != nullptr) {
@@ -577,7 +590,7 @@ void WorldRenderer::render(const Camera& camera, ScenarioRuntime* const runtime)
       }
       for (std::size_t index{0}; index < found->second->meshes.size(); ++index) {
         if (!is_blended(found->second->group_modes.at(index))) {
-          draw_character_group(character, camera, index);
+          draw_character_group(character, camera, index, uv_phase_u, uv_phase_v);
         }
       }
     }
@@ -622,7 +635,7 @@ void WorldRenderer::render(const Camera& camera, ScenarioRuntime* const runtime)
         glBlendEquation(GL_FUNC_ADD);
         break;
     }
-    draw_group(index);
+    draw_group(index, uv_phase_u, uv_phase_v);
   }
   if (runtime != nullptr) {
     for (const Character::RuntimeCharacter& character : runtime->character_runtime().characters()) {
@@ -649,7 +662,7 @@ void WorldRenderer::render(const Camera& camera, ScenarioRuntime* const runtime)
             glBlendEquation(GL_FUNC_ADD);
             break;
         }
-        draw_character_group(character, camera, index);
+        draw_character_group(character, camera, index, uv_phase_u, uv_phase_v);
       }
     }
   }

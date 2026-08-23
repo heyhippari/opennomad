@@ -76,7 +76,8 @@ Buffer make_header(const std::uint32_t material_count,
       .u32(frame_count)
       .zeros(104)
       .u32(root_mesh_id)
-      .f32(1.0F)  // +0xB8 global scalar; semantic remains unresolved.      .u32(triangle_count)
+      .f32(1.0F)  // +0xB8 global scalar; semantic remains unresolved.
+      .u32(triangle_count)
       .u32(rectangle_count)
       .u32(vertex_count)
       .u64(0)
@@ -136,6 +137,40 @@ void append_mesh(Buffer& buffer,
       .f32(bone_position_x)
       .f32(0.0F)
       .f32(0.0F);
+}
+
+void append_material(Buffer& buffer, const std::string_view name = "MATERIAL") {
+  buffer.chars(name, 20).chars("", 20).chars("", 20).u32(0).u64(0).u32(0).u16(32).u16(32);
+}
+
+void append_vertex(Buffer& buffer, const float position_x = 0.0F) {
+  buffer.f32(position_x)
+      .f32(0.0F)
+      .f32(0.0F)
+      .f32(0.0F)
+      .f32(0.0F)
+      .f32(1.0F)
+      .u32(0)
+      .u8(0)
+      .u8(0)
+      .u8(0)
+      .u8(255);
+}
+
+void append_degenerate_triangle(Buffer& buffer, const std::int32_t material_id = 0) {
+  buffer.u16(0)
+      .u16(0)
+      .u16(0)
+      .u8(0)
+      .u8(0)
+      .u8(0)
+      .u8(0)
+      .u8(0)
+      .u8(0)
+      .i32(material_id)
+      .i32(0)
+      .i32(0)
+      .i32(0);
 }
 
 /// Appends one 304-byte light record in serialized native XYZ order.
@@ -420,6 +455,85 @@ TEST_SUITE("Core::Omikron::Model3DO") {
     CHECK(child.world_translation.x == doctest::Approx(5.0F));
     CHECK(child.world_translation.y == doctest::Approx(-10.0F));
     CHECK(child.world_translation.z == doctest::Approx(0.0F));
+  }
+
+  TEST_CASE("Root-level siblings use serialized positions and remain renderable") {
+    Buffer file{make_header(1, 3, 2, 2, 0, 0, 0, 0, 0, 0, 10)};
+    append_material(file, "PORTAL");
+    append_vertex(file);
+    append_vertex(file);
+    append_degenerate_triangle(file);
+    append_degenerate_triangle(file);
+    append_mesh(file, 0, 10, -1, 1, 1, 0, 100.0F, -1, 11);
+    append_mesh(file, 0, 11, -1, 1, 1, 0, 200.0F, -1, -1, 0.0F);
+    append_mesh(file, 0, 12, -1, 0, 0, 0, 300.0F);
+
+    const auto model{App::Omikron::Model3DO::load(file.data())};
+    REQUIRE(model.has_value());
+    CHECK_EQ(model->hierarchy_reachable, std::vector<std::uint8_t>{1U, 1U, 0U});
+    CHECK(model->runtime_objects.at(0).world_translation.x == doctest::Approx(100.0F));
+    CHECK(model->runtime_objects.at(1).local_offset.x == doctest::Approx(200.0F));
+    CHECK(model->runtime_objects.at(1).world_translation.x == doctest::Approx(200.0F));
+
+    const auto groups{App::Omikron::Model3DO::build_static_geometry(model.value())};
+    REQUIRE(groups.has_value());
+    REQUIRE_EQ(groups->size(), std::size_t{1});
+    REQUIRE_EQ(groups->at(0).vertices.size(), std::size_t{6});
+    CHECK(groups->at(0).vertices.at(0).position.at(0) == doctest::Approx(100.0F));
+    CHECK(groups->at(0).vertices.at(3).position.at(0) == doctest::Approx(200.0F));
+  }
+
+  TEST_CASE("Nested child siblings retain parent-relative bone offsets") {
+    Buffer file{make_header(0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 10)};
+    append_mesh(file, 0, 10, -1, 0, 0, 0, 100.0F, 11);
+    append_mesh(file, 0, 11, 10, 0, 0, 0, 1000.0F, -1, 12, 10.0F);
+    append_mesh(file, 0, 12, 10, 0, 0, 0, 2000.0F, -1, -1, 20.0F);
+    append_mesh(file, 0, 13, -1, 0, 0, 0, 300.0F);
+
+    const auto model{App::Omikron::Model3DO::load(file.data())};
+    REQUIRE(model.has_value());
+    CHECK_EQ(model->hierarchy_reachable, std::vector<std::uint8_t>{1U, 1U, 1U, 0U});
+    CHECK(model->runtime_objects.at(1).local_offset.x == doctest::Approx(10.0F));
+    CHECK(model->runtime_objects.at(1).world_translation.x == doctest::Approx(110.0F));
+    CHECK(model->runtime_objects.at(2).local_offset.x == doctest::Approx(20.0F));
+    CHECK(model->runtime_objects.at(2).world_translation.x == doctest::Approx(120.0F));
+  }
+
+  TEST_CASE("Rejects a cycle in the top-level sibling chain") {
+    Buffer file{make_header(0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 10)};
+    append_mesh(file, 0, 10, -1, 0, 0, 0, 0.0F, -1, 11);
+    append_mesh(file, 0, 11, -1, 0, 0, 0, 0.0F, -1, 10);
+
+    const auto model{App::Omikron::Model3DO::load(file.data())};
+    REQUIRE_FALSE(model.has_value());
+    CHECK(model.error().find("cycle in 3DO sibling chain") != std::string::npos);
+  }
+
+  TEST_CASE("Reachable invisible siblings do not emit static geometry") {
+    Buffer file{make_header(1, 2, 2, 2, 0, 0, 0, 0, 0, 0, 10)};
+    append_material(file);
+    append_vertex(file);
+    append_vertex(file);
+    append_degenerate_triangle(file);
+    append_degenerate_triangle(file);
+    append_mesh(file, 0, 10, -1, 1, 1, 0, 100.0F, -1, 11);
+    append_mesh(file,
+        static_cast<std::uint32_t>(App::Omikron::MeshFlags::k_invisible),
+        11,
+        -1,
+        1,
+        1,
+        0,
+        200.0F);
+
+    const auto model{App::Omikron::Model3DO::load(file.data())};
+    REQUIRE(model.has_value());
+    CHECK_EQ(model->hierarchy_reachable, std::vector<std::uint8_t>{1U, 1U});
+    const auto groups{App::Omikron::Model3DO::build_static_geometry(model.value())};
+    REQUIRE(groups.has_value());
+    REQUIRE_EQ(groups->size(), std::size_t{1});
+    CHECK_EQ(groups->at(0).vertices.size(), std::size_t{3});
+    CHECK(groups->at(0).vertices.at(0).position.at(0) == doctest::Approx(100.0F));
   }
 
   TEST_CASE("Rectangles are split into two triangles") {

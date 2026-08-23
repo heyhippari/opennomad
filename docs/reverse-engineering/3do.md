@@ -865,7 +865,7 @@ pass 2:
     resolve parent/child/sibling/root/relationship links
 ```
 
-## 15.2 Root-driven traversal
+## 15.2 Root-headed forest traversal
 
 The designated object from:
 
@@ -873,16 +873,39 @@ The designated object from:
 root + 0xB4
 ```
 
-is the traversal root.
+is the traversal head. It does not imply that every reachable object is a
+descendant of that descriptor.
 
 OpenNomad now mirrors that model and records which descriptors are reachable by:
 
 ```text
-root
- -> first child
- -> next sibling
- -> descendants
+top-level chain:
+    rootObjectId
+      -> next sibling
+      -> next sibling
+
+for each top-level object:
+    first child
+      -> next sibling
+      -> descendants
 ```
+
+`GRID.3DO` is the confirmed retail counterexample to treating `rootObjectId`
+as a single tree root:
+
+```text
+rootObjectId = 0
+
+circle01  meshID=0 parentID=-1 nextSiblingID=1
+circle2   meshID=1 parentID=-1 nextSiblingID=2
+introgrid meshID=2 parentID=-1 nextSiblingID=-1
+```
+
+All three records are serialized top-level objects. The serialized structure
+and values above are retail-data-confirmed. OpenNomad's traversal of the
+root-headed parentless sibling chain is the general Runtime-faithful
+interpretation supported by that structure; the exact Runtime machine-code
+loop over this specific chain has not yet been independently documented.
 
 Disconnected serialized descriptors should not automatically become visible
 world geometry merely because they exist in the table.
@@ -916,9 +939,10 @@ scale             = (1, 1, 1)
 animation matrix  = absent
 ```
 
-## 16.1 Root local offset
+## 16.1 Top-level local offset
 
-For the designated root object:
+For every serialized top-level object (`parentID == -1`), including siblings
+after the distinguished root/head:
 
 ```text
 localOffset = serialized object.position
@@ -926,7 +950,7 @@ localOffset = serialized object.position
 
 ## 16.2 Child local offset
 
-For a non-root hierarchy object:
+For a child hierarchy object:
 
 ```text
 localOffset = serialized object.bonePosition

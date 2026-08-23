@@ -7,6 +7,7 @@
 #include <numbers>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <variant>
 #include <vector>
 
@@ -31,6 +32,36 @@
 #include "Core/Texture.hpp"
 
 namespace App::Debug {
+
+namespace {
+
+std::string known_mesh_flags(const std::uint32_t flags) {
+  std::string result;
+  const auto append = [&result, flags](
+                          const Omikron::MeshFlags flag, const std::string_view label) {
+    if (!Omikron::has_flag(flags, flag)) {
+      return;
+    }
+    if (!result.empty()) {
+      result += ", ";
+    }
+    result += label;
+  };
+  append(Omikron::MeshFlags::k_joint_only, "joint-only");
+  append(Omikron::MeshFlags::k_vertex_lit, "vertex-lit");
+  append(Omikron::MeshFlags::k_alpha_testing, "alpha test");
+  append(Omikron::MeshFlags::k_alpha_blending, "alpha blend");
+  append(Omikron::MeshFlags::k_additive, "additive");
+  append(Omikron::MeshFlags::k_subtractive, "subtractive");
+  append(Omikron::MeshFlags::k_invisible, "invisible");
+  append(Omikron::MeshFlags::k_uv_scroll_u, "UV U");
+  append(Omikron::MeshFlags::k_uv_scroll_v, "UV V");
+  append(Omikron::MeshFlags::k_mirror, "mirror");
+  append(Omikron::MeshFlags::k_environment_mapped, "environment-mapped");
+  return result.empty() ? std::string{"<none>"} : result;
+}
+
+}  // namespace
 
 void DebugUI::show_world_inspector() {
   ImGui::Begin("World Inspector", &m_show_world_inspector);
@@ -65,36 +96,52 @@ void DebugUI::show_world_inspector() {
                                                 ImGuiTableFlags_ScrollY |
                                                 ImGuiTableFlags_SizingFixedFit};
     if (ImGui::CollapsingHeader("3DO hierarchy", ImGuiTreeNodeFlags_DefaultOpen) &&
-        ImGui::BeginTable("##3DOHierarchy", 7, k_hierarchy_flags, ImVec2{0.0F, 220.0F})) {
-      ImGui::TableSetupColumn("ID");
+        ImGui::BeginTable("##3DOHierarchy", 8, k_hierarchy_flags, ImVec2{0.0F, 220.0F})) {
+      ImGui::TableSetupColumn("Index / meshID");
       ImGui::TableSetupColumn("Name");
-      ImGui::TableSetupColumn("Parent");
-      ImGui::TableSetupColumn("Child");
-      ImGui::TableSetupColumn("Sibling");
-      ImGui::TableSetupColumn("Live");
+      ImGui::TableSetupColumn("Script");
+      ImGui::TableSetupColumn("Flags");
+      ImGui::TableSetupColumn("P / C / S");
+      ImGui::TableSetupColumn("Top / live");
+      ImGui::TableSetupColumn("V / T / Q");
       ImGui::TableSetupColumn("Runtime world T");
       ImGui::TableHeadersRow();
       for (const Debug::WorldMeshHierarchyDebugState& mesh : world->mesh_hierarchy) {
         ImGui::TableNextRow();
         ImGui::TableSetColumnIndex(0);
-        ImGui::Text(mesh.root ? "%u *" : "%u", mesh.mesh_id);
+        ImGui::Text(mesh.root ? "%zu / %u *" : "%zu / %u", mesh.descriptor_index, mesh.mesh_id);
         ImGui::TableSetColumnIndex(1);
         ImGui::TextUnformatted(mesh.name.c_str());
         ImGui::TableSetColumnIndex(2);
-        ImGui::Text("%d", mesh.parent_id);
+        ImGui::Text("%u", mesh.script_id);
         ImGui::TableSetColumnIndex(3);
-        ImGui::Text("%d", mesh.first_child_id);
+        ImGui::Text("0x%08X", mesh.flags);
         ImGui::TableSetColumnIndex(4);
-        ImGui::Text("%d", mesh.next_sibling_id);
+        ImGui::Text("%d / %d / %d", mesh.parent_id, mesh.first_child_id, mesh.next_sibling_id);
         ImGui::TableSetColumnIndex(5);
-        ImGui::TextUnformatted(mesh.reachable ? "yes" : "no");
+        ImGui::Text("%s / %s", mesh.top_level ? "yes" : "no", mesh.reachable ? "yes" : "no");
         ImGui::TableSetColumnIndex(6);
+        ImGui::Text("%u / %u / %u", mesh.vertex_count, mesh.triangle_count, mesh.rectangle_count);
+        ImGui::TableSetColumnIndex(7);
         ImGui::Text("%.3f, %.3f, %.3f",
             static_cast<double>(mesh.runtime_world_translation.at(0)),
             static_cast<double>(mesh.runtime_world_translation.at(1)),
             static_cast<double>(mesh.runtime_world_translation.at(2)));
         if (ImGui::IsItemHovered()) {
           ImGui::BeginTooltip();
+          ImGui::Text("Descriptor index: %zu", mesh.descriptor_index);
+          ImGui::Text("meshID / scriptID: %u / %u", mesh.mesh_id, mesh.script_id);
+          ImGui::Text("Flags: 0x%08X (%s)", mesh.flags, known_mesh_flags(mesh.flags).c_str());
+          ImGui::Text("Mover flags: 0x%08X", mesh.mover_flags);
+          ImGui::Text("Root/head: %s", mesh.root ? "yes" : "no");
+          ImGui::Text("Top-level / parentless: %s", mesh.top_level ? "yes" : "no");
+          ImGui::Text("Reachable: %s", mesh.reachable ? "yes" : "no");
+          if (!mesh.materials.empty()) {
+            ImGui::TextUnformatted("Polygon materials:");
+            for (const std::string& material : mesh.materials) {
+              ImGui::BulletText("%s", material.c_str());
+            }
+          }
           ImGui::Text("Serialized position: %.3f, %.3f, %.3f",
               static_cast<double>(mesh.position.at(0)),
               static_cast<double>(mesh.position.at(1)),
@@ -201,6 +248,8 @@ void DebugUI::show_world_inspector() {
     ImGui::Text("Mirror: %zu", world->mirror_group_count);
     ImGui::Text("UV scroll U: %zu", world->uv_scroll_u_group_count);
     ImGui::Text("UV scroll V: %zu", world->uv_scroll_v_group_count);
+    ImGui::Text("Runtime UV phase U: %.6f", static_cast<double>(world->uv_phase_u));
+    ImGui::Text("Runtime UV phase V: %.6f", static_cast<double>(world->uv_phase_v));
     ImGui::Text("Environment mapped: %zu", world->environment_group_count);
     const std::size_t unsupported_special_groups{
         world->mirror_group_count + world->environment_group_count};
@@ -209,14 +258,6 @@ void DebugUI::show_world_inspector() {
           "%zu group(s) currently use WorldRenderer's fallback base pass.",
           unsupported_special_groups);
     }
-    const std::size_t uv_scroll_groups{
-        world->uv_scroll_u_group_count + world->uv_scroll_v_group_count};
-    if (uv_scroll_groups != 0U) {
-      ImGui::TextColored(K_WARNING_COLOR,
-          "%zu UV-scroll flag occurrence(s); Runtime UV phase is not yet applied.",
-          uv_scroll_groups);
-    }
-
     ImGui::SeparatorText("Characters");
     ImGui::Text("Count: %zu", world->runtime_characters.size());
     constexpr ImGuiTableFlags k_character_flags{

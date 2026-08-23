@@ -54,7 +54,11 @@ struct SpriteRenderDebugState {
     const std::vector<Sprite::SpriteDrawCommand>& commands);
 
 struct WorldMeshHierarchyDebugState {
+  std::size_t descriptor_index{0};
   std::uint32_t mesh_id{0};
+  std::uint32_t script_id{0};
+  std::uint32_t flags{0};
+  std::uint32_t mover_flags{0};
   std::string name;
 
   std::int32_t parent_id{-1};
@@ -63,6 +67,12 @@ struct WorldMeshHierarchyDebugState {
 
   bool reachable{false};
   bool root{false};
+  bool top_level{false};
+
+  std::uint32_t vertex_count{0};
+  std::uint32_t triangle_count{0};
+  std::uint32_t rectangle_count{0};
+  std::vector<std::string> materials;
 
   std::array<float, 3> position{};
   std::array<float, 3> bone_position{};
@@ -140,6 +150,8 @@ struct WorldRenderDebugState {
   std::size_t mirror_group_count{0};
   std::size_t uv_scroll_u_group_count{0};
   std::size_t uv_scroll_v_group_count{0};
+  float uv_phase_u{0.0F};
+  float uv_phase_v{0.0F};
   std::size_t environment_group_count{0};
 
   std::array<float, 3> bounds_center{};

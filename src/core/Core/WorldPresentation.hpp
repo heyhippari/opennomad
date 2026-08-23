@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -11,6 +12,38 @@
 #include "Core/RuntimeMath.hpp"
 
 namespace App {
+
+/// Session-lifetime copy of Runtime's global cyclic 3DO texture phases.
+///
+/// Runtime advances both globals by 0.0004 per nominal 30 Hz tick. Expressing
+/// the same rate in seconds keeps presentation deterministic and independent
+/// of display refresh. WorldScene owns this state so decor renderer rebuilds
+/// do not restart the phases.
+class WorldUvPhaseState {
+ public:
+  static constexpr double k_periods_per_second{0.012};
+
+  void update(const float delta_seconds) {
+    if (!std::isfinite(delta_seconds) || delta_seconds <= 0.0F) {
+      return;
+    }
+    const double increment{static_cast<double>(delta_seconds) * k_periods_per_second};
+    m_u_phase = std::fmod(m_u_phase + increment, 1.0);
+    m_v_phase = std::fmod(m_v_phase + increment, 1.0);
+  }
+
+  [[nodiscard]] double u_phase() const {
+    return m_u_phase;
+  }
+
+  [[nodiscard]] double v_phase() const {
+    return m_v_phase;
+  }
+
+ private:
+  double m_u_phase{0.0};
+  double m_v_phase{0.0};
+};
 
 /// One resolved Runtime AREA camera command waiting to be consumed by the
 /// presentation layer.

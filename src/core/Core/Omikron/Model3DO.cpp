@@ -245,14 +245,14 @@ std::expected<Model3DOData, std::string> Model3DO::load(const std::span<const st
   model.runtime_objects.reserve(model.meshes.size());
   for (std::size_t index{0}; index < model.meshes.size(); ++index) {
     const MeshDescriptor& mesh{model.meshes.at(index)};
-    const bool root{std::cmp_equal(model.root_mesh_index, index)};
-    model.runtime_objects.push_back(
-        Model3DOData::RuntimeObjectState{.local_offset = root ? mesh.position : mesh.bone_position,
-            .local_matrix = Runtime::Matrix3::identity(),
-            .animation_matrix = std::nullopt,
-            .scale = {.x = 1.0F, .y = 1.0F, .z = 1.0F},
-            .world_matrix = Runtime::Matrix3::identity(),
-            .world_translation = {}});
+    const bool top_level{mesh.parent_id == -1};
+    model.runtime_objects.push_back(Model3DOData::RuntimeObjectState{
+        .local_offset = top_level ? mesh.position : mesh.bone_position,
+        .local_matrix = Runtime::Matrix3::identity(),
+        .animation_matrix = std::nullopt,
+        .scale = {.x = 1.0F, .y = 1.0F, .z = 1.0F},
+        .world_matrix = Runtime::Matrix3::identity(),
+        .world_translation = {}});
   }
 
   if (auto resolved{resolve_runtime_transforms(model)}; !resolved) {
@@ -280,17 +280,20 @@ std::expected<void, std::string> Model3DO::resolve_runtime_transforms(Model3DODa
       continue;
     }
     model.hierarchy_reachable.at(index) = 1U;
-    std::int32_t child{model.hierarchy_first_child_index.at(index)};
-    while (child != -1) {
+    const std::int32_t sibling{model.hierarchy_next_sibling_index.at(index)};
+    if (sibling != -1) {
+      stack.push_back(static_cast<std::size_t>(sibling));
+    }
+    const std::int32_t child{model.hierarchy_first_child_index.at(index)};
+    if (child != -1) {
       stack.push_back(static_cast<std::size_t>(child));
-      child = model.hierarchy_next_sibling_index.at(static_cast<std::size_t>(child));
     }
   }
   return {};
 }
 
-std::expected<void, std::string> Model3DO::resolve_runtime_transforms(const Model3DOData& model,
-    const std::span<Model3DOData::RuntimeObjectState> runtime_objects) {
+std::expected<void, std::string> Model3DO::resolve_runtime_transforms(
+    const Model3DOData& model, const std::span<Model3DOData::RuntimeObjectState> runtime_objects) {
   if (runtime_objects.size() != model.meshes.size()) {
     return std::expected<void, std::string>{std::unexpect,
         fmt::format("3DO runtime object count {} does not match mesh count {}",
@@ -300,8 +303,10 @@ std::expected<void, std::string> Model3DO::resolve_runtime_transforms(const Mode
 
   if (model.root_mesh_index != -1) {
     std::vector<std::uint8_t> visit_state(model.meshes.size(), std::uint8_t{0});
-    std::function<std::expected<void, std::string>(std::size_t)> visit;
-    visit = [&](const std::size_t index) -> std::expected<void, std::string> {
+    std::function<std::expected<void, std::string>(std::size_t)> visit_object;
+    std::function<std::expected<void, std::string>(std::int32_t, std::int32_t)> visit_siblings;
+
+    visit_object = [&](const std::size_t index) -> std::expected<void, std::string> {
       if (index >= model.meshes.size()) {
         return std::expected<void, std::string>{
             std::unexpect, "3DO hierarchy index is outside the mesh table"};
@@ -318,7 +323,6 @@ std::expected<void, std::string> Model3DO::resolve_runtime_transforms(const Mode
       }
 
       visit_state.at(index) = 1U;
-      const MeshDescriptor& mesh{model.meshes.at(index)};
       // std::span has no bounds-checked at(); the size and traversal index are validated above.
       // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
       Model3DOData::RuntimeObjectState& object{runtime_objects[index]};
@@ -327,17 +331,11 @@ std::expected<void, std::string> Model3DO::resolve_runtime_transforms(const Mode
         effective_local = Runtime::multiply(effective_local, object.animation_matrix.value());
       }
 
-      if (std::cmp_equal(index, model.root_mesh_index)) {
+      const std::int32_t parent_index{model.hierarchy_parent_index.at(index)};
+      if (parent_index < 0) {
         object.world_matrix = effective_local;
         object.world_translation = object.local_offset;
       } else {
-        const std::int32_t parent_index{model.hierarchy_parent_index.at(index)};
-        if (parent_index < 0) {
-          return std::expected<void, std::string>{std::unexpect,
-              fmt::format(
-                  "reachable non-root mesh '{}' (id {}) has no parent", mesh.name, mesh.mesh_id)};
-        }
-
         const Model3DOData::RuntimeObjectState& parent{
             // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
             runtime_objects[static_cast<std::size_t>(parent_index)]};
@@ -352,49 +350,75 @@ std::expected<void, std::string> Model3DO::resolve_runtime_transforms(const Mode
         object.world_translation = composed.translation;
       }
 
-      std::int32_t child_index{model.hierarchy_first_child_index.at(index)};
-      std::size_t sibling_steps{0};
-      while (child_index != -1) {
-        // A malformed sibling loop must not hang model loading.
-        ++sibling_steps;
-        if (sibling_steps > model.meshes.size()) {
-          return std::expected<void, std::string>{std::unexpect,
-              fmt::format(
-                  "cycle in child/sibling chain below mesh '{}' (id {})", mesh.name, mesh.mesh_id)};
-        }
-
-        const std::size_t child{static_cast<std::size_t>(child_index)};
-        if (child >= model.meshes.size()) {
-          return std::expected<void, std::string>{
-              std::unexpect, "3DO child descriptor index is out of range"};
-        }
-
-        if (std::cmp_not_equal(model.hierarchy_parent_index.at(child), index)) {
-          return std::expected<void, std::string>{std::unexpect,
-              fmt::format("inconsistent 3DO hierarchy: '{}' (id {}) lists '{}' "
-                          "(id {}) as a child, but that mesh names parent {}",
-                  mesh.name,
-                  mesh.mesh_id,
-                  model.meshes.at(child).name,
-                  model.meshes.at(child).mesh_id,
-                  model.meshes.at(child).parent_id)};
-        }
-
-        if (auto result{visit(child)}; !result) {
-          return result;
-        }
-
-        child_index = model.hierarchy_next_sibling_index.at(child);
+      if (auto result{visit_siblings(
+              model.hierarchy_first_child_index.at(index), static_cast<std::int32_t>(index))};
+          !result) {
+        return result;
       }
 
       visit_state.at(index) = 2U;
       return {};
     };
 
-    if (auto result{visit(static_cast<std::size_t>(model.root_mesh_index))}; !result) {
+    visit_siblings = [&](std::int32_t sibling_index,
+                         const std::int32_t expected_parent) -> std::expected<void, std::string> {
+      std::size_t sibling_steps{0};
+      while (sibling_index != -1) {
+        // A malformed sibling loop must not hang model loading.
+        ++sibling_steps;
+        if (sibling_steps > model.meshes.size()) {
+          const std::string owner{
+              expected_parent < 0
+                  ? "top-level object chain"
+                  : fmt::format("child chain below mesh '{}' (id {})",
+                        model.meshes.at(static_cast<std::size_t>(expected_parent)).name,
+                        model.meshes.at(static_cast<std::size_t>(expected_parent)).mesh_id)};
+          return std::expected<void, std::string>{
+              std::unexpect, fmt::format("cycle in 3DO sibling chain ({})", owner)};
+        }
+
+        const std::size_t sibling{static_cast<std::size_t>(sibling_index)};
+        if (sibling >= model.meshes.size()) {
+          return std::expected<void, std::string>{
+              std::unexpect, "3DO sibling descriptor index is out of range"};
+        }
+
+        const MeshDescriptor& mesh{model.meshes.at(sibling)};
+        const bool resolved_parent_matches{
+            model.hierarchy_parent_index.at(sibling) == expected_parent};
+        const bool serialized_top_level_matches{expected_parent != -1 || mesh.parent_id == -1};
+        if (!resolved_parent_matches || !serialized_top_level_matches) {
+          if (expected_parent == -1) {
+            return std::expected<void, std::string>{std::unexpect,
+                fmt::format("inconsistent 3DO hierarchy: top-level sibling '{}' (id {}) "
+                            "names parent {}",
+                    mesh.name,
+                    mesh.mesh_id,
+                    mesh.parent_id)};
+          }
+          const MeshDescriptor& parent{model.meshes.at(static_cast<std::size_t>(expected_parent))};
+          return std::expected<void, std::string>{std::unexpect,
+              fmt::format("inconsistent 3DO hierarchy: '{}' (id {}) lists '{}' "
+                          "(id {}) as a child, but that mesh names parent {}",
+                  parent.name,
+                  parent.mesh_id,
+                  mesh.name,
+                  mesh.mesh_id,
+                  mesh.parent_id)};
+        }
+
+        if (auto result{visit_object(sibling)}; !result) {
+          return result;
+        }
+
+        sibling_index = model.hierarchy_next_sibling_index.at(sibling);
+      }
+      return {};
+    };
+
+    if (auto result{visit_siblings(model.root_mesh_index, -1)}; !result) {
       return std::expected<void, std::string>{std::unexpect, std::move(result).error()};
     }
-
   }
 
   return {};

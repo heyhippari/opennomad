@@ -7,6 +7,7 @@
 #include <SDL3/SDL_iostream.h>
 #include <SDL3/SDL_stdinc.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -29,6 +30,8 @@ constexpr std::string_view K_LEVEL_MODEL{"MESHES/DECORS/Anekbah.3DO"};
 constexpr std::string_view K_LEVEL_TEXTURES{"MESHES/DECORS/Anekbah.3DT"};
 constexpr std::string_view K_CHARACTER_MODEL{"MESHES/PERSOS/KIL2_FN.3DO"};
 constexpr std::string_view K_CHARACTER_TEXTURES{"MESHES/PERSOS/KIL2_FN.3dt"};
+constexpr std::string_view K_GRID_MODEL{"MESHES/DECORS/GRID.3DO"};
+constexpr std::string_view K_GRID_TEXTURES{"MESHES/DECORS/GRID.3DT"};
 constexpr std::string_view K_SCX_PATH{"SCPTDATA/aventure.SCX"};
 
 /// Loads a game file from the data root set via the OPENNOMAD_GAME_DATA_ROOT
@@ -153,6 +156,88 @@ TEST_SUITE("Core::Omikron::GameData3DOTextureIntegration") {
 
     const auto groups{App::Omikron::Model3DO::build_static_geometry(model.value())};
     REQUIRE(groups.has_value());
+  }
+
+  TEST_CASE("GRID preserves its top-level portal sibling chain and scrolling materials") {
+    const auto model_file{load_game_file(K_GRID_MODEL)};
+    const auto texture_file{load_game_file(K_GRID_TEXTURES)};
+    if (!model_file.has_value() || !texture_file.has_value()) {
+      WARN("OPENNOMAD_GAME_DATA_ROOT is not set or GRID assets are missing; test skipped");
+      return;
+    }
+
+    const auto model{App::Omikron::Model3DO::load(*model_file)};
+    REQUIRE(model.has_value());
+    REQUIRE_EQ(model->meshes.size(), std::size_t{3});
+    REQUIRE_EQ(model->materials.size(), std::size_t{2});
+    CHECK_EQ(model->header.root_mesh_id, 0U);
+    CHECK_EQ(model->root_mesh_index, 0);
+
+    const App::Omikron::MeshDescriptor& circle01{model->meshes.at(0)};
+    const App::Omikron::MeshDescriptor& circle2{model->meshes.at(1)};
+    const App::Omikron::MeshDescriptor& introgrid{model->meshes.at(2)};
+    CHECK_EQ(circle01.name, "circle01");
+    CHECK_EQ(circle01.mesh_id, 0U);
+    CHECK_EQ(circle01.parent_id, -1);
+    CHECK_EQ(circle01.next_sibling_id, 1);
+    CHECK_EQ(circle01.flags, 0x03003000U);
+    CHECK_EQ(circle01.vertex_count, 210U);
+    CHECK_EQ(circle01.triangle_count, 54U);
+    CHECK_EQ(circle01.rectangle_count, 165U);
+    CHECK(circle01.position.x == doctest::Approx(474.8081665F));
+    CHECK(circle01.position.y == doctest::Approx(-131.1215820F));
+    CHECK(circle01.position.z == doctest::Approx(181.0717773F));
+    CHECK_EQ(circle2.name, "circle2");
+    CHECK_EQ(circle2.mesh_id, 1U);
+    CHECK_EQ(circle2.parent_id, -1);
+    CHECK_EQ(circle2.next_sibling_id, 2);
+    CHECK_EQ(circle2.flags, 0x01003000U);
+    CHECK_EQ(circle2.vertex_count, 112U);
+    CHECK_EQ(circle2.triangle_count, 108U);
+    CHECK_EQ(circle2.rectangle_count, 42U);
+    CHECK(circle2.position.x == doctest::Approx(498.5312805F));
+    CHECK(circle2.position.y == doctest::Approx(-131.1215820F));
+    CHECK(circle2.position.z == doctest::Approx(181.0717773F));
+    CHECK(circle2.bone_position.x == doctest::Approx(0.0F));
+    CHECK(circle2.bone_position.y == doctest::Approx(0.0F));
+    CHECK(circle2.bone_position.z == doctest::Approx(0.0F));
+    CHECK_EQ(introgrid.name, "introgrid");
+    CHECK_EQ(introgrid.mesh_id, 2U);
+    CHECK_EQ(introgrid.parent_id, -1);
+    CHECK_EQ(introgrid.next_sibling_id, -1);
+    CHECK(App::Omikron::has_flag(introgrid.flags, App::Omikron::MeshFlags::k_invisible));
+    CHECK_EQ(introgrid.vertex_count, 45U);
+    CHECK_EQ(introgrid.triangle_count, 64U);
+
+    CHECK_EQ(model->hierarchy_reachable, std::vector<std::uint8_t>{1U, 1U, 1U});
+    CHECK(model->runtime_objects.at(0).world_translation.x ==
+          doctest::Approx(circle01.position.x));
+    CHECK(model->runtime_objects.at(1).world_translation.x == doctest::Approx(circle2.position.x));
+    CHECK(model->runtime_objects.at(1).world_translation.y == doctest::Approx(circle2.position.y));
+    CHECK(model->runtime_objects.at(1).world_translation.z == doctest::Approx(circle2.position.z));
+    CHECK(model->runtime_objects.at(1).world_translation.x != doctest::Approx(0.0F));
+
+    CHECK_EQ(model->materials.at(1).name, "SPACY");
+    CHECK_EQ(model->materials.at(1).width, 256U);
+    CHECK_EQ(model->materials.at(1).height, 256U);
+    const auto images{App::Omikron::Texture3DT::load(*texture_file, model->materials)};
+    REQUIRE(images.has_value());
+    REQUIRE_EQ(images->size(), std::size_t{2});
+    CHECK_EQ(images->at(1).width, 256U);
+    CHECK_EQ(images->at(1).height, 256U);
+    CHECK_EQ(images->at(1).rgba8.size(), std::size_t{256U} * 256U * 4U);
+
+    const auto groups{App::Omikron::Model3DO::build_static_geometry(model.value())};
+    REQUIRE(groups.has_value());
+    REQUIRE_EQ(groups->size(), std::size_t{2});
+    const auto has_circle01_group{std::ranges::any_of(*groups, [](const auto& group) {
+      return group.material_id == 1 && group.flags == 0x03003000U && !group.vertices.empty();
+    })};
+    const auto has_circle2_group{std::ranges::any_of(*groups, [](const auto& group) {
+      return group.material_id == 1 && group.flags == 0x01003000U && !group.vertices.empty();
+    })};
+    CHECK(has_circle01_group);
+    CHECK(has_circle2_group);
   }
 
   TEST_CASE("Decodes EFFECTS2_SMOKE2.3DO (parser correctness, not animation)") {

@@ -32,6 +32,10 @@ add_executable(WorldLetterboxTest WorldLetterbox.spec.cpp $<TARGET_OBJECTS:TestR
 add_test(NAME WorldLetterboxTest COMMAND WorldLetterboxTest)
 target_link_libraries(WorldLetterboxTest PRIVATE doctest::doctest Core)
 
+add_executable(WorldUvPhaseTest WorldUvPhase.spec.cpp $<TARGET_OBJECTS:TestRunner>)
+add_test(NAME WorldUvPhaseTest COMMAND WorldUvPhaseTest)
+target_link_libraries(WorldUvPhaseTest PRIVATE doctest::doctest Core)
+
 add_executable(RuntimeMathTest RuntimeMath.spec.cpp $<TARGET_OBJECTS:TestRunner>)
 add_test(NAME RuntimeMathTest COMMAND RuntimeMathTest)
 target_link_libraries(RuntimeMathTest PRIVATE doctest::doctest Core)

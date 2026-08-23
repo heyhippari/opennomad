@@ -1817,32 +1817,48 @@ They are **not** generic “skybox” flags despite older importer/tool naming.
 
 ---
 
-# 61. Current OpenNomad UV-scroll gap
+# 61. Runtime global UV-scroll phase
 
-OpenNomad currently:
-
-```text
-parses
-names
-diagnoses
-```
-
-the U/V scroll flags but does not yet animate the global phases in ordinary
-world rendering.
-
-This is a concrete renderer fidelity gap.
-
-Recommended implementation:
+Runtime stores two independent cyclic globals:
 
 ```text
-retain native material UVs
-+
-maintain Runtime-compatible U/V phase state
-+
-apply phase in shader or draw data
+V phase = 0x00907300
+U phase = 0x00907304
 ```
 
-without mutating decoded model data every frame.
+The recovered update path advances both from Runtime's normalized frame-time
+factor:
+
+```text
+phase += frame_time_scale * 0.0004
+wrap phase to [0, 1)
+```
+
+At nominal 30 Hz this is equivalently:
+
+```text
+phase += delta_seconds * 0.012
+```
+
+Polygon submission adds, rather than subtracts, the selected phase from the
+authored coordinates. Bits 24 and 25 independently select U and V.
+
+OpenNomad keeps authored UVs immutable, advances session-lifetime phase state
+from the normal presentation update delta, and supplies a per-draw shader
+offset to ordinary world and character 3DO material groups. Renderer recreation
+on an area/decor change therefore does not reset the global phase. Sprite-frame
+UVs remain a separate path and do not inherit these object flags.
+
+`GRID.3DO` is a useful retail validation asset:
+
+```text
+circle01 flags=0x03003000 -> additive SPACY, U + V scroll
+circle2  flags=0x01003000 -> additive SPACY, U only
+```
+
+Both shells use the same static 256x256 `SPACY` texture; their differing cyclic
+translations create the evolving overlapping tunnel effect. This is not an
+animated-texture/frame mechanism.
 
 ---
 
@@ -3452,12 +3468,12 @@ Recommended tests:
 
 # 129. UV-scroll tests
 
-- [ ] bit 24 changes U only;
-- [ ] bit 25 changes V only;
-- [ ] both can operate together;
-- [ ] original texture coordinates remain immutable;
-- [ ] global cyclic phase is applied at presentation/submission;
-- [ ] phase wrap/timing eventually matches Runtime exactly.
+- [x] bit 24 changes U only;
+- [x] bit 25 changes V only;
+- [x] both can operate together;
+- [x] original texture coordinates remain immutable;
+- [x] global cyclic phase is applied at presentation/submission;
+- [x] phase wrap/timing matches the recovered `0.0004` per nominal 30 Hz tick.
 
 ---
 
