@@ -558,6 +558,16 @@ void DebugUI::show_scenarios() {
     ImGui::Text("Shared values: %zu  render instances: %zu",
         scenario.shared_value_count,
         scenario.render_instances);
+    ImGui::Text("SFX: %s | definitions %zu | nodes %zu (%zu active) | tracks %zu",
+        scenario.sfx_loaded ? "loaded" : "not loaded",
+        scenario.sfx_definition_count,
+        scenario.sfx_node_count,
+        scenario.active_sfx_nodes,
+        scenario.sfx_track_count);
+    ImGui::Text("SFX live: requests %zu | particles %zu | attached sprites %zu",
+        scenario.queued_sfx_requests,
+        scenario.active_sfx_particles,
+        scenario.sfx_attached_sprites);
     if (!scenario.last_error.empty()) {
       ImGui::TextColored(K_WARNING_COLOR, "Last error: %s", scenario.last_error.c_str());
     }

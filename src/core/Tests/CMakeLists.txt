@@ -69,6 +69,14 @@ add_executable(SCXScriptTest SCXScript.spec.cpp $<TARGET_OBJECTS:TestRunner>)
 add_test(NAME SCXScriptTest COMMAND SCXScriptTest)
 target_link_libraries(SCXScriptTest PRIVATE doctest::doctest Core)
 
+add_executable(SFXTest SFX.spec.cpp $<TARGET_OBJECTS:TestRunner>)
+add_test(NAME SFXTest COMMAND SFXTest)
+target_link_libraries(SFXTest PRIVATE doctest::doctest Core)
+
+add_executable(SfxRuntimeTest SfxRuntime.spec.cpp $<TARGET_OBJECTS:TestRunner>)
+add_test(NAME SfxRuntimeTest COMMAND SfxRuntimeTest)
+target_link_libraries(SfxRuntimeTest PRIVATE doctest::doctest Core)
+
 add_executable(ScenarioManagerTest ScenarioManager.spec.cpp $<TARGET_OBJECTS:TestRunner>)
 add_test(NAME ScenarioManagerTest COMMAND ScenarioManagerTest)
 target_link_libraries(ScenarioManagerTest PRIVATE doctest::doctest Core)
@@ -193,6 +201,10 @@ if(OPENNOMAD_GAME_DATA_TESTS)
   add_executable(SCXIntegrationTest SCXIntegration.spec.cpp $<TARGET_OBJECTS:TestRunner>)
   add_test(NAME SCXIntegrationTest COMMAND SCXIntegrationTest)
   target_link_libraries(SCXIntegrationTest PRIVATE doctest::doctest Core)
+
+  add_executable(SFXIntegrationTest SFXIntegration.spec.cpp $<TARGET_OBJECTS:TestRunner>)
+  add_test(NAME SFXIntegrationTest COMMAND SFXIntegrationTest)
+  target_link_libraries(SFXIntegrationTest PRIVATE doctest::doctest Core)
 
   add_executable(GameData3DOTextureIntegrationTest
       GameData3DOTextureIntegration.spec.cpp $<TARGET_OBJECTS:TestRunner>)

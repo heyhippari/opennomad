@@ -11,6 +11,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -21,7 +22,10 @@
 #include "Core/LogCategory.hpp"
 #include "Core/Omikron/Model3DO.hpp"
 #include "Core/Omikron/SCX.hpp"
+#include "Core/Omikron/SFX.hpp"
+#include "Core/Resources.hpp"
 #include "Core/Scenario/ScenarioRuntime.hpp"
+#include "Core/Sfx/SfxRuntime.hpp"
 
 namespace App {
 
@@ -413,6 +417,17 @@ std::vector<LoadedScenarioView> ScenarioManager::scenario_inventory() const {
           m_gameplay_mode_slot.runtime->script_runtime()->instances().size();
       view.render_instances = m_gameplay_mode_slot.runtime->sprite_pool().attached_count();
     }
+    const Sfx::Diagnostics sfx{m_gameplay_mode_slot.runtime == nullptr
+                                   ? Sfx::Diagnostics{}
+                                   : m_gameplay_mode_slot.runtime->sfx_diagnostics()};
+    view.sfx_loaded = sfx.loaded;
+    view.sfx_definition_count = sfx.definition_count;
+    view.sfx_node_count = sfx.node_count;
+    view.sfx_track_count = sfx.track_count;
+    view.active_sfx_nodes = sfx.active_node_count;
+    view.queued_sfx_requests = sfx.queued_request_count;
+    view.active_sfx_particles = sfx.active_particle_count;
+    view.sfx_attached_sprites = sfx.attached_sprite_count;
     view.last_error = m_gameplay_mode_slot.last_error;
     results.push_back(std::move(view));
   }
@@ -445,6 +460,16 @@ std::vector<LoadedScenarioView> ScenarioManager::scenario_inventory() const {
       view.active_script_instances = ctx.runtime->script_runtime()->instances().size();
       view.render_instances = ctx.runtime->sprite_pool().attached_count();
     }
+    const Sfx::Diagnostics sfx{
+        ctx.runtime == nullptr ? Sfx::Diagnostics{} : ctx.runtime->sfx_diagnostics()};
+    view.sfx_loaded = sfx.loaded;
+    view.sfx_definition_count = sfx.definition_count;
+    view.sfx_node_count = sfx.node_count;
+    view.sfx_track_count = sfx.track_count;
+    view.active_sfx_nodes = sfx.active_node_count;
+    view.queued_sfx_requests = sfx.queued_request_count;
+    view.active_sfx_particles = sfx.active_particle_count;
+    view.sfx_attached_sprites = sfx.attached_sprite_count;
     results.push_back(std::move(view));
   }
 
@@ -535,9 +560,57 @@ std::expected<ScenarioManager::LoadedScenario, std::string> ScenarioManager::loa
       scx->sprites.size(),
       scx->models.size());
 
+  std::filesystem::path companion_relative{normalized};
+  companion_relative.replace_extension(".SFX");
+  const std::filesystem::path companion_root{Resources::game_data_path(companion_relative)};
+  const std::filesystem::path companion_resolved{
+      Resources::resolve_case_insensitive(companion_root)};
+  std::error_code exists_error;
+  const bool companion_exists{std::filesystem::exists(companion_resolved, exists_error)};
+  if (exists_error) {
+    return std::expected<LoadedScenario, std::string>{std::unexpect,
+        fmt::format("Failed to inspect optional SFX companion: requested='{}' resolved='{}': {}",
+            companion_relative.string(),
+            companion_resolved.string(),
+            exists_error.message())};
+  }
+
+  std::string resolved_sfx_path;
+  std::vector<std::byte> sfx_file_buffer;
+  std::optional<Omikron::SfxData> sfx_data;
+  if (companion_exists) {
+    auto sfx_file{load_game_file(companion_relative)};
+    if (!sfx_file) {
+      return std::expected<LoadedScenario, std::string>{std::unexpect,
+          fmt::format("Failed to open SFX companion: requested='{}': {}",
+              companion_relative.string(),
+              sfx_file.error())};
+    }
+    auto parsed_sfx{Omikron::SFX::load(std::span<const std::byte>{sfx_file->bytes})};
+    if (!parsed_sfx) {
+      return std::expected<LoadedScenario, std::string>{std::unexpect,
+          fmt::format("Failed to parse SFX companion: requested='{}' resolved='{}' error='{}'",
+              companion_relative.string(),
+              sfx_file->resolved.string(),
+              parsed_sfx.error())};
+    }
+    resolved_sfx_path = sfx_file->resolved.string();
+    sfx_file_buffer = std::move(sfx_file->bytes);
+    sfx_data = std::move(parsed_sfx).value();
+    App::Log::debug(LogCategory::Scenario,
+        "loaded {}: definitions={} nodes={} tracks={}",
+        companion_relative.filename().string(),
+        sfx_data->definitions.size(),
+        sfx_data->nodes.size(),
+        sfx_data->tracks.size());
+  }
+
   return LoadedScenario{.resolved_path = resolved.string(),
       .file_buffer = std::move(loaded_file->bytes),
-      .scx_data = std::move(scx).value()};
+      .scx_data = std::move(scx).value(),
+      .resolved_sfx_path = std::move(resolved_sfx_path),
+      .sfx_file_buffer = std::move(sfx_file_buffer),
+      .sfx_data = std::move(sfx_data)};
 }
 
 std::expected<std::unique_ptr<ScenarioRuntime>, std::string> ScenarioManager::prepare_runtime(
@@ -547,7 +620,8 @@ std::expected<std::unique_ptr<ScenarioRuntime>, std::string> ScenarioManager::pr
           std::span<const std::byte>{loaded.file_buffer},
           scenario_name,
           m_audio_system,
-          /*activate_startup_scripts=*/false)};
+          /*activate_startup_scripts=*/false,
+          loaded.sfx_data ? &*loaded.sfx_data : nullptr)};
       !result) {
     return std::expected<std::unique_ptr<ScenarioRuntime>, std::string>{
         std::unexpect, fmt::format("Scenario runtime init failed: {}", result.error())};
@@ -563,6 +637,9 @@ void ScenarioManager::install_gameplay_mode(const GameplayMode mode,
   m_gameplay_mode_slot.resolved_path = std::move(loaded.resolved_path);
   m_gameplay_mode_slot.file_buffer = std::move(loaded.file_buffer);
   m_gameplay_mode_slot.scx_data = std::move(loaded.scx_data);
+  m_gameplay_mode_slot.resolved_sfx_path = std::move(loaded.resolved_sfx_path);
+  m_gameplay_mode_slot.sfx_file_buffer = std::move(loaded.sfx_file_buffer);
+  m_gameplay_mode_slot.sfx_data = std::move(loaded.sfx_data);
   m_gameplay_mode_slot.runtime = std::move(runtime);
   m_gameplay_mode_slot.file_size_bytes = m_gameplay_mode_slot.file_buffer.size();
   m_gameplay_mode_slot.last_error.clear();
@@ -574,6 +651,9 @@ void ScenarioManager::teardown_gameplay_mode_slot() {
   m_gameplay_mode_slot.runtime.reset();
   m_gameplay_mode_slot.scx_data = Omikron::ScxData{};
   m_gameplay_mode_slot.file_buffer.clear();
+  m_gameplay_mode_slot.sfx_data.reset();
+  m_gameplay_mode_slot.sfx_file_buffer.clear();
+  m_gameplay_mode_slot.resolved_sfx_path.clear();
   m_gameplay_mode_slot.scenario_path.clear();
   m_gameplay_mode_slot.resolved_path.clear();
   m_gameplay_mode_slot.file_size_bytes = 0;
@@ -598,6 +678,9 @@ void ScenarioManager::install_world_context(WorldSceneContext& context,
   context.resolved_scenario_path = std::move(loaded.resolved_path);
   context.scx_file_buffer = std::move(loaded.file_buffer);
   context.scx_data = std::move(loaded.scx_data);
+  context.resolved_sfx_path = std::move(loaded.resolved_sfx_path);
+  context.sfx_file_buffer = std::move(loaded.sfx_file_buffer);
+  context.sfx_data = std::move(loaded.sfx_data);
   context.runtime = std::move(runtime);
   context.file_size_bytes = context.scx_file_buffer.size();
   context.residency = residency;
@@ -615,6 +698,9 @@ void ScenarioManager::teardown_world_context(WorldSceneContext& context) {
   context.resolved_decor_path.clear();
   context.scx_data.reset();
   context.scx_file_buffer.clear();
+  context.sfx_data.reset();
+  context.sfx_file_buffer.clear();
+  context.resolved_sfx_path.clear();
   context.scene_id = 0;
   context.scenario_path.clear();
   context.resolved_scenario_path.clear();

@@ -30,6 +30,7 @@ constexpr std::uint32_t K_END_TAG{0xDEADFFFFU};
 constexpr std::uint32_t K_SET_FRAME{0x04000029U};
 constexpr std::uint32_t K_RIFF{0x46464952U};
 constexpr std::uint32_t K_WAVE{0x45564157U};
+constexpr std::uint32_t K_SFX_MAGIC{0x56302E35U};
 
 /// Writes a fixture's bytes to disk, creating parent directories.
 void write_bytes(const std::filesystem::path& path, const Buffer& buffer) {
@@ -152,6 +153,12 @@ Buffer make_sounds_scx(const std::size_t count) {
 Buffer make_malformed_scx() {
   Buffer bytes;
   bytes.u32(0x12345678U).u32(5).u32(8).u32(0);
+  return bytes;
+}
+
+Buffer make_empty_sfx() {
+  Buffer bytes;
+  bytes.u32(K_SFX_MAGIC).u32(0U).u32(0U).u32(0U).u32(0U).u32(0U).u32(0U);
   return bytes;
 }
 
@@ -451,6 +458,37 @@ TEST_SUITE("Core::Scenario::ScenarioManager") {
     CHECK(manager.gameplay_mode_scx() != nullptr);
     CHECK(manager.world_contexts()[0].residency == App::WorldSceneResidencyState::Free);
     CHECK(manager.world_contexts()[1].residency == App::WorldSceneResidencyState::Free);
+  }
+
+  TEST_CASE("an optional case-insensitive SFX companion loads with the scenario") {
+    const TempDirectory temp;
+    write_bytes(temp.root() / "SCPTDATA" / "Grid.SCX", make_script_scx(1));
+    write_bytes(temp.root() / "SCPTDATA" / "grid.sfx", make_empty_sfx());
+    const ScopedGameDataRoot root{temp.root()};
+
+    App::ScenarioManager manager;
+    auto loaded{manager.load_world_context(0, std::nullopt, "SCPTDATA/GRID.SCX")};
+    REQUIRE(loaded.has_value());
+    REQUIRE(loaded.value()->sfx_data.has_value());
+    CHECK(loaded.value()->resolved_sfx_path.ends_with("grid.sfx"));
+    const std::vector<App::LoadedScenarioView> inventory{manager.scenario_inventory()};
+    CHECK(inventory.at(1).sfx_loaded);
+    CHECK(inventory.at(1).sfx_definition_count == 0U);
+  }
+
+  TEST_CASE("a malformed existing SFX companion fails transactionally") {
+    const TempDirectory temp;
+    write_bytes(temp.root() / "SCPTDATA" / "Grid.SCX", make_script_scx(1));
+    Buffer malformed;
+    malformed.u32(0x12345678U);
+    write_bytes(temp.root() / "SCPTDATA" / "Grid.SFX", malformed);
+    const ScopedGameDataRoot root{temp.root()};
+
+    App::ScenarioManager manager;
+    auto loaded{manager.load_world_context(0, std::nullopt, "SCPTDATA/GRID.SCX")};
+    REQUIRE_FALSE(loaded.has_value());
+    CHECK(loaded.error().find("SFX companion") != std::string::npos);
+    CHECK(manager.world_contexts()[0].residency == App::WorldSceneResidencyState::Free);
   }
 
   TEST_CASE("A malformed world-context replacement preserves the current owner") {

@@ -5,9 +5,11 @@
 #include <cstdint>
 #include <expected>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 #include "Core/Audio/AudioTypes.hpp"
@@ -16,7 +18,9 @@
 #include "Core/Omikron/IamArea.hpp"
 #include "Core/Omikron/Path3DP.hpp"
 #include "Core/Omikron/SCX.hpp"
+#include "Core/Omikron/SFX.hpp"
 #include "Core/Script/ScriptRuntime.hpp"
+#include "Core/Sfx/SfxRuntime.hpp"
 #include "Core/Sprite/SpritePool.hpp"
 #include "Core/Sprite/SpriteRenderMode.hpp"
 #include "Core/Sprite/SpriteResource.hpp"
@@ -37,10 +41,10 @@ namespace App {
 /// and the debug tools read from this owner; `Sprite::SpriteRenderer` (the GL
 /// billboard queue builder/drawer) stays in the presentation scene/renderer
 /// because billboards need a 3D camera basis.
-class ScenarioRuntime final : public Script::ScriptWorld {
+class ScenarioRuntime final : public Script::ScriptWorld, private Sfx::Host {
  public:
   ScenarioRuntime() = default;
-  ~ScenarioRuntime() override = default;
+  ~ScenarioRuntime() override;
 
   ScenarioRuntime(const ScenarioRuntime&) = delete;
   ScenarioRuntime(ScenarioRuntime&&) = delete;
@@ -57,7 +61,8 @@ class ScenarioRuntime final : public Script::ScriptWorld {
       std::span<const std::byte> scx_bytes,
       std::string_view scenario_name,
       Audio::AudioSystem* audio,
-      bool activate_startup_scripts);
+      bool activate_startup_scripts,
+      const Omikron::SfxData* sfx = nullptr);
 
   [[nodiscard]] bool initialized() const {
     return m_initialized;
@@ -78,6 +83,11 @@ class ScenarioRuntime final : public Script::ScriptWorld {
   /// Advances the script runtime with the real application delta in seconds.
   void tick(float real_delta_seconds);
 
+  /// Optional retail SFX runtime and its concise lifecycle diagnostics.
+  [[nodiscard]] Sfx::Runtime* sfx_runtime();
+  [[nodiscard]] const Sfx::Runtime* sfx_runtime() const;
+  [[nodiscard]] Sfx::Diagnostics sfx_diagnostics() const;
+
   // --- Runtime characters --------------------------------------------------
 
   /// Resolves and materializes an AREA character activation in this world.
@@ -95,6 +105,9 @@ class ScenarioRuntime final : public Script::ScriptWorld {
   [[nodiscard]] std::span<const Sprite::SpriteResource* const> sprite_resource_ptrs() const;
   /// Number of sprite effect resources indexed from the scenario.
   [[nodiscard]] std::size_t sprite_resource_count() const;
+  /// Maps an authored SCX sprite ID to its resource index.
+  [[nodiscard]] std::expected<std::size_t, std::string> resolve_authored_sprite_id(
+      std::uint16_t authored_sprite_id) const;
   /// The SCX sprite name of a resource (known even before decoding).
   [[nodiscard]] std::string_view sprite_resource_name(std::size_t resource_index) const;
   /// A registered resource, or nullptr when not decoded yet or out of range.
@@ -162,6 +175,15 @@ class ScenarioRuntime final : public Script::ScriptWorld {
   [[nodiscard]] const Audio::AudioSystem* audio_system() const;
 
  private:
+  [[nodiscard]] std::expected<std::size_t, std::string> resolve_sfx_sprite_id(
+      std::uint16_t authored_sprite_id) const override;
+  [[nodiscard]] std::expected<Sfx::SpawnedSprite, std::string> spawn_sfx_sprite(
+      std::size_t resource_index, Runtime::Vec3 position) override;
+  [[nodiscard]] Sprite::SpriteInstance* find_sfx_sprite(Sprite::SpriteHandle handle) override;
+  void destroy_sfx_sprite(Sprite::SpriteHandle handle) override;
+  [[nodiscard]] std::optional<Runtime::Transform> resolve_sfx_character_anchor(
+      std::int32_t packed_reference_id) const override;
+
   /// Decodes one embedded sprite resource and uploads its GPU textures on
   /// first use (idempotent).
   [[nodiscard]] std::expected<void, std::string> ensure_sprite_resource_loaded(
@@ -187,8 +209,11 @@ class ScenarioRuntime final : public Script::ScriptWorld {
   std::vector<const Sprite::SpriteResource*> m_sprite_resource_ptrs;
   /// GPU textures per resource, parallel to m_sprite_resources.
   std::vector<std::vector<Texture2D>> m_sprite_textures;
+  std::unordered_map<std::uint16_t, std::size_t> m_sprite_id_lookup;
 
   std::unique_ptr<Script::ScriptRuntime> m_script_runtime;
+  std::optional<Omikron::SfxData> m_sfx_data;
+  std::unique_ptr<Sfx::Runtime> m_sfx_runtime;
   /// Runtime sound resources parallel to `m_scx.sounds` (lazily loaded).
   std::vector<Audio::SoundResourceId> m_sound_resources;
   /// Non-owning audio subsystem injected by the application.

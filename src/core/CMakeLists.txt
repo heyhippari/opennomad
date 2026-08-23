@@ -62,6 +62,7 @@ add_library(${NAME} STATIC
   Core/Omikron/BmpImage.hpp Core/Omikron/BmpImage.cpp
   Core/Omikron/IndexedBmp8.hpp Core/Omikron/IndexedBmp8.cpp
   Core/Omikron/SCX.hpp Core/Omikron/SCX.cpp
+  Core/Omikron/SFX.hpp Core/Omikron/SFX.cpp
   Core/Omikron/IamArchive.hpp Core/Omikron/IamArchive.cpp
   Core/Omikron/IamStart.hpp Core/Omikron/IamStart.cpp
   Core/Omikron/IamArea.hpp Core/Omikron/IamArea.cpp
@@ -71,6 +72,7 @@ add_library(${NAME} STATIC
   Core/Sprite/SpritePool.hpp Core/Sprite/SpritePool.cpp
   Core/Sprite/SpriteResource.hpp Core/Sprite/SpriteResource.cpp
   Core/Sprite/SpriteRenderer.hpp Core/Sprite/SpriteRenderer.cpp
+  Core/Sfx/SfxRuntime.hpp Core/Sfx/SfxRuntime.cpp
   Core/Scenario/ScenarioManager.hpp Core/Scenario/ScenarioManager.cpp
   Core/Scenario/ScenarioRuntime.hpp Core/Scenario/ScenarioRuntime.cpp
   Core/Scenario/ScenarioStartupController.hpp Core/Scenario/ScenarioStartupController.cpp

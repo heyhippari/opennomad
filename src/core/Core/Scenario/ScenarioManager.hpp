@@ -13,6 +13,7 @@
 
 #include "Core/Omikron/Model3DO.hpp"
 #include "Core/Omikron/SCX.hpp"
+#include "Core/Omikron/SFX.hpp"
 #include "Core/WorldPresentation.hpp"
 
 namespace App::Script {
@@ -134,6 +135,10 @@ struct WorldSceneContext {
   std::string resolved_scenario_path;
   /// Parsed SCX data (owned here for this milestone).
   std::optional<Omikron::ScxData> scx_data;
+  /// Optional immutable retail SFX companion data and backing bytes.
+  std::optional<Omikron::SfxData> sfx_data;
+  std::vector<std::byte> sfx_file_buffer;
+  std::string resolved_sfx_path;
   /// Scenario-local byte buffer for the loaded file.
   std::vector<std::byte> scx_file_buffer;
   /// Parsed file size in bytes.
@@ -173,6 +178,14 @@ struct LoadedScenarioView {
   std::size_t shared_value_count{0};
   std::size_t active_voices{0};
   std::size_t render_instances{0};
+  bool sfx_loaded{false};
+  std::size_t sfx_definition_count{0};
+  std::size_t sfx_node_count{0};
+  std::size_t sfx_track_count{0};
+  std::size_t active_sfx_nodes{0};
+  std::size_t queued_sfx_requests{0};
+  std::size_t active_sfx_particles{0};
+  std::size_t sfx_attached_sprites{0};
   bool loaded{false};
   std::string last_error;
 };
@@ -311,6 +324,9 @@ class ScenarioManager {
     std::string resolved_path;
     std::vector<std::byte> file_buffer;
     Omikron::ScxData scx_data;
+    std::string resolved_sfx_path;
+    std::vector<std::byte> sfx_file_buffer;
+    std::optional<Omikron::SfxData> sfx_data;
   };
 
   /// Gameplay-mode scenario slot state.
@@ -321,6 +337,9 @@ class ScenarioManager {
     std::string resolved_path;
     Omikron::ScxData scx_data;
     std::vector<std::byte> file_buffer;
+    std::string resolved_sfx_path;
+    std::vector<std::byte> sfx_file_buffer;
+    std::optional<Omikron::SfxData> sfx_data;
     std::size_t file_size_bytes{0};
     std::string last_error;
     /// Mutable scenario runtime owned by this slot (built transactionally).

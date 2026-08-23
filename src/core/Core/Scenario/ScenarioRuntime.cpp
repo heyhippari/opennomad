@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <expected>
 #include <iterator>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <span>
@@ -27,10 +28,12 @@
 #include "Core/Omikron/Model3DO.hpp"
 #include "Core/Omikron/Path3DP.hpp"
 #include "Core/Omikron/SCX.hpp"
+#include "Core/Omikron/SFX.hpp"
 #include "Core/Omikron/Texture3DT.hpp"
 #include "Core/RuntimeMath.hpp"
 #include "Core/Script/AreaScriptRuntime.hpp"
 #include "Core/Script/ScriptRuntime.hpp"
+#include "Core/Sfx/SfxRuntime.hpp"
 #include "Core/Sprite/SpriteInstance.hpp"
 #include "Core/Sprite/SpritePool.hpp"
 #include "Core/Sprite/SpriteRenderMode.hpp"
@@ -39,11 +42,18 @@
 
 namespace App {
 
+ScenarioRuntime::~ScenarioRuntime() {
+  // SFX teardown calls back into this runtime to destroy its owned handles;
+  // do it while the SpritePool and the complete Host object are still alive.
+  m_sfx_runtime.reset();
+}
+
 std::expected<void, std::string> ScenarioRuntime::initialize(const Omikron::ScxData& scx,
     const std::span<const std::byte> scx_bytes,
     const std::string_view scenario_name,
     Audio::AudioSystem* const audio,
-    const bool activate_startup_scripts) {
+    const bool activate_startup_scripts,
+    const Omikron::SfxData* const sfx) {
   APP_PROFILE_FUNCTION();
 
   // Copy the parsed structure and its backing bytes; the parsed offsets refer
@@ -52,11 +62,24 @@ std::expected<void, std::string> ScenarioRuntime::initialize(const Omikron::ScxD
   m_scx_bytes.assign(scx_bytes.begin(), scx_bytes.end());
   m_scenario_name = std::string{scenario_name};
   m_audio = audio;
+  m_sfx_runtime.reset();
+  m_sfx_data.reset();
 
   const std::size_t count{m_scx.models.size()};
   m_sprite_resources.resize(count);
   m_sprite_resource_ptrs.resize(count);
   m_sprite_textures.resize(count);
+  m_sprite_id_lookup.clear();
+  for (std::size_t index{0}; index < m_scx.sprites.size(); ++index) {
+    const std::uint32_t authored_id{m_scx.sprites.at(index).sprite_id};
+    if (authored_id > std::numeric_limits<std::uint16_t>::max()) {
+      continue;
+    }
+    if (!m_sprite_id_lookup.emplace(static_cast<std::uint16_t>(authored_id), index).second) {
+      return std::expected<void, std::string>{
+          std::unexpect, fmt::format("Duplicate authored SCX sprite ID {}", authored_id)};
+    }
+  }
   m_animation_resources.clear();
   m_animation_resources.resize(m_scx.animations.size());
   m_path_resources.clear();
@@ -68,6 +91,21 @@ std::expected<void, std::string> ScenarioRuntime::initialize(const Omikron::ScxD
         std::unexpect, fmt::format("Failed to initialise the script runtime: {}", runtime.error())};
   }
   m_script_runtime = std::move(runtime).value();
+
+  if (sfx != nullptr) {
+    m_sfx_data = *sfx;
+    auto sfx_runtime{Sfx::Runtime::create(m_sfx_data.value(), *this)};
+    if (!sfx_runtime) {
+      m_sfx_data.reset();
+      return std::expected<void, std::string>{std::unexpect,
+          fmt::format("Failed to initialise the SFX runtime: {}", sfx_runtime.error())};
+    }
+    m_sfx_runtime = std::move(sfx_runtime).value();
+    const Sfx::Diagnostics diagnostics{m_sfx_runtime->diagnostics()};
+    App::Log::debug(LogCategory::Scenario,
+        "SFX auto trigger (1,-1): activated={}",
+        diagnostics.active_node_count);
+  }
 
   if (activate_startup_scripts) {
     // Startup activation: activate every script that owns at least one command
@@ -130,7 +168,19 @@ std::expected<std::size_t, std::string> ScenarioRuntime::spawn_script_instance(
     return std::expected<std::size_t, std::string>{
         std::unexpect, "script runtime is not initialised"};
   }
-  return m_script_runtime->create_instance(source_script_index);
+  auto created{m_script_runtime->create_instance(source_script_index)};
+  if (!created) {
+    return created;
+  }
+  if (m_sfx_runtime != nullptr) {
+    const std::int32_t script_id{m_scx.scripts.at(source_script_index).script_id};
+    const std::size_t activated{m_sfx_runtime->trigger(0, script_id)};
+    if (activated != 0U) {
+      App::Log::debug(
+          LogCategory::Scenario, "SFX trigger (0,{}): activated={}", script_id, activated);
+    }
+  }
+  return created;
 }
 
 std::expected<std::size_t, std::string> ScenarioRuntime::spawn_character_script_instance(
@@ -150,14 +200,41 @@ std::expected<std::size_t, std::string> ScenarioRuntime::spawn_character_script_
     return std::expected<std::size_t, std::string>{std::unexpect,
         fmt::format("runtime character {} is not active in the current AREA", character_id)};
   }
-  return m_script_runtime->create_instance(source_script_index,
-      Script::ScriptLaunchContext{.character_id = character_id, .parameter = parameter});
+  auto created{m_script_runtime->create_instance(source_script_index,
+      Script::ScriptLaunchContext{.character_id = character_id, .parameter = parameter})};
+  if (!created) {
+    return created;
+  }
+  if (m_sfx_runtime != nullptr) {
+    const std::int32_t script_id{m_scx.scripts.at(source_script_index).script_id};
+    const std::size_t activated{m_sfx_runtime->trigger(0, script_id)};
+    if (activated != 0U) {
+      App::Log::debug(
+          LogCategory::Scenario, "SFX trigger (0,{}): activated={}", script_id, activated);
+    }
+  }
+  return created;
 }
 
 void ScenarioRuntime::tick(const float real_delta_seconds) {
   if (m_script_runtime != nullptr) {
     m_script_runtime->tick(real_delta_seconds);
   }
+  if (m_sfx_runtime != nullptr) {
+    m_sfx_runtime->tick(real_delta_seconds);
+  }
+}
+
+Sfx::Runtime* ScenarioRuntime::sfx_runtime() {
+  return m_sfx_runtime.get();
+}
+
+const Sfx::Runtime* ScenarioRuntime::sfx_runtime() const {
+  return m_sfx_runtime.get();
+}
+
+Sfx::Diagnostics ScenarioRuntime::sfx_diagnostics() const {
+  return m_sfx_runtime == nullptr ? Sfx::Diagnostics{} : m_sfx_runtime->diagnostics();
 }
 
 std::expected<void, std::string> ScenarioRuntime::activate_character(const std::int32_t area_id,
@@ -189,6 +266,70 @@ std::span<const Sprite::SpriteResource* const> ScenarioRuntime::sprite_resource_
 
 std::size_t ScenarioRuntime::sprite_resource_count() const {
   return m_sprite_resources.size();
+}
+
+std::expected<std::size_t, std::string> ScenarioRuntime::resolve_authored_sprite_id(
+    const std::uint16_t authored_sprite_id) const {
+  const auto found{m_sprite_id_lookup.find(authored_sprite_id)};
+  if (found == m_sprite_id_lookup.end() || found->second >= m_scx.models.size()) {
+    return std::expected<std::size_t, std::string>{
+        std::unexpect, fmt::format("authored SCX sprite ID {} does not exist", authored_sprite_id)};
+  }
+  return found->second;
+}
+
+std::expected<std::size_t, std::string> ScenarioRuntime::resolve_sfx_sprite_id(
+    const std::uint16_t authored_sprite_id) const {
+  return resolve_authored_sprite_id(authored_sprite_id);
+}
+
+std::expected<Sfx::SpawnedSprite, std::string> ScenarioRuntime::spawn_sfx_sprite(
+    const std::size_t resource_index, const Runtime::Vec3 position) {
+  if (auto loaded{ensure_sprite_resource_loaded(resource_index)}; !loaded) {
+    return std::expected<Sfx::SpawnedSprite, std::string>{std::unexpect, loaded.error()};
+  }
+  const Sprite::SpriteResource* resource{m_sprite_resource_ptrs.at(resource_index)};
+  const std::size_t object_index{resource->default_object_index()};
+  auto handle{spawn_sprite(resource_index, object_index, {position.x, position.y, position.z})};
+  if (!handle) {
+    return std::expected<Sfx::SpawnedSprite, std::string>{std::unexpect, std::move(handle).error()};
+  }
+  return Sfx::SpawnedSprite{
+      .handle = handle.value(), .frame_count = resource->frame_count(object_index)};
+}
+
+Sprite::SpriteInstance* ScenarioRuntime::find_sfx_sprite(const Sprite::SpriteHandle handle) {
+  return m_sprite_pool.find(handle);
+}
+
+void ScenarioRuntime::destroy_sfx_sprite(const Sprite::SpriteHandle handle) {
+  if (auto destroyed{m_sprite_pool.destroy(handle)}; !destroyed) {
+    App::Log::warn(LogCategory::Scenario, "SFX sprite teardown failed: {}", destroyed.error());
+  }
+}
+
+std::optional<Runtime::Transform> ScenarioRuntime::resolve_sfx_character_anchor(
+    const std::int32_t packed_reference_id) const {
+  const std::array<char, 3> requested{
+      static_cast<char>((static_cast<std::uint32_t>(packed_reference_id) >> 16U) & 0xFFU),
+      static_cast<char>((static_cast<std::uint32_t>(packed_reference_id) >> 8U) & 0xFFU),
+      static_cast<char>(static_cast<std::uint32_t>(packed_reference_id) & 0xFFU)};
+  const auto upper = [](const char value) {
+    return value >= 'a' && value <= 'z' ? static_cast<char>(value - ('a' - 'A')) : value;
+  };
+  for (const Character::RuntimeCharacter& character : m_character_runtime.characters()) {
+    if (!character.active || !character.area_present || character.model_resource_name.size() < 3U) {
+      continue;
+    }
+    bool matches{true};
+    for (std::size_t index{0}; index < requested.size(); ++index) {
+      matches = matches && upper(character.model_resource_name.at(index)) == requested.at(index);
+    }
+    if (matches) {
+      return character.transform;
+    }
+  }
+  return std::nullopt;
 }
 
 std::string_view ScenarioRuntime::sprite_resource_name(const std::size_t resource_index) const {
