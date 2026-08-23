@@ -46,8 +46,7 @@ constexpr std::string_view K_STRING_TABLE_DIRECTORY{"IAM"};
 /// OpenNomad-only START MENU presentation policy. The splash already reaches
 /// black before interface 29 opens, so revealing the menu from black continues
 /// the established startup visual language without changing AREA timing.
-constexpr InterfaceFadePresentationHint K_START_MENU_ENTER_FADE{
-    .color = {0.0F, 0.0F, 0.0F},
+constexpr InterfaceFadePresentationHint K_START_MENU_ENTER_FADE{.color = {0.0F, 0.0F, 0.0F},
     .duration_seconds = 0.50F,
     .easing = InterfacePresentationEasing::k_quadratic_in};
 
@@ -189,8 +188,8 @@ std::expected<InterfaceHandle, std::string> InterfaceManager::open(
     auto texture{Texture2D::create(bmp->width,
         bmp->height,
         std::span<const std::uint8_t>{bmp->rgba8},
-        TextureColorEncoding::k_legacy_encoded,
-        TextureFilter::k_linear)};
+        k_legacy_effect_texture_policy.encoding,
+        k_legacy_effect_texture_policy.filter)};
     if (!texture) {
       return std::expected<InterfaceHandle, std::string>{
           std::unexpect, fmt::format("bitmap: {}", texture.error())};
@@ -422,8 +421,7 @@ std::optional<InterfacePresentationOverlay> InterfaceManager::presentation_overl
   return std::nullopt;
 }
 
-void InterfaceManager::update_presentation(
-    InterfaceInstance& instance, const float delta_time) {
+void InterfaceManager::update_presentation(InterfaceInstance& instance, const float delta_time) {
   InterfacePresentationState& state{instance.presentation};
   const float delta{std::max(delta_time, 0.0F)};
 
@@ -514,7 +512,7 @@ void InterfaceManager::render(const int pixel_width, const int pixel_height) {
   if (const auto overlay{presentation_overlay()}; overlay.has_value() && overlay->alpha > 0.0F) {
     m_renderer->render_overlay(overlay->color, overlay->alpha, pixel_width, pixel_height);
     counters.draw_calls += 1U;
-  }  
+  }
   Debug::Metrics::get().set_i2d_counters(counters);
 }
 
@@ -549,7 +547,8 @@ std::expected<void, std::string> InterfaceManager::load_font(const char key) {
 
 void InterfaceManager::select_previous() {
   const InterfaceInstance* instance{focused_instance_mut()};
-  if (instance == nullptr || instance->current_state == nullptr || presentation_input_locked(*instance)) {
+  if (instance == nullptr || instance->current_state == nullptr ||
+      presentation_input_locked(*instance)) {
     return;
   }
   std::vector<I2DTextElement*> selectable{selectable_text_elements(*instance->current_state)};
@@ -570,7 +569,8 @@ void InterfaceManager::select_previous() {
 
 void InterfaceManager::select_next() {
   const InterfaceInstance* instance{focused_instance_mut()};
-  if (instance == nullptr || instance->current_state == nullptr || presentation_input_locked(*instance)) {
+  if (instance == nullptr || instance->current_state == nullptr ||
+      presentation_input_locked(*instance)) {
     return;
   }
   std::vector<I2DTextElement*> selectable{selectable_text_elements(*instance->current_state)};
@@ -615,7 +615,8 @@ void InterfaceManager::confirm() {
 
 void InterfaceManager::cancel() {
   InterfaceInstance* instance{focused_instance_mut()};
-  if (instance == nullptr || instance->current_state == nullptr || presentation_input_locked(*instance)) {
+  if (instance == nullptr || instance->current_state == nullptr ||
+      presentation_input_locked(*instance)) {
     return;
   }
   if (instance->current_state->parent == nullptr) {
@@ -782,11 +783,9 @@ void initialize_start_menu(InterfaceManager& manager, InterfaceInstance& instanc
   I2DGroup quit_title_group;
   quit_title_group.runtime_flags = k_start_menu_text_group_flags;
   quit_title_group.elements.push_back(
-      I2DElement{.data = I2DTextElement{
-                     .string_index = k_start_menu_quit_title.string_index,
+      I2DElement{.data = I2DTextElement{.string_index = k_start_menu_quit_title.string_index,
                      .font_key = k_start_menu_quit_title.font_key,
-                     .bounds = I2DRect{
-                         .x = k_start_menu_quit_title.x,
+                     .bounds = I2DRect{.x = k_start_menu_quit_title.x,
                          .y = k_start_menu_quit_title.y,
                          .width = k_start_menu_quit_title.width,
                          .height = k_start_menu_quit_title.height},
@@ -809,19 +808,16 @@ void initialize_start_menu(InterfaceManager& manager, InterfaceInstance& instanc
   quit_choice_group.render_selected_only = true;
   for (std::size_t index{0}; index < k_start_menu_quit_choices.size(); ++index) {
     const RecoveredTextEntry& entry{k_start_menu_quit_choices.at(index)};
-    quit_choice_group.elements.push_back(
-        I2DElement{.data = I2DTextElement{.string_index = entry.string_index,
-                       .font_key = entry.font_key,
-                       .bounds = I2DRect{
-                           .x = entry.x,
-                           .y = entry.y,
-                           .width = entry.width,
-                           .height = entry.height},
-                       .red = 255,
-                       .green = 255,
-                       .blue = 255,
-                       .target_state = quit_targets.at(index)},
-            .presentation = I2DPresentationHints{}});
+    quit_choice_group.elements.push_back(I2DElement{
+        .data = I2DTextElement{.string_index = entry.string_index,
+            .font_key = entry.font_key,
+            .bounds =
+                I2DRect{.x = entry.x, .y = entry.y, .width = entry.width, .height = entry.height},
+            .red = 255,
+            .green = 255,
+            .blue = 255,
+            .target_state = quit_targets.at(index)},
+        .presentation = I2DPresentationHints{}});
   }
   quit->groups.push_back(std::move(quit_choice_group));
   quit->selected_element = k_start_menu_quit_default_choice;

@@ -117,8 +117,9 @@ Reusable OpenGL wrappers live directly in `src/core/Core/`:
 - `UniformBuffer` owns std140 uniform-block storage.
 - `Framebuffer` owns offscreen colour targets with explicit storage/color
   semantics and optional depth/stencil attachments.
-- `WorldColorPipeline` owns the legacy encoded `GL_RGBA16` target and modern
-  linear `GL_RGBA16F` target used by normal gameplay presentation.
+- `WorldColorPipeline` owns two scene-linear HDR `GL_RGBA16F` ping-pong targets,
+  one transient encoded `GL_RGBA16` operator accumulator, and their shared
+  depth/stencil attachment.
 - `Camera` stores the OpenGL-facing view/projection state; `WorldCameraSystem` derives it from Runtime camera intent.
 - `Renderer` initializes shared GL state and clears the drawable pixel viewport each frame.
 
@@ -127,8 +128,8 @@ These wrappers are move-only RAII types. They must be created after the OpenGL c
 
 The gameplay color-domain flow is documented in
 [Rendering color pipeline](RenderingColorPipeline.md). `GL_FRAMEBUFFER_SRGB`
-is not a global renderer policy; color transfers happen only in explicit
-fullscreen passes.
+is not a global renderer policy; modern textures decode while sampling and the
+only full-frame transfer is the explicit clamped SDR display pass.
 
 ## High-DPI and debug UI
 

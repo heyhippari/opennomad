@@ -20,12 +20,38 @@ struct FramebufferDescription {
   DepthStencilFormat depth_stencil{DepthStencilFormat::k_none};
 };
 
+class DepthStencilBuffer {
+ public:
+  static std::expected<DepthStencilBuffer, std::string> create(
+      int width, int height, DepthStencilFormat format);
+  DepthStencilBuffer(DepthStencilBuffer&& other) noexcept;
+  DepthStencilBuffer& operator=(DepthStencilBuffer&& other) noexcept;
+  ~DepthStencilBuffer();
+  DepthStencilBuffer(const DepthStencilBuffer&) = delete;
+  DepthStencilBuffer& operator=(const DepthStencilBuffer&) = delete;
+  [[nodiscard]] GLuint id() const;
+  [[nodiscard]] int width() const;
+  [[nodiscard]] int height() const;
+  [[nodiscard]] DepthStencilFormat format() const;
+
+ private:
+  DepthStencilBuffer(GLuint id, int width, int height, DepthStencilFormat format);
+  GLuint m_id{0};
+  int m_width{0};
+  int m_height{0};
+  DepthStencilFormat m_format{DepthStencilFormat::k_none};
+};
+
 /// RAII offscreen framebuffer with explicit color-domain/storage and optional
 /// depth/stencil attachment policies.
 class Framebuffer {
  public:
   static std::expected<Framebuffer, std::string> create(
       int width, int height, FramebufferDescription description);
+  static std::expected<Framebuffer, std::string> create_with_shared_depth(int width,
+      int height,
+      FramebufferDescription description,
+      const DepthStencilBuffer& depth_stencil);
 
   Framebuffer(Framebuffer&& other) noexcept;
   Framebuffer& operator=(Framebuffer&& other) noexcept;
@@ -38,9 +64,6 @@ class Framebuffer {
   void bind() const;
   /// Restores the default (window) framebuffer.
   static void unbind();
-  /// Copies depth and stencil into a same-sized compatible target.
-  void blit_depth_stencil_to(const Framebuffer& destination) const;
-
   /// The colour attachment, bound like any other texture.
   [[nodiscard]] const Texture2D& color_texture() const;
   [[nodiscard]] int width() const;

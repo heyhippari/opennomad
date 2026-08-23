@@ -76,6 +76,14 @@ void DebugUI::show_world_inspector() {
   if (const auto world{view->world_render_debug_state()}; world.has_value()) {
     ImGui::SeparatorText("World / Renderer");
     ImGui::Text("Renderer: %s", world->renderer_ready ? "ready" : "not ready");
+    ImGui::Text("Working space: linear sRGB / Rec.709 primaries (HDR)");
+    ImGui::Text("Scene: GL_RGBA16F %s", world->current_scene_a ? "A" : "B");
+    ImGui::Text("Legacy accumulator: GL_RGBA16 encoded operator state");
+    ImGui::Text("Legacy stages / sources / composites: %zu / %zu / %zu",
+        world->legacy_stages,
+        world->legacy_source_draws,
+        world->legacy_composites);
+    ImGui::Text("Display: clamped SDR + exact sRGB OETF");
     ImGui::Text("Groups: %zu", world->group_count);
     ImGui::Text("Materials: %zu", world->material_count);
     ImGui::Text("Bounds center: %.3f, %.3f, %.3f",

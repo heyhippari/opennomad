@@ -1,12 +1,11 @@
 #include "Core/Interface/I2DBumpBackground.hpp"
 
 // NOLINTBEGIN(misc-include-cleaner)
-#include <glad/glad.h>
-
 #include <SDL3/SDL_error.h>
 #include <SDL3/SDL_iostream.h>
 #include <SDL3/SDL_stdinc.h>
 #include <fmt/format.h>
+#include <glad/glad.h>
 
 #include <algorithm>
 #include <array>
@@ -25,9 +24,9 @@
 #include <vector>
 
 #include "Core/Debug/Instrumentor.hpp"
+#include "Core/IntegerTexture.hpp"
 #include "Core/Interface/I2DBumpEffect.hpp"
 #include "Core/Interface/I2DPresentation.hpp"
-#include "Core/IntegerTexture.hpp"
 #include "Core/Log.hpp"
 #include "Core/LogCategory.hpp"
 #include "Core/Omikron/IndexedBmp8.hpp"
@@ -241,8 +240,8 @@ void main() {
 
 /// Reads a whole file through the case-insensitive game-data resolver.
 std::expected<std::vector<std::byte>, std::string> read_file(const std::string& relative_path) {
-  const std::filesystem::path root_relative{Resources::game_data_path(
-      std::filesystem::path{relative_path})};
+  const std::filesystem::path root_relative{
+      Resources::game_data_path(std::filesystem::path{relative_path})};
   const std::filesystem::path resolved{Resources::resolve_case_insensitive(root_relative)};
 
   std::size_t size{0};
@@ -274,8 +273,11 @@ std::expected<Texture2D, std::string> create_palette_texture() {
     pixels.at((i * 4U) + 2U) = palette.at(i).at(2);
     pixels.at((i * 4U) + 3U) = 255U;
   }
-  return Texture2D::create(
-      64, 1, std::span<const std::uint8_t>{pixels}, TextureColorEncoding::k_legacy_encoded);
+  return Texture2D::create(64,
+      1,
+      std::span<const std::uint8_t>{pixels},
+      k_legacy_effect_texture_policy.encoding,
+      k_legacy_effect_texture_policy.filter);
 }
 
 }  // namespace
@@ -320,21 +322,17 @@ void I2DBumpBackground::RenderTarget::unbind() {
   glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
-std::expected<I2DBumpBackground::RenderTarget, std::string>
-I2DBumpBackground::create_render_target(const int width,
-    const int height,
-    const IntegerFormat format) {
+std::expected<I2DBumpBackground::RenderTarget, std::string> I2DBumpBackground::create_render_target(
+    const int width, const int height, const IntegerFormat format) {
   auto texture{IntegerTexture::create(width, height, format)};
   if (!texture) {
-    return std::expected<RenderTarget, std::string>{std::unexpect,
-        std::move(texture).error()};
+    return std::expected<RenderTarget, std::string>{std::unexpect, std::move(texture).error()};
   }
 
   GLuint framebuffer{0};
   glGenFramebuffers(1, &framebuffer);
   glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
-  glFramebufferTexture2D(
-      GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture->id(), 0);
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture->id(), 0);
   glDrawBuffer(GL_COLOR_ATTACHMENT0);
 
   const GLenum status{glCheckFramebufferStatus(GL_FRAMEBUFFER)};
@@ -345,10 +343,7 @@ I2DBumpBackground::create_render_target(const int width,
         std::unexpect, fmt::format("bump render target incomplete: status 0x{:x}", status)};
   }
 
-  return RenderTarget{IntegerTexture{std::move(texture).value()},
-      framebuffer,
-      width,
-      height};
+  return RenderTarget{IntegerTexture{std::move(texture).value()}, framebuffer, width, height};
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -381,36 +376,34 @@ std::expected<std::unique_ptr<I2DBumpBackground>, std::string> I2DBumpBackground
   const int width{bmp->width};
   const int height{bmp->height};
   if (width != 256 || height != 256) {
-    return std::expected<std::unique_ptr<I2DBumpBackground>, std::string>{
-        std::unexpect, fmt::format("I2DBumpBackground: expected 256x256, got {}x{}", width, height)};
+    return std::expected<std::unique_ptr<I2DBumpBackground>, std::string>{std::unexpect,
+        fmt::format("I2DBumpBackground: expected 256x256, got {}x{}", width, height)};
   }
 
   // The constructor is private; only the factory may build one.
   // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
-  auto background{std::unique_ptr<I2DBumpBackground>{
-      new I2DBumpBackground{std::move(bmp->indices)}}};
+  auto background{
+      std::unique_ptr<I2DBumpBackground>{new I2DBumpBackground{std::move(bmp->indices)}}};
 
   background->m_vertex_array = std::make_unique<VertexArray>();
 
   auto gradient_shader{Shader::create(K_FULLSCREEN_VERTEX_SOURCE, K_GRADIENT_FRAGMENT_SOURCE)};
   if (!gradient_shader) {
-    return std::expected<std::unique_ptr<I2DBumpBackground>, std::string>{
-        std::unexpect, fmt::format("I2DBumpBackground gradient shader: {}", gradient_shader.error())};
+    return std::expected<std::unique_ptr<I2DBumpBackground>, std::string>{std::unexpect,
+        fmt::format("I2DBumpBackground gradient shader: {}", gradient_shader.error())};
   }
   background->m_gradient_shader = std::make_unique<Shader>(std::move(gradient_shader).value());
 
   auto row_warp_shader{Shader::create(K_FULLSCREEN_VERTEX_SOURCE, K_ROW_WARP_FRAGMENT_SOURCE)};
   if (!row_warp_shader) {
-    return std::expected<std::unique_ptr<I2DBumpBackground>, std::string>{
-        std::unexpect,
+    return std::expected<std::unique_ptr<I2DBumpBackground>, std::string>{std::unexpect,
         fmt::format("I2DBumpBackground row-warp shader: {}", row_warp_shader.error())};
   }
   background->m_row_warp_shader = std::make_unique<Shader>(std::move(row_warp_shader).value());
 
   auto col_warp_shader{Shader::create(K_FULLSCREEN_VERTEX_SOURCE, K_COLUMN_WARP_FRAGMENT_SOURCE)};
   if (!col_warp_shader) {
-    return std::expected<std::unique_ptr<I2DBumpBackground>, std::string>{
-        std::unexpect,
+    return std::expected<std::unique_ptr<I2DBumpBackground>, std::string>{std::unexpect,
         fmt::format("I2DBumpBackground column-warp shader: {}", col_warp_shader.error())};
   }
   background->m_col_warp_shader = std::make_unique<Shader>(std::move(col_warp_shader).value());
@@ -418,8 +411,7 @@ std::expected<std::unique_ptr<I2DBumpBackground>, std::string> I2DBumpBackground
   auto background_shader{Shader::create(K_FULLSCREEN_VERTEX_SOURCE, K_BACKGROUND_FRAGMENT_SOURCE)};
   if (!background_shader) {
     return std::expected<std::unique_ptr<I2DBumpBackground>, std::string>{
-        std::unexpect,
-        fmt::format("I2DBumpBackground shader: {}", background_shader.error())};
+        std::unexpect, fmt::format("I2DBumpBackground shader: {}", background_shader.error())};
   }
   background->m_background_shader = std::make_unique<Shader>(std::move(background_shader).value());
 
@@ -457,20 +449,18 @@ std::expected<void, std::string> I2DBumpBackground::build_static_resources() {
   // Runtime uses CLOUD.BMP's raw indexed bytes as height values. Upload them
   // as an integer R8UI texture — no sRGB, no normalized colour, no palette
   // RGB conversion — so the shader sees exact 0..255 heights.
-  auto height{IntegerTexture::create_with_data(256,
-      256,
-      IntegerFormat::k_r8ui,
-      std::span<const std::uint8_t>{m_height_indices})};
+  auto height{IntegerTexture::create_with_data(
+      256, 256, IntegerFormat::k_r8ui, std::span<const std::uint8_t>{m_height_indices})};
   if (!height) {
-    return std::expected<void, std::string>{std::unexpect,
-        fmt::format("height texture: {}", height.error())};
+    return std::expected<void, std::string>{
+        std::unexpect, fmt::format("height texture: {}", height.error())};
   }
   m_height = std::move(height).value();
 
   auto gradient{create_render_target(256, 256, IntegerFormat::k_rg8i)};
   if (!gradient) {
-    return std::expected<void, std::string>{std::unexpect,
-        fmt::format("gradient target: {}", gradient.error())};
+    return std::expected<void, std::string>{
+        std::unexpect, fmt::format("gradient target: {}", gradient.error())};
   }
   m_gradient.emplace(std::move(gradient).value());
 
@@ -617,20 +607,18 @@ void I2DBumpBackground::render(const I2DPresentationTransform& transform) {
   // Stepped mode pins alpha to 0 so the effect advances only at authentic
   // 30 Hz boundaries.
   const float alpha{interpolated() ? m_timeline.alpha : 0.0F};
-  const float light_x{std::lerp(static_cast<float>(m_current.light_x),
-      static_cast<float>(m_next.light_x),
-      alpha)};
-  const float light_y{std::lerp(static_cast<float>(m_current.light_y),
-      static_cast<float>(m_next.light_y),
-      alpha)};
+  const float light_x{
+      std::lerp(static_cast<float>(m_current.light_x), static_cast<float>(m_next.light_x), alpha)};
+  const float light_y{
+      std::lerp(static_cast<float>(m_current.light_y), static_cast<float>(m_next.light_y), alpha)};
 
   m_background_shader->bind();
   m_background_shader->set_uniform_int("u_gradient", 0);
   m_background_shader->set_uniform_int("u_palette", 1);
   m_background_shader->set_uniform_int("u_row_warp", 2);
   m_background_shader->set_uniform_int("u_col_warp", 3);
-  const std::array<GLfloat, 2> viewport_size{static_cast<GLfloat>(width),
-      static_cast<GLfloat>(height)};
+  const std::array<GLfloat, 2> viewport_size{
+      static_cast<GLfloat>(width), static_cast<GLfloat>(height)};
   m_background_shader->set_uniform_vec2(
       "u_viewport_size", std::span<const GLfloat, 2>{viewport_size.data(), 2});
   m_background_shader->set_uniform_float("u_logical_left", transform.logical_left);
@@ -681,21 +669,19 @@ std::size_t I2DBumpBackground::debug_compare_gradient() const {
   std::size_t mismatches{0};
   for (int cell_y{0}; cell_y < 256; ++cell_y) {
     for (int cell_x{0}; cell_x < 256; ++cell_x) {
-      const std::size_t index{((static_cast<std::size_t>(cell_y) * 256U) +
-                               static_cast<std::size_t>(cell_x)) *
-                              2U};
+      const std::size_t index{
+          ((static_cast<std::size_t>(cell_y) * 256U) + static_cast<std::size_t>(cell_x)) * 2U};
       if (gpu.at(index) != reference->gradient_x(static_cast<std::size_t>(cell_x),
-                                    static_cast<std::size_t>(cell_y)) ||
+                               static_cast<std::size_t>(cell_y)) ||
           gpu.at(index + 1U) != reference->gradient_y(static_cast<std::size_t>(cell_x),
-                                       static_cast<std::size_t>(cell_y))) {
+                                    static_cast<std::size_t>(cell_y))) {
         ++mismatches;
       }
     }
   }
 
-  App::Log::debug(LogCategory::I2D,
-      "debug gradient compare: {} mismatches of 65536 cells",
-      mismatches);
+  App::Log::debug(
+      LogCategory::I2D, "debug gradient compare: {} mismatches of 65536 cells", mismatches);
   return mismatches;
 }
 

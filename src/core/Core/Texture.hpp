@@ -5,6 +5,7 @@
 #include <array>
 #include <cstdint>
 #include <expected>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -37,24 +38,33 @@ struct TextureUploadPolicy {
   TextureColorEncoding encoding{TextureColorEncoding::k_linear};
   TextureFilter filter{TextureFilter::k_nearest};
 
-  friend constexpr bool operator==(const TextureUploadPolicy&, const TextureUploadPolicy&) =
-      default;
+  friend constexpr bool operator==(
+      const TextureUploadPolicy&, const TextureUploadPolicy&) = default;
 };
 
-inline constexpr TextureUploadPolicy k_retail_texture_policy{
-    .encoding = TextureColorEncoding::k_legacy_encoded,
-    .filter = TextureFilter::k_linear};
+inline constexpr TextureUploadPolicy k_modern_color_texture_policy{
+    .encoding = TextureColorEncoding::k_srgb, .filter = TextureFilter::k_linear};
+
+inline constexpr TextureUploadPolicy k_legacy_effect_texture_policy{
+    .encoding = TextureColorEncoding::k_legacy_encoded, .filter = TextureFilter::k_linear};
+
+inline constexpr TextureUploadPolicy k_linear_data_texture_policy{
+    .encoding = TextureColorEncoding::k_linear, .filter = TextureFilter::k_linear};
+
+enum class GameColorTextureUsage : std::uint8_t {
+  k_modern = 1U,
+  k_legacy_effect = 2U,
+  k_both = 3U,
+};
 
 /// GL internal format for an RGBA8 upload. This is context-free so color
 /// policy can be regression-tested without creating an OpenGL context.
-[[nodiscard]] constexpr GLint texture_upload_internal_format(
-    const TextureColorEncoding encoding) {
+[[nodiscard]] constexpr GLint texture_upload_internal_format(const TextureColorEncoding encoding) {
   return encoding == TextureColorEncoding::k_srgb ? GL_SRGB8_ALPHA8 : GL_RGBA8;
 }
 
 /// GL internal format for render-target storage.
-[[nodiscard]] constexpr GLint texture_storage_internal_format(
-    const TextureStorageFormat format) {
+[[nodiscard]] constexpr GLint texture_storage_internal_format(const TextureStorageFormat format) {
   switch (format) {
     case TextureStorageFormat::k_rgba16_unorm:
       return GL_RGBA16;
@@ -79,10 +89,8 @@ class Texture2D {
 
   /// Allocates uninitialised render-target storage with linear filtering and
   /// clamp-to-edge wrapping.
-  static std::expected<Texture2D, std::string> create_render_target(int width,
-      int height,
-      TextureColorEncoding encoding,
-      TextureStorageFormat storage_format);
+  static std::expected<Texture2D, std::string> create_render_target(
+      int width, int height, TextureColorEncoding encoding, TextureStorageFormat storage_format);
 
   Texture2D(Texture2D&& other) noexcept;
   Texture2D& operator=(Texture2D&& other) noexcept;
@@ -111,8 +119,7 @@ class Texture2D {
   ///
   /// Colors are given in sRGB space in [0, 1]. Returns an error for
   /// non-positive dimensions.
-  static std::expected<std::vector<std::uint8_t>, std::string> generate_checkerboard(
-      int width,
+  static std::expected<std::vector<std::uint8_t>, std::string> generate_checkerboard(int width,
       int height,
       int squares_per_side,
       std::array<float, 3> color_a,
@@ -133,6 +140,29 @@ class Texture2D {
   TextureColorEncoding m_color_encoding{TextureColorEncoding::k_linear};
   TextureFilter m_filter{TextureFilter::k_nearest};
   TextureStorageFormat m_storage_format{TextureStorageFormat::k_rgba8_unorm};
+};
+
+/// One authored RGBA image with only the GPU color representations required
+/// by its draw paths. Both representations are built from the same decoded
+/// bytes, never by converting one GPU texture into the other.
+class GameColorTexture {
+ public:
+  static std::expected<GameColorTexture, std::string> create(
+      int width, int height, std::span<const std::uint8_t> rgba8, GameColorTextureUsage usage);
+
+  GameColorTexture(GameColorTexture&&) noexcept = default;
+  GameColorTexture& operator=(GameColorTexture&&) noexcept = default;
+  GameColorTexture(const GameColorTexture&) = delete;
+  GameColorTexture& operator=(const GameColorTexture&) = delete;
+
+  [[nodiscard]] const Texture2D* modern() const;
+  [[nodiscard]] const Texture2D* legacy_effect() const;
+
+ private:
+  GameColorTexture(std::optional<Texture2D> modern, std::optional<Texture2D> legacy_effect);
+
+  std::optional<Texture2D> m_modern;
+  std::optional<Texture2D> m_legacy_effect;
 };
 
 }  // namespace App

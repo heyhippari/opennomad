@@ -130,7 +130,20 @@ class SpriteRenderer {
   void draw_pass(SpritePass pass,
       const glm::mat4& view,
       const glm::mat4& projection,
-      const std::vector<std::vector<Texture2D>>& textures);
+      const std::vector<std::vector<GameColorTexture>>& textures);
+
+  /// Draws modes 0, 1 and 8 into the current scene-linear target.
+  void draw_modern_opaque(const glm::mat4& view,
+      const glm::mat4& projection,
+      const std::vector<std::vector<GameColorTexture>>& textures);
+  /// Ascending Runtime bucket keys present in the legacy portion of the queue.
+  [[nodiscard]] std::vector<std::uint16_t> legacy_buckets() const;
+  [[nodiscard]] std::size_t legacy_bucket_draw_count(std::uint16_t bucket) const;
+  /// Emits one bucket as encoded operator sources. The compositor owns blend state.
+  void draw_legacy_bucket(std::uint16_t bucket,
+      const glm::mat4& view,
+      const glm::mat4& projection,
+      const std::vector<std::vector<GameColorTexture>>& textures);
 
   /// Renderer-wide grayscale (Rec.601 luminance) for the sprite pass.
   void set_grayscale(bool enabled);
@@ -149,11 +162,14 @@ class SpriteRenderer {
   void draw_commands(SpritePass pass,
       const glm::mat4& view,
       const glm::mat4& projection,
-      const std::vector<std::vector<Texture2D>>& textures);
+      const std::vector<std::vector<GameColorTexture>>& textures,
+      std::uint16_t only_bucket,
+      bool compositor_owned_blend);
   /// Applies the blend function of one command, caching the current one.
   void apply_blend_function(const SpriteRenderState& state);
 
-  std::unique_ptr<Shader> m_shader;
+  std::unique_ptr<Shader> m_modern_shader;
+  std::unique_ptr<Shader> m_legacy_shader;
   std::unique_ptr<VertexArray> m_vertex_array;
   std::unique_ptr<VertexBuffer> m_vertex_buffer;
 

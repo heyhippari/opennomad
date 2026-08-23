@@ -45,7 +45,7 @@ void main() {
 }
 )glsl"};
 
-constexpr std::string_view K_SPRITE_FRAGMENT_SHADER_SOURCE{R"glsl(
+constexpr std::string_view K_LEGACY_SPRITE_FRAGMENT_SHADER_SOURCE{R"glsl(
 #version 410 core
 in vec2 v_uv;
 in vec4 v_tint;
@@ -56,6 +56,7 @@ uniform float u_fog_enabled; // 1 = linear fog between u_fog_start/end.
 uniform float u_fog_start;
 uniform float u_fog_end;
 uniform vec4 u_fog_color;
+uniform float u_premultiply_alpha;
 out vec4 fragment_color;
 void main() {
   vec4 texel = texture(u_texture0, v_uv) * v_tint;
@@ -70,6 +71,45 @@ void main() {
   if (u_fog_enabled > 0.5) {
     // Provisional linear fog on window-space depth; the exact Runtime
     // distance-fade equation is not reconstructed yet.
+    float depth = gl_FragCoord.z / gl_FragCoord.w;
+    float fog_factor = clamp(
+        (u_fog_end - depth) / max(u_fog_end - u_fog_start, 0.001), 0.0, 1.0);
+    color = mix(u_fog_color.rgb, color, fog_factor);
+  }
+  fragment_color = vec4(mix(color, color * texel.a, u_premultiply_alpha), texel.a);
+}
+)glsl"};
+
+constexpr std::string_view K_MODERN_SPRITE_FRAGMENT_SHADER_SOURCE{R"glsl(
+#version 410 core
+in vec2 v_uv;
+in vec4 v_tint;
+uniform sampler2D u_texture0;
+uniform float u_cutout;
+uniform float u_grayscale;
+uniform float u_fog_enabled;
+uniform float u_fog_start;
+uniform float u_fog_end;
+uniform vec4 u_fog_color;
+uniform float u_premultiply_alpha;
+out vec4 fragment_color;
+float srgb_to_linear(float encoded) {
+  return encoded <= 0.04045 ? encoded / 12.92
+                            : pow((encoded + 0.055) / 1.055, 2.4);
+}
+void main() {
+  vec4 sampled = texture(u_texture0, v_uv);
+  vec3 tint = vec3(srgb_to_linear(v_tint.r), srgb_to_linear(v_tint.g),
+                   srgb_to_linear(v_tint.b));
+  vec4 texel = vec4(sampled.rgb * tint, sampled.a * v_tint.a);
+  if (u_cutout > 0.5 && texel.a < 0.5) {
+    discard;
+  }
+  vec3 color = texel.rgb;
+  if (u_grayscale > 0.5) {
+    color = vec3(dot(color, vec3(0.299, 0.587, 0.114)));
+  }
+  if (u_fog_enabled > 0.5) {
     float depth = gl_FragCoord.z / gl_FragCoord.w;
     float fog_factor = clamp(
         (u_fog_end - depth) / max(u_fog_end - u_fog_start, 0.001), 0.0, 1.0);
@@ -163,11 +203,18 @@ const char* skip_reason_name(const SpriteSkipReason reason) {
 std::expected<void, std::string> SpriteRenderer::initialize() {
   APP_PROFILE_FUNCTION();
 
-  auto shader{Shader::create(K_SPRITE_VERTEX_SHADER_SOURCE, K_SPRITE_FRAGMENT_SHADER_SOURCE)};
-  if (!shader) {
-    return std::expected<void, std::string>{std::unexpect, std::move(shader).error()};
+  auto modern_shader{
+      Shader::create(K_SPRITE_VERTEX_SHADER_SOURCE, K_MODERN_SPRITE_FRAGMENT_SHADER_SOURCE)};
+  if (!modern_shader) {
+    return std::expected<void, std::string>{std::unexpect, std::move(modern_shader).error()};
   }
-  m_shader = std::make_unique<Shader>(std::move(shader).value());
+  auto legacy_shader{
+      Shader::create(K_SPRITE_VERTEX_SHADER_SOURCE, K_LEGACY_SPRITE_FRAGMENT_SHADER_SOURCE)};
+  if (!legacy_shader) {
+    return std::expected<void, std::string>{std::unexpect, std::move(legacy_shader).error()};
+  }
+  m_modern_shader = std::make_unique<Shader>(std::move(modern_shader).value());
+  m_legacy_shader = std::make_unique<Shader>(std::move(legacy_shader).value());
   m_vertex_array = std::make_unique<VertexArray>();
 
   const std::vector<std::byte> initial{K_INITIAL_VERTEX_CAPACITY * sizeof(SpriteVertex)};
@@ -205,7 +252,8 @@ std::expected<void, std::string> SpriteRenderer::initialize() {
 }
 
 bool SpriteRenderer::valid() const {
-  return m_shader != nullptr && m_shader->program_id() != 0U;
+  return m_modern_shader != nullptr && m_legacy_shader != nullptr &&
+         m_modern_shader->program_id() != 0U && m_legacy_shader->program_id() != 0U;
 }
 
 void SpriteRenderer::build_queue(const SpritePool& pool,
@@ -301,10 +349,7 @@ void SpriteRenderer::build_queue(const SpritePool& pool,
 
     const std::uint32_t first_vertex{static_cast<std::uint32_t>(m_vertices.size())};
     const std::array<float, 4> tint{
-        instance->tint.at(0),
-        instance->tint.at(1),
-        instance->tint.at(2),
-        instance->diffuse_alpha};
+        instance->tint.at(0), instance->tint.at(1), instance->tint.at(2), instance->diffuse_alpha};
     const auto emit = [&](const glm::vec3& world, const std::array<float, 2>& uv) {
       SpriteVertex vertex{.uv = uv, .tint = tint};
       std::copy_n(glm::value_ptr(world), 3, vertex.position.begin());
@@ -350,7 +395,7 @@ void SpriteRenderer::build_queue(const SpritePool& pool,
         if (lhs_bucket != rhs_bucket) {
           return lhs_bucket < rhs_bucket;
         }
-        return lhs.pipeline_key < rhs.pipeline_key;
+        return false;  // Stable sort preserves authored list order within a bucket.
       });
 
   m_stats.draw_calls = m_commands.size();
@@ -369,31 +414,72 @@ void SpriteRenderer::build_queue(const SpritePool& pool,
 void SpriteRenderer::draw_pass(const SpritePass pass,
     const glm::mat4& view,
     const glm::mat4& projection,
-    const std::vector<std::vector<Texture2D>>& textures) {
+    const std::vector<std::vector<GameColorTexture>>& textures) {
   if (!valid() || m_commands.empty()) {
     return;
   }
   APP_PROFILE_SCOPE(pass == SpritePass::k_opaque ? "SpriteDrawOpaque" : "SpriteDrawTranslucent");
-  draw_commands(pass, view, projection, textures);
+  draw_commands(pass, view, projection, textures, 0U, false);
+}
+
+void SpriteRenderer::draw_modern_opaque(const glm::mat4& view,
+    const glm::mat4& projection,
+    const std::vector<std::vector<GameColorTexture>>& textures) {
+  draw_pass(SpritePass::k_opaque, view, projection, textures);
+}
+
+std::vector<std::uint16_t> SpriteRenderer::legacy_buckets() const {
+  std::vector<std::uint16_t> result;
+  for (const SpriteDrawCommand& command : m_commands) {
+    if (!render_state(command.pipeline_key.render_mode).blend_enabled) {
+      continue;
+    }
+    const std::uint16_t bucket{bucket_bits(command.pipeline_key.render_mode)};
+    if (!std::ranges::contains(result, bucket)) {
+      result.push_back(bucket);
+    }
+  }
+  return result;
+}
+
+std::size_t SpriteRenderer::legacy_bucket_draw_count(const std::uint16_t bucket) const {
+  return static_cast<std::size_t>(
+      std::ranges::count_if(m_commands, [bucket](const SpriteDrawCommand& command) {
+        return render_state(command.pipeline_key.render_mode).blend_enabled &&
+               bucket_bits(command.pipeline_key.render_mode) == bucket;
+      }));
+}
+
+void SpriteRenderer::draw_legacy_bucket(const std::uint16_t bucket,
+    const glm::mat4& view,
+    const glm::mat4& projection,
+    const std::vector<std::vector<GameColorTexture>>& textures) {
+  if (!valid() || legacy_bucket_draw_count(bucket) == 0U) {
+    return;
+  }
+  draw_commands(SpritePass::k_translucent, view, projection, textures, bucket, true);
 }
 
 void SpriteRenderer::draw_commands(const SpritePass pass,
     const glm::mat4& view,
     const glm::mat4& projection,
-    const std::vector<std::vector<Texture2D>>& textures) {
+    const std::vector<std::vector<GameColorTexture>>& textures,
+    const std::uint16_t only_bucket,
+    const bool compositor_owned_blend) {
   upload_vertices();
 
   m_vertex_array->bind();
-  m_shader->bind();
+  const Shader& shader{pass == SpritePass::k_opaque ? *m_modern_shader : *m_legacy_shader};
+  shader.bind();
 
   const glm::mat4 mvp{projection * view};
-  m_shader->set_uniform_mat4("u_mvp", std::span<const GLfloat, 16>{glm::value_ptr(mvp), 16});
-  m_shader->set_uniform_int("u_texture0", 0);
-  m_shader->set_uniform_float("u_grayscale", m_grayscale ? 1.0F : 0.0F);
+  shader.set_uniform_mat4("u_mvp", std::span<const GLfloat, 16>{glm::value_ptr(mvp), 16});
+  shader.set_uniform_int("u_texture0", 0);
+  shader.set_uniform_float("u_grayscale", m_grayscale ? 1.0F : 0.0F);
   const bool fog_enabled{m_fog_end > m_fog_start};
-  m_shader->set_uniform_float("u_fog_start", m_fog_start);
-  m_shader->set_uniform_float("u_fog_end", m_fog_end);
-  m_shader->set_uniform_vec4("u_fog_color", std::span<const GLfloat, 4>{m_fog_color.data(), 4});
+  shader.set_uniform_float("u_fog_start", m_fog_start);
+  shader.set_uniform_float("u_fog_end", m_fog_end);
+  shader.set_uniform_vec4("u_fog_color", std::span<const GLfloat, 4>{m_fog_color.data(), 4});
 
   // Billboards face the camera exactly; culling only risks losing quads to
   // float error, so it is disabled for the sprite pass.
@@ -408,20 +494,33 @@ void SpriteRenderer::draw_commands(const SpritePass pass,
     if (translucent != (pass == SpritePass::k_translucent)) {
       continue;
     }
+    if (compositor_owned_blend && bucket_bits(command.pipeline_key.render_mode) != only_bucket) {
+      continue;
+    }
 
-    apply_blend_function(state);
-    m_shader->set_uniform_float("u_cutout", state.cutout ? 1.0F : 0.0F);
-    m_shader->set_uniform_float("u_fog_enabled", (fog_enabled && state.fogged) ? 1.0F : 0.0F);
+    if (!compositor_owned_blend) {
+      apply_blend_function(state);
+    }
+    shader.set_uniform_float("u_cutout", state.cutout ? 1.0F : 0.0F);
+    shader.set_uniform_float("u_fog_enabled", (fog_enabled && state.fogged) ? 1.0F : 0.0F);
+    const bool alpha_mode{command.pipeline_key.render_mode == SpriteRenderMode::k_alpha ||
+                          command.pipeline_key.render_mode == SpriteRenderMode::k_alpha_cutout};
+    if (pass == SpritePass::k_translucent) {
+      shader.set_uniform_float(
+          "u_premultiply_alpha", (compositor_owned_blend && alpha_mode) ? 1.0F : 0.0F);
+    }
 
     GLuint texture_id{0};
     if (command.resource_index < textures.size() &&
         static_cast<std::size_t>(command.material_index) <
             textures.at(command.resource_index).size()) {
-      const Texture2D& texture{
+      const GameColorTexture& color_texture{
           textures.at(command.resource_index).at(static_cast<std::size_t>(command.material_index))};
-      texture_id = texture.id();
+      const Texture2D* texture{
+          pass == SpritePass::k_opaque ? color_texture.modern() : color_texture.legacy_effect()};
+      texture_id = texture != nullptr ? texture->id() : 0U;
       if (texture_id != bound_texture_id) {
-        texture.bind(0);
+        texture->bind(0);
         bound_texture_id = texture_id;
       }
     }

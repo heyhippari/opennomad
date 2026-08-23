@@ -1,5 +1,6 @@
 #include "Texture.hpp"
 
+#include <fmt/format.h>
 #include <glad/glad.h>
 
 #include <algorithm>
@@ -9,16 +10,61 @@
 #include <cstdint>
 #include <expected>
 #include <mdspan>
+#include <optional>
 #include <span>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <fmt/format.h>
-
 #include "Core/Debug/Instrumentor.hpp"
 
 namespace App {
+
+GameColorTexture::GameColorTexture(
+    std::optional<Texture2D> modern, std::optional<Texture2D> legacy_effect)
+    : m_modern(std::move(modern)),
+      m_legacy_effect(std::move(legacy_effect)) {}
+
+std::expected<GameColorTexture, std::string> GameColorTexture::create(const int width,
+    const int height,
+    const std::span<const std::uint8_t> rgba8,
+    const GameColorTextureUsage usage) {
+  std::optional<Texture2D> modern;
+  std::optional<Texture2D> legacy_effect;
+  if (usage == GameColorTextureUsage::k_modern || usage == GameColorTextureUsage::k_both) {
+    auto texture{Texture2D::create(width,
+        height,
+        rgba8,
+        k_modern_color_texture_policy.encoding,
+        k_modern_color_texture_policy.filter)};
+    if (!texture) {
+      return std::expected<GameColorTexture, std::string>{
+          std::unexpect, "modern color texture: " + std::move(texture).error()};
+    }
+    modern.emplace(std::move(texture).value());
+  }
+  if (usage == GameColorTextureUsage::k_legacy_effect || usage == GameColorTextureUsage::k_both) {
+    auto texture{Texture2D::create(width,
+        height,
+        rgba8,
+        k_legacy_effect_texture_policy.encoding,
+        k_legacy_effect_texture_policy.filter)};
+    if (!texture) {
+      return std::expected<GameColorTexture, std::string>{
+          std::unexpect, "legacy effect texture: " + std::move(texture).error()};
+    }
+    legacy_effect.emplace(std::move(texture).value());
+  }
+  return GameColorTexture{std::move(modern), std::move(legacy_effect)};
+}
+
+const Texture2D* GameColorTexture::modern() const {
+  return m_modern.has_value() ? &m_modern.value() : nullptr;
+}
+
+const Texture2D* GameColorTexture::legacy_effect() const {
+  return m_legacy_effect.has_value() ? &m_legacy_effect.value() : nullptr;
+}
 
 Texture2D::Texture2D(const int width,
     const int height,
@@ -57,10 +103,10 @@ Texture2D& Texture2D::operator=(Texture2D&& other) noexcept {
 }
 
 std::expected<Texture2D, std::string> Texture2D::create(const int width,
-                                                        const int height,
-                                                        const std::span<const std::uint8_t> rgba8,
-                                                        const TextureColorEncoding encoding,
-                                                        const TextureFilter filter) {
+    const int height,
+    const std::span<const std::uint8_t> rgba8,
+    const TextureColorEncoding encoding,
+    const TextureFilter filter) {
   APP_PROFILE_FUNCTION();
 
   if (width <= 0 || height <= 0) {
@@ -80,14 +126,14 @@ std::expected<Texture2D, std::string> Texture2D::create(const int width,
   glGenTextures(1, &id);
   glBindTexture(GL_TEXTURE_2D, id);
   glTexImage2D(GL_TEXTURE_2D,
-               0,
-               texture_upload_internal_format(encoding),
-               width,
-               height,
-               0,
-               GL_RGBA,
-               GL_UNSIGNED_BYTE,
-               rgba8.data());
+      0,
+      texture_upload_internal_format(encoding),
+      width,
+      height,
+      0,
+      GL_RGBA,
+      GL_UNSIGNED_BYTE,
+      rgba8.data());
 
   const GLint min_filter{filter == TextureFilter::k_linear ? GL_LINEAR : GL_NEAREST};
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, min_filter);
@@ -97,12 +143,10 @@ std::expected<Texture2D, std::string> Texture2D::create(const int width,
 
   glBindTexture(GL_TEXTURE_2D, 0);
 
-  return Texture2D{
-      width, height, id, encoding, filter, TextureStorageFormat::k_rgba8_unorm};
+  return Texture2D{width, height, id, encoding, filter, TextureStorageFormat::k_rgba8_unorm};
 }
 
-std::expected<Texture2D, std::string> Texture2D::create_render_target(
-    const int width,
+std::expected<Texture2D, std::string> Texture2D::create_render_target(const int width,
     const int height,
     const TextureColorEncoding encoding,
     const TextureStorageFormat storage_format) {
@@ -124,15 +168,8 @@ std::expected<Texture2D, std::string> Texture2D::create_render_target(
   const GLint internal_format{storage_format == TextureStorageFormat::k_rgba8_unorm
                                   ? texture_upload_internal_format(encoding)
                                   : texture_storage_internal_format(storage_format)};
-  glTexImage2D(GL_TEXTURE_2D,
-               0,
-               internal_format,
-               width,
-               height,
-               0,
-               GL_RGBA,
-               GL_UNSIGNED_BYTE,
-               nullptr);
+  glTexImage2D(
+      GL_TEXTURE_2D, 0, internal_format, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
 
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -141,8 +178,7 @@ std::expected<Texture2D, std::string> Texture2D::create_render_target(
 
   glBindTexture(GL_TEXTURE_2D, 0);
 
-  return Texture2D{
-      width, height, id, encoding, TextureFilter::k_linear, storage_format};
+  return Texture2D{width, height, id, encoding, TextureFilter::k_linear, storage_format};
 }
 
 Texture2D::~Texture2D() {
@@ -182,17 +218,29 @@ void Texture2D::unbind() {
   glBindTexture(GL_TEXTURE_2D, 0);
 }
 
-GLuint Texture2D::id() const { return m_id; }
+GLuint Texture2D::id() const {
+  return m_id;
+}
 
-int Texture2D::width() const { return m_width; }
+int Texture2D::width() const {
+  return m_width;
+}
 
-int Texture2D::height() const { return m_height; }
+int Texture2D::height() const {
+  return m_height;
+}
 
-TextureColorEncoding Texture2D::color_encoding() const { return m_color_encoding; }
+TextureColorEncoding Texture2D::color_encoding() const {
+  return m_color_encoding;
+}
 
-TextureFilter Texture2D::filter() const { return m_filter; }
+TextureFilter Texture2D::filter() const {
+  return m_filter;
+}
 
-TextureStorageFormat Texture2D::storage_format() const { return m_storage_format; }
+TextureStorageFormat Texture2D::storage_format() const {
+  return m_storage_format;
+}
 
 std::expected<std::vector<std::uint8_t>, std::string> Texture2D::generate_checkerboard(
     const int width,
@@ -210,20 +258,19 @@ std::expected<std::vector<std::uint8_t>, std::string> Texture2D::generate_checke
     return static_cast<std::uint8_t>(std::lround(clamped * 255.0F));
   }};
 
-  const std::array<std::uint8_t, 3> byte_a{to_byte(color_a.at(0)), to_byte(color_a.at(1)),
-                                           to_byte(color_a.at(2))};
-  const std::array<std::uint8_t, 3> byte_b{to_byte(color_b.at(0)), to_byte(color_b.at(1)),
-                                           to_byte(color_b.at(2))};
+  const std::array<std::uint8_t, 3> byte_a{
+      to_byte(color_a.at(0)), to_byte(color_a.at(1)), to_byte(color_a.at(2))};
+  const std::array<std::uint8_t, 3> byte_b{
+      to_byte(color_b.at(0)), to_byte(color_b.at(1)), to_byte(color_b.at(2))};
 
   const int cell_width{std::max(1, width / squares_per_side)};
   const int cell_height{std::max(1, height / squares_per_side)};
 
-  std::vector<std::uint8_t> pixels(static_cast<std::size_t>(width) *
-                                   static_cast<std::size_t>(height) * 4U);
+  std::vector<std::uint8_t> pixels(
+      static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4U);
 
   // View the flat buffer as height x width x RGBA for index-math-free filling.
-  const std::mdspan<std::uint8_t, std::dextents<std::size_t, 3>> view{
-      pixels.data(),
+  const std::mdspan<std::uint8_t, std::dextents<std::size_t, 3>> view{pixels.data(),
       static_cast<std::size_t>(height),
       static_cast<std::size_t>(width),
       std::size_t{4}};

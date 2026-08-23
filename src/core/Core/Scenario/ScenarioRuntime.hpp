@@ -117,7 +117,7 @@ class ScenarioRuntime final : public Script::ScriptWorld, private Sfx::Host {
       std::size_t resource_index, std::size_t material_index) const;
   /// GPU texture sets per resource; ModelViewerScene passes this to
   /// SpriteRenderer::draw_pass.
-  [[nodiscard]] const std::vector<std::vector<Texture2D>>& sprite_textures() const;
+  [[nodiscard]] const std::vector<std::vector<GameColorTexture>>& sprite_textures() const;
 
   /// Decodes the resource on demand, creates an instance and attaches it to
   /// the render list.
@@ -208,7 +208,7 @@ class ScenarioRuntime final : public Script::ScriptWorld, private Sfx::Host {
   /// Non-owning pointers parallel to m_sprite_resources (span-friendly).
   std::vector<const Sprite::SpriteResource*> m_sprite_resource_ptrs;
   /// GPU textures per resource, parallel to m_sprite_resources.
-  std::vector<std::vector<Texture2D>> m_sprite_textures;
+  std::vector<std::vector<GameColorTexture>> m_sprite_textures;
   std::unordered_map<std::uint16_t, std::size_t> m_sprite_id_lookup;
 
   std::unique_ptr<Script::ScriptRuntime> m_script_runtime;

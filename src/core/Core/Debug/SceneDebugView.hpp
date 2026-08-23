@@ -144,6 +144,11 @@ struct RuntimeCharacterDebugState {
 /// concrete Scene subclass owns the renderer or camera.
 struct WorldRenderDebugState {
   bool renderer_ready{false};
+  bool color_pipeline_ready{false};
+  bool current_scene_a{true};
+  std::size_t legacy_stages{0};
+  std::size_t legacy_source_draws{0};
+  std::size_t legacy_composites{0};
 
   std::size_t group_count{0};
   std::size_t material_count{0};

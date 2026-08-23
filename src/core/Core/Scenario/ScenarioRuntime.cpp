@@ -353,10 +353,10 @@ const Texture2D* ScenarioRuntime::sprite_texture(
       material_index >= m_sprite_textures.at(resource_index).size()) {
     return nullptr;
   }
-  return &m_sprite_textures.at(resource_index).at(material_index);
+  return m_sprite_textures.at(resource_index).at(material_index).legacy_effect();
 }
 
-const std::vector<std::vector<Texture2D>>& ScenarioRuntime::sprite_textures() const {
+const std::vector<std::vector<GameColorTexture>>& ScenarioRuntime::sprite_textures() const {
   return m_sprite_textures;
 }
 
@@ -382,14 +382,13 @@ std::expected<void, std::string> ScenarioRuntime::ensure_sprite_resource_loaded(
         fmt::format("Failed to decode sprite resource {}: {}", resource_index, resource.error())};
   }
 
-  std::vector<Texture2D> textures;
+  std::vector<GameColorTexture> textures;
   textures.reserve(resource->images.size());
   for (const Omikron::Texture3DTImage& image : resource->images) {
-    auto texture{Texture2D::create(static_cast<int>(image.width),
+    auto texture{GameColorTexture::create(static_cast<int>(image.width),
         static_cast<int>(image.height),
         std::span<const std::uint8_t>{image.rgba8},
-        k_retail_texture_policy.encoding,
-        k_retail_texture_policy.filter)};
+        GameColorTextureUsage::k_both)};
     if (!texture) {
       return std::expected<void, std::string>{std::unexpect,
           fmt::format(

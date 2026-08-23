@@ -1,21 +1,81 @@
 #include "Framebuffer.hpp"
 
+#include <fmt/format.h>
 #include <glad/glad.h>
 
 #include <expected>
 #include <string>
 #include <utility>
 
-#include <fmt/format.h>
-
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Texture.hpp"
 
 namespace App {
 
-std::expected<Framebuffer, std::string> Framebuffer::create(const int width,
-    const int height,
-    const FramebufferDescription description) {
+DepthStencilBuffer::DepthStencilBuffer(
+    const GLuint id, const int width, const int height, const DepthStencilFormat format)
+    : m_id(id),
+      m_width(width),
+      m_height(height),
+      m_format(format) {}
+
+std::expected<DepthStencilBuffer, std::string> DepthStencilBuffer::create(
+    const int width, const int height, const DepthStencilFormat format) {
+  if (width <= 0 || height <= 0 || format == DepthStencilFormat::k_none) {
+    return std::expected<DepthStencilBuffer, std::string>{
+        std::unexpect, "shared depth/stencil requires positive dimensions and a format"};
+  }
+  GLuint id{0};
+  glGenRenderbuffers(1, &id);
+  glBindRenderbuffer(GL_RENDERBUFFER, id);
+  const GLenum internal_format{
+      static_cast<GLenum>(format == DepthStencilFormat::k_depth24_stencil8 ? GL_DEPTH24_STENCIL8
+                                                                           : GL_DEPTH_COMPONENT24)};
+  glRenderbufferStorage(GL_RENDERBUFFER, internal_format, width, height);
+  glBindRenderbuffer(GL_RENDERBUFFER, 0);
+  return DepthStencilBuffer{id, width, height, format};
+}
+
+DepthStencilBuffer::DepthStencilBuffer(DepthStencilBuffer&& other) noexcept
+    : m_id(std::exchange(other.m_id, 0)),
+      m_width(other.m_width),
+      m_height(other.m_height),
+      m_format(other.m_format) {}
+
+DepthStencilBuffer& DepthStencilBuffer::operator=(DepthStencilBuffer&& other) noexcept {
+  if (this != &other) {
+    if (m_id != 0U) {
+      glDeleteRenderbuffers(1, &m_id);
+    }
+    m_id = std::exchange(other.m_id, 0);
+    m_width = other.m_width;
+    m_height = other.m_height;
+    m_format = other.m_format;
+  }
+  return *this;
+}
+
+DepthStencilBuffer::~DepthStencilBuffer() {
+  if (m_id != 0U) {
+    glDeleteRenderbuffers(1, &m_id);
+  }
+}
+
+GLuint DepthStencilBuffer::id() const {
+  return m_id;
+}
+int DepthStencilBuffer::width() const {
+  return m_width;
+}
+int DepthStencilBuffer::height() const {
+  return m_height;
+}
+DepthStencilFormat DepthStencilBuffer::format() const {
+  return m_format;
+}
+
+std::expected<Framebuffer, std::string> Framebuffer::create(
+    const int width, const int height, const FramebufferDescription description) {
   APP_PROFILE_FUNCTION();
 
   auto color{Texture2D::create_render_target(
@@ -28,10 +88,10 @@ std::expected<Framebuffer, std::string> Framebuffer::create(const int width,
   if (description.depth_stencil != DepthStencilFormat::k_none) {
     glGenRenderbuffers(1, &depth_stencil_renderbuffer);
     glBindRenderbuffer(GL_RENDERBUFFER, depth_stencil_renderbuffer);
-    const GLenum internal_format{static_cast<GLenum>(
-        description.depth_stencil == DepthStencilFormat::k_depth24_stencil8
-            ? GL_DEPTH24_STENCIL8
-            : GL_DEPTH_COMPONENT24)};
+    const GLenum internal_format{
+        static_cast<GLenum>(description.depth_stencil == DepthStencilFormat::k_depth24_stencil8
+                                ? GL_DEPTH24_STENCIL8
+                                : GL_DEPTH_COMPONENT24)};
     glRenderbufferStorage(GL_RENDERBUFFER, internal_format, width, height);
     glBindRenderbuffer(GL_RENDERBUFFER, 0);
   }
@@ -39,13 +99,12 @@ std::expected<Framebuffer, std::string> Framebuffer::create(const int width,
   GLuint framebuffer{0};
   glGenFramebuffers(1, &framebuffer);
   glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
-  glFramebufferTexture2D(
-      GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, color->id(), 0);
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, color->id(), 0);
   if (description.depth_stencil != DepthStencilFormat::k_none) {
-    const GLenum attachment{static_cast<GLenum>(
-        description.depth_stencil == DepthStencilFormat::k_depth24_stencil8
-            ? GL_DEPTH_STENCIL_ATTACHMENT
-            : GL_DEPTH_ATTACHMENT)};
+    const GLenum attachment{
+        static_cast<GLenum>(description.depth_stencil == DepthStencilFormat::k_depth24_stencil8
+                                ? GL_DEPTH_STENCIL_ATTACHMENT
+                                : GL_DEPTH_ATTACHMENT)};
     glFramebufferRenderbuffer(
         GL_FRAMEBUFFER, attachment, GL_RENDERBUFFER, depth_stencil_renderbuffer);
   }
@@ -67,6 +126,41 @@ std::expected<Framebuffer, std::string> Framebuffer::create(const int width,
       width,
       height,
       description};
+}
+
+std::expected<Framebuffer, std::string> Framebuffer::create_with_shared_depth(const int width,
+    const int height,
+    const FramebufferDescription description,
+    const DepthStencilBuffer& depth_stencil) {
+  APP_PROFILE_FUNCTION();
+  if (description.depth_stencil == DepthStencilFormat::k_none ||
+      description.depth_stencil != depth_stencil.format() || width != depth_stencil.width() ||
+      height != depth_stencil.height()) {
+    return std::expected<Framebuffer, std::string>{
+        std::unexpect, "framebuffer shared depth/stencil description mismatch"};
+  }
+  auto color{Texture2D::create_render_target(
+      width, height, description.color_encoding, description.color_storage)};
+  if (!color) {
+    return std::expected<Framebuffer, std::string>{std::unexpect, std::move(color).error()};
+  }
+  GLuint framebuffer{0};
+  glGenFramebuffers(1, &framebuffer);
+  glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, color->id(), 0);
+  const GLenum attachment{
+      static_cast<GLenum>(description.depth_stencil == DepthStencilFormat::k_depth24_stencil8
+                              ? GL_DEPTH_STENCIL_ATTACHMENT
+                              : GL_DEPTH_ATTACHMENT)};
+  glFramebufferRenderbuffer(GL_FRAMEBUFFER, attachment, GL_RENDERBUFFER, depth_stencil.id());
+  const GLenum status{glCheckFramebufferStatus(GL_FRAMEBUFFER)};
+  glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  if (status != GL_FRAMEBUFFER_COMPLETE) {
+    glDeleteFramebuffers(1, &framebuffer);
+    return std::expected<Framebuffer, std::string>{
+        std::unexpect, fmt::format("Framebuffer incomplete: status 0x{:x}", status)};
+  }
+  return Framebuffer{std::move(color).value(), 0, framebuffer, width, height, description};
 }
 
 Framebuffer::Framebuffer(Texture2D color,
@@ -127,27 +221,20 @@ void Framebuffer::unbind() {
   glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
-void Framebuffer::blit_depth_stencil_to(const Framebuffer& destination) const {
-  glBindFramebuffer(GL_READ_FRAMEBUFFER, m_framebuffer);
-  glBindFramebuffer(GL_DRAW_FRAMEBUFFER, destination.m_framebuffer);
-  glBlitFramebuffer(0,
-      0,
-      m_width,
-      m_height,
-      0,
-      0,
-      destination.m_width,
-      destination.m_height,
-      GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT,
-      GL_NEAREST);
+const Texture2D& Framebuffer::color_texture() const {
+  return m_color;
 }
 
-const Texture2D& Framebuffer::color_texture() const { return m_color; }
+int Framebuffer::width() const {
+  return m_width;
+}
 
-int Framebuffer::width() const { return m_width; }
+int Framebuffer::height() const {
+  return m_height;
+}
 
-int Framebuffer::height() const { return m_height; }
-
-const FramebufferDescription& Framebuffer::description() const { return m_description; }
+const FramebufferDescription& Framebuffer::description() const {
+  return m_description;
+}
 
 }  // namespace App

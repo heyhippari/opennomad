@@ -1,9 +1,8 @@
 #include "Core/Interface/FontManager.hpp"
 
 // NOLINTBEGIN(misc-include-cleaner)
-#include <imgui.h>
-
 #include <fmt/format.h>
+#include <imgui.h>
 
 #include <algorithm>
 #include <cmath>
@@ -34,12 +33,11 @@ constexpr std::string_view K_TTF_FALLBACK_PATH{"FONTS/OMIKRON.TTF"};
 
 /// Flips the atlas rows so the texture matches Texture2D's bottom-up upload
 /// convention (row 0 = bottom). The atlas is produced top-down by ImGui.
-std::vector<std::uint8_t> flip_rows(const unsigned char* pixels,
-    const int width,
-    const int height) {
+std::vector<std::uint8_t> flip_rows(
+    const unsigned char* pixels, const int width, const int height) {
   const std::size_t row_bytes{static_cast<std::size_t>(width) * 4U};
-  std::vector<std::uint8_t> flipped(static_cast<std::size_t>(width) *
-                                    static_cast<std::size_t>(height) * 4U);
+  std::vector<std::uint8_t> flipped(
+      static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4U);
   for (int row{0}; row < height; ++row) {
     const std::size_t source_row{static_cast<std::size_t>(height - row - 1)};
     const auto* source{pixels + (source_row * row_bytes)};
@@ -95,8 +93,8 @@ std::expected<FontResource, std::string> FontResource::load_ttf_fallback(
   ImFont* font{atlas->AddFontFromFileTTF(
       ttf_path.string().c_str(), size_pixels, &config, atlas->GetGlyphRangesDefault())};
   if (font == nullptr) {
-    return std::expected<FontResource, std::string>{std::unexpect,
-        fmt::format("FontManager: cannot load TTF '{}'", ttf_path.string())};
+    return std::expected<FontResource, std::string>{
+        std::unexpect, fmt::format("FontManager: cannot load TTF '{}'", ttf_path.string())};
   }
 
   unsigned char* pixels{nullptr};
@@ -114,8 +112,8 @@ std::expected<FontResource, std::string> FontResource::load_ttf_fallback(
   auto texture{Texture2D::create(width,
       height,
       std::span<const std::uint8_t>{flipped},
-      TextureColorEncoding::k_linear,
-      TextureFilter::k_linear)};
+      k_linear_data_texture_policy.encoding,
+      k_linear_data_texture_policy.filter)};
   if (!texture) {
     return std::expected<FontResource, std::string>{
         std::unexpect, fmt::format("FontManager: {}", texture.error())};
@@ -238,8 +236,8 @@ std::expected<void, std::string> FontManager::load_font(const char key) {
 
   const std::string_view logical{font_logical_name(key)};
   if (logical.empty()) {
-    return std::expected<void, std::string>{std::unexpect,
-        fmt::format("FontManager: no font mapping for key '{}'", key)};
+    return std::expected<void, std::string>{
+        std::unexpect, fmt::format("FontManager: no font mapping for key '{}'", key)};
   }
 
   // The original resource is FONTS/<logical>.FNT. Its format is not decoded
@@ -249,11 +247,12 @@ std::expected<void, std::string> FontManager::load_font(const char key) {
       "{}.FNT renderer unavailable; using temporary OMIKRON.TTF fallback",
       logical);
 
-  const std::filesystem::path ttf_request{Resources::game_data_path(
-      std::filesystem::path{std::string{K_TTF_FALLBACK_PATH}})};
+  const std::filesystem::path ttf_request{
+      Resources::game_data_path(std::filesystem::path{std::string{K_TTF_FALLBACK_PATH}})};
   const std::filesystem::path ttf_resolved{Resources::resolve_case_insensitive(ttf_request)};
 
-  auto font{FontResource::load_ttf_fallback(ttf_resolved, k_logical_font_size, k_logical_font_size)};
+  auto font{
+      FontResource::load_ttf_fallback(ttf_resolved, k_logical_font_size, k_logical_font_size)};
   if (!font) {
     return std::expected<void, std::string>{std::unexpect, font.error()};
   }
@@ -286,8 +285,8 @@ const FontResource* FontManager::ensure_font(const char key, const float referen
         logical);
   }
 
-  const std::filesystem::path ttf_request{Resources::game_data_path(
-      std::filesystem::path{std::string{K_TTF_FALLBACK_PATH}})};
+  const std::filesystem::path ttf_request{
+      Resources::game_data_path(std::filesystem::path{std::string{K_TTF_FALLBACK_PATH}})};
   const std::filesystem::path ttf_resolved{Resources::resolve_case_insensitive(ttf_request)};
 
   auto font{FontResource::load_ttf_fallback(
@@ -312,20 +311,34 @@ const FontResource* FontManager::font_for_key(const char key) const {
 std::string_view FontManager::font_logical_name(const char key) {
   // Recovered Runtime font-key registry.
   switch (key) {
-    case 'I': return "MENUINTR";
-    case 'M': return "MENUSAVE";
-    case 'D': return "DIALOGUE";
-    case 'R': return "DIALSELE";
-    case 'P': return "PARCHEMI";
-    case 'C': return "COMPUTER";
-    case 'S': return "SNEAK";
-    case 'J': return "JOURNAL";
-    case 'V': return "VOIXOFF";
-    case '1': return "GENERIC1";
-    case '2': return "GENERIC2";
-    case '3': return "GENERIC3";
-    case 'L': return "SMALL";
-    default:   return {};
+    case 'I':
+      return "MENUINTR";
+    case 'M':
+      return "MENUSAVE";
+    case 'D':
+      return "DIALOGUE";
+    case 'R':
+      return "DIALSELE";
+    case 'P':
+      return "PARCHEMI";
+    case 'C':
+      return "COMPUTER";
+    case 'S':
+      return "SNEAK";
+    case 'J':
+      return "JOURNAL";
+    case 'V':
+      return "VOIXOFF";
+    case '1':
+      return "GENERIC1";
+    case '2':
+      return "GENERIC2";
+    case '3':
+      return "GENERIC3";
+    case 'L':
+      return "SMALL";
+    default:
+      return {};
   }
 }
 

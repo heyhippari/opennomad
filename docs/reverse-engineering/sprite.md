@@ -451,6 +451,13 @@ and diffuse alpha therefore multiply in the sprite fragment shader. Additive
 modes retain their confirmed `ONE, ONE` RGB blend factors; diffuse alpha does
 not replace those factors.
 
+OpenNomad's modern reconstruction draws modes 0, 1 and 8 directly into the
+scene-linear HDR target using the texture's sRGB sampling representation.
+Modes 2 through 7 use the encoded representation and transient legacy
+operator accumulator. Alpha sources premultiply RGB by their combined alpha;
+additive and darken sources deliberately do not. This pipeline boundary is an
+OpenNomad implementation choice, not an additional Runtime claim.
+
 ---
 
 # 17. Texture offsets

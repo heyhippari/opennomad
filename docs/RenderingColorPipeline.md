@@ -1,67 +1,74 @@
 # Rendering color pipeline
 
-OpenNomad preserves Omikron's retail composition math inside an explicit
-legacy compatibility boundary, then exposes a modern linear-light scene target.
-
-## Frame flow
-
-`WorldScene` renders at drawable pixel resolution in this order:
+Gameplay rendering uses scene-linear sRGB/Rec.709-primary RGB in an HDR
+`GL_RGBA16F` working buffer. Retail-compatible encoded arithmetic is confined
+to transient blend-operator stages; there is no encoded whole-scene target.
 
 ```text
-retail RGBA8 textures (legacy encoded, bilinear)
-    -> GL_RGBA16 legacy encoded target
-       world -> white fade -> letterbox -> I2D
-    -> exact standard sRGB EOTF
-    -> GL_RGBA16F linear scene target
-       -> OpenNomad developer overlays
-    -> exact standard sRGB OETF
-    -> ordinary default framebuffer
-    -> ImGui/debug UI
+modern opaque/cutout world, characters, sprites
+    -> scene A (GL_RGBA16F, linear HDR)
+legacy blended source draws
+    -> accumulator (GL_RGBA16, encoded operator state)
+current scene + accumulator
+    -> alternate scene B/A (GL_RGBA16F), then swap
+world-space diagnostics
+    -> current linear scene
+clamp RGB to [0,1] + exact sRGB OETF
+    -> default encoded SDR framebuffer
+white fade -> letterbox -> I2D -> ImGui
 ```
 
-The legacy target has `GL_DEPTH24_STENCIL8`. Its normalized color storage
-clamps blend results to `[0,1]`, preserving saturation semantics while using
-more precision than Runtime's display target. Runtime dithering is
-intentionally omitted because the high-precision target makes it obsolete.
-OpenGL dithering is explicitly disabled rather than left at its default state.
-The linear target retains a matching depth/stencil attachment solely so the
-existing depth-aware geometry wireframe can remain a modern developer overlay
-after legacy decode. Depth/stencil is copied at the boundary; retail particles
-and layers are never recomposed in linear light.
+Scene A, scene B, and the accumulator attach the same
+`GL_DEPTH24_STENCIL8` renderbuffer. A compatibility stage therefore never
+copies depth. It clears only the accumulator color attachment, draws its
+sources with depth testing and no depth writes, then performs one portable
+OpenGL 4.1 fullscreen composite into the alternate scene target. No
+framebuffer fetch, image load/store, interlock, texture barrier, or scene copy
+is required.
 
-`GL_FRAMEBUFFER_SRGB` remains disabled throughout these passes. The first
-fullscreen shader converts only RGB from encoded to linear with the standard
-piecewise sRGB EOTF. The second converts only RGB back with the standard
-piecewise sRGB OETF. Alpha passes through unchanged, and manual output encoding
-is never combined with automatic framebuffer encoding.
+Only active stages are submitted. Alpha sources accumulate premultiplied
+encoded RGB and coverage with `ONE, ONE_MINUS_SRC_ALPHA`; additive and
+subtractive amounts accumulate with `ONE, ONE`; darken accumulates a factor
+from a white clear with `ZERO, ONE_MINUS_SRC_COLOR`. Sprite stages follow
+ascending Runtime bucket bits, including additive `0x2100` before darken
+`0x2200`. Decor, character, and sprite streams retain their existing separate
+ordering; they are not globally re-sorted.
+
+For an HDR destination `D`, the compositor defines `base = clamp(D, 0, 1)` and
+`excess = max(D - base, 0)`. It encodes only `base`. Alpha attenuates excess by
+remaining transmittance, additive and subtractive preserve excess, and darken
+scales excess by its accumulated factor. This makes SDR behavior match encoded
+legacy arithmetic without applying transfer functions to negative values or
+discarding HDR energy accidentally.
 
 ## Texture semantics
 
-`TextureColorEncoding` distinguishes three meanings:
+Retail color images have explicit upload policies:
 
-- `k_srgb`: sRGB bytes stored as `GL_SRGB8_ALPHA8`; sampling automatically
-  decodes RGB.
-- `k_linear`: linear numeric data stored in a non-sRGB format.
-- `k_legacy_encoded`: display/sRGB-like numbers stored in `GL_RGBA8` so
-  sampling does not decode them.
+- modern color: `GL_SRGB8_ALPHA8`, automatically decoded while sampling;
+- legacy effect: ordinary `GL_RGBA8`, preserving encoded filtering and source
+  modulation;
+- linear data: ordinary linear storage for numeric data.
 
-Retail 3DO/3DT, character, embedded sprite, and I2D bitmap textures use
-`k_legacy_encoded`. Retail 3D and sprite textures use `GL_LINEAR` minification
-and magnification, so interpolation occurs directly on encoded RGB exactly as
-it did in Runtime's fixed-function renderer.
+The game-color texture abstraction may own modern, legacy, or both GPU
+representations made from the same decoded RGBA bytes. World material usage is
+derived from opaque/cutout versus blended groups, so unused representations are
+not allocated. Dynamic sprite modes may require both. I2D remains a legacy-only
+display-space layer outside HDR scene processing.
 
-"Linear format" and "linear-light values" are deliberately separate concepts.
-`GL_RGBA16` is a non-sRGB format whose numbers are semantically legacy encoded;
-`GL_RGBA16F` is the canonical modern linear-light scene representation.
+Modern shaders convert authored vertex/tint RGB from its sRGB-like convention
+to linear before modulation and perform lighting in linear light. Alpha is not
+transferred. Legacy source shaders deliberately keep encoded texture filtering,
+tint, grayscale, and modulation. Alpha stages premultiply RGB by source alpha;
+additive and darken stages do not.
 
-## Confidence boundary
+## Display boundary
 
-Runtime's lack of sRGB transfer states, bilinear filtering, encoded-domain
-blend behavior, sprite bucket traversal, diffuse alpha, and dithering are
-recovered Runtime facts. Treating authored RGB as sRGB-like at the boundary,
-the two high-precision target formats, exact standard sRGB transfers, and
-omitting dithering are modern OpenNomad reconstruction choices.
+`GL_FRAMEBUFFER_SRGB` and `GL_DITHER` remain disabled. The final display shader
+clamps scene RGB to `[0,1]` and applies the exact piecewise sRGB OETF once;
+alpha passes through. The encoded white fade follows that transform, so it does
+not affect the opaque letterbox or I2D. Startup video and splash presentation
+have their own unchanged color paths.
 
-Startup FMV playback, the splash presenter, and ImGui stay outside the legacy
-target. The splash shader performs its own explicit display encoding; decoded
-video remains a display-referred passthrough.
+This is an SDR display transform, not a tone mapper. The pipeline does not add
+bloom, HDR10 output, deferred rendering, or a G-buffer.

@@ -758,8 +758,8 @@ ModelViewerScene::create_from_geometry(const std::vector<Omikron::MaterialGroup>
       auto fallback{Texture2D::create(1,
           1,
           std::span<const std::uint8_t>{k_white_pixel},
-          k_retail_texture_policy.encoding,
-          k_retail_texture_policy.filter)};
+          k_legacy_effect_texture_policy.encoding,
+          k_legacy_effect_texture_policy.filter)};
       if (!fallback) {
         return std::expected<std::unique_ptr<ModelViewerScene>, std::string>{
             std::unexpect, std::move(fallback).error()};
@@ -770,8 +770,8 @@ ModelViewerScene::create_from_geometry(const std::vector<Omikron::MaterialGroup>
     auto texture{Texture2D::create(static_cast<int>(image.width),
         static_cast<int>(image.height),
         std::span<const std::uint8_t>{image.rgba8},
-        k_retail_texture_policy.encoding,
-        k_retail_texture_policy.filter)};
+        k_legacy_effect_texture_policy.encoding,
+        k_legacy_effect_texture_policy.filter)};
     if (!texture) {
       return std::expected<std::unique_ptr<ModelViewerScene>, std::string>{
           std::unexpect, std::move(texture).error()};

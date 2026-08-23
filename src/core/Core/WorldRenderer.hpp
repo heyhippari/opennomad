@@ -22,6 +22,7 @@ namespace App {
 
 class Camera;
 class ScenarioRuntime;
+class WorldColorPipeline;
 struct WorldSceneContext;
 
 struct WorldBounds {
@@ -45,7 +46,11 @@ class WorldRenderer {
   WorldRenderer& operator=(const WorldRenderer&) = delete;
   WorldRenderer& operator=(WorldRenderer&&) = delete;
 
-  void render(const Camera& camera, ScenarioRuntime* runtime, float uv_phase_u, float uv_phase_v);
+  void render(const Camera& camera,
+      ScenarioRuntime* runtime,
+      float uv_phase_u,
+      float uv_phase_v,
+      WorldColorPipeline& color_pipeline);
   /// Draws OpenNomad-native diagnostics after legacy color has been decoded.
   void render_debug_overlay(const Camera& camera, const ScenarioRuntime* runtime);
 
@@ -81,12 +86,13 @@ class WorldRenderer {
  private:
   WorldRenderer() = default;
 
-  void draw_group(std::size_t index, float uv_phase_u, float uv_phase_v);
+  void draw_group(std::size_t index, float uv_phase_u, float uv_phase_v, bool legacy_effect);
   void draw_character_group(const Character::RuntimeCharacter& character,
       const Camera& camera,
       std::size_t group_index,
       float uv_phase_u,
-      float uv_phase_v);
+      float uv_phase_v,
+      bool legacy_effect);
   void render_geometry_wireframe(const Camera& camera, const ScenarioRuntime* runtime);
   void sync_character_models(const ScenarioRuntime& runtime);
 
@@ -96,18 +102,19 @@ class WorldRenderer {
     std::vector<std::int32_t> group_material_ids;
     std::vector<std::uint32_t> group_flags;
     std::vector<Omikron::BlendMode> group_modes;
-    std::vector<Texture2D> textures;
+    std::vector<GameColorTexture> textures;
     std::uint64_t pose_revision{0};
   };
 
-  std::unique_ptr<Shader> m_shader;
+  std::unique_ptr<Shader> m_modern_shader;
+  std::unique_ptr<Shader> m_legacy_shader;
   std::unique_ptr<Shader> m_wireframe_shader;
   std::deque<Mesh> m_meshes;
   std::vector<std::int32_t> m_group_material_ids;
   std::vector<std::uint32_t> m_group_flags;
   std::vector<Omikron::BlendMode> m_group_modes;
   std::vector<std::array<float, 3>> m_group_centers;
-  std::vector<Texture2D> m_textures;
+  std::vector<GameColorTexture> m_textures;
 
   Sprite::SpriteRenderer m_sprite_renderer;
   ScenarioRuntime* m_last_sprite_runtime{nullptr};

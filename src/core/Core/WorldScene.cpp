@@ -24,9 +24,9 @@
 #include "Core/Log.hpp"
 #include "Core/LogCategory.hpp"
 #include "Core/Omikron/Model3DO.hpp"
+#include "Core/Renderer.hpp"
 #include "Core/RuntimeMath.hpp"
 #include "Core/RuntimePresentation.hpp"
-#include "Core/Renderer.hpp"
 #include "Core/Scenario/ScenarioManager.hpp"
 #include "Core/Scenario/ScenarioRuntime.hpp"
 #include "Core/Shader.hpp"
@@ -279,6 +279,14 @@ std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state
   Debug::WorldRenderDebugState state;
 
   state.renderer_ready = m_world_renderer != nullptr;
+  if (m_color_pipeline != nullptr) {
+    state.color_pipeline_ready = m_color_pipeline->width() > 0;
+    state.current_scene_a = m_color_pipeline->current_scene_is_a();
+    const LegacyBlendCompositorStats& stats{m_color_pipeline->stats()};
+    state.legacy_stages = stats.stages;
+    state.legacy_source_draws = stats.source_draws;
+    state.legacy_composites = stats.composites;
+  }
   state.uv_phase_u = static_cast<float>(m_uv_phases.u_phase());
   state.uv_phase_v = static_cast<float>(m_uv_phases.v_phase());
   if (m_world_renderer != nullptr) {
@@ -744,9 +752,9 @@ void WorldScene::render() {
   }
   m_color_pipeline_error.clear();
 
-  // All retail presentation layers below compose numerically in encoded RGB
-  // against normalized GL_RGBA16 storage. No automatic sRGB transfer occurs.
-  m_color_pipeline->begin_legacy(Renderer::clear_color());
+  // Canonical world color begins and remains scene-linear RGBA16F. The encoded
+  // clear setting is decoded once at this boundary.
+  m_color_pipeline->begin_scene(Renderer::clear_color());
 
   // Scenario execution happens after WorldScene::update() in the frame, so
   // consume newly-emitted presentation commands again here. This lets opcode
@@ -767,8 +775,20 @@ void WorldScene::render() {
     m_world_renderer->render(m_camera.camera(),
         context->runtime.get(),
         static_cast<float>(m_uv_phases.u_phase()),
-        static_cast<float>(m_uv_phases.v_phase()));
+        static_cast<float>(m_uv_phases.v_phase()),
+        *m_color_pipeline);
   }
+
+  // OpenNomad-native world diagnostics are linear scene content and reuse the
+  // same depth attachment as both scene ping-pong targets.
+  m_color_pipeline->bind_current_scene();
+  if (world_renderable) {
+    m_world_renderer->render_debug_overlay(m_camera.camera(), context->runtime.get());
+  }
+
+  // Explicit SDR clamp and OETF. Presentation overlays below intentionally
+  // remain outside HDR scene processing and compose in encoded display space.
+  m_color_pipeline->present_linear();
 
   if (m_fade_renderer != nullptr && m_white_fade_alpha > 0.0F) {
     m_fade_renderer->render(m_white_fade_alpha);
@@ -786,16 +806,6 @@ void WorldScene::render() {
   // background therefore covers the world while the main menu is active,
   // exactly as the stable WorldScene architecture intends.
   m_interfaces.render(m_width, m_height);
-
-  // Cross once into canonical RGBA16F linear scene color. OpenNomad-native
-  // diagnostics stay outside the compatibility composition boundary.
-  m_color_pipeline->resolve_legacy_to_linear();
-  if (world_renderable) {
-    m_world_renderer->render_debug_overlay(m_camera.camera(), context->runtime.get());
-  }
-
-  // Explicitly encode for the default SDR framebuffer. ImGui follows later.
-  m_color_pipeline->present_linear();
 }
 
 void WorldScene::resize(const int width, const int height) {

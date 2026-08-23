@@ -1,32 +1,45 @@
 #pragma once
 
-#include <array>
-#include <expected>
-#include <memory>
-#include <optional>
-#include <string>
-
 #include <glad/glad.h>
+
+#include <array>
+#include <cstddef>
+#include <expected>
+#include <functional>
+#include <memory>
+#include <string>
 
 #include "Core/Framebuffer.hpp"
 #include "Core/Shader.hpp"
 
 namespace App {
 
-inline constexpr FramebufferDescription k_legacy_encoded_target_description{
+inline constexpr FramebufferDescription k_linear_scene_target_description{
+    .color_encoding = TextureColorEncoding::k_linear,
+    .color_storage = TextureStorageFormat::k_rgba16_float,
+    .depth_stencil = DepthStencilFormat::k_depth24_stencil8};
+
+inline constexpr FramebufferDescription k_legacy_accumulator_target_description{
     .color_encoding = TextureColorEncoding::k_legacy_encoded,
     .color_storage = TextureStorageFormat::k_rgba16_unorm,
     .depth_stencil = DepthStencilFormat::k_depth24_stencil8};
 
-inline constexpr FramebufferDescription k_linear_scene_target_description{
-    .color_encoding = TextureColorEncoding::k_linear,
-    .color_storage = TextureStorageFormat::k_rgba16_float,
-    // Retained only so depth-aware modern developer overlays can be composed
-    // after legacy decode without entering the compatibility target.
-    .depth_stencil = DepthStencilFormat::k_depth24_stencil8};
+enum class LegacyBlendOperator : unsigned char {
+  k_alpha,
+  k_additive,
+  k_darken,
+  k_subtractive,
+};
 
-/// Owns the explicit boundary between Runtime-compatible encoded composition,
-/// modern linear scene color, and manually encoded SDR display output.
+struct LegacyBlendCompositorStats {
+  std::size_t stages{0};
+  std::size_t source_draws{0};
+  std::size_t composites{0};
+};
+
+/// Scene-linear HDR target manager and portable two-pass legacy blend
+/// compositor. The encoded RGBA16 target is transient operator state only;
+/// canonical scene color always remains in one of the RGBA16F targets.
 class WorldColorPipeline {
  public:
   static std::expected<std::unique_ptr<WorldColorPipeline>, std::string> create();
@@ -37,31 +50,30 @@ class WorldColorPipeline {
   WorldColorPipeline& operator=(const WorldColorPipeline&) = delete;
   WorldColorPipeline& operator=(WorldColorPipeline&&) = delete;
 
-  /// Creates or transactionally replaces both targets when their drawable
-  /// pixel dimensions change.
   std::expected<void, std::string> ensure_targets(int width, int height);
-
-  /// Starts the encoded legacy composition and clears color/depth/stencil.
-  void begin_legacy(std::array<float, 4> clear_color) const;
-
-  /// Decodes the completed legacy frame to RGBA16F linear scene color and
-  /// leaves that target bound for modern overlays/post-processing.
-  void resolve_legacy_to_linear() const;
-
-  /// Manually encodes linear scene color to the default SDR framebuffer.
+  void begin_scene(std::array<float, 4> encoded_clear_color);
+  void composite_legacy_stage(LegacyBlendOperator blend_operator,
+      std::size_t source_draws,
+      const std::function<void()>& draw_sources);
+  void bind_current_scene() const;
   void present_linear() const;
 
   [[nodiscard]] int width() const;
   [[nodiscard]] int height() const;
+  [[nodiscard]] bool current_scene_is_a() const;
+  [[nodiscard]] const LegacyBlendCompositorStats& stats() const;
 
  private:
-  WorldColorPipeline(Shader transfer_shader, GLuint vertex_array);
-  void draw_transfer(const Texture2D& source, bool decode) const;
+  class Targets;
+  WorldColorPipeline(Shader compositor_shader, Shader display_shader, GLuint vertex_array);
+  void draw_fullscreen(const Shader& shader) const;
 
-  Shader m_transfer_shader;
+  Shader m_compositor_shader;
+  Shader m_display_shader;
   GLuint m_vertex_array{0};
-  std::optional<Framebuffer> m_legacy_target;
-  std::optional<Framebuffer> m_linear_target;
+  std::unique_ptr<Targets> m_targets;
+  bool m_current_scene_a{true};
+  LegacyBlendCompositorStats m_stats;
 };
 
 }  // namespace App

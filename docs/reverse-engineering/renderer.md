@@ -3925,14 +3925,16 @@ The central architectural takeaway is:
 - `SpriteInstance+0x24` supplies the diffuse alpha byte packed into generated
   faces (see `sprite.md`).
 
-**Modern reconstruction:** retail RGB is treated as sRGB-like only when the
-completed encoded game frame crosses into OpenNomad's linear scene domain.
-OpenNomad accumulates the legacy frame in normalized `GL_RGBA16`, deliberately
-omits obsolete low-bit-depth dithering, decodes it with the exact standard sRGB
-EOTF into `GL_RGBA16F`, and explicitly applies the standard sRGB OETF for SDR
-display. These target formats and transfer functions are OpenNomad choices,
-not recovered Runtime behavior.
+**Modern reconstruction:** canonical world color is scene-linear HDR in one of
+two `GL_RGBA16F` ping-pong targets. Opaque/cutout sampling and lighting happen
+in linear light. Runtime-compatible blended sources still filter and modulate
+encoded RGB, but enter only a transient normalized `GL_RGBA16` operator
+accumulator. A fullscreen pass combines it with the current linear scene and
+writes the alternate scene target. All three framebuffers share one
+depth/stencil attachment, so no depth copy or scene copy is involved.
 
-The `GL_RGBA16` attachment is a linear OpenGL *format* but contains semantically
-encoded RGB. That choice prevents implicit transfer conversion while retaining
-Runtime's encoded-domain saturation behavior at modern precision.
+The accumulator contains semantically encoded operator state, never a complete
+game frame. HDR destinations split into an SDR base and positive excess for the
+compatibility equation. The display pass clamps to SDR and applies the exact
+standard sRGB OETF once. These target formats and transfer functions are
+OpenNomad choices, not recovered Runtime behavior.

@@ -1,13 +1,13 @@
 #include <doctest/doctest.h>
 
-// NOLINTBEGIN(misc-use-anonymous-namespace, cppcoreguidelines-avoid-do-while, cert-err33-c, misc-include-cleaner, cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
-#include <glm/glm.hpp>
-#include <glm/gtc/matrix_transform.hpp>
-
+// NOLINTBEGIN(misc-use-anonymous-namespace, cppcoreguidelines-avoid-do-while, cert-err33-c,
+// misc-include-cleaner, cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
 #include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 #include <span>
 #include <vector>
 
@@ -38,31 +38,104 @@ TEST_SUITE("Core::Rendering") {
   }
 
   TEST_CASE("Texture color policies select explicit GL storage without a context") {
-    CHECK_EQ(App::texture_upload_internal_format(App::TextureColorEncoding::k_srgb),
-        GL_SRGB8_ALPHA8);
-    CHECK_EQ(App::texture_upload_internal_format(App::TextureColorEncoding::k_legacy_encoded),
-        GL_RGBA8);
+    CHECK_EQ(
+        App::texture_upload_internal_format(App::TextureColorEncoding::k_srgb), GL_SRGB8_ALPHA8);
+    CHECK_EQ(
+        App::texture_upload_internal_format(App::TextureColorEncoding::k_legacy_encoded), GL_RGBA8);
     CHECK_EQ(App::texture_upload_internal_format(App::TextureColorEncoding::k_linear), GL_RGBA8);
-    CHECK_EQ(App::k_retail_texture_policy.encoding,
-        App::TextureColorEncoding::k_legacy_encoded);
-    CHECK_EQ(App::k_retail_texture_policy.filter, App::TextureFilter::k_linear);
+    CHECK_EQ(App::k_modern_color_texture_policy.encoding, App::TextureColorEncoding::k_srgb);
+    CHECK_EQ(
+        App::k_legacy_effect_texture_policy.encoding, App::TextureColorEncoding::k_legacy_encoded);
+    CHECK_EQ(App::k_linear_data_texture_policy.encoding, App::TextureColorEncoding::k_linear);
+    CHECK_EQ(App::k_modern_color_texture_policy.filter, App::TextureFilter::k_linear);
   }
 
   TEST_CASE("World color targets expose their semantic domains and precision") {
-    CHECK_EQ(App::k_legacy_encoded_target_description.color_encoding,
+    CHECK_EQ(App::k_legacy_accumulator_target_description.color_encoding,
         App::TextureColorEncoding::k_legacy_encoded);
     CHECK_EQ(App::texture_storage_internal_format(
-                 App::k_legacy_encoded_target_description.color_storage),
+                 App::k_legacy_accumulator_target_description.color_storage),
         GL_RGBA16);
-    CHECK_EQ(App::k_legacy_encoded_target_description.depth_stencil,
+    CHECK_EQ(App::k_legacy_accumulator_target_description.depth_stencil,
         App::DepthStencilFormat::k_depth24_stencil8);
-    CHECK_EQ(App::k_linear_scene_target_description.color_encoding,
-        App::TextureColorEncoding::k_linear);
-    CHECK_EQ(App::texture_storage_internal_format(
-                 App::k_linear_scene_target_description.color_storage),
+    CHECK_EQ(
+        App::k_linear_scene_target_description.color_encoding, App::TextureColorEncoding::k_linear);
+    CHECK_EQ(
+        App::texture_storage_internal_format(App::k_linear_scene_target_description.color_storage),
         GL_RGBA16F);
     CHECK_EQ(App::k_linear_scene_target_description.depth_stencil,
         App::DepthStencilFormat::k_depth24_stencil8);
+  }
+
+  TEST_CASE("Legacy operators preserve SDR equivalence and defined HDR excess") {
+    using App::ColorManagement::legacy_additive;
+    using App::ColorManagement::legacy_alpha_over;
+    using App::ColorManagement::legacy_darken;
+    using App::ColorManagement::legacy_subtractive;
+    using App::ColorManagement::linear_to_srgb;
+    using App::ColorManagement::split_sdr_base_and_hdr_excess;
+    using App::ColorManagement::srgb_to_linear;
+
+    const float destination{srgb_to_linear(0.4F)};
+    CHECK_EQ(linear_to_srgb(legacy_alpha_over(destination, 0.4F, 0.5F)), doctest::Approx(0.6F));
+    CHECK_EQ(linear_to_srgb(legacy_additive(destination, 0.2F)), doctest::Approx(0.6F));
+    CHECK_EQ(linear_to_srgb(legacy_darken(destination, 0.5F)), doctest::Approx(0.2F));
+    CHECK_EQ(linear_to_srgb(legacy_subtractive(destination, 0.15F)), doctest::Approx(0.25F));
+
+    const auto negative{split_sdr_base_and_hdr_excess(-2.0F)};
+    CHECK_EQ(negative.base, 0.0F);
+    CHECK_EQ(negative.excess, 0.0F);
+
+    constexpr float k_hdr_destination{1.75F};
+    CHECK_EQ(legacy_additive(k_hdr_destination, 0.2F), doctest::Approx(k_hdr_destination));
+    CHECK_EQ(
+        legacy_subtractive(k_hdr_destination, 0.2F), doctest::Approx(srgb_to_linear(0.8F) + 0.75F));
+    CHECK_EQ(
+        legacy_darken(k_hdr_destination, 0.5F), doctest::Approx(srgb_to_linear(0.5F) + 0.375F));
+    CHECK_EQ(legacy_alpha_over(k_hdr_destination, 0.25F, 0.5F),
+        doctest::Approx(srgb_to_linear(0.75F) + 0.375F));
+  }
+
+  TEST_CASE("Aggregated alpha accumulator matches ordered encoded alpha-over") {
+    using App::ColorManagement::legacy_alpha_over;
+    using App::ColorManagement::linear_to_srgb;
+    using App::ColorManagement::srgb_to_linear;
+    constexpr float k_first_alpha{0.25F};
+    constexpr float k_second_alpha{0.5F};
+    constexpr float k_first_color{0.8F};
+    constexpr float k_second_color{0.2F};
+    const float aggregate_coverage{k_second_alpha + (k_first_alpha * (1.0F - k_second_alpha))};
+    const float aggregate_premultiplied{(k_second_color * k_second_alpha) +
+                                        (k_first_color * k_first_alpha * (1.0F - k_second_alpha))};
+    const float result{
+        legacy_alpha_over(srgb_to_linear(0.4F), aggregate_premultiplied, aggregate_coverage)};
+    const float expected_encoded{
+        (k_second_color * k_second_alpha) +
+        (((k_first_color * k_first_alpha) + (0.4F * (1.0F - k_first_alpha))) *
+            (1.0F - k_second_alpha))};
+    CHECK_EQ(linear_to_srgb(result), doctest::Approx(expected_encoded));
+  }
+
+  TEST_CASE("Legacy operator aggregation matches sequential SDR composition") {
+    using App::ColorManagement::legacy_additive;
+    using App::ColorManagement::legacy_darken;
+    using App::ColorManagement::legacy_subtractive;
+    using App::ColorManagement::srgb_to_linear;
+    const float destination{srgb_to_linear(0.55F)};
+
+    CHECK_EQ(legacy_additive(destination, 0.10F + 0.15F),
+        doctest::Approx(legacy_additive(legacy_additive(destination, 0.10F), 0.15F)));
+    CHECK_EQ(legacy_subtractive(destination, 0.10F + 0.15F),
+        doctest::Approx(legacy_subtractive(legacy_subtractive(destination, 0.10F), 0.15F)));
+    const float combined_darken_factor{(1.0F - 0.20F) * (1.0F - 0.35F)};
+    CHECK_EQ(legacy_darken(destination, combined_darken_factor),
+        doctest::Approx(legacy_darken(legacy_darken(destination, 1.0F - 0.20F), 1.0F - 0.35F)));
+  }
+
+  TEST_CASE("Display transform clamps before the exact OETF") {
+    using App::ColorManagement::linear_scene_to_sdr;
+    CHECK_EQ(linear_scene_to_sdr(-1.0F), 0.0F);
+    CHECK_EQ(linear_scene_to_sdr(2.0F), doctest::Approx(1.0F));
   }
 
   TEST_CASE("Vertex layout is tightly packed") {
@@ -78,8 +151,7 @@ TEST_SUITE("Core::Rendering") {
     const std::array<float, 3> color_b{0.0F, 0.0F, 1.0F};
 
     // 16x16 image with 4x4 squares (4-pixel cells).
-    const auto pixels{
-        App::Texture2D::generate_checkerboard(16, 16, 4, color_a, color_b)};
+    const auto pixels{App::Texture2D::generate_checkerboard(16, 16, 4, color_a, color_b)};
 
     REQUIRE(pixels.has_value());
     REQUIRE_EQ(pixels.value().size(), std::size_t{16} * 16U * 4U);
@@ -123,9 +195,8 @@ TEST_SUITE("Core::Rendering") {
 
   TEST_CASE("View basis recovers the camera frame from a lookAt view") {
     // Camera at (0, 2, 4) looking at the origin.
-    const glm::mat4 view{glm::lookAt(glm::vec3{0.0F, 2.0F, 4.0F},
-                                     glm::vec3{0.0F, 0.0F, 0.0F},
-                                     glm::vec3{0.0F, 1.0F, 0.0F})};
+    const glm::mat4 view{glm::lookAt(
+        glm::vec3{0.0F, 2.0F, 4.0F}, glm::vec3{0.0F, 0.0F, 0.0F}, glm::vec3{0.0F, 1.0F, 0.0F})};
 
     const App::ViewBasis basis{App::view_basis(view)};
 
@@ -175,9 +246,8 @@ TEST_SUITE("Core::Rendering") {
 
   TEST_CASE("Reflected view mirrors the eye through the plane") {
     // Camera at (0, 2, 4) looking at the origin, mirrored through y = 0.
-    const glm::mat4 view{glm::lookAt(glm::vec3{0.0F, 2.0F, 4.0F},
-                                     glm::vec3{0.0F, 0.0F, 0.0F},
-                                     glm::vec3{0.0F, 1.0F, 0.0F})};
+    const glm::mat4 view{glm::lookAt(
+        glm::vec3{0.0F, 2.0F, 4.0F}, glm::vec3{0.0F, 0.0F, 0.0F}, glm::vec3{0.0F, 1.0F, 0.0F})};
     const glm::vec4 floor{0.0F, 1.0F, 0.0F, 0.0F};
     const glm::mat4 reflected{App::reflected_view_matrix(view, floor)};
 
@@ -208,10 +278,11 @@ TEST_SUITE("Core::Rendering") {
 
     const auto up{pixel_at(faces.at(2), 4, 4)};
     const auto down{pixel_at(faces.at(3), 4, 4)};
-    CHECK_GT(up.at(2), down.at(2));          // Zenith blue beats nadir blue.
-    CHECK_EQ(up.at(3), std::uint8_t{255});   // Opaque everywhere.
+    CHECK_GT(up.at(2), down.at(2));         // Zenith blue beats nadir blue.
+    CHECK_EQ(up.at(3), std::uint8_t{255});  // Opaque everywhere.
     CHECK_EQ(down.at(3), std::uint8_t{255});
   }
 }
 
-// NOLINTEND(misc-use-anonymous-namespace, cppcoreguidelines-avoid-do-while, cert-err33-c, misc-include-cleaner, cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
+// NOLINTEND(misc-use-anonymous-namespace, cppcoreguidelines-avoid-do-while, cert-err33-c,
+// misc-include-cleaner, cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
