@@ -14,6 +14,7 @@
 #include "Core/Omikron/IamArea.hpp"
 #include "Core/Omikron/IamScene.hpp"
 #include "Core/Omikron/IamStart.hpp"
+#include "Core/Omikron/IamZone.hpp"
 #include "Core/Script/AreaScriptRuntime.hpp"
 
 namespace App::Startup {
@@ -43,6 +44,23 @@ struct RuntimeAreaSlot {
   std::uint32_t world_scene_id{0};
   /// Independent compact IAM context for the attached SCENE top-level script.
   std::optional<Script::AreaScriptRuntime> scene_script;
+};
+
+/// Origin of one transient, residency-derived active spatial-zone record.
+enum class ActiveZoneSource : std::uint8_t {
+  k_area,
+  k_scene,
+};
+
+/// One enabled IAM table-2 record materialized from a resident AREA or SCENE.
+/// This deliberately retains the raw authored record and never claims
+/// collision or event-trigger semantics for its three event offsets.
+struct ActiveZoneRef {
+  std::size_t resident_slot{0};
+  ActiveZoneSource source{ActiveZoneSource::k_area};
+  std::int32_t area_id{-1};
+  std::int32_t scene_id{-1};
+  Omikron::IamZoneRecord zone;
 };
 
 /// Staged startup that follows the recovered Runtime.exe path:
@@ -154,6 +172,10 @@ class ScenarioStartupController {
   }
   [[nodiscard]] std::int32_t active_area_id() const;
   [[nodiscard]] const RuntimeAreaSlot* runtime_area_slot(std::size_t index) const;
+  /// Transient enabled zone records rebuilt from the two resident AREA slots.
+  [[nodiscard]] std::span<const ActiveZoneRef> active_zones() const {
+    return m_active_zones;
+  }
   [[nodiscard]] bool area_transition_pending() const {
     return m_area_transition.has_value();
   }
@@ -209,22 +231,22 @@ class ScenarioStartupController {
       const Script::AreaAddressFlagRequest& request);
   [[nodiscard]] std::expected<void, std::string> add_object_to_persistent_collection(
       const Script::AreaPersistentObjectCollectionRequest& request);
+  /// Rebuilds transient zone residency after a ZONE flag or resident-record change.
+  [[nodiscard]] std::expected<void, std::string> refresh_active_zones();
+  /// Applies persistent ZONE state, then rebuilds resident active zones.
+  [[nodiscard]] std::expected<void, std::string> set_zone_activation(
+      const Script::AreaZoneActivationRequest& request);
   /// Wires one compact context to playthrough-owned globals and character
   /// profiles. `prefer_scene_definition` preserves the context's resource
   /// ownership when an authored ID exists in both definition tables.
-  void bind_compact_state_services(Script::AreaScriptRuntime& runtime,
-      std::size_t owner_slot,
-      bool prefer_scene_definition);
+  void bind_compact_state_services(
+      Script::AreaScriptRuntime& runtime, std::size_t owner_slot, bool prefer_scene_definition);
   [[nodiscard]] std::expected<std::int16_t, std::string> ensure_character_value_profile(
-      std::size_t owner_slot,
-      bool prefer_scene_definition,
-      std::int16_t requested_character_id);
-  [[nodiscard]] std::expected<std::int32_t, std::string> character_value(
-      std::size_t owner_slot,
+      std::size_t owner_slot, bool prefer_scene_definition, std::int16_t requested_character_id);
+  [[nodiscard]] std::expected<std::int32_t, std::string> character_value(std::size_t owner_slot,
       bool prefer_scene_definition,
       const Script::AreaCharacterValueRequest& request);
-  [[nodiscard]] std::expected<void, std::string> set_character_value(
-      std::size_t owner_slot,
+  [[nodiscard]] std::expected<void, std::string> set_character_value(std::size_t owner_slot,
       bool prefer_scene_definition,
       const Script::AreaCharacterValueRequest& request,
       std::int32_t value);
@@ -263,14 +285,13 @@ class ScenarioStartupController {
   std::optional<Omikron::IamIndexedArchive> m_scene_archive;
   /// Two resident Runtime AREA slots. Slot 0 holds the initial area; opcode
   /// 0x2F prepares the inactive alternate slot, and 0x47 later commits it.
-  std::array<RuntimeAreaSlot, 2> m_area_slots{
-      RuntimeAreaSlot{.primary = std::nullopt,
-          .scene = std::nullopt,
-          .primary_area_id = -1,
-          .secondary_area_id = -1,
-          .scene_id = -1,
-          .world_scene_id = 0,
-          .scene_script = std::nullopt},
+  std::array<RuntimeAreaSlot, 2> m_area_slots{RuntimeAreaSlot{.primary = std::nullopt,
+                                                  .scene = std::nullopt,
+                                                  .primary_area_id = -1,
+                                                  .secondary_area_id = -1,
+                                                  .scene_id = -1,
+                                                  .world_scene_id = 0,
+                                                  .scene_script = std::nullopt},
       RuntimeAreaSlot{.primary = std::nullopt,
           .scene = std::nullopt,
           .primary_area_id = -1,
@@ -285,6 +306,7 @@ class ScenarioStartupController {
   std::optional<PendingAreaTransition> m_area_transition;
   std::uint64_t m_next_area_transition_generation{1};
   std::optional<Script::AreaScriptRuntime> m_area_script;
+  std::vector<ActiveZoneRef> m_active_zones;
 
   std::int16_t m_initial_area_id{0};
   std::int16_t m_linked_area_id{0};

@@ -4,9 +4,11 @@
 // bugprone-unchecked-optional-access)
 
 #include <array>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <limits>
 #include <optional>
 #include <span>
 #include <string>
@@ -46,6 +48,7 @@ using App::Script::AreaScxScriptRequest;
 using App::Script::AreaTransitionHandle;
 using App::Script::AreaTransitionRequest;
 using App::Script::AreaWaitKind;
+using App::Script::AreaZoneActivationRequest;
 
 struct SharedGlobalStore {
   explicit SharedGlobalStore(const std::size_t size = 1024U) : values(size, 0) {}
@@ -54,23 +57,22 @@ struct SharedGlobalStore {
     runtime.set_global_variable_read_sink(
         [this](const std::uint16_t id) -> std::expected<std::int32_t, std::string> {
           if (id >= values.size()) {
-            return std::expected<std::int32_t, std::string>{std::unexpect,
-                "global variable is out of range"};
+            return std::expected<std::int32_t, std::string>{
+                std::unexpect, "global variable is out of range"};
           }
           return values.at(id);
         });
-    runtime.set_global_variable_write_sink(
-        [this](const std::uint16_t id,
-            const std::int32_t value) -> std::expected<void, std::string> {
-          if (id >= values.size()) {
-            return std::expected<void, std::string>{std::unexpect,
-                "global variable is out of range"};
-          }
-          values.at(id) = value;
-          return {};
-        });
-    runtime.set_global_variable_snapshot_sink(
-        [this]() -> std::span<const std::int32_t> { return values; });
+    runtime.set_global_variable_write_sink([this](const std::uint16_t id, const std::int32_t value)
+                                               -> std::expected<void, std::string> {
+      if (id >= values.size()) {
+        return std::expected<void, std::string>{std::unexpect, "global variable is out of range"};
+      }
+      values.at(id) = value;
+      return {};
+    });
+    runtime.set_global_variable_snapshot_sink([this]() -> std::span<const std::int32_t> {
+      return values;
+    });
   }
 
   std::vector<std::int32_t> values;
@@ -225,7 +227,8 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     runtime.set_character_value_write_sink(
         [&resolved_character, &kind5, k_current_character](const AreaCharacterValueRequest& request,
             const std::int32_t value) -> std::expected<void, std::string> {
-          resolved_character = request.character_id == -1 ? k_current_character : request.character_id;
+          resolved_character =
+              request.character_id == -1 ? k_current_character : request.character_id;
           if (request.value_kind != 5) {
             return std::expected<void, std::string>{std::unexpect, "unexpected character kind"};
           }
@@ -259,8 +262,8 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
             const std::int32_t value) -> std::expected<void, std::string> {
           if (request.character_id != -1 || request.value_kind < 0 ||
               static_cast<std::size_t>(request.value_kind) >= character_values.size()) {
-            return std::expected<void, std::string>{std::unexpect,
-                "unexpected SCENE 55 character value request"};
+            return std::expected<void, std::string>{
+                std::unexpect, "unexpected SCENE 55 character value request"};
           }
           character_values.at(static_cast<std::size_t>(request.value_kind)) = value;
           return {};
@@ -277,7 +280,7 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     CHECK_EQ(runtime.instruction_pointer(), bytes.data().size());
   }
 
-  TEST_CASE("SCENE 55 retail slice reaches the next unsupported opcode at original offset 0x66") {
+  TEST_CASE("SCENE 55 retail slice activates its authored zone and initializes global 629") {
     Buffer bytes;
     bytes.u8(0x0C).u16(60);
     bytes.u8(0x5D).u16(0xFFFF).u16(5).u16(60);
@@ -288,32 +291,191 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     bytes.u8(0x0A).u16(629);
     bytes.u8(0x19);
     bytes.u8(0x06).u16(0x006C);
-    bytes.u8(0x40);
+    bytes.u8(0x40).u16(0x0ED3);
+    bytes.u8(0x07).u8(10);
+    bytes.u8(0x13).u16(629);
+    bytes.u8(0x03);
     AreaScriptRuntime runtime{bytes.data()};
     SharedGlobalStore globals;
     globals.values.at(37) = 2;
     globals.values.at(60) = 3;
     globals.values.at(629) = 4;
     globals.bind(runtime);
+    std::optional<AreaZoneActivationRequest> zone_request;
+    runtime.set_zone_activation_sink(
+        [&zone_request](
+            const AreaZoneActivationRequest& request) -> std::expected<void, std::string> {
+          zone_request = request;
+          return {};
+        });
     runtime.set_character_value_write_sink(
         [](const AreaCharacterValueRequest& request,
             const std::int32_t value) -> std::expected<void, std::string> {
-          if (request.character_id != -1 ||
-              (request.value_kind != 4 && request.value_kind != 5) || value != 0) {
-            return std::expected<void, std::string>{std::unexpect,
-                "unexpected SCENE 55 character value request"};
+          if (request.character_id != -1 || (request.value_kind != 4 && request.value_kind != 5) ||
+              value != 0) {
+            return std::expected<void, std::string>{
+                std::unexpect, "unexpected SCENE 55 character value request"};
           }
           return {};
         });
     runtime.queue_event(1);
     runtime.activate();
 
-    CHECK(runtime.run() == AreaScriptState::k_paused_unsupported);
-    CHECK_EQ(runtime.pause_info().opcode, 0x40U);
-    CHECK_EQ(runtime.pause_info().offset, 0x20U);
+    CHECK(runtime.run() == AreaScriptState::k_ready);
+    REQUIRE(zone_request.has_value());
+    CHECK_EQ(zone_request->zone_id, 3795);
+    CHECK(zone_request->enabled);
     CHECK_EQ(globals.values.at(37), 0);
     CHECK_EQ(globals.values.at(60), 0);
-    CHECK_EQ(globals.values.at(629), 0);
+    CHECK_EQ(globals.values.at(629), 10);
+  }
+
+  TEST_CASE("0x13 through 0x18 mutate shared globals with x86 dword semantics") {
+    const auto execute = [](const std::uint8_t opcode,
+                             const std::uint16_t target,
+                             const std::uint16_t stack_source,
+                             const std::int32_t initial_target,
+                             const std::int32_t stack_value) {
+      Buffer bytes;
+      bytes.u8(0x0A).u16(stack_source).u8(opcode).u16(target).u8(0x03);
+      AreaScriptRuntime runtime{bytes.data()};
+      SharedGlobalStore globals;
+      globals.values.at(target) = initial_target;
+      globals.values.at(stack_source) = stack_value;
+      globals.bind(runtime);
+      runtime.queue_event(1);
+      runtime.activate();
+      CHECK(runtime.run() == AreaScriptState::k_ready);
+      CHECK(runtime.wait_info().kind == AreaWaitKind::k_none);
+      return globals.values.at(target);
+    };
+
+    CHECK_EQ(execute(0x13, 60, 61, 7, 10), 17);
+    CHECK_EQ(execute(0x13, 60, 61, std::numeric_limits<std::int32_t>::max(), 1),
+        std::numeric_limits<std::int32_t>::min());
+    CHECK_EQ(execute(0x14, 60, 61, 10, 3), 7);
+    CHECK_EQ(execute(0x14, 60, 61, std::numeric_limits<std::int32_t>::min(), 1),
+        std::numeric_limits<std::int32_t>::max());
+    CHECK_EQ(execute(0x15, 60, 61, 7, 6), 42);
+    CHECK_EQ(execute(0x15, 60, 61, 0x40000000, 4), 0);
+    CHECK_EQ(execute(0x16, 60, 61, 10, 3), 3);
+    CHECK_EQ(execute(0x16, 60, 61, -10, 3), -3);
+    CHECK_EQ(execute(0x16, 60, 61, 10, -3), -3);
+    CHECK_EQ(execute(0x17,
+                 60,
+                 61,
+                 std::bit_cast<std::int32_t>(std::uint32_t{0xF0F00FF0U}),
+                 std::bit_cast<std::int32_t>(std::uint32_t{0x0FF0F00FU})),
+        std::bit_cast<std::int32_t>(std::uint32_t{0x00F00000U}));
+    CHECK_EQ(execute(0x18,
+                 60,
+                 61,
+                 std::bit_cast<std::int32_t>(std::uint32_t{0xF0F00FF0U}),
+                 std::bit_cast<std::int32_t>(std::uint32_t{0x0FF0F00FU})),
+        std::bit_cast<std::int32_t>(std::uint32_t{0xFFF0FFFFU}));
+  }
+
+  TEST_CASE("global-stack arithmetic resolves Scalar16 parameters and fails atomically") {
+    SUBCASE("parameter remapping") {
+      Buffer bytes;
+      bytes.u8(0x07).u8(10).u8(0x13).u16(0x4001).u8(0x03);
+      AreaScriptRuntime runtime{bytes.data()};
+      SharedGlobalStore globals;
+      globals.values.at(60) = 7;
+      globals.bind(runtime);
+      const std::array<std::int16_t, 2> parameters{0, 60};
+      runtime.set_scalar16_parameters(parameters);
+      runtime.queue_event(1);
+      runtime.activate();
+
+      CHECK(runtime.run() == AreaScriptState::k_ready);
+      CHECK_EQ(globals.values.at(60), 17);
+    }
+
+    SUBCASE("division faults preserve the destination") {
+      Buffer bytes;
+      bytes.u8(0x0A).u16(61).u8(0x16).u16(60);
+      AreaScriptRuntime runtime{bytes.data()};
+      SharedGlobalStore globals;
+      globals.values.at(60) = 10;
+      globals.values.at(61) = 0;
+      globals.bind(runtime);
+      runtime.queue_event(1);
+      runtime.activate();
+
+      CHECK(runtime.run() == AreaScriptState::k_failed);
+      CHECK_EQ(globals.values.at(60), 10);
+      CHECK(runtime.pause_info().reason_text.find("division by zero") != std::string::npos);
+
+      Buffer overflow_bytes;
+      overflow_bytes.u8(0x0A).u16(61).u8(0x16).u16(60);
+      AreaScriptRuntime overflow{overflow_bytes.data()};
+      globals.values.at(60) = std::numeric_limits<std::int32_t>::min();
+      globals.values.at(61) = -1;
+      globals.bind(overflow);
+      overflow.queue_event(1);
+      overflow.activate();
+      CHECK(overflow.run() == AreaScriptState::k_failed);
+      CHECK_EQ(globals.values.at(60), std::numeric_limits<std::int32_t>::min());
+      CHECK(
+          overflow.pause_info().reason_text.find("signed division overflow") != std::string::npos);
+    }
+
+    SUBCASE("underflow and invalid global leave the destination unchanged") {
+      Buffer underflow_bytes;
+      underflow_bytes.u8(0x13).u16(60);
+      AreaScriptRuntime underflow{underflow_bytes.data()};
+      SharedGlobalStore globals;
+      globals.values.at(60) = 7;
+      globals.bind(underflow);
+      underflow.queue_event(1);
+      underflow.activate();
+      CHECK(underflow.run() == AreaScriptState::k_failed);
+      CHECK_EQ(globals.values.at(60), 7);
+      CHECK(underflow.pause_info().reason_text.find("underflow") != std::string::npos);
+
+      Buffer invalid_bytes;
+      invalid_bytes.u8(0x07).u8(1).u8(0x13).u16(1024);
+      AreaScriptRuntime invalid{invalid_bytes.data()};
+      globals.bind(invalid);
+      invalid.queue_event(1);
+      invalid.activate();
+      CHECK(invalid.run() == AreaScriptState::k_failed);
+      CHECK(invalid.pause_info().reason_text.find("out of range") != std::string::npos);
+    }
+  }
+
+  TEST_CASE("0x40 and 0x41 emit immediate typed ZONE requests") {
+    Buffer bytes;
+    bytes.u8(0x40).u16(3795).u8(0x41).u16(0x4001).u8(0x03);
+    AreaScriptRuntime runtime{bytes.data()};
+    const std::array<std::int16_t, 2> parameters{0, static_cast<std::int16_t>(0x8005U)};
+    runtime.set_scalar16_parameters(parameters);
+    std::vector<AreaZoneActivationRequest> requests;
+    runtime.set_zone_activation_sink(
+        [&requests](const AreaZoneActivationRequest& request) -> std::expected<void, std::string> {
+          requests.push_back(request);
+          return {};
+        });
+    runtime.queue_event(1);
+    runtime.activate();
+
+    CHECK(runtime.run() == AreaScriptState::k_ready);
+    REQUIRE_EQ(requests.size(), 2U);
+    CHECK_EQ(requests.at(0).zone_id, 3795);
+    CHECK(requests.at(0).enabled);
+    CHECK_EQ(static_cast<std::uint16_t>(requests.at(1).zone_id), 0x8005U);
+    CHECK_FALSE(requests.at(1).enabled);
+    CHECK(runtime.wait_info().kind == AreaWaitKind::k_none);
+
+    Buffer missing_sink_bytes;
+    missing_sink_bytes.u8(0x40).u16(5);
+    AreaScriptRuntime missing_sink{missing_sink_bytes.data()};
+    missing_sink.queue_event(1);
+    missing_sink.activate();
+    CHECK(missing_sink.run() == AreaScriptState::k_failed);
+    CHECK(
+        missing_sink.pause_info().reason_text.find("zone activation bridge") != std::string::npos);
   }
 
   TEST_CASE("0x56 reads a current-character value into a shared global") {
@@ -323,11 +485,10 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     SharedGlobalStore globals;
     globals.bind(runtime);
     runtime.set_character_value_read_sink(
-        [](const AreaCharacterValueRequest& request)
-            -> std::expected<std::int32_t, std::string> {
+        [](const AreaCharacterValueRequest& request) -> std::expected<std::int32_t, std::string> {
           if (request.character_id != -1 || request.value_kind != 4) {
-            return std::expected<std::int32_t, std::string>{std::unexpect,
-                "unexpected character value request"};
+            return std::expected<std::int32_t, std::string>{
+                std::unexpect, "unexpected character value request"};
           }
           return 321;
         });
@@ -1532,6 +1693,8 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     CHECK(App::Script::area_opcode_name(0x0A) != nullptr);
     CHECK_EQ(std::string{App::Script::area_opcode_name(0x0C)}, "SetGlobalVariableZero");
     CHECK(App::Script::area_opcode_name(0x0D) != nullptr);
+    CHECK_EQ(std::string{App::Script::area_opcode_name(0x13)}, "AddStackToGlobalVariable");
+    CHECK_EQ(std::string{App::Script::area_opcode_name(0x18)}, "OrGlobalVariableWithStack");
     CHECK(App::Script::area_opcode_name(0x19) != nullptr);
     CHECK(App::Script::area_opcode_name(0x2F) != nullptr);
     CHECK_EQ(std::string{App::Script::area_opcode_name(0x32)}, "AddObjectToPersistentCollection");
@@ -1540,11 +1703,12 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     CHECK(App::Script::area_opcode_name(0x3B) != nullptr);
     CHECK(App::Script::area_opcode_name(0x3C) != nullptr);
     CHECK(App::Script::area_opcode_name(0x3D) != nullptr);
+    CHECK_EQ(std::string{App::Script::area_opcode_name(0x40)}, "ActivateZone");
+    CHECK_EQ(std::string{App::Script::area_opcode_name(0x41)}, "DeactivateZone");
     CHECK(App::Script::area_opcode_name(0x4E) != nullptr);
     CHECK(App::Script::area_opcode_name(0x46) != nullptr);
     CHECK_EQ(std::string{App::Script::area_opcode_name(0x56)}, "GetCharacterValueToVariable");
-    CHECK_EQ(
-        std::string{App::Script::area_opcode_name(0x5D)}, "SetCharacterValueFromVariable");
+    CHECK_EQ(std::string{App::Script::area_opcode_name(0x5D)}, "SetCharacterValueFromVariable");
     CHECK(App::Script::area_opcode_name(0x5F) != nullptr);
     CHECK(App::Script::area_opcode_name(0x60) != nullptr);
     CHECK_EQ(std::string{App::Script::area_opcode_name(0x57)}, "SetAddressFlag");

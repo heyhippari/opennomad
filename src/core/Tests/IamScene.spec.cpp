@@ -62,10 +62,18 @@ std::vector<std::byte> valid_scene() {
   write(data, k_table0 + 0x10U, static_cast<std::int16_t>(4073));
 
   write(data, k_table2 + 0x00U, static_cast<std::uint32_t>(k_script));
+  write(data, k_table2 + 0x04U, static_cast<std::uint32_t>(k_script + 1U));
+  write(data, k_table2 + 0x08U, static_cast<std::uint32_t>(k_script));
+  data.at(k_table2 + 0x0CU) = std::byte{0x12};
+  data.at(k_table2 + 0x3DU) = std::byte{0x34};
+  write(data, k_table2 + 0x3EU, static_cast<std::int16_t>(-12));
   write(data, k_table2 + 0x40U, static_cast<std::int16_t>(9));
+  data.at(k_table2 + 0x42U) = std::byte{0x56};
+  data.at(k_table2 + 0x43U) = std::byte{0x78};
   write(data, k_table4 + 0x10EU, static_cast<std::int16_t>(-1));
   write(data, k_table4 + 0x110U, static_cast<std::int16_t>(57));
   write(data, k_table4 + 0x112U, static_cast<std::int16_t>(-4));
+  write(data, k_table4 + 0x0B0U, std::uint32_t{0xFFFFFFFFU});
   write(data, k_table4 + 0x00U, static_cast<std::uint32_t>(k_signs));
   write(data, k_table4 + 0x04U, static_cast<std::uint32_t>(k_interests));
   constexpr char k_name[]{"LOCAL CHARACTER"};
@@ -112,7 +120,8 @@ TEST_SUITE("Core::Omikron::IamSceneRecord") {
     const auto scene{IamSceneRecord::load(valid_scene())};
     REQUIRE(scene.has_value());
     REQUIRE_EQ(scene->script_bytes().size(), 2U);
-    CHECK_EQ(scene->script_bytes()[0], std::byte{0x57});  // NOLINT(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
+    CHECK_EQ(scene->script_bytes()[0],
+        std::byte{0x57});  // NOLINT(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
     const auto character{scene->character_by_id(57)};
     REQUIRE(character.has_value());
     CHECK_EQ(character->serialized_position.at(0), 49457);
@@ -129,10 +138,18 @@ TEST_SUITE("Core::Omikron::IamSceneRecord") {
     CHECK_EQ(definition->linked_object_id, -1);
     CHECK_EQ(definition->character_id, 57);
     CHECK_EQ(definition->unknown_112, -4);
+    CHECK(definition->character_type == App::Omikron::CharacterType::Unspecified);
     const std::vector<App::Omikron::IamSceneZoneRecord> zones{scene->zones()};
     REQUIRE_EQ(zones.size(), 1U);
     CHECK_EQ(zones.front().event_offsets.at(0), scene->script_offset());
+    CHECK_EQ(zones.front().event_offsets.at(1), scene->script_offset() + 1U);
+    CHECK_EQ(zones.front().event_offsets.at(2), scene->script_offset());
+    CHECK_EQ(zones.front().raw_geometry_and_fields.at(0), std::byte{0x12});
+    CHECK_EQ(zones.front().raw_geometry_and_fields.at(0x31U), std::byte{0x34});
+    CHECK_EQ(zones.front().field_3e, -12);
     CHECK_EQ(zones.front().zone_id, 9);
+    CHECK_EQ(zones.front().raw_tail.at(0), std::byte{0x56});
+    CHECK_EQ(zones.front().raw_tail.at(1), std::byte{0x78});
     const std::vector<App::Omikron::IamSceneScriptLinkRecord> links{scene->script_links()};
     REQUIRE_EQ(links.size(), 1U);
     CHECK_EQ(links.front().program_offset, scene->script_offset());

@@ -191,6 +191,8 @@ std::vector<std::byte> make_handoff_area_archive() {
   Buffer handoff;
   handoff.u8(0x38).u16(136);
   handoff.u8(0x4F).u16(0xFFFF);
+  handoff.u8(0x41).u16(6);
+  handoff.u8(0x40).u16(5);
   handoff.u8(0x2F).u16(222).u16(0xFFFF).u16(0xFFFF);
   handoff.u8(0x60).u16(0).u16(1).u16(0);
   handoff.u8(0x47).u16(222).u16(0);
@@ -203,9 +205,12 @@ std::vector<std::byte> make_handoff_area_archive() {
   constexpr std::size_t k_header_size{0xB4};
   constexpr std::size_t k_source_placement_offset{k_header_size};
   constexpr std::size_t k_source_definition_offset{k_source_placement_offset + 0x14U};
-  constexpr std::size_t k_source_script_offset{k_source_definition_offset + 0x114U};
+  constexpr std::size_t k_source_zone_offset{k_source_definition_offset + 0x114U};
+  constexpr std::size_t k_source_script_offset{k_source_zone_offset + (2U * 0x44U)};
   const std::size_t source_record_size{k_source_script_offset + handoff.data().size()};
-  constexpr std::size_t k_target_record_size{k_header_size + 0x10U};
+  constexpr std::size_t k_target_zone_offset{k_header_size};
+  constexpr std::size_t k_target_address_offset{k_target_zone_offset + (2U * 0x44U)};
+  constexpr std::size_t k_target_record_size{k_target_address_offset + 0x10U};
   std::vector<std::byte> data(k_target_offset + k_target_record_size, std::byte{});
   write_u32(data, 118U * 8U, static_cast<std::uint32_t>(k_source_offset));
   write_u32(data, (118U * 8U) + 4U, static_cast<std::uint32_t>(source_record_size));
@@ -221,6 +226,8 @@ std::vector<std::byte> make_handoff_area_archive() {
   write_u16(data, k_source_offset + k_source_placement_offset + 0x10U, 0);
   write_u32(data, k_source_offset + 0x28U + (4U * 4U), k_source_definition_offset);
   write_u16(data, k_source_offset + 0x48U + (4U * 2U), 1);
+  write_u32(data, k_source_offset + 0x28U + (2U * 4U), k_source_zone_offset);
+  write_u16(data, k_source_offset + 0x48U + (2U * 2U), 2);
   constexpr std::string_view k_source_name{"CURRENT CHARACTER"};
   constexpr std::string_view k_source_model{"CURRENT_BODY"};
   std::memcpy(data.data() + k_source_offset + k_source_definition_offset + 0x08U,
@@ -230,6 +237,10 @@ std::vector<std::byte> make_handoff_area_archive() {
       k_source_model.data(),
       k_source_model.size());
   write_u16(data, k_source_offset + k_source_definition_offset + 0x110U, 136);
+  write_u32(data, k_source_offset + k_source_zone_offset + 0x00U, 0x10203040U);
+  write_u16(data, k_source_offset + k_source_zone_offset + 0x40U, 5);
+  write_u32(data, k_source_offset + k_source_zone_offset + 0x44U, 0x50607080U);
+  write_u16(data, k_source_offset + k_source_zone_offset + 0x44U + 0x40U, 6);
   std::memcpy(data.data() + k_source_offset + k_source_script_offset,
       handoff.data().data(),
       handoff.data().size());
@@ -238,13 +249,19 @@ std::vector<std::byte> make_handoff_area_archive() {
   write_u32(data, (222U * 8U) + 4U, k_target_record_size);
   write_u32(data, k_target_offset + 0x04U, k_target_record_size);
   write_name(data, k_target_offset + 0x61U, "DEST");
-  write_u32(data, k_target_offset + 0x28U + (5U * 4U), k_header_size);
+  write_u32(data, k_target_offset + 0x28U + (2U * 4U), k_target_zone_offset);
+  write_u16(data, k_target_offset + 0x48U + (2U * 2U), 2);
+  write_u32(data, k_target_offset + 0x28U + (5U * 4U), k_target_address_offset);
   write_u16(data, k_target_offset + 0x48U + (5U * 2U), 1);
-  write_u32(data, k_target_offset + k_header_size + 0x00U, 43922U);
-  write_u32(data, k_target_offset + k_header_size + 0x04U, 2592U);
-  write_u32(data, k_target_offset + k_header_size + 0x08U, 19656U);
-  write_u16(data, k_target_offset + k_header_size + 0x0CU, 0);
-  write_u16(data, k_target_offset + k_header_size + 0x0EU, 654);
+  write_u32(data, k_target_offset + k_target_zone_offset + 0x00U, 0x50607080U);
+  write_u16(data, k_target_offset + k_target_zone_offset + 0x40U, 5);
+  write_u32(data, k_target_offset + k_target_zone_offset + 0x44U, 0x90A0B0C0U);
+  write_u16(data, k_target_offset + k_target_zone_offset + 0x44U + 0x40U, 0x8005U);
+  write_u32(data, k_target_offset + k_target_address_offset + 0x00U, 43922U);
+  write_u32(data, k_target_offset + k_target_address_offset + 0x04U, 2592U);
+  write_u32(data, k_target_offset + k_target_address_offset + 0x08U, 19656U);
+  write_u16(data, k_target_offset + k_target_address_offset + 0x0CU, 0);
+  write_u16(data, k_target_offset + k_target_address_offset + 0x0EU, 654);
   return data;
 }
 
@@ -258,7 +275,8 @@ std::vector<std::byte> make_handoff_scene_archive() {
 
   constexpr std::size_t k_record_offset{0x800};
   constexpr std::size_t k_table0_offset{0x44};
-  constexpr std::size_t k_table4_offset{k_table0_offset + 0x14U};
+  constexpr std::size_t k_table2_offset{k_table0_offset + 0x14U};
+  constexpr std::size_t k_table4_offset{k_table2_offset + 0x44U};
   constexpr std::size_t k_script_offset{k_table4_offset + 0x114U};
   const std::size_t table6_offset{k_script_offset + script.data().size()};
   std::vector<std::byte> data(k_record_offset + table6_offset, std::byte{});
@@ -267,11 +285,14 @@ std::vector<std::byte> make_handoff_scene_archive() {
   write_u32(data, k_record_offset + 0x04U, static_cast<std::uint32_t>(k_script_offset));
   write_u32(data, k_record_offset + 0x08U, static_cast<std::uint32_t>(k_table0_offset));
   write_u16(data, k_record_offset + 0x28U, 1);
-  for (const std::size_t table_index : {1U, 2U, 3U, 4U}) {
+  write_u32(data, k_record_offset + 0x08U + (1U * 4U), static_cast<std::uint32_t>(k_table2_offset));
+  for (const std::size_t table_index : {3U, 4U}) {
     write_u32(data,
         k_record_offset + 0x08U + (table_index * 4U),
         static_cast<std::uint32_t>(k_table4_offset));
   }
+  write_u32(data, k_record_offset + 0x08U + (2U * 4U), static_cast<std::uint32_t>(k_table2_offset));
+  write_u16(data, k_record_offset + 0x28U + (2U * 2U), 1);
   write_u16(data, k_record_offset + 0x28U + (4U * 2U), 1);
   write_u32(data, k_record_offset + 0x08U + (6U * 4U), static_cast<std::uint32_t>(table6_offset));
   write_u32(data, k_record_offset + 0x08U + (7U * 4U), static_cast<std::uint32_t>(k_script_offset));
@@ -282,6 +303,9 @@ std::vector<std::byte> make_handoff_scene_archive() {
   write_u32(data, k_record_offset + k_table0_offset + 0x08U, static_cast<std::uint32_t>(-511));
   write_u32(data, k_record_offset + k_table0_offset + 0x0CU, 19386U);
   write_u16(data, k_record_offset + k_table0_offset + 0x10U, 4073);
+  write_u32(
+      data, k_record_offset + k_table2_offset + 0x00U, static_cast<std::uint32_t>(k_script_offset));
+  write_u16(data, k_record_offset + k_table2_offset + 0x40U, 5);
   constexpr std::string_view k_name{"LOCAL CHARACTER"};
   constexpr std::string_view k_model{"DE1_FN"};
   std::memcpy(
@@ -467,7 +491,9 @@ void write_character_value_fixtures(const TempDirectory& temp) {
 }
 
 void write_handoff_fixtures(const TempDirectory& temp) {
-  write_bytes(temp.root() / "IAM" / "START", make_start());
+  std::vector<std::byte> start{make_start()};
+  start.at(0x13FCU) = std::byte{0x40};  // ZONE 6 starts persistently enabled.
+  write_bytes(temp.root() / "IAM" / "START", start);
   write_bytes(temp.root() / "IAM" / "AREA", make_handoff_area_archive());
   write_bytes(temp.root() / "IAM" / "SCENE", make_handoff_scene_archive());
   write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
@@ -478,7 +504,8 @@ void write_handoff_fixtures(const TempDirectory& temp) {
 }  // namespace
 
 TEST_SUITE("Core::Scenario::ScenarioStartupController") {
-  TEST_CASE("compact character values use current and explicit owner profiles without body reload") {
+  TEST_CASE(
+      "compact character values use current and explicit owner profiles without body reload") {
     const TempDirectory temp;
     write_character_value_fixtures(temp);
     const ScopedGameDataRoot root{temp.root()};
@@ -564,6 +591,10 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     App::ScenarioManager manager;
     App::ScenarioStartupController controller;
     REQUIRE(controller.initialize(manager).has_value());
+    REQUIRE(manager.game_state() != nullptr);
+    CHECK(manager.game_state()->zone_flag(6).value());
+    REQUIRE_EQ(controller.active_zones().size(), 1U);
+    CHECK_EQ(controller.active_zones()[0].zone.zone_id, 6);
 
     App::ScenarioRuntime* source_runtime{manager.world_runtime(0)};
     REQUIRE(source_runtime != nullptr);
@@ -584,7 +615,12 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK(initial_current->area_present);
     CHECK_EQ(initial_current->serialized_area_position.at(0), 100);
     CHECK_FALSE(initial_current->presentation_enabled);
-    REQUIRE(manager.game_state() != nullptr);
+    CHECK(manager.game_state()->zone_flag(5).value());
+    CHECK_FALSE(manager.game_state()->zone_flag(6).value());
+    REQUIRE_EQ(controller.active_zones().size(), 1U);
+    CHECK_EQ(controller.active_zones()[0].resident_slot, 0U);
+    CHECK(controller.active_zones()[0].source == App::ActiveZoneSource::k_area);
+    CHECK_EQ(controller.active_zones()[0].zone.zone_id, 5);
     REQUIRE(manager.game_state()->set_character_value(136, 5, 91).has_value());
     REQUIRE(controller.tick().has_value());  // Target prepares, then camera wait.
     const App::RuntimeAreaSlot* source{controller.runtime_area_slot(0)};
@@ -594,6 +630,11 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK_EQ(source->primary_area_id, 118);
     CHECK_EQ(destination->primary_area_id, 222);
     CHECK_EQ(controller.active_area_slot(), 0U);
+    REQUIRE_EQ(controller.active_zones().size(), 3U);
+    CHECK_EQ(controller.active_zones()[0].resident_slot, 0U);
+    CHECK_EQ(controller.active_zones()[1].resident_slot, 1U);
+    CHECK_EQ(controller.active_zones()[2].resident_slot, 1U);
+    CHECK_EQ(static_cast<std::uint16_t>(controller.active_zones()[2].zone.zone_id), 0x8005U);
     CHECK_EQ(manager.world_contexts()[0].residency, WorldSceneResidencyState::LoadedActive);
     CHECK_EQ(manager.world_contexts()[1].residency, WorldSceneResidencyState::LoadedInactive);
 
@@ -607,7 +648,9 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
           resource->groups.push_back(App::Omikron::MaterialGroup{});
           return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
         });
-    REQUIRE(controller.tick(1.0F).has_value());  // 0x47, 0x49, 0x30, then SCENE selection.
+    const auto committed{controller.tick(1.0F)};  // 0x47, 0x49, 0x30, then SCENE selection.
+    const std::string commit_error{committed.has_value() ? std::string{} : committed.error()};
+    REQUIRE_MESSAGE(committed.has_value(), commit_error);
     source = controller.runtime_area_slot(0);
     destination = controller.runtime_area_slot(1);
     REQUIRE(source != nullptr);
@@ -621,6 +664,13 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
           App::Script::AreaWaitKind::k_character_script);
     REQUIRE(destination->scene_script->wait_info().character_script_instance.has_value());
     CHECK_EQ(controller.active_area_slot(), 1U);
+    REQUIRE_EQ(controller.active_zones().size(), 3U);
+    CHECK_EQ(controller.active_zones()[0].resident_slot, 1U);
+    CHECK_EQ(controller.active_zones()[1].resident_slot, 1U);
+    CHECK(controller.active_zones()[0].source == App::ActiveZoneSource::k_area);
+    CHECK(controller.active_zones()[1].source == App::ActiveZoneSource::k_area);
+    CHECK(controller.active_zones()[2].source == App::ActiveZoneSource::k_scene);
+    CHECK_EQ(static_cast<std::uint16_t>(controller.active_zones()[1].zone.zone_id), 0x8005U);
     CHECK_EQ(manager.world_contexts()[0].residency, WorldSceneResidencyState::Free);
     CHECK_EQ(manager.world_contexts()[1].residency, WorldSceneResidencyState::LoadedActive);
     CHECK_EQ(controller.area_mapping(222), std::optional<std::int32_t>{0});

@@ -76,6 +76,7 @@ add_library(${NAME} STATIC
   Core/Omikron/IamCharacterDefinition.hpp Core/Omikron/IamCharacterDefinition.cpp
   Core/Omikron/IamArchive.hpp Core/Omikron/IamArchive.cpp
   Core/Omikron/IamStart.hpp Core/Omikron/IamStart.cpp
+  Core/Omikron/IamZone.hpp
   Core/Omikron/IamArea.hpp Core/Omikron/IamArea.cpp
   Core/Omikron/IamScene.hpp Core/Omikron/IamScene.cpp
   Core/Omikron/IamDialog.hpp Core/Omikron/IamDialog.cpp

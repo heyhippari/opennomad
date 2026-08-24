@@ -49,9 +49,11 @@ Table 1 preserves object ID, authored position, three angle components, and a
 neutral final persistent-state field. Table 3 preserves object ID plus an
 opaque tail. This is a data seam, not a guessed generic object runtime.
 
-The first three dwords of table 2 are neutral
-`event1_offset/event2_offset/event3_offset` program offsets. Their trigger
-meanings are not named. The zone ID is at `+0x40`; remaining bytes are retained.
+Table 2 uses the shared immutable `IamZoneRecord` representation with AREA:
+three neutral `event_offsets[0..2]` program offsets at `+0x00/+0x04/+0x08`,
+opaque bytes `+0x0C..+0x3D`, signed `field_3e` at `+0x3E`, signed authored
+zone ID at `+0x40`, and two opaque tail bytes. The trigger meanings of the
+three offsets are not named or fired by parsing/residency synchronization.
 Table 7 is `{ uint32 program_offset, int32 field_04 }` with intentionally
 unresolved higher-level semantics. Table 6 reuses the checked AREA camera
 parser.
@@ -87,6 +89,12 @@ replacement/dematerialization similarly leaves a selected body live.
 the source remains loaded/inactive until `0x30` explicitly releases it. Once a
 selected source body has transferred, that release can safely unload the source
 without invalidating session selection.
+
+Attached-SCENE table-2 records participate in the coordinator's transient
+active-zone registry. It is rebuilt, not incrementally deduplicated, whenever
+resident AREA/SCENE data or persistent ZONE enablement changes; it contains
+only records whose START-backed ZONE bit is enabled. This is not yet collision
+or zone-event execution.
 
 Related: [`iam-area.md`](iam-area.md), [`iam-scenario-vm.md`](iam-scenario-vm.md),
 and [`startup-sequence.md`](startup-sequence.md).

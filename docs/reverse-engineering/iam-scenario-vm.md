@@ -896,25 +896,30 @@ The opcode ABI must describe each operand role individually.
 
 ---
 
-# 29. Current OpenNomad Scalar16 gap
+# 29. OpenNomad Scalar16 handling
 
-Current OpenNomad's `AreaOpcodeInfo` describes two-byte operands only as:
+`AreaOpcodeInfo` describes physical two-byte operands as:
 
 ```text
 k_int16
 ```
 
-and sign-extends them directly.
+and sign-extends them directly for instruction decoding. Supported handlers
+whose ABI specifies `Scalar16` then pass that decoded value through
+`AreaScriptRuntime::resolve_scalar16()`.
 
-It does not model the:
+This preserves literal `-1` and resolves the:
 
 ```text
 0x4000 parameter reference
 ```
 
-behavior.
+behavior from a copied context parameter block. An absent or out-of-range
+parameter block remains a structured execution failure; raw-u16 operands stay
+raw by handler contract.
 
-This is a meaningful compatibility/fidelity gap.
+Unsupported opcode families still need their own ABI-specific Scalar16 routing
+when they are implemented.
 
 ---
 
@@ -1197,6 +1202,58 @@ current OpenNomad subset.
 These give the compact VM a conventional small expression/state-manipulation
 core.
 
+## `0x13..0x18` — global/stack arithmetic
+
+All six handlers consume one `Scalar16` global-variable ID, including normal
+`0x4000` parameter-block indirection, then pop one signed dword from the
+compact evaluation stack. Their confirmed native handlers are:
+
+| Opcode | Handler | Operation |
+| ---: | ---: | --- |
+| `0x13` | `0x00402210` | `global = global + stack` |
+| `0x14` | `0x00402290` | `global = global - stack` |
+| `0x15` | `0x00402310` | `global = global * stack` |
+| `0x16` | `0x00402390` | `global = global / stack` |
+| `0x17` | `0x00402410` | `global = global & stack` |
+| `0x18` | `0x00402490` | `global = global | stack` |
+
+Subtraction and division are specifically **global minus/divided by stack**;
+they do not reverse the operands. Addition, subtraction, and multiplication
+retain the low 32 bits of x86 arithmetic. OpenNomad performs those operations
+with explicit unsigned-bit-pattern wrapping rather than relying on C++ signed
+overflow. AND/OR operate on the complete 32-bit pattern. Signed division
+truncates toward zero; division by zero and `INT32_MIN / -1` become structured
+compact-VM failures without modifying the destination global.
+
+## `0x40` / `0x41` — persistent ZONE activation
+
+| Opcode | Handler | Scalar16 operand | Persistent action |
+| ---: | ---: | --- | --- |
+| `0x40` | `0x00403780` | zone ID | enable ZONE bit |
+| `0x41` | `0x004037F0` | zone ID | disable ZONE bit |
+
+The persistent helpers are `GetPersistentZoneFlag` at `0x0040D500` and
+`SetPersistentZoneFlag` at `0x0040D540`. Both normalize their 16-bit input
+with `zoneId &= 0x7FFF` before accessing the START-backed ZONE bitset.
+
+The bit mutation is only the first half of both opcode handlers. Immediately
+after it, Runtime enters the common resident-zone refresh path around
+`0x00406560`. That refresh discards the old transient active-zone set, scans
+both resident AREA slots, then scans each primary AREA table 2 and attached
+SCENE table 2. Every `0x44` record whose persistent bit is enabled is
+materialized; duplicate records are retained even when their normalized IDs
+match.
+
+OpenNomad mirrors this as a session-coordinator-owned transient registry of
+complete immutable `IamZoneRecord` values, tagged with resident slot and AREA
+or SCENE source. Persistent ZONE enablement remains exclusively in
+`GameState`. The registry refreshes after `0x40`, `0x41`, SCENE attachment,
+AREA release, initial residency, and successful alternate-slot preparation.
+It intentionally does not interpret geometry, name the three event offsets,
+perform collision, fire zone events, or create zone compact contexts. Runtime's
+later cleanup of zone-bound contexts whose backing records disappear remains
+deferred for the same reason.
+
 ## `0x0C` — `SetGlobalVariableZero`
 
 Handler `0x00401EB0` consumes one `Scalar16` (three bytes including the
@@ -1251,13 +1308,16 @@ offset `+0x46`:
 +0x5F  0A 75 02                 push global[629]
 +0x62  19                       equal
 +0x63  06 6C 00                 branch if false
-+0x66  40 D3 0E ...             next unsupported compact opcode
++0x66  40 D3 0E                 ActivateZone 3795
++0x69  07 0A                    PushInt8 10
++0x6B  13 75 02                 global[629] += 10
 ```
 
 Because the script zeroes variable 629 immediately before comparing it with
-zero, the recovered path falls through to `0x40`. OpenNomad's next compact-VM
-compatibility stop after this implementation is therefore SCENE-relative
-`+0x66`, opcode `0x40`; its ABI/semantics remain to be recovered.
+zero, the recovered path falls through to `0x40`. OpenNomad enables the
+numeric ZONE 3795 persistent bit, synchronizes currently resident active-zone
+records, and then initializes global 629 from zero to ten. No friendly ZONE
+tag is asserted for 3795.
 
 ---
 
@@ -4213,6 +4273,8 @@ Core context/runtime:
 | `0x3A` | `0x004031E0` | StartScxScriptTracked |
 | `0x3B` | `0x00403300` | StartCharacterScript |
 | `0x3C` | `0x00403430` | StartCharacterScriptTracked |
+| `0x40` | `0x00403780` | ActivateZone |
+| `0x41` | `0x004037F0` | DeactivateZone |
 | `0x46` | `0x00403860` | OpenInterface |
 | `0x4E` | `0x00403CB0` | character activation path |
 | `0x5A` | `0x00404450` | StartCurrentCharacterScript |

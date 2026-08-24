@@ -4,11 +4,13 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <deque>
 #include <expected>
+#include <limits>
 #include <optional>
 #include <span>
 #include <string>
@@ -36,6 +38,12 @@ constexpr std::uint32_t K_OP_PUSH_GLOBAL_VARIABLE{0x0A};
 constexpr std::uint32_t K_OP_SET_GLOBAL_VARIABLE_ZERO{0x0C};
 constexpr std::uint32_t K_OP_SET_GLOBAL_VARIABLE_ONE{0x0D};
 constexpr std::uint32_t K_OP_SET_GLOBAL_VARIABLE{0x0E};
+constexpr std::uint32_t K_OP_ADD_STACK_TO_GLOBAL_VARIABLE{0x13};
+constexpr std::uint32_t K_OP_SUBTRACT_STACK_FROM_GLOBAL_VARIABLE{0x14};
+constexpr std::uint32_t K_OP_MULTIPLY_GLOBAL_VARIABLE_BY_STACK{0x15};
+constexpr std::uint32_t K_OP_DIVIDE_GLOBAL_VARIABLE_BY_STACK{0x16};
+constexpr std::uint32_t K_OP_AND_GLOBAL_VARIABLE_WITH_STACK{0x17};
+constexpr std::uint32_t K_OP_OR_GLOBAL_VARIABLE_WITH_STACK{0x18};
 constexpr std::uint32_t K_OP_EQUAL{0x19};
 constexpr std::uint32_t K_OP_START_CURRENT_CHARACTER_SCRIPT_TRACKED{0x2E};
 constexpr std::uint32_t K_OP_BEGIN_AREA_TRANSITION{0x2F};
@@ -47,6 +55,8 @@ constexpr std::uint32_t K_OP_START_SCX_SCRIPT_TRACKED{0x3A};
 constexpr std::uint32_t K_OP_START_CHARACTER_SCRIPT{0x3B};
 constexpr std::uint32_t K_OP_START_CHARACTER_SCRIPT_TRACKED{0x3C};
 constexpr std::uint32_t K_OP_START_DIALOG{0x3D};
+constexpr std::uint32_t K_OP_ACTIVATE_ZONE{0x40};
+constexpr std::uint32_t K_OP_DEACTIVATE_ZONE{0x41};
 constexpr std::uint32_t K_OP_ACTIVATE_CHARACTER{0x4E};
 constexpr std::uint32_t K_OP_DEACTIVATE_CHARACTER{0x4F};
 constexpr std::uint32_t K_OP_GET_CHARACTER_VALUE_TO_VARIABLE{0x56};
@@ -104,7 +114,32 @@ constexpr std::array<AreaOperandWidth, 3> K_OPERANDS_67{
 constexpr std::array<AreaOperandWidth, 3> K_OPERANDS_PRESENTATION{
     AreaOperandWidth::k_int32, AreaOperandWidth::k_int16, AreaOperandWidth::k_int16};
 
-constexpr std::array<AreaOpcodeInfo, 39> K_AREA_OPCODE_TABLE{
+[[nodiscard]] std::int32_t wrapping_add(const std::int32_t lhs, const std::int32_t rhs) {
+  return std::bit_cast<std::int32_t>(
+      static_cast<std::uint32_t>(lhs) + static_cast<std::uint32_t>(rhs));
+}
+
+[[nodiscard]] std::int32_t wrapping_subtract(const std::int32_t lhs, const std::int32_t rhs) {
+  return std::bit_cast<std::int32_t>(
+      static_cast<std::uint32_t>(lhs) - static_cast<std::uint32_t>(rhs));
+}
+
+[[nodiscard]] std::int32_t wrapping_multiply(const std::int32_t lhs, const std::int32_t rhs) {
+  return std::bit_cast<std::int32_t>(
+      static_cast<std::uint32_t>(lhs) * static_cast<std::uint32_t>(rhs));
+}
+
+[[nodiscard]] std::int32_t bitwise_and(const std::int32_t lhs, const std::int32_t rhs) {
+  return std::bit_cast<std::int32_t>(
+      static_cast<std::uint32_t>(lhs) & static_cast<std::uint32_t>(rhs));
+}
+
+[[nodiscard]] std::int32_t bitwise_or(const std::int32_t lhs, const std::int32_t rhs) {
+  return std::bit_cast<std::int32_t>(
+      static_cast<std::uint32_t>(lhs) | static_cast<std::uint32_t>(rhs));
+}
+
+constexpr std::array<AreaOpcodeInfo, 47> K_AREA_OPCODE_TABLE{
     AreaOpcodeInfo{.opcode = K_OP_END_EVENT,
         .name = "EndEvent",
         .support = OpcodeSupport::k_supported,
@@ -199,6 +234,48 @@ constexpr std::array<AreaOpcodeInfo, 39> K_AREA_OPCODE_TABLE{
         .notes = "sets START/global variable <operand 0> to <operand 1>",
         .operands = K_OPERANDS_0E.data(),
         .operand_count = K_OPERANDS_0E.size()},
+    AreaOpcodeInfo{.opcode = K_OP_ADD_STACK_TO_GLOBAL_VARIABLE,
+        .name = "AddStackToGlobalVariable",
+        .support = OpcodeSupport::k_supported,
+        .provisional = false,
+        .notes = "adds one evaluation-stack dword to a Scalar16 shared global variable",
+        .operands = K_OPERANDS_I16.data(),
+        .operand_count = K_OPERANDS_I16.size()},
+    AreaOpcodeInfo{.opcode = K_OP_SUBTRACT_STACK_FROM_GLOBAL_VARIABLE,
+        .name = "SubtractStackFromGlobalVariable",
+        .support = OpcodeSupport::k_supported,
+        .provisional = false,
+        .notes = "subtracts one evaluation-stack dword from a Scalar16 shared global variable",
+        .operands = K_OPERANDS_I16.data(),
+        .operand_count = K_OPERANDS_I16.size()},
+    AreaOpcodeInfo{.opcode = K_OP_MULTIPLY_GLOBAL_VARIABLE_BY_STACK,
+        .name = "MultiplyGlobalVariableByStack",
+        .support = OpcodeSupport::k_supported,
+        .provisional = false,
+        .notes = "multiplies a Scalar16 shared global variable by one evaluation-stack dword",
+        .operands = K_OPERANDS_I16.data(),
+        .operand_count = K_OPERANDS_I16.size()},
+    AreaOpcodeInfo{.opcode = K_OP_DIVIDE_GLOBAL_VARIABLE_BY_STACK,
+        .name = "DivideGlobalVariableByStack",
+        .support = OpcodeSupport::k_supported,
+        .provisional = false,
+        .notes = "signed-divides a Scalar16 shared global variable by one evaluation-stack dword",
+        .operands = K_OPERANDS_I16.data(),
+        .operand_count = K_OPERANDS_I16.size()},
+    AreaOpcodeInfo{.opcode = K_OP_AND_GLOBAL_VARIABLE_WITH_STACK,
+        .name = "AndGlobalVariableWithStack",
+        .support = OpcodeSupport::k_supported,
+        .provisional = false,
+        .notes = "bitwise-ANDs a Scalar16 shared global variable with one evaluation-stack dword",
+        .operands = K_OPERANDS_I16.data(),
+        .operand_count = K_OPERANDS_I16.size()},
+    AreaOpcodeInfo{.opcode = K_OP_OR_GLOBAL_VARIABLE_WITH_STACK,
+        .name = "OrGlobalVariableWithStack",
+        .support = OpcodeSupport::k_supported,
+        .provisional = false,
+        .notes = "bitwise-ORs a Scalar16 shared global variable with one evaluation-stack dword",
+        .operands = K_OPERANDS_I16.data(),
+        .operand_count = K_OPERANDS_I16.size()},
     AreaOpcodeInfo{.opcode = K_OP_SELECT_CURRENT_CHARACTER,
         .name = "SelectCurrentCharacter",
         .support = OpcodeSupport::k_supported,
@@ -242,6 +319,20 @@ constexpr std::array<AreaOpcodeInfo, 39> K_AREA_OPCODE_TABLE{
         .provisional = false,
         .notes = "starts an IAM/DIALOG conversation and forces dispatcher yield without "
                  "entering a typed AREA wait",
+        .operands = K_OPERANDS_I16.data(),
+        .operand_count = K_OPERANDS_I16.size()},
+    AreaOpcodeInfo{.opcode = K_OP_ACTIVATE_ZONE,
+        .name = "ActivateZone",
+        .support = OpcodeSupport::k_supported,
+        .provisional = false,
+        .notes = "sets a persistent Scalar16 ZONE bit and rebuilds resident active zones",
+        .operands = K_OPERANDS_I16.data(),
+        .operand_count = K_OPERANDS_I16.size()},
+    AreaOpcodeInfo{.opcode = K_OP_DEACTIVATE_ZONE,
+        .name = "DeactivateZone",
+        .support = OpcodeSupport::k_supported,
+        .provisional = false,
+        .notes = "clears a persistent Scalar16 ZONE bit and rebuilds resident active zones",
         .operands = K_OPERANDS_I16.data(),
         .operand_count = K_OPERANDS_I16.size()},
     AreaOpcodeInfo{.opcode = K_OP_ACTIVATE_CHARACTER,
@@ -482,6 +573,10 @@ void AreaScriptRuntime::set_address_flag_sink(AddressFlagSink sink) {
   m_address_flag_sink = std::move(sink);
 }
 
+void AreaScriptRuntime::set_zone_activation_sink(ZoneActivationSink sink) {
+  m_zone_activation_sink = std::move(sink);
+}
+
 void AreaScriptRuntime::set_persistent_object_collection_sink(PersistentObjectCollectionSink sink) {
   m_persistent_object_collection_sink = std::move(sink);
 }
@@ -506,8 +601,7 @@ void AreaScriptRuntime::set_character_value_write_sink(CharacterValueWriteSink s
   m_character_value_write_sink = std::move(sink);
 }
 
-void AreaScriptRuntime::set_scalar16_parameters(
-    const std::span<const std::int16_t> parameters) {
+void AreaScriptRuntime::set_scalar16_parameters(const std::span<const std::int16_t> parameters) {
   m_scalar16_parameters.assign(parameters.begin(), parameters.end());
 }
 
@@ -555,7 +649,8 @@ std::expected<void, std::string> AreaScriptRuntime::complete_interface_wait(
 
   m_completion_result = completion.result;
   if (m_wait.interface_result_variable.has_value()) {
-    auto written{write_global_variable(m_wait.interface_result_variable.value(), completion.result)};
+    auto written{
+        write_global_variable(m_wait.interface_result_variable.value(), completion.result)};
     if (!written) {
       return std::expected<void, std::string>{std::unexpect,
           fmt::format("cannot write interface result to global variable {}: {}",
@@ -777,8 +872,8 @@ std::expected<std::int16_t, std::string> AreaScriptRuntime::resolve_scalar16(
 std::expected<std::int32_t, std::string> AreaScriptRuntime::read_global_variable(
     const std::uint16_t id) const {
   if (!m_global_variable_read_sink) {
-    return std::expected<std::int32_t, std::string>{std::unexpect,
-        "shared global-variable read bridge is not wired"};
+    return std::expected<std::int32_t, std::string>{
+        std::unexpect, "shared global-variable read bridge is not wired"};
   }
   return m_global_variable_read_sink(id);
 }
@@ -786,8 +881,8 @@ std::expected<std::int32_t, std::string> AreaScriptRuntime::read_global_variable
 std::expected<void, std::string> AreaScriptRuntime::write_global_variable(
     const std::uint16_t id, const std::int32_t value) {
   if (!m_global_variable_write_sink) {
-    return std::expected<void, std::string>{std::unexpect,
-        "shared global-variable write bridge is not wired"};
+    return std::expected<void, std::string>{
+        std::unexpect, "shared global-variable write bridge is not wired"};
   }
   return m_global_variable_write_sink(id, value);
 }
@@ -965,7 +1060,8 @@ void AreaScriptRuntime::execute_instruction() {
     case K_OP_SET_GLOBAL_VARIABLE_ONE: {
       const std::uint16_t id{static_cast<std::uint16_t>(operands.at(0))};
       if (auto written{write_global_variable(id, 1)}; !written) {
-        fail_instruction(fmt::format("cannot set global variable {} to one: {}", id, written.error()));
+        fail_instruction(
+            fmt::format("cannot set global variable {} to one: {}", id, written.error()));
         return;
       }
       entry.effect = fmt::format("set global variable {} to 1", id);
@@ -977,18 +1073,88 @@ void AreaScriptRuntime::execute_instruction() {
         fail_instruction(fmt::format("cannot set global variable {}: {}", id, written.error()));
         return;
       }
-      entry.effect = fmt::format("set global variable {} to {}",
-          id,
-          operands.at(1));
+      entry.effect = fmt::format("set global variable {} to {}", id, operands.at(1));
+      break;
+    }
+    case K_OP_ADD_STACK_TO_GLOBAL_VARIABLE:
+    case K_OP_SUBTRACT_STACK_FROM_GLOBAL_VARIABLE:
+    case K_OP_MULTIPLY_GLOBAL_VARIABLE_BY_STACK:
+    case K_OP_DIVIDE_GLOBAL_VARIABLE_BY_STACK:
+    case K_OP_AND_GLOBAL_VARIABLE_WITH_STACK:
+    case K_OP_OR_GLOBAL_VARIABLE_WITH_STACK: {
+      const std::string_view operation{info->name};
+      auto variable_id{resolve_scalar16(operands.at(0), operation)};
+      if (!variable_id) {
+        fail_instruction(variable_id.error());
+        return;
+      }
+      const std::uint16_t id{static_cast<std::uint16_t>(variable_id.value())};
+      auto lhs{read_global_variable(id)};
+      if (!lhs) {
+        fail_instruction(fmt::format("cannot read global variable {}: {}", id, lhs.error()));
+        return;
+      }
+      auto rhs{pop_evaluation_value()};
+      if (!rhs) {
+        fail_instruction(rhs.error());
+        return;
+      }
+
+      std::int32_t result{0};
+      const char* operator_text{""};
+      switch (opcode) {
+        case K_OP_ADD_STACK_TO_GLOBAL_VARIABLE:
+          result = wrapping_add(lhs.value(), rhs.value());
+          operator_text = "+";
+          break;
+        case K_OP_SUBTRACT_STACK_FROM_GLOBAL_VARIABLE:
+          result = wrapping_subtract(lhs.value(), rhs.value());
+          operator_text = "-";
+          break;
+        case K_OP_MULTIPLY_GLOBAL_VARIABLE_BY_STACK:
+          result = wrapping_multiply(lhs.value(), rhs.value());
+          operator_text = "*";
+          break;
+        case K_OP_DIVIDE_GLOBAL_VARIABLE_BY_STACK:
+          if (rhs.value() == 0) {
+            fail_instruction("DivideGlobalVariableByStack: division by zero");
+            return;
+          }
+          if (lhs.value() == std::numeric_limits<std::int32_t>::min() && rhs.value() == -1) {
+            fail_instruction("DivideGlobalVariableByStack: signed division overflow");
+            return;
+          }
+          result = lhs.value() / rhs.value();
+          operator_text = "/";
+          break;
+        case K_OP_AND_GLOBAL_VARIABLE_WITH_STACK:
+          result = bitwise_and(lhs.value(), rhs.value());
+          operator_text = "&";
+          break;
+        case K_OP_OR_GLOBAL_VARIABLE_WITH_STACK:
+          result = bitwise_or(lhs.value(), rhs.value());
+          operator_text = "|";
+          break;
+        default:
+          fail_instruction("internal global-stack arithmetic opcode dispatch error");
+          return;
+      }
+      if (auto written{write_global_variable(id, result)}; !written) {
+        fail_instruction(fmt::format("cannot write global variable {}: {}", id, written.error()));
+        return;
+      }
+
+      entry.effect = fmt::format(
+          "global {}: {} {} {} -> {}", id, lhs.value(), operator_text, rhs.value(), result);
       break;
     }
     case K_OP_GET_CHARACTER_VALUE_TO_VARIABLE:
     case K_OP_SET_CHARACTER_VALUE_FROM_VARIABLE: {
       std::array<std::int16_t, 3> resolved{};
       const bool read_character{opcode == K_OP_GET_CHARACTER_VALUE_TO_VARIABLE};
-      const std::array<std::string_view, 3> semantics{read_character
-              ? "GetCharacterValueToVariable character"
-              : "SetCharacterValueFromVariable character",
+      const std::array<std::string_view, 3> semantics{
+          read_character ? "GetCharacterValueToVariable character"
+                         : "SetCharacterValueFromVariable character",
           read_character ? "GetCharacterValueToVariable kind"
                          : "SetCharacterValueFromVariable kind",
           read_character ? "GetCharacterValueToVariable destination variable"
@@ -1034,9 +1200,8 @@ void AreaScriptRuntime::execute_instruction() {
 
       auto value{read_global_variable(variable_id)};
       if (!value) {
-        fail_instruction(fmt::format("cannot read source global variable {}: {}",
-            variable_id,
-            value.error()));
+        fail_instruction(
+            fmt::format("cannot read source global variable {}: {}", variable_id, value.error()));
         return;
       }
       if (!m_character_value_write_sink) {
@@ -1443,6 +1608,34 @@ void AreaScriptRuntime::execute_instruction() {
       // 0x3D. The context remains running at the already-advanced IP; global
       // dialog takeover suppresses later AREA ticks until completion.
       m_yield_requested = true;
+      break;
+    }
+    case K_OP_ACTIVATE_ZONE:
+    case K_OP_DEACTIVATE_ZONE: {
+      const std::string_view operation{
+          opcode == K_OP_ACTIVATE_ZONE ? "ActivateZone" : "DeactivateZone"};
+      auto zone_id{resolve_scalar16(operands.at(0), operation)};
+      if (!zone_id) {
+        fail_instruction(zone_id.error());
+        return;
+      }
+      if (!m_zone_activation_sink) {
+        fail_instruction("zone activation bridge is not wired");
+        return;
+      }
+      const AreaZoneActivationRequest request{
+          .zone_id = zone_id.value(), .enabled = opcode == K_OP_ACTIVATE_ZONE};
+      m_last_zone_activation_request = request;
+      if (auto updated{m_zone_activation_sink(request)}; !updated) {
+        fail_instruction(fmt::format("failed to {} ZONE {}: {}",
+            request.enabled ? "activate" : "deactivate",
+            static_cast<std::uint16_t>(request.zone_id),
+            updated.error()));
+        return;
+      }
+      entry.effect = fmt::format("{} ZONE {}",
+          request.enabled ? "activate" : "deactivate",
+          static_cast<std::uint16_t>(request.zone_id));
       break;
     }
     case K_OP_ACTIVATE_CHARACTER: {

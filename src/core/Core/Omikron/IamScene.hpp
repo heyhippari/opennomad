@@ -11,6 +11,7 @@
 
 #include "Core/Omikron/IamCamera.hpp"
 #include "Core/Omikron/IamCharacterDefinition.hpp"
+#include "Core/Omikron/IamZone.hpp"
 
 namespace App::Omikron {
 
@@ -43,15 +44,8 @@ struct IamSceneObjectDefinitionRecord {
   std::array<std::byte, 0x16> raw_tail{};
 };
 
-/// One 0x44-byte SCENE table-2 trigger/context record. Event names remain
-/// deliberately neutral: their trigger meanings are not recovered.
-struct IamSceneZoneRecord {
-  std::array<std::uint32_t, 3> event_offsets{};
-  std::array<std::byte, 0x32> raw_geometry_and_fields{};
-  std::int16_t field_3e{0};
-  std::int16_t zone_id{0};
-  std::array<std::byte, 2> raw_tail{};
-};
+/// SCENE table-2 has the same physical and semantic record layout as AREA.
+using IamSceneZoneRecord = IamZoneRecord;
 
 /// One 0x08-byte SCENE table-7 link record. Its higher-level meaning remains
 /// unresolved; nonzero program offsets are retained as serialized offsets.
@@ -105,8 +99,7 @@ class IamSceneRecord {
  private:
   explicit IamSceneRecord(std::vector<std::byte> bytes) : m_bytes(std::move(bytes)) {}
 
-  [[nodiscard]] std::optional<std::string> optional_record_string(
-      std::uint32_t offset) const;
+  [[nodiscard]] std::optional<std::string> optional_record_string(std::uint32_t offset) const;
 
   std::vector<std::byte> m_bytes;
 };

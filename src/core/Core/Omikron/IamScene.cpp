@@ -17,6 +17,7 @@
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Omikron/IamCamera.hpp"
 #include "Core/Omikron/IamCharacterDefinition.hpp"
+#include "Core/Omikron/IamZone.hpp"
 
 namespace App::Omikron {
 
@@ -95,15 +96,15 @@ std::expected<IamSceneRecord, std::string> IamSceneRecord::load(
     }
     if (index == 5U) {
       if (counts.at(index) != 0 || offsets.at(index) != 0U) {
-        return std::expected<IamSceneRecord, std::string>{std::unexpect,
-            "IAM/SCENE record: table 5 is unsupported and must be empty"};
+        return std::expected<IamSceneRecord, std::string>{
+            std::unexpect, "IAM/SCENE record: table 5 is unsupported and must be empty"};
       }
       continue;
     }
     const std::optional<std::size_t> stride{table_stride(index)};
     if (!stride.has_value()) {
-      return std::expected<IamSceneRecord, std::string>{std::unexpect,
-          fmt::format("IAM/SCENE record: table {} has no known stride", index)};
+      return std::expected<IamSceneRecord, std::string>{
+          std::unexpect, fmt::format("IAM/SCENE record: table {} has no known stride", index)};
     }
     auto end{span_end(offsets.at(index), counts.at(index), stride.value(), data.size(), index)};
     if (!end) {
@@ -125,18 +126,17 @@ std::expected<IamSceneRecord, std::string> IamSceneRecord::load(
     }
   }
   if (counts.at(7) != 0 && offsets.at(7) < ends.at(4)) {
-    return std::expected<IamSceneRecord, std::string>{std::unexpect,
-        "IAM/SCENE record: table 7 starts before table 4/string region ends"};
+    return std::expected<IamSceneRecord, std::string>{
+        std::unexpect, "IAM/SCENE record: table 7 starts before table 4/string region ends"};
   }
 
   if (counts.at(6) != 0 && offsets.at(6) < ends.at(7)) {
-    return std::expected<IamSceneRecord, std::string>{std::unexpect,
-        "IAM/SCENE record: table 6 cameras start before table 7/script region ends"};
+    return std::expected<IamSceneRecord, std::string>{
+        std::unexpect, "IAM/SCENE record: table 6 cameras start before table 7/script region ends"};
   }
 
   const std::uint32_t script_offset{read_at<std::uint32_t>(data, k_offset_script)};
-  if (script_offset != 0U &&
-      (script_offset < ends.at(7) || script_offset > offsets.at(6))) {
+  if (script_offset != 0U && (script_offset < ends.at(7) || script_offset > offsets.at(6))) {
     return std::expected<IamSceneRecord, std::string>{std::unexpect,
         fmt::format("IAM/SCENE record: script offset {:#x} is outside [{:#x}, {:#x}]",
             script_offset,
@@ -154,17 +154,16 @@ std::expected<IamSceneRecord, std::string> IamSceneRecord::load(
         continue;
       }
       if (string_offset >= data.size() ||
-          std::memchr(data.subspan(string_offset).data(), '\0', data.size() - string_offset) == nullptr) {
+          std::memchr(data.subspan(string_offset).data(), '\0', data.size() - string_offset) ==
+              nullptr) {
         return std::expected<IamSceneRecord, std::string>{std::unexpect,
             fmt::format("IAM/SCENE record: table-4 string at {:#x} is not NUL terminated in record",
                 string_offset)};
       }
-      strings.at(string_field / sizeof(std::uint32_t)) =
-          fixed_string(data.subspan(string_offset));
+      strings.at(string_field / sizeof(std::uint32_t)) = fixed_string(data.subspan(string_offset));
     }
-    auto parsed{parse_iam_character_definition(data.subspan(record_offset, 0x114U),
-        std::move(strings.at(0)),
-        std::move(strings.at(1)))};
+    auto parsed{parse_iam_character_definition(
+        data.subspan(record_offset, 0x114U), std::move(strings.at(0)), std::move(strings.at(1)))};
     if (!parsed) {
       return std::expected<IamSceneRecord, std::string>{std::unexpect,
           fmt::format("IAM/SCENE record: table-4 character {}: {}", index, parsed.error())};
@@ -201,8 +200,8 @@ std::expected<IamSceneRecord, std::string> IamSceneRecord::load(
     const std::size_t record_offset{offsets.at(6) + (index * IamCameraRecord::k_serialized_size)};
     auto camera{parse_iam_camera(data.subspan(record_offset, IamCameraRecord::k_serialized_size))};
     if (!camera) {
-      return std::expected<IamSceneRecord, std::string>{std::unexpect,
-          fmt::format("IAM/SCENE record: camera {}: {}", index, camera.error())};
+      return std::expected<IamSceneRecord, std::string>{
+          std::unexpect, fmt::format("IAM/SCENE record: camera {}: {}", index, camera.error())};
     }
   }
 
@@ -218,39 +217,41 @@ std::uint32_t IamSceneRecord::script_offset() const {
 }
 
 std::uint32_t IamSceneRecord::table_offset(const std::size_t index) const {
-  return index < k_table_count ? read_at<std::uint32_t>(m_bytes, k_offset_table_offsets + (index * 4U))
-                               : 0U;
+  return index < k_table_count
+             ? read_at<std::uint32_t>(m_bytes, k_offset_table_offsets + (index * 4U))
+             : 0U;
 }
 
 std::int16_t IamSceneRecord::table_count(const std::size_t index) const {
-  return index < k_table_count ? read_at<std::int16_t>(m_bytes, k_offset_table_counts + (index * 2U))
-                               : 0;
+  return index < k_table_count
+             ? read_at<std::int16_t>(m_bytes, k_offset_table_counts + (index * 2U))
+             : 0;
 }
 
 std::expected<std::span<const std::byte>, std::string> IamSceneRecord::table_view(
     const std::size_t index) const {
   if (index >= k_table_count) {
-    return std::expected<std::span<const std::byte>, std::string>{std::unexpect,
-        fmt::format("IAM/SCENE record: table index {} is out of range", index)};
+    return std::expected<std::span<const std::byte>, std::string>{
+        std::unexpect, fmt::format("IAM/SCENE record: table index {} is out of range", index)};
   }
   if (index == 5U) {
     return std::span<const std::byte>{};
   }
   const auto stride{table_stride(index)};
   if (!stride.has_value()) {
-    return std::expected<std::span<const std::byte>, std::string>{std::unexpect,
-        fmt::format("IAM/SCENE record: table {} has no known stride", index)};
+    return std::expected<std::span<const std::byte>, std::string>{
+        std::unexpect, fmt::format("IAM/SCENE record: table {} has no known stride", index)};
   }
   const std::int16_t count{table_count(index)};
   if (count < 0) {
-    return std::expected<std::span<const std::byte>, std::string>{std::unexpect,
-        fmt::format("IAM/SCENE record: table {} has negative count", index)};
+    return std::expected<std::span<const std::byte>, std::string>{
+        std::unexpect, fmt::format("IAM/SCENE record: table {} has negative count", index)};
   }
   const std::size_t offset{table_offset(index)};
   const std::size_t size{static_cast<std::size_t>(count) * stride.value()};
   if (offset > m_bytes.size() || size > m_bytes.size() - offset) {
-    return std::expected<std::span<const std::byte>, std::string>{std::unexpect,
-        fmt::format("IAM/SCENE record: table {} view is outside record", index)};
+    return std::expected<std::span<const std::byte>, std::string>{
+        std::unexpect, fmt::format("IAM/SCENE record: table {} view is outside record", index)};
   }
   return std::span<const std::byte>{m_bytes}.subspan(offset, size);
 }
@@ -264,7 +265,8 @@ std::span<const std::byte> IamSceneRecord::script_bytes() const {
   return std::span<const std::byte>{m_bytes}.subspan(start, end - start);
 }
 
-std::optional<std::string> IamSceneRecord::optional_record_string(const std::uint32_t offset) const {
+std::optional<std::string> IamSceneRecord::optional_record_string(
+    const std::uint32_t offset) const {
   if (offset == 0U) {
     return std::nullopt;
   }
@@ -350,15 +352,16 @@ std::vector<IamSceneObjectPlacementRecord> IamSceneRecord::object_placements() c
   const std::size_t count{static_cast<std::size_t>(table_count(1))};
   for (std::size_t index{0}; index < count; ++index) {
     const std::span<const std::byte> record{table->subspan(index * 0x18U, 0x18U)};
-    result.push_back(IamSceneObjectPlacementRecord{.runtime_object_slot_seed = read_at<std::int16_t>(record, 0U),
-        .object_id = read_at<std::int16_t>(record, 2U),
-        .serialized_position = {read_at<std::int32_t>(record, 4U),
-            read_at<std::int32_t>(record, 8U),
-            read_at<std::int32_t>(record, 12U)},
-        .orientation_units = {read_at<std::int16_t>(record, 16U),
-            read_at<std::int16_t>(record, 18U),
-            read_at<std::int16_t>(record, 20U)},
-        .persistent_state_field = read_at<std::uint16_t>(record, 22U)});
+    result.push_back(
+        IamSceneObjectPlacementRecord{.runtime_object_slot_seed = read_at<std::int16_t>(record, 0U),
+            .object_id = read_at<std::int16_t>(record, 2U),
+            .serialized_position = {read_at<std::int32_t>(record, 4U),
+                read_at<std::int32_t>(record, 8U),
+                read_at<std::int32_t>(record, 12U)},
+            .orientation_units = {read_at<std::int16_t>(record, 16U),
+                read_at<std::int16_t>(record, 18U),
+                read_at<std::int16_t>(record, 20U)},
+            .persistent_state_field = read_at<std::uint16_t>(record, 22U)});
   }
   return result;
 }
@@ -373,8 +376,8 @@ std::vector<IamSceneObjectDefinitionRecord> IamSceneRecord::object_definitions()
   const std::size_t count{static_cast<std::size_t>(table_count(3))};
   for (std::size_t index{0}; index < count; ++index) {
     const std::span<const std::byte> record{table->subspan(index * 0x18U, 0x18U)};
-    IamSceneObjectDefinitionRecord definition{.object_id = read_at<std::int16_t>(record, 0U),
-        .raw_tail = {}};
+    IamSceneObjectDefinitionRecord definition{
+        .object_id = read_at<std::int16_t>(record, 0U), .raw_tail = {}};
     std::memcpy(definition.raw_tail.data(), record.subspan(2U).data(), definition.raw_tail.size());
     result.push_back(definition);
   }
@@ -390,18 +393,8 @@ std::vector<IamSceneZoneRecord> IamSceneRecord::zones() const {
   result.reserve(static_cast<std::size_t>(table_count(2)));
   const std::size_t count{static_cast<std::size_t>(table_count(2))};
   for (std::size_t index{0}; index < count; ++index) {
-    const std::span<const std::byte> record{table->subspan(index * 0x44U, 0x44U)};
-    IamSceneZoneRecord zone{.event_offsets = {read_at<std::uint32_t>(record, 0U),
-            read_at<std::uint32_t>(record, 4U),
-            read_at<std::uint32_t>(record, 8U)},
-        .raw_geometry_and_fields = {},
-        .field_3e = read_at<std::int16_t>(record, 0x3EU),
-        .zone_id = read_at<std::int16_t>(record, 0x40U),
-        .raw_tail = {}};
-    std::memcpy(zone.raw_geometry_and_fields.data(), record.subspan(0x0CU, 0x32U).data(),
-        zone.raw_geometry_and_fields.size());
-    std::memcpy(zone.raw_tail.data(), record.subspan(0x42U, 2U).data(), zone.raw_tail.size());
-    result.push_back(zone);
+    const std::span<const std::byte, 0x44> record{table->subspan(index * 0x44U, 0x44U)};
+    result.push_back(parse_iam_zone_record(record));
   }
   return result;
 }

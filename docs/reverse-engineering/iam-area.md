@@ -1200,6 +1200,11 @@ Record size:
 0x44 bytes
 ```
 
+AREA table 2 now shares OpenNomad's immutable `IamZoneRecord` representation
+with SCENE table 2. Its three `event_offsets[0..2]` remain record-relative
+serialized offsets with deliberately neutral event naming; the parser and
+active-zone residency registry never relocate or execute them.
+
 Strong current sparse layout:
 
 ```c

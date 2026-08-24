@@ -58,9 +58,12 @@ std::expected<IamCharacterDefinition, std::string> parse_iam_character_definitio
   }
 
   const std::uint32_t character_type_value{read_at<std::uint32_t>(record, 0x0B0U)};
+  constexpr std::uint32_t k_unspecified_character_type{
+      static_cast<std::uint32_t>(CharacterType::Unspecified)};
   constexpr std::uint32_t k_last_character_type{
       static_cast<std::uint32_t>(CharacterType::Astaroth)};
-  if (character_type_value > k_last_character_type) {
+  if (character_type_value != k_unspecified_character_type &&
+      character_type_value > k_last_character_type) {
     return std::expected<IamCharacterDefinition, std::string>{std::unexpect,
         fmt::format("IAM character definition: character type {} is outside [0, {}]",
             character_type_value,

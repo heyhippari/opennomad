@@ -1145,7 +1145,7 @@ Neither should be modeled as a generic character "stat" merely because they are 
 
 # 19. Character type at `+0xB0`
 
-`character +0xB0` is a confirmed 32-bit character-type enum. Runtime retains the associated strings:
+`character +0xB0` is a confirmed 32-bit authored character classification. Runtime retains strings for the ordinary values:
 
 | Value | Runtime string |
 |---:|---|
@@ -1166,10 +1166,14 @@ Neither should be modeled as a generic character "stat" merely because they are 
 
 Possessable bodies such as Kay'l, Syao, Itzam'a, Jayli'n, etc. contain value `9` (`Incarnable`).
 
+Retail AREA also uses `0xFFFFFFFF` extensively as an authored sentinel/default classification. Across the complete AREA table-4 corpus, 830 definitions were observed: 297 use `0xFFFFFFFF`, 533 use an ordinary value in `0..13`, and no other value occurred. Every sentinel definition corresponds to a real table-0 placement, so it is neither padding nor an unused/deleted record. OpenNomad preserves it as `CharacterType::Unspecified`; this is a neutral engineering label, not a recovered Runtime source name.
+
 Working enum:
 
 ```cpp
 enum class CharacterType : std::uint32_t {
+    Unspecified = 0xFFFFFFFFU,
+
     None = 0,
     MalePasser = 1,
     FemalePasser = 2,

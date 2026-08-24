@@ -11,6 +11,7 @@
 
 #include "Core/Omikron/IamCamera.hpp"
 #include "Core/Omikron/IamCharacterDefinition.hpp"
+#include "Core/Omikron/IamZone.hpp"
 
 namespace App::Omikron {
 
@@ -32,6 +33,9 @@ struct IamAreaCharacterRecord {
 
 /// AREA table-4 uses the shared complete 0x114-byte authored definition.
 using IamAreaCharacterDefinitionRecord = IamCharacterDefinition;
+
+/// AREA table-2 has the same physical and semantic record layout as SCENE.
+using IamAreaZoneRecord = IamZoneRecord;
 
 /// One named 0x10-byte spawn/address entry from AREA table 5.
 struct IamAreaAddressRecord {
@@ -124,6 +128,10 @@ class IamAreaRecord {
 
   /// Finds a named table-5 address by its signed address ID.
   [[nodiscard]] std::optional<IamAreaAddressRecord> address_by_id(std::int16_t address_id) const;
+
+  /// Immutable AREA table-2 zone records. Event offsets remain serialized
+  /// offsets; trigger semantics are deliberately not inferred here.
+  [[nodiscard]] std::vector<IamAreaZoneRecord> zones() const;
 
   /// Known serialized stride of a table, when established. Tables 0, 1, 2, 4,
   /// 5, 6 and 7 have confirmed strides; table 3's semantics remain unresolved.

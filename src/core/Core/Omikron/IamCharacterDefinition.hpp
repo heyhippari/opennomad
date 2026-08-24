@@ -12,6 +12,9 @@ namespace App::Omikron {
 
 /// Recovered authored character classification stored at definition +0xB0.
 enum class CharacterType : std::uint32_t {
+  /// Retail-authored default/sentinel. Its original Runtime source name is unknown.
+  Unspecified = 0xFFFFFFFFU,
+
   None = 0,
   MalePasser = 1,
   FemalePasser = 2,

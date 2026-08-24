@@ -91,6 +91,14 @@ struct AreaAddressFlagRequest {
   bool enabled{false};
 };
 
+/// Persistent ZONE bit mutation requested by compact IAM opcodes 0x40/0x41.
+/// The signed member preserves the complete authored Scalar16 bit pattern;
+/// normalization belongs to the session-owned GameState service.
+struct AreaZoneActivationRequest {
+  std::int16_t zone_id{0};
+  bool enabled{false};
+};
+
 /// Persistent object-collection insertion requested by compact IAM opcode
 /// 0x32. Both operands retain their authored numeric meaning.
 struct AreaPersistentObjectCollectionRequest {
@@ -260,30 +268,33 @@ class AreaScriptRuntime {
   using DialogSink = std::function<std::expected<void, std::string>(const AreaDialogRequest&)>;
 
   /// Bridge from opcode 0x2F to the session-level two-slot AREA coordinator.
-  using AreaTransitionSink = std::function<std::expected<AreaTransitionHandle, std::string>(
-      const AreaTransitionRequest&)>;
+  using AreaTransitionSink =
+      std::function<std::expected<AreaTransitionHandle, std::string>(const AreaTransitionRequest&)>;
 
   /// Session lifecycle bridges for the nonblocking AREA handoff opcodes.
-  using AreaReleaseSink = std::function<std::expected<void, std::string>(const AreaReleaseRequest&)>;
+  using AreaReleaseSink =
+      std::function<std::expected<void, std::string>(const AreaReleaseRequest&)>;
   using AreaSceneAttachSink =
       std::function<std::expected<void, std::string>(const AreaSceneAttachRequest&)>;
   using AreaAddressPlacementSink =
       std::function<std::expected<void, std::string>(const AreaAddressPlacementRequest&)>;
   using AddressFlagSink =
       std::function<std::expected<void, std::string>(const AreaAddressFlagRequest&)>;
-  using PersistentObjectCollectionSink = std::function<std::expected<void, std::string>(
-      const AreaPersistentObjectCollectionRequest&)>;
+  using ZoneActivationSink =
+      std::function<std::expected<void, std::string>(const AreaZoneActivationRequest&)>;
+  using PersistentObjectCollectionSink =
+      std::function<std::expected<void, std::string>(const AreaPersistentObjectCollectionRequest&)>;
 
   /// Shared START/global-variable services owned by the playthrough state.
   using GlobalVariableReadSink =
       std::function<std::expected<std::int32_t, std::string>(std::uint16_t id)>;
-  using GlobalVariableWriteSink = std::function<std::expected<void, std::string>(
-      std::uint16_t id, std::int32_t value)>;
+  using GlobalVariableWriteSink =
+      std::function<std::expected<void, std::string>(std::uint16_t id, std::int32_t value)>;
   using GlobalVariableSnapshotSink = std::function<std::span<const std::int32_t>()>;
 
   /// Session character-profile services used by compact opcodes 0x56/0x5D.
-  using CharacterValueReadSink = std::function<std::expected<std::int32_t, std::string>(
-      const AreaCharacterValueRequest&)>;
+  using CharacterValueReadSink =
+      std::function<std::expected<std::int32_t, std::string>(const AreaCharacterValueRequest&)>;
   using CharacterValueWriteSink = std::function<std::expected<void, std::string>(
       const AreaCharacterValueRequest&, std::int32_t value)>;
 
@@ -357,6 +368,8 @@ class AreaScriptRuntime {
   void set_area_address_placement_sink(AreaAddressPlacementSink sink);
   /// Wires persistent ADDRESS mutations from opcodes 0x57/0x58.
   void set_address_flag_sink(AddressFlagSink sink);
+  /// Wires persistent ZONE mutations and resident-zone synchronization from 0x40/0x41.
+  void set_zone_activation_sink(ZoneActivationSink sink);
   /// Wires persistent object-collection insertion from opcode 0x32.
   void set_persistent_object_collection_sink(PersistentObjectCollectionSink sink);
 
@@ -531,6 +544,10 @@ class AreaScriptRuntime {
   [[nodiscard]] const std::optional<AreaAddressFlagRequest>& last_address_flag_request() const {
     return m_last_address_flag_request;
   }
+  [[nodiscard]] const std::optional<AreaZoneActivationRequest>& last_zone_activation_request()
+      const {
+    return m_last_zone_activation_request;
+  }
   [[nodiscard]] const std::optional<AreaPersistentObjectCollectionRequest>&
   last_persistent_object_collection_request() const {
     return m_last_persistent_object_collection_request;
@@ -610,6 +627,7 @@ class AreaScriptRuntime {
   AreaSceneAttachSink m_area_scene_attach_sink;
   AreaAddressPlacementSink m_area_address_placement_sink;
   AddressFlagSink m_address_flag_sink;
+  ZoneActivationSink m_zone_activation_sink;
   PersistentObjectCollectionSink m_persistent_object_collection_sink;
   GlobalVariableReadSink m_global_variable_read_sink;
   GlobalVariableWriteSink m_global_variable_write_sink;
@@ -633,6 +651,7 @@ class AreaScriptRuntime {
   std::optional<AreaSceneAttachRequest> m_last_area_scene_attach_request;
   std::optional<AreaAddressPlacementRequest> m_last_area_address_placement_request;
   std::optional<AreaAddressFlagRequest> m_last_address_flag_request;
+  std::optional<AreaZoneActivationRequest> m_last_zone_activation_request;
   std::optional<AreaPersistentObjectCollectionRequest> m_last_persistent_object_collection_request;
   std::optional<AreaCameraRequest> m_last_camera_request;
   std::optional<AreaPresentationRequest> m_last_presentation_request;

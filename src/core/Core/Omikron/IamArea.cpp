@@ -16,6 +16,7 @@
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Omikron/IamCamera.hpp"
 #include "Core/Omikron/IamCharacterDefinition.hpp"
+#include "Core/Omikron/IamZone.hpp"
 
 namespace App::Omikron {
 
@@ -137,8 +138,8 @@ std::expected<IamAreaRecord, std::string> IamAreaRecord::load(
       }
       if (string_offset >= data.size()) {
         return std::expected<IamAreaRecord, std::string>{std::unexpect,
-            fmt::format("IAM/AREA record: table-4 string at {:#x} is outside record",
-                string_offset)};
+            fmt::format(
+                "IAM/AREA record: table-4 string at {:#x} is outside record", string_offset)};
       }
       const std::span<const std::byte> suffix{data.subspan(string_offset)};
       if (std::memchr(suffix.data(), '\0', suffix.size()) == nullptr) {
@@ -298,11 +299,12 @@ std::optional<IamAreaCharacterDefinitionRecord> IamAreaRecord::character_definit
     for (std::size_t field{0}; field < strings.size(); ++field) {
       const std::uint32_t string_offset{read_u32_at(record, field * sizeof(std::uint32_t))};
       if (string_offset != 0U) {
-        strings.at(field) = fixed_string(std::span<const std::byte>{m_bytes}.subspan(string_offset));
+        strings.at(field) =
+            fixed_string(std::span<const std::byte>{m_bytes}.subspan(string_offset));
       }
     }
-    auto definition{parse_iam_character_definition(
-        record, std::move(strings.at(0)), std::move(strings.at(1)))};
+    auto definition{
+        parse_iam_character_definition(record, std::move(strings.at(0)), std::move(strings.at(1)))};
     return definition ? std::optional<IamAreaCharacterDefinitionRecord>{std::move(*definition)}
                       : std::nullopt;
   }
@@ -345,8 +347,8 @@ std::optional<IamAreaAddressRecord> IamAreaRecord::address_by_id(
     const std::span<const std::byte> record{
         table->subspan(index * k_address_stride, k_address_stride)};
     IamAreaAddressRecord address{.serialized_position = {read_i32_at(record, 0x00U),
-            read_i32_at(record, 0x04U),
-            read_i32_at(record, 0x08U)},
+                                     read_i32_at(record, 0x04U),
+                                     read_i32_at(record, 0x08U)},
         .orientation_units = read_i16_at(record, 0x0CU),
         .address_id = read_i16_at(record, 0x0EU)};
     if (address.address_id == address_id) {
@@ -354,6 +356,24 @@ std::optional<IamAreaAddressRecord> IamAreaRecord::address_by_id(
     }
   }
   return std::nullopt;
+}
+
+std::vector<IamAreaZoneRecord> IamAreaRecord::zones() const {
+  constexpr std::size_t k_zone_table_index{2};
+  constexpr std::size_t k_zone_stride{0x44};
+
+  std::vector<IamAreaZoneRecord> result;
+  const auto table{table_view(k_zone_table_index)};
+  if (!table) {
+    return result;
+  }
+  result.reserve(static_cast<std::size_t>(table_count(k_zone_table_index)));
+  for (std::size_t index{0}; index < table_count(k_zone_table_index); ++index) {
+    const std::span<const std::byte, k_zone_stride> record{
+        table->subspan(index * k_zone_stride, k_zone_stride)};
+    result.push_back(parse_iam_zone_record(record));
+  }
+  return result;
 }
 
 }  // namespace App::Omikron
