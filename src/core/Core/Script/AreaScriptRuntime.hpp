@@ -17,10 +17,10 @@
 
 namespace App::Script {
 
-/// Coarse execution state of one area-script context. Mirrors the recovered
-/// scenario-context lifecycle: a context is created, an event/state is
-/// queued, activation is explicit, and the first tick executes the queued
-/// prefix.
+/// Coarse execution state of one compact IAM scenario context. The historical
+/// class name is retained for compatibility, but both AREA and attached SCENE
+/// records use this lifecycle: a context is created, event/state is queued,
+/// activation is explicit, and the first tick executes the queued prefix.
 enum class AreaScriptState : std::uint8_t {
   k_ready,               ///< Created; waiting for an event to be queued and run.
   k_running,             ///< Executing instructions.
@@ -55,6 +55,22 @@ struct AreaTransitionRequest {
   std::int16_t target_area_id{0};
   std::int16_t operand_b{0};
   std::int16_t operand_c{0};
+};
+
+/// Nonblocking release request emitted by opcode 0x30.
+struct AreaReleaseRequest {
+  std::int16_t area_id{0};
+};
+
+/// Nonblocking attached-SCENE replacement request emitted by opcode 0x47.
+struct AreaSceneAttachRequest {
+  std::int16_t area_id{0};
+  std::int16_t scene_id{0};
+};
+
+/// Nonblocking named-address placement request emitted by opcode 0x49.
+struct AreaAddressPlacementRequest {
+  std::int16_t address_id{0};
 };
 
 /// Stable identity of one accepted session-level AREA transition.
@@ -169,9 +185,9 @@ struct AreaPauseInfo {
   std::string nearby_bytes;
 };
 
-/// Runtime-style AREA bytecode interpreter over immutable bytes. Loading or
-/// constructing a context never executes it: an event/state must be queued,
-/// the context explicitly activated, and run() called on a tick.
+/// Runtime-style compact IAM interpreter over immutable AREA or SCENE bytes.
+/// Loading or constructing a context never executes it: an event/state must
+/// be queued, the context explicitly activated, and run() called on a tick.
 class AreaScriptRuntime {
  public:
   /// Sink for the interface-open opcode (0x46): the full open request. The
@@ -201,6 +217,13 @@ class AreaScriptRuntime {
   /// Bridge from opcode 0x2F to the session-level two-slot AREA coordinator.
   using AreaTransitionSink = std::function<std::expected<AreaTransitionHandle, std::string>(
       const AreaTransitionRequest&)>;
+
+  /// Session lifecycle bridges for the nonblocking AREA handoff opcodes.
+  using AreaReleaseSink = std::function<std::expected<void, std::string>(const AreaReleaseRequest&)>;
+  using AreaSceneAttachSink =
+      std::function<std::expected<void, std::string>(const AreaSceneAttachRequest&)>;
+  using AreaAddressPlacementSink =
+      std::function<std::expected<void, std::string>(const AreaAddressPlacementRequest&)>;
 
   /// Bridge from opcode 0x4E to the active world's character runtime.
   using CharacterActivationSink =
@@ -257,6 +280,11 @@ class AreaScriptRuntime {
 
   /// Wires AREA opcode 0x2F to native AREA-transition coordination.
   void set_area_transition_sink(AreaTransitionSink sink);
+
+  /// Wires 0x30, 0x47 and 0x49 to session-owned residency operations.
+  void set_area_release_sink(AreaReleaseSink sink);
+  void set_area_scene_attach_sink(AreaSceneAttachSink sink);
+  void set_area_address_placement_sink(AreaAddressPlacementSink sink);
 
   /// Wires AREA opcode 0x4E to runtime-character activation.
   void set_character_activation_sink(CharacterActivationSink sink);
@@ -389,6 +417,17 @@ class AreaScriptRuntime {
   [[nodiscard]] const std::optional<AreaTransitionRequest>& last_area_transition_request() const {
     return m_last_area_transition_request;
   }
+  [[nodiscard]] const std::optional<AreaReleaseRequest>& last_area_release_request() const {
+    return m_last_area_release_request;
+  }
+  [[nodiscard]] const std::optional<AreaSceneAttachRequest>& last_area_scene_attach_request()
+      const {
+    return m_last_area_scene_attach_request;
+  }
+  [[nodiscard]] const std::optional<AreaAddressPlacementRequest>&
+  last_area_address_placement_request() const {
+    return m_last_area_address_placement_request;
+  }
   [[nodiscard]] const std::optional<AreaCameraRequest>& last_camera_request() const {
     return m_last_camera_request;
   }
@@ -433,6 +472,9 @@ class AreaScriptRuntime {
   [[nodiscard]] std::expected<std::size_t, std::string> relative_target(
       std::size_t base, std::int32_t displacement) const;
 
+  /// Immutable bytecode ownership keeps a context valid while its owning AREA
+  /// or attached SCENE is released by one of its own nonblocking opcodes.
+  std::vector<std::byte> m_script_storage;
   std::span<const std::byte> m_script;
   std::deque<std::uint16_t> m_queued_events;
   std::optional<std::uint16_t> m_active_event;
@@ -450,6 +492,9 @@ class AreaScriptRuntime {
   CharacterScriptSink m_character_script_sink;
   DialogSink m_dialog_sink;
   AreaTransitionSink m_area_transition_sink;
+  AreaReleaseSink m_area_release_sink;
+  AreaSceneAttachSink m_area_scene_attach_sink;
+  AreaAddressPlacementSink m_area_address_placement_sink;
   CharacterActivationSink m_character_activation_sink;
   CameraSink m_camera_sink;
   PresentationSink m_presentation_sink;
@@ -459,6 +504,9 @@ class AreaScriptRuntime {
   std::optional<AreaCharacterScriptRequest> m_last_character_script_request;
   std::optional<AreaDialogRequest> m_last_dialog_request;
   std::optional<AreaTransitionRequest> m_last_area_transition_request;
+  std::optional<AreaReleaseRequest> m_last_area_release_request;
+  std::optional<AreaSceneAttachRequest> m_last_area_scene_attach_request;
+  std::optional<AreaAddressPlacementRequest> m_last_area_address_placement_request;
   std::optional<AreaCameraRequest> m_last_camera_request;
   std::optional<AreaPresentationRequest> m_last_presentation_request;
   bool m_cinematic_letterbox_requested{false};

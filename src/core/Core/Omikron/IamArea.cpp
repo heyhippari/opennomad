@@ -288,4 +288,28 @@ std::optional<IamAreaCameraRecord> IamAreaRecord::camera_by_id(const std::int16_
   return std::nullopt;
 }
 
+std::optional<IamAreaAddressRecord> IamAreaRecord::address_by_id(
+    const std::int16_t address_id) const {
+  constexpr std::size_t k_address_table_index{5};
+  constexpr std::size_t k_address_stride{0x10};
+
+  auto table{table_view(k_address_table_index)};
+  if (!table) {
+    return std::nullopt;
+  }
+  for (std::size_t index{0}; index < table_count(k_address_table_index); ++index) {
+    const std::span<const std::byte> record{
+        table->subspan(index * k_address_stride, k_address_stride)};
+    IamAreaAddressRecord address{.serialized_position = {read_i32_at(record, 0x00U),
+            read_i32_at(record, 0x04U),
+            read_i32_at(record, 0x08U)},
+        .orientation_units = read_i16_at(record, 0x0CU),
+        .address_id = read_i16_at(record, 0x0EU)};
+    if (address.address_id == address_id) {
+      return address;
+    }
+  }
+  return std::nullopt;
+}
+
 }  // namespace App::Omikron

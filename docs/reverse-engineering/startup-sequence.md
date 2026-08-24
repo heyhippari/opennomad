@@ -67,6 +67,20 @@ This document deliberately stops at the **running main menu**.
 
 Selecting **New Game**, the Kay'l portal/arrival sequence, the subsequent transition to Anekbah, and handing control to the player are later game-state transitions and are outside this startup boundary.
 
+## Later AREA handoff correction
+
+The later compact-VM handoff is split into residency and presentation.
+`0x2F` prepares the alternate AREA slot (AREA bytes, decor, SCX, and world
+context) but leaves the destination `LoadedInactive` and source active. `0x47`
+attaches IAM/SCENE, materializes only SCENE-local entities, queues the
+independent SCENE compact event, updates the AREA-to-SCENE mapping, and commits
+the prepared destination as active. `0x49` resolves its named address across
+both resident AREA slots and applies it only to an already-established
+controlled character. `0x30` finally releases the requested inactive source
+AREA and any attached SCENE.
+
+See [`iam-scene.md`](iam-scene.md) for the record format and replacement lifecycle.
+
 ---
 
 # Executive overview

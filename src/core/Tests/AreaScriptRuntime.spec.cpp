@@ -24,6 +24,7 @@ using App::InterfaceHandle;
 using App::InterfaceOpenRequest;
 using App::Audio::MusicTrackRequest;
 using App::Script::AreaCameraRequest;
+using App::Script::AreaAddressPlacementRequest;
 using App::Script::AreaCharacterActivationRequest;
 using App::Script::AreaCinematicLetterboxRequest;
 using App::Script::AreaCharacterScriptLaunchMode;
@@ -35,6 +36,8 @@ using App::Script::AreaScriptState;
 using App::Script::AreaScxScriptRequest;
 using App::Script::AreaTransitionHandle;
 using App::Script::AreaTransitionRequest;
+using App::Script::AreaReleaseRequest;
+using App::Script::AreaSceneAttachRequest;
 using App::Script::AreaWaitKind;
 
 /// The confirmed area-118 startup prefix (script-relative offsets 0..0x2C).
@@ -106,6 +109,85 @@ auto recording_interface_sink(
 }  // namespace
 
 TEST_SUITE("Core::Script::AreaScriptRuntime") {
+  TEST_CASE("0x47 attaches a SCENE without waiting and continues to EndEvent") {
+    Buffer bytes;
+    bytes.u8(0x47).u16(222).u16(55).u8(0x03);
+    AreaScriptRuntime runtime{bytes.data()};
+    std::optional<AreaSceneAttachRequest> captured;
+    std::size_t calls{0};
+    runtime.set_area_scene_attach_sink(
+        [&captured, &calls](const AreaSceneAttachRequest& request) -> std::expected<void, std::string> {
+          captured = request;
+          ++calls;
+          return {};
+        });
+    runtime.queue_event(1);
+    runtime.activate();
+
+    CHECK(runtime.run() == AreaScriptState::k_ready);
+    REQUIRE(captured.has_value());
+    CHECK_EQ(captured->area_id, 222);
+    CHECK_EQ(captured->scene_id, 55);
+    CHECK_EQ(calls, 1U);
+    CHECK(runtime.wait_info().kind == AreaWaitKind::k_none);
+    CHECK_EQ(runtime.instruction_pointer(), bytes.data().size());
+  }
+
+  TEST_CASE("0x49 requests current-character address placement without waiting") {
+    Buffer bytes;
+    bytes.u8(0x49).u16(654).u8(0x03);
+    AreaScriptRuntime runtime{bytes.data()};
+    std::optional<AreaAddressPlacementRequest> captured;
+    runtime.set_area_address_placement_sink(
+        [&captured](const AreaAddressPlacementRequest& request) -> std::expected<void, std::string> {
+          captured = request;
+          return {};
+        });
+    runtime.queue_event(1);
+    runtime.activate();
+
+    CHECK(runtime.run() == AreaScriptState::k_ready);
+    REQUIRE(captured.has_value());
+    CHECK_EQ(captured->address_id, 654);
+    CHECK(runtime.wait_info().kind == AreaWaitKind::k_none);
+  }
+
+  TEST_CASE("0x30 releases its requested AREA without waiting") {
+    Buffer bytes;
+    bytes.u8(0x30).u16(118).u8(0x03);
+    AreaScriptRuntime runtime{bytes.data()};
+    std::optional<AreaReleaseRequest> captured;
+    runtime.set_area_release_sink(
+        [&captured](const AreaReleaseRequest& request) -> std::expected<void, std::string> {
+          captured = request;
+          return {};
+        });
+    runtime.queue_event(1);
+    runtime.activate();
+
+    CHECK(runtime.run() == AreaScriptState::k_ready);
+    REQUIRE(captured.has_value());
+    CHECK_EQ(captured->area_id, 118);
+    CHECK(runtime.wait_info().kind == AreaWaitKind::k_none);
+  }
+
+  TEST_CASE("0x47 sink failure preserves instruction boundaries as a structured failure") {
+    Buffer bytes;
+    bytes.u8(0x47).u16(222).u16(55).u8(0x03);
+    AreaScriptRuntime runtime{bytes.data()};
+    runtime.set_area_scene_attach_sink(
+        [](const AreaSceneAttachRequest&) -> std::expected<void, std::string> {
+          return std::expected<void, std::string>{std::unexpect, "scene archive unavailable"};
+        });
+    runtime.queue_event(1);
+    runtime.activate();
+
+    CHECK(runtime.run() == AreaScriptState::k_failed);
+    CHECK_EQ(runtime.pause_info().opcode, 0x47U);
+    CHECK_EQ(runtime.instruction_pointer(), 0U);
+    CHECK(runtime.pause_info().reason_text.find("scene archive unavailable") != std::string::npos);
+  }
+
   TEST_CASE("0x39 launches SCX fire-and-forget and executes the following instruction") {
     Buffer bytes;
     bytes.u8(0x39).u16(20).u16(7).u16(9);

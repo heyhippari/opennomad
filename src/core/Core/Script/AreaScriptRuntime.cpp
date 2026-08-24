@@ -37,6 +37,7 @@ constexpr std::uint32_t K_OP_SET_GLOBAL_VARIABLE_ONE{0x0D};
 constexpr std::uint32_t K_OP_SET_GLOBAL_VARIABLE{0x0E};
 constexpr std::uint32_t K_OP_EQUAL{0x19};
 constexpr std::uint32_t K_OP_BEGIN_AREA_TRANSITION{0x2F};
+constexpr std::uint32_t K_OP_RELEASE_AREA{0x30};
 constexpr std::uint32_t K_OP_CHARACTER_LOOKUP{0x38};
 constexpr std::uint32_t K_OP_START_SCX_SCRIPT{0x39};
 constexpr std::uint32_t K_OP_START_SCX_SCRIPT_TRACKED{0x3A};
@@ -54,6 +55,8 @@ constexpr std::uint32_t K_OP_PLAY_MUSIC{0x67};
 constexpr std::uint32_t K_OP_PRESENTATION_EFFECT{0x76};
 constexpr std::uint32_t K_OP_PRESENTATION_EFFECT_ALT{0x77};
 constexpr std::uint32_t K_OP_OPEN_INTERFACE{0x46};
+constexpr std::uint32_t K_OP_ATTACH_AREA_SCENE{0x47};
+constexpr std::uint32_t K_OP_PLACE_CURRENT_CHARACTER_AT_ADDRESS{0x49};
 constexpr std::uint32_t K_OP_BEGIN_CINEMATIC_LETTERBOX{0x84};
 constexpr std::uint32_t K_OP_END_CINEMATIC_LETTERBOX{0x85};
 
@@ -91,7 +94,7 @@ constexpr std::array<AreaOperandWidth, 3> K_OPERANDS_67{
 constexpr std::array<AreaOperandWidth, 3> K_OPERANDS_PRESENTATION{
     AreaOperandWidth::k_int32, AreaOperandWidth::k_int16, AreaOperandWidth::k_int16};
 
-constexpr std::array<AreaOpcodeInfo, 28> K_AREA_OPCODE_TABLE{
+constexpr std::array<AreaOpcodeInfo, 31> K_AREA_OPCODE_TABLE{
     AreaOpcodeInfo{.opcode = K_OP_END_EVENT,
         .name = "EndEvent",
         .support = OpcodeSupport::k_supported,
@@ -150,6 +153,13 @@ constexpr std::array<AreaOpcodeInfo, 28> K_AREA_OPCODE_TABLE{
                  "remain unresolved",
         .operands = K_OPERANDS_3X_I16.data(),
         .operand_count = K_OPERANDS_3X_I16.size()},
+    AreaOpcodeInfo{.opcode = K_OP_RELEASE_AREA,
+        .name = "ReleaseArea",
+        .support = OpcodeSupport::k_supported,
+        .provisional = false,
+        .notes = "releases the requested resident AREA without waiting",
+        .operands = K_OPERANDS_I16.data(),
+        .operand_count = K_OPERANDS_I16.size()},
     AreaOpcodeInfo{.opcode = K_OP_SET_GLOBAL_VARIABLE,
         .name = "SetGlobalVariable",
         .support = OpcodeSupport::k_supported,
@@ -280,6 +290,20 @@ constexpr std::array<AreaOpcodeInfo, 28> K_AREA_OPCODE_TABLE{
         .notes = "opens interface, waits in state 6, writes result to operand 2 variable",
         .operands = K_OPERANDS_3X_I16.data(),
         .operand_count = K_OPERANDS_3X_I16.size()},
+    AreaOpcodeInfo{.opcode = K_OP_ATTACH_AREA_SCENE,
+        .name = "AttachAreaScene",
+        .support = OpcodeSupport::k_supported,
+        .provisional = false,
+        .notes = "attaches/replaces a SCENE in a resident AREA and commits it for presentation",
+        .operands = K_OPERANDS_4E.data(),
+        .operand_count = K_OPERANDS_4E.size()},
+    AreaOpcodeInfo{.opcode = K_OP_PLACE_CURRENT_CHARACTER_AT_ADDRESS,
+        .name = "PlaceCurrentCharacterAtAddress",
+        .support = OpcodeSupport::k_supported,
+        .provisional = false,
+        .notes = "places the established controlled character at a resident AREA address",
+        .operands = K_OPERANDS_I16.data(),
+        .operand_count = K_OPERANDS_I16.size()},
     AreaOpcodeInfo{.opcode = K_OP_BEGIN_CINEMATIC_LETTERBOX,
         .name = "BeginCinematicLetterbox",
         .support = OpcodeSupport::k_supported,
@@ -351,7 +375,7 @@ const char* area_opcode_name(const std::uint32_t opcode) {
 }
 
 AreaScriptRuntime::AreaScriptRuntime(const std::span<const std::byte> script_bytes)
-    : m_script(script_bytes) {}
+    : m_script_storage{script_bytes.begin(), script_bytes.end()}, m_script{m_script_storage} {}
 
 void AreaScriptRuntime::queue_event(const std::uint16_t event) {
   m_queued_events.push_back(event);
@@ -383,6 +407,18 @@ void AreaScriptRuntime::set_dialog_sink(DialogSink sink) {
 
 void AreaScriptRuntime::set_area_transition_sink(AreaTransitionSink sink) {
   m_area_transition_sink = std::move(sink);
+}
+
+void AreaScriptRuntime::set_area_release_sink(AreaReleaseSink sink) {
+  m_area_release_sink = std::move(sink);
+}
+
+void AreaScriptRuntime::set_area_scene_attach_sink(AreaSceneAttachSink sink) {
+  m_area_scene_attach_sink = std::move(sink);
+}
+
+void AreaScriptRuntime::set_area_address_placement_sink(AreaAddressPlacementSink sink) {
+  m_area_address_placement_sink = std::move(sink);
 }
 
 void AreaScriptRuntime::set_character_activation_sink(CharacterActivationSink sink) {
@@ -846,6 +882,40 @@ void AreaScriptRuntime::execute_instruction() {
           accepted->generation);
       break;
     }
+    case K_OP_RELEASE_AREA: {
+      auto area_id{resolve_scalar16(operands.at(0), "ReleaseArea")};
+      if (!area_id) {
+        m_pause_info = AreaPauseInfo{.offset = instruction_offset,
+            .opcode = opcode,
+            .opcode_name = std::string{info->name},
+            .reason_text = area_id.error(),
+            .nearby_bytes = nearby_bytes_hex(instruction_offset)};
+        m_state = AreaScriptState::k_failed;
+        return;
+      }
+      if (!m_area_release_sink) {
+        m_pause_info = AreaPauseInfo{.offset = instruction_offset,
+            .opcode = opcode,
+            .opcode_name = std::string{info->name},
+            .reason_text = "AREA release bridge is not wired",
+            .nearby_bytes = nearby_bytes_hex(instruction_offset)};
+        m_state = AreaScriptState::k_failed;
+        return;
+      }
+      const AreaReleaseRequest request{.area_id = area_id.value()};
+      m_last_area_release_request = request;
+      if (auto released{m_area_release_sink(request)}; !released) {
+        m_pause_info = AreaPauseInfo{.offset = instruction_offset,
+            .opcode = opcode,
+            .opcode_name = std::string{info->name},
+            .reason_text = fmt::format("failed to release AREA {}: {}", request.area_id, released.error()),
+            .nearby_bytes = nearby_bytes_hex(instruction_offset)};
+        m_state = AreaScriptState::k_failed;
+        return;
+      }
+      entry.effect = fmt::format("release AREA {}", request.area_id);
+      break;
+    }
     case K_OP_START_SCX_SCRIPT:
     case K_OP_START_SCX_SCRIPT_TRACKED: {
       if (!m_scx_script_sink) {
@@ -1093,6 +1163,80 @@ void AreaScriptRuntime::execute_instruction() {
       wait_after_instruction = true;
       entry.effect = fmt::format(
           "open interface {} (operand {}, result variable {})", interface_id, operand_b, operand_c);
+      break;
+    }
+    case K_OP_ATTACH_AREA_SCENE: {
+      auto area_id{resolve_scalar16(operands.at(0), "AttachAreaScene area")};
+      auto scene_id{resolve_scalar16(operands.at(1), "AttachAreaScene scene")};
+      if (!area_id || !scene_id) {
+        m_pause_info = AreaPauseInfo{.offset = instruction_offset,
+            .opcode = opcode,
+            .opcode_name = std::string{info->name},
+            .reason_text = !area_id ? area_id.error() : scene_id.error(),
+            .nearby_bytes = nearby_bytes_hex(instruction_offset)};
+        m_state = AreaScriptState::k_failed;
+        return;
+      }
+      if (!m_area_scene_attach_sink) {
+        m_pause_info = AreaPauseInfo{.offset = instruction_offset,
+            .opcode = opcode,
+            .opcode_name = std::string{info->name},
+            .reason_text = "AREA SCENE-attach bridge is not wired",
+            .nearby_bytes = nearby_bytes_hex(instruction_offset)};
+        m_state = AreaScriptState::k_failed;
+        return;
+      }
+      const AreaSceneAttachRequest request{.area_id = area_id.value(), .scene_id = scene_id.value()};
+      m_last_area_scene_attach_request = request;
+      if (auto attached{m_area_scene_attach_sink(request)}; !attached) {
+        m_pause_info = AreaPauseInfo{.offset = instruction_offset,
+            .opcode = opcode,
+            .opcode_name = std::string{info->name},
+            .reason_text = fmt::format("failed to attach SCENE {} to AREA {}: {}",
+                request.scene_id,
+                request.area_id,
+                attached.error()),
+            .nearby_bytes = nearby_bytes_hex(instruction_offset)};
+        m_state = AreaScriptState::k_failed;
+        return;
+      }
+      entry.effect = fmt::format("attach SCENE {} to AREA {}", request.scene_id, request.area_id);
+      break;
+    }
+    case K_OP_PLACE_CURRENT_CHARACTER_AT_ADDRESS: {
+      auto address_id{resolve_scalar16(operands.at(0), "PlaceCurrentCharacterAtAddress")};
+      if (!address_id) {
+        m_pause_info = AreaPauseInfo{.offset = instruction_offset,
+            .opcode = opcode,
+            .opcode_name = std::string{info->name},
+            .reason_text = address_id.error(),
+            .nearby_bytes = nearby_bytes_hex(instruction_offset)};
+        m_state = AreaScriptState::k_failed;
+        return;
+      }
+      if (!m_area_address_placement_sink) {
+        m_pause_info = AreaPauseInfo{.offset = instruction_offset,
+            .opcode = opcode,
+            .opcode_name = std::string{info->name},
+            .reason_text = "AREA address-placement bridge is not wired",
+            .nearby_bytes = nearby_bytes_hex(instruction_offset)};
+        m_state = AreaScriptState::k_failed;
+        return;
+      }
+      const AreaAddressPlacementRequest request{.address_id = address_id.value()};
+      m_last_area_address_placement_request = request;
+      if (auto placed{m_area_address_placement_sink(request)}; !placed) {
+        m_pause_info = AreaPauseInfo{.offset = instruction_offset,
+            .opcode = opcode,
+            .opcode_name = std::string{info->name},
+            .reason_text = fmt::format("failed to place current character at address {}: {}",
+                request.address_id,
+                placed.error()),
+            .nearby_bytes = nearby_bytes_hex(instruction_offset)};
+        m_state = AreaScriptState::k_failed;
+        return;
+      }
+      entry.effect = fmt::format("place current character at address {}", request.address_id);
       break;
     }
     case K_OP_CAMERA_SELECT:

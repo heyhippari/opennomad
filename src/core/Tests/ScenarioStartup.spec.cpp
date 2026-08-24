@@ -172,6 +172,83 @@ std::vector<std::byte> make_area_archive() {
   return data;
 }
 
+std::vector<std::byte> make_handoff_area_archive() {
+  Buffer handoff;
+  handoff.u8(0x2F).u16(222).u16(0xFFFF).u16(0xFFFF);
+  handoff.u8(0x60).u16(0).u16(1).u16(0);
+  handoff.u8(0x47).u16(222).u16(0);
+  handoff.u8(0x49).u16(654);
+  handoff.u8(0x30).u16(118);
+  handoff.u8(0x03);
+
+  constexpr std::size_t k_source_offset{0x800};
+  constexpr std::size_t k_target_offset{0x900};
+  constexpr std::size_t k_header_size{0xB4};
+  constexpr std::size_t k_target_record_size{k_header_size + 0x10U};
+  std::vector<std::byte> data(k_target_offset + k_target_record_size, std::byte{});
+  write_u32(data, 118U * 8U, static_cast<std::uint32_t>(k_source_offset));
+  write_u32(data, (118U * 8U) + 4U, static_cast<std::uint32_t>(k_header_size + handoff.data().size()));
+  write_u32(data, k_source_offset + 0x04U, k_header_size);
+  write_name(data, k_source_offset + 0x61U, "GRID");
+  std::memcpy(data.data() + k_source_offset + k_header_size,
+      handoff.data().data(), handoff.data().size());
+
+  write_u32(data, 222U * 8U, static_cast<std::uint32_t>(k_target_offset));
+  write_u32(data, (222U * 8U) + 4U, k_target_record_size);
+  write_u32(data, k_target_offset + 0x04U, k_target_record_size);
+  write_name(data, k_target_offset + 0x61U, "DEST");
+  write_u32(data, k_target_offset + 0x28U + (5U * 4U), k_header_size);
+  write_u16(data, k_target_offset + 0x48U + (5U * 2U), 1);
+  write_u32(data, k_target_offset + k_header_size + 0x00U, 43922U);
+  write_u32(data, k_target_offset + k_header_size + 0x04U, 2592U);
+  write_u32(data, k_target_offset + k_header_size + 0x08U, 19656U);
+  write_u16(data, k_target_offset + k_header_size + 0x0CU, 0);
+  write_u16(data, k_target_offset + k_header_size + 0x0EU, 654);
+  return data;
+}
+
+std::vector<std::byte> make_handoff_scene_archive() {
+  constexpr std::size_t k_record_offset{0x800};
+  constexpr std::size_t k_table0_offset{0x44};
+  constexpr std::size_t k_table4_offset{k_table0_offset + 0x14U};
+  constexpr std::size_t k_script_offset{k_table4_offset + 0x114U};
+  constexpr std::size_t k_table6_offset{k_script_offset + 1U};
+  std::vector<std::byte> data(k_record_offset + k_table6_offset, std::byte{});
+  write_u32(data, 0, static_cast<std::uint32_t>(k_record_offset));
+  write_u32(data, 4, static_cast<std::uint32_t>(k_table6_offset));
+  write_u32(data, k_record_offset + 0x04U, static_cast<std::uint32_t>(k_script_offset));
+  write_u32(data, k_record_offset + 0x08U, static_cast<std::uint32_t>(k_table0_offset));
+  write_u16(data, k_record_offset + 0x28U, 1);
+  for (const std::size_t table_index : {1U, 2U, 3U, 4U}) {
+    write_u32(data,
+        k_record_offset + 0x08U + (table_index * 4U),
+        static_cast<std::uint32_t>(k_table4_offset));
+  }
+  write_u16(data, k_record_offset + 0x28U + (4U * 2U), 1);
+  write_u32(data,
+      k_record_offset + 0x08U + (6U * 4U),
+      static_cast<std::uint32_t>(k_table6_offset));
+  write_u32(data,
+      k_record_offset + 0x08U + (7U * 4U),
+      static_cast<std::uint32_t>(k_script_offset));
+
+  write_u16(data, k_record_offset + k_table0_offset + 0x00U, 0xFFFF);
+  write_u16(data, k_record_offset + k_table0_offset + 0x02U, 57);
+  write_u32(data, k_record_offset + k_table0_offset + 0x04U, 49457U);
+  write_u32(data, k_record_offset + k_table0_offset + 0x08U, static_cast<std::uint32_t>(-511));
+  write_u32(data, k_record_offset + k_table0_offset + 0x0CU, 19386U);
+  write_u16(data, k_record_offset + k_table0_offset + 0x10U, 4073);
+  constexpr std::string_view k_name{"LOCAL CHARACTER"};
+  constexpr std::string_view k_model{"DE1_FN"};
+  std::memcpy(data.data() + k_record_offset + k_table4_offset + 0x08U,
+      k_name.data(), k_name.size());
+  std::memcpy(data.data() + k_record_offset + k_table4_offset + 0x90U,
+      k_model.data(), k_model.size());
+  write_u16(data, k_record_offset + k_table4_offset + 0x110U, 57);
+  data.at(k_record_offset + k_script_offset) = std::byte{0x57};
+  return data;
+}
+
 /// Minimal valid SCX container (empty descriptor, end tag only).
 std::vector<std::byte> make_minimal_scx() {
   Buffer bytes;
@@ -277,9 +354,75 @@ void write_boot_fixtures(const TempDirectory& temp) {
   write_bytes(temp.root() / "MESHES" / "DECORS" / "GRID.3DO", make_minimal_3do());
 }
 
+void write_handoff_fixtures(const TempDirectory& temp) {
+  write_bytes(temp.root() / "IAM" / "START", make_start());
+  write_bytes(temp.root() / "IAM" / "AREA", make_handoff_area_archive());
+  write_bytes(temp.root() / "IAM" / "SCENE", make_handoff_scene_archive());
+  write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
+  write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_minimal_scx());
+  write_bytes(temp.root() / "SCPTDATA" / "DEST.SCX", make_minimal_scx());
+}
+
 }  // namespace
 
 TEST_SUITE("Core::Scenario::ScenarioStartupController") {
+  TEST_CASE("0x2F preserves the active source until 0x47 commits the attached SCENE") {
+    const TempDirectory temp;
+    write_handoff_fixtures(temp);
+    const ScopedGameDataRoot root{temp.root()};
+
+    App::ScenarioManager manager;
+    App::ScenarioStartupController controller;
+    REQUIRE(controller.initialize(manager).has_value());
+
+    REQUIRE(controller.tick().has_value());  // 0x2F accepts and waits.
+    REQUIRE(controller.tick().has_value());  // Target prepares, then camera wait.
+    const App::RuntimeAreaSlot* source{controller.runtime_area_slot(0)};
+    const App::RuntimeAreaSlot* destination{controller.runtime_area_slot(1)};
+    REQUIRE(source != nullptr);
+    REQUIRE(destination != nullptr);
+    CHECK_EQ(source->primary_area_id, 118);
+    CHECK_EQ(destination->primary_area_id, 222);
+    CHECK_EQ(controller.active_area_slot(), 0U);
+    CHECK_EQ(manager.world_contexts()[0].residency, WorldSceneResidencyState::LoadedActive);
+    CHECK_EQ(manager.world_contexts()[1].residency, WorldSceneResidencyState::LoadedInactive);
+
+    App::ScenarioRuntime* destination_runtime{manager.world_runtime(1)};
+    REQUIRE(destination_runtime != nullptr);
+    destination_runtime->character_runtime().set_model_loader(
+        [](const std::string_view name)
+            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
+          auto resource{std::make_shared<App::Character::ModelResource>()};
+          resource->name = name;
+          resource->groups.push_back(App::Omikron::MaterialGroup{});
+          return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
+        });
+    controller.set_current_controlled_character(57);
+
+    REQUIRE(controller.tick(1.0F).has_value());  // 0x47, 0x49, 0x30, then SCENE 0x57 pause.
+    source = controller.runtime_area_slot(0);
+    destination = controller.runtime_area_slot(1);
+    REQUIRE(source != nullptr);
+    REQUIRE(destination != nullptr);
+    CHECK_FALSE(source->primary.has_value());
+    CHECK_EQ(destination->primary_area_id, 222);
+    CHECK_EQ(destination->scene_id, 0);
+    REQUIRE(destination->scene_script.has_value());
+    CHECK(destination->scene_script->state() == AreaScriptState::k_paused_unsupported);
+    CHECK_EQ(destination->scene_script->pause_info().opcode, 0x57U);
+    CHECK_EQ(controller.active_area_slot(), 1U);
+    CHECK_EQ(manager.world_contexts()[0].residency, WorldSceneResidencyState::Free);
+    CHECK_EQ(manager.world_contexts()[1].residency, WorldSceneResidencyState::LoadedActive);
+    CHECK_EQ(controller.area_mapping(222), std::optional<std::int32_t>{0});
+    CHECK_FALSE(controller.area_mapping(118).has_value());
+    const App::Character::RuntimeCharacter* character{destination_runtime->character_runtime().find(57)};
+    REQUIRE(character != nullptr);
+    CHECK_EQ(character->serialized_area_position.at(0), 43922);
+    CHECK_EQ(character->serialized_area_position.at(1), 2592);
+    CHECK_EQ(character->serialized_area_position.at(2), 19656);
+    CHECK_EQ(character->serialized_orientation_units, 0);
+  }
+
   TEST_CASE("Startup reaches the main menu through START, AREA 118 and interface 29") {
     const TempDirectory temp;
     write_boot_fixtures(temp);

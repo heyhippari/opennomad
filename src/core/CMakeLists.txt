@@ -75,6 +75,7 @@ add_library(${NAME} STATIC
   Core/Omikron/IamArchive.hpp Core/Omikron/IamArchive.cpp
   Core/Omikron/IamStart.hpp Core/Omikron/IamStart.cpp
   Core/Omikron/IamArea.hpp Core/Omikron/IamArea.cpp
+  Core/Omikron/IamScene.hpp Core/Omikron/IamScene.cpp
   Core/Omikron/IamDialog.hpp Core/Omikron/IamDialog.cpp
   Core/Sprite/SpriteInstance.hpp
   Core/Sprite/SpriteRenderMode.hpp

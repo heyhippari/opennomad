@@ -196,6 +196,29 @@ TEST_SUITE("Core::Omikron::IamAreaRecord") {
     CHECK_EQ(camera->horizontal_fov_units, 853);
     CHECK_FALSE(record->camera_by_id(999).has_value());
   }
+
+  TEST_CASE("AREA table 5 resolves named addresses by signed ID") {
+    constexpr std::size_t k_address_offset{IamAreaRecord::k_header_size};
+    std::vector<std::byte> data(k_address_offset + 0x10U, std::byte{});
+    write_u32(data, IamAreaRecord::k_offset_script, static_cast<std::uint32_t>(data.size()));
+    write_u32(data, IamAreaRecord::k_offset_table_offsets + (5U * 4U), k_address_offset);
+    write_u16(data, IamAreaRecord::k_offset_table_counts + (5U * 2U), 1);
+    write_i32(data, k_address_offset + 0x00U, 43922);
+    write_i32(data, k_address_offset + 0x04U, 2592);
+    write_i32(data, k_address_offset + 0x08U, 19656);
+    write_i16(data, k_address_offset + 0x0CU, 0);
+    write_i16(data, k_address_offset + 0x0EU, 654);
+
+    const auto record{IamAreaRecord::load(data)};
+    REQUIRE(record.has_value());
+    const auto address{record->address_by_id(654)};
+    REQUIRE(address.has_value());
+    CHECK_EQ(address->serialized_position.at(0), 43922);
+    CHECK_EQ(address->serialized_position.at(1), 2592);
+    CHECK_EQ(address->serialized_position.at(2), 19656);
+    CHECK_EQ(address->orientation_units, 0);
+    CHECK_FALSE(record->address_by_id(999).has_value());
+  }
 }
 
 // NOLINTEND(misc-use-anonymous-namespace, cppcoreguidelines-avoid-do-while, cert-err33-c,

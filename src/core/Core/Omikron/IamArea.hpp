@@ -39,6 +39,13 @@ struct IamAreaCharacterDefinitionRecord {
   std::string model_resource;      ///< +0x090, 10-byte NUL-terminated model name.
 };
 
+/// One named 0x10-byte spawn/address entry from AREA table 5.
+struct IamAreaAddressRecord {
+  std::array<std::int32_t, 3> serialized_position{};
+  std::int16_t orientation_units{0};
+  std::int16_t address_id{0};
+};
+
 /// One 0x2C-byte AREA table-6 camera record.
 ///
 /// Runtime's camera selection handlers copy the first two 3-vectors into the
@@ -120,6 +127,9 @@ class IamAreaRecord {
 
   /// Finds a table-6 camera by its signed camera ID.
   [[nodiscard]] std::optional<IamAreaCameraRecord> camera_by_id(std::int16_t camera_id) const;
+
+  /// Finds a named table-5 address by its signed address ID.
+  [[nodiscard]] std::optional<IamAreaAddressRecord> address_by_id(std::int16_t address_id) const;
 
   /// Known serialized stride of a table, when established. Tables 0, 1, 2, 4,
   /// 5, 6 and 7 have confirmed strides; table 3's semantics remain unresolved.

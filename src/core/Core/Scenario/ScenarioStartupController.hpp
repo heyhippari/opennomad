@@ -12,6 +12,7 @@
 #include "Core/Interface/InterfaceDispatcher.hpp"
 #include "Core/Omikron/IamArchive.hpp"
 #include "Core/Omikron/IamArea.hpp"
+#include "Core/Omikron/IamScene.hpp"
 #include "Core/Omikron/IamStart.hpp"
 #include "Core/Script/AreaScriptRuntime.hpp"
 
@@ -28,16 +29,20 @@ namespace App {
 class ScenarioManager;
 
 /// One runtime area slot, mirroring Runtime's `RuntimeAreaSlot` layout with
-/// safe ownership: the parsed primary area record is owned here, and the
-/// primary/secondary area IDs are ordinary values rather than serialized
-/// pointers.
+/// safe ownership: the parsed AREA and optional attached SCENE are owned here;
+/// IDs are ordinary values rather than serialized pointers.
 struct RuntimeAreaSlot {
   std::optional<Omikron::IamAreaRecord> primary;
+  std::optional<Omikron::IamSceneRecord> scene;
   std::int32_t primary_area_id{-1};
+  /// START's linked-AREA relationship, not an attached SCENE ID.
   std::int32_t secondary_area_id{-1};
+  std::int32_t scene_id{-1};
   /// Stable ScenarioManager world-scene identity owned by this resident slot.
   /// This is not an IAM AREA ID or an array index.
   std::uint32_t world_scene_id{0};
+  /// Independent compact IAM context for the attached SCENE top-level script.
+  std::optional<Script::AreaScriptRuntime> scene_script;
 };
 
 /// Staged startup that follows the recovered Runtime.exe path:
@@ -153,6 +158,13 @@ class ScenarioStartupController {
     return m_area_transition.has_value();
   }
   [[nodiscard]] const Script::AreaScriptRuntime* area_script() const;
+  /// Selects the current controlled character for systems which have already
+  /// established an authoritative player identity. This controller never
+  /// infers that identity from a name, model, or placement order.
+  void set_current_controlled_character(std::optional<std::int16_t> character_id);
+  [[nodiscard]] std::optional<std::int16_t> current_controlled_character() const {
+    return m_current_controlled_character;
+  }
   [[nodiscard]] bool ticked() const {
     return m_ticked;
   }
@@ -191,6 +203,17 @@ class ScenarioStartupController {
   /// Advances one accepted native AREA transition through target preparation,
   /// transactional residency commit, and exact VM completion.
   [[nodiscard]] std::expected<void, std::string> service_area_transition();
+  [[nodiscard]] std::expected<void, std::string> attach_area_scene(
+      const Script::AreaSceneAttachRequest& request);
+  [[nodiscard]] std::expected<void, std::string> release_area(
+      const Script::AreaReleaseRequest& request);
+  [[nodiscard]] std::expected<void, std::string> place_current_character_at_address(
+      const Script::AreaAddressPlacementRequest& request);
+  void bind_scene_compact_services(Script::AreaScriptRuntime& runtime, std::size_t owner_slot);
+  void service_scene_scripts(float delta_seconds);
+  [[nodiscard]] std::optional<std::size_t> resident_area_slot(std::int32_t area_id) const;
+  [[nodiscard]] std::optional<Omikron::IamCameraRecord> active_resident_camera(
+      std::int16_t camera_id) const;
 
   struct PendingAreaTransition {
     Script::AreaTransitionHandle handle;
@@ -202,27 +225,37 @@ class ScenarioStartupController {
 
   std::vector<std::byte> m_start_bytes;
   std::vector<std::byte> m_area_archive_bytes;
+  std::vector<std::byte> m_scene_archive_bytes;
 
   std::optional<Omikron::IamStart> m_start;
   std::optional<Omikron::IamIndexedArchive> m_area_archive;
+  std::optional<Omikron::IamIndexedArchive> m_scene_archive;
   /// Two resident Runtime AREA slots. Slot 0 holds the initial area; opcode
-  /// 0x2F prepares the inactive alternate slot and switches active ownership.
+  /// 0x2F prepares the inactive alternate slot, and 0x47 later commits it.
   std::array<RuntimeAreaSlot, 2> m_area_slots{
       RuntimeAreaSlot{.primary = std::nullopt,
+          .scene = std::nullopt,
           .primary_area_id = -1,
           .secondary_area_id = -1,
-          .world_scene_id = 0},
+          .scene_id = -1,
+          .world_scene_id = 0,
+          .scene_script = std::nullopt},
       RuntimeAreaSlot{.primary = std::nullopt,
+          .scene = std::nullopt,
           .primary_area_id = -1,
           .secondary_area_id = -1,
-          .world_scene_id = 1}};
+          .scene_id = -1,
+          .world_scene_id = 1,
+          .scene_script = std::nullopt}};
   std::size_t m_active_area_slot{0};
   std::optional<PendingAreaTransition> m_area_transition;
   std::uint64_t m_next_area_transition_generation{1};
   std::optional<Script::AreaScriptRuntime> m_area_script;
 
-  /// Reproduces Runtime's `areaMapping[areaId] = linkedAreaId` assignment.
+  /// Runtime-style AREA mapping: START initializes its linked-AREA value and
+  /// 0x47 later replaces the entry with the attached SCENE ID.
   std::unordered_map<std::int32_t, std::int32_t> m_area_mapping;
+  std::optional<std::int16_t> m_current_controlled_character;
 
   std::int16_t m_initial_area_id{0};
   std::int16_t m_linked_area_id{0};

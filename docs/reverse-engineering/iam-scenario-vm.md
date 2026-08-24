@@ -7,7 +7,7 @@
 > used by the Windows retail release of *Omikron: The Nomad Soul*.
 >
 > The VM is used by IAM-authored scenario data, most visibly the bytecode pool
-> embedded in `IAM/AREA` records. It is a separate execution system from the
+> embedded in `IAM/AREA` and `IAM/SCENE` records. It is a separate execution system from the
 > structured SCX `Script_*` runtime.
 >
 > The recovered VM has:
@@ -30,6 +30,8 @@
 >
 > - [`iam-area.md`](iam-area.md) — AREA archive/record layout, bytecode-pool
 >   boundaries, entity tables, and serialized event entrypoints;
+> - [`iam-scene.md`](iam-scene.md) — attached SCENE records, exact top-level
+>   script spans, and independent SCENE compact contexts;
 > - [`script-opcodes.md`](script-opcodes.md) — structured SCX script
 >   serialization and the broader relationship between the two script systems;
 > - [`iam-script-functions.md`](iam-script-functions.md) — native structured
@@ -139,9 +141,9 @@ representations must not be merged.
 The recovered relationship is:
 
 ```text
-IAM/AREA
+IAM/AREA or IAM/SCENE
     |
-    +-- AREA tables
+    +-- AREA or SCENE tables
     |
     +-- shared compact bytecode pool
             |
@@ -2730,8 +2732,10 @@ but not the current instruction-pointer simplification.
 
 # 100. Zone contexts
 
-AREA table-2 zone records supply three event entrypoints to the context
-constructor.
+AREA and SCENE table-2 zone records supply three neutral event entrypoints to
+the context constructor. For SCENE, the serialized fields are retained as
+`event1_offset`, `event2_offset`, and `event3_offset`; their trigger meanings
+are not established.
 
 Conceptually:
 
@@ -2944,8 +2948,10 @@ remain unresolved. The confirmed startup instruction is:
 Accepted execution advances the instruction pointer by all seven bytes and
 blocks the calling AREA context in recovered Runtime state 10. A session-level
 native coordinator prepares the destination using the alternate resident AREA
-slot, switches presentation residency, then releases the old context to resume
-from its post-instruction IP.
+slot, but leaves it `LoadedInactive` while the source remains the active
+presentation world. The context resumes from its post-instruction IP after
+preparation; later `0x47` attaches SCENE data and commits presentation
+ownership.
 
 OpenNomad implements this as:
 
@@ -2953,8 +2959,7 @@ OpenNomad implements this as:
 BeginAreaTransition request
   -> generation-tagged ScenarioStartupController coordinator
   -> alternate RuntimeAreaSlot and WorldSceneContext preparation
-  -> source LoadedActive -> LoadedInactive (still resident)
-  -> destination LoadedInactive -> LoadedActive
+  -> source stays LoadedActive and destination is LoadedInactive
   -> exact handle completes AreaWaitKind::k_area_transition
   -> old AREA context resumes in Runtime state 1
 ```
@@ -2967,23 +2972,21 @@ references fail explicitly rather than being guessed.
 
 ---
 
-# 109. Opcode `0x30`
+# 109. AREA/SCENE handoff opcodes
 
-Handler:
+The compact VM supports three nonblocking operations used after the prepared
+AREA transition:
 
-```text
-0x00402E10
-```
+| Opcode | Operands | Operation |
+| --- | --- | --- |
+| `0x30` | Scalar16 AREA ID | `ReleaseArea`: release the requested inactive resident AREA after resetting any attached SCENE context/state. |
+| `0x47` | Scalar16 AREA ID, Scalar16 SCENE ID | `AttachAreaScene`: replace/attach the SCENE, queue its independent compact event 1, then commit the prepared destination active. |
+| `0x49` | Scalar16 address ID | `PlaceCurrentCharacterAtAddress`: resolve the address across both resident AREA table-5 collections and move only the established controlled character. |
 
-is associated with camera-category behavior in current tracing.
-
-Keep a generic:
-
-```text
-CameraOperation
-```
-
-until the exact action and operand semantics are recovered.
+`0x47`, `0x49`, and `0x30` do not enter a VM wait state. SCENE uses the same
+interpreter and service bridges as AREA, but its compact context is independent:
+an unsupported SCENE opcode pauses that SCENE context without stopping its
+parent AREA context.
 
 ---
 
@@ -3211,13 +3214,15 @@ High-confidence or useful current names:
 | `0x2D` | `AreaOperation` | provisional |
 | `0x2E` | tracked native operation | provisional |
 | `0x2F` | `BeginAreaTransition` | implemented; state-10 two-slot native wait |
-| `0x30` | `CameraOperation` | provisional |
+| `0x30` | `ReleaseArea` | implemented; one Scalar16, nonblocking |
 | `0x38` | `CharacterLookup` | provisional |
 | `0x39` | `StartScxScript` | strongly recovered |
 | `0x3A` | `StartScxScriptTracked` | strongly recovered |
 | `0x3B` | `StartCharacterScript` | strongly recovered |
 | `0x3C` | `StartCharacterScriptTracked` | strongly recovered |
 | `0x46` | `OpenInterface` | strongly recovered |
+| `0x47` | `AttachAreaScene` | implemented; two Scalar16 values, nonblocking |
+| `0x49` | `PlaceCurrentCharacterAtAddress` | implemented; one Scalar16, nonblocking |
 | `0x4E` | `ActivateCharacter` | provisional name, behavior traced |
 | `0x4F` | character selection/reset | provisional |
 | `0x5C` | object activation | provisional |

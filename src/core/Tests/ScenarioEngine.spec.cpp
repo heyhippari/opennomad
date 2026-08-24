@@ -132,6 +132,18 @@ std::vector<std::byte> make_minimal_scx() {
   return bytes.data();
 }
 
+std::vector<std::byte> make_transition_scene_archive() {
+  constexpr std::size_t k_scene_id{55};
+  constexpr std::size_t k_record_offset{0x800};
+  std::vector<std::byte> data(k_record_offset + 0x45U, std::byte{});
+  write_u32(data, k_scene_id * 8U, static_cast<std::uint32_t>(k_record_offset));
+  write_u32(data, (k_scene_id * 8U) + 4U, 0x45U);
+  write_u32(data, k_record_offset + 0x04U, 0x44U);
+  write_u32(data, k_record_offset + 0x08U + (6U * 4U), 0x45U);
+  data.at(k_record_offset + 0x44U) = std::byte{0x57};
+  return data;
+}
+
 /// Minimal IAM/DIALOG archive with record 0. When action_choice is true the
 /// one visible response owns non-empty action bytecode, allowing the test to
 /// drive DialogRuntime into a post-start failure without private hooks.
@@ -244,7 +256,7 @@ void write_dialog_boot_fixtures(const TempDirectory& temp, const bool action_cho
 void write_transition_boot_fixtures(const TempDirectory& temp, const bool include_target_scx) {
   Buffer script;
   script.u8(0x2F).u16(222).u16(0xFFFF).u16(0xFFFF);
-  script.u8(0x47).u16(222).u16(55);
+  script.u8(0x47).u16(222).u16(55).u8(0x03);
   write_bytes(temp.root() / "IAM" / "START", make_start());
   write_bytes(
       temp.root() / "IAM" / "AREA", make_transition_area_archive(script.data()));
@@ -252,6 +264,7 @@ void write_transition_boot_fixtures(const TempDirectory& temp, const bool includ
   write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_minimal_scx());
   if (include_target_scx) {
     write_bytes(temp.root() / "SCPTDATA" / "IMPASSE.SCX", make_minimal_scx());
+    write_bytes(temp.root() / "IAM" / "SCENE", make_transition_scene_archive());
   }
 }
 
@@ -574,7 +587,7 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
     REQUIRE_EQ(engine.area_script()->trace().size(), 1U);
   }
 
-  TEST_CASE("0x2F transaction commits the alternate AREA/world slot and resumes at 0x47") {
+  TEST_CASE("0x2F prepares the alternate AREA and following 0x47 commits its SCENE") {
     const TempDirectory temp;
     write_transition_boot_fixtures(temp, true);
     const ScopedGameDataRoot root{temp.root()};
@@ -601,9 +614,9 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
     CHECK(manager.world_contexts()[0].residency == WorldSceneResidencyState::LoadedActive);
     CHECK(manager.world_contexts()[1].residency == WorldSceneResidencyState::Free);
 
-    // The next scheduler tick prepares the destination transactionally,
-    // commits the residency swap, completes generation 1 exactly once, then
-    // resumes the old AREA 118 context at its post-0x2F successor.
+    // The next scheduler tick prepares the destination transactionally and
+    // completes generation 1. The parent then runs its following 0x47, which
+    // attaches SCENE 55 and commits the prepared world for presentation.
     REQUIRE(engine.update(1.0F / 30.0F).has_value());
     CHECK_FALSE(engine.area_transition_pending());
     CHECK_EQ(engine.active_area_slot(), 1U);
@@ -622,12 +635,15 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
     REQUIRE(manager.active_world_context() != nullptr);
     CHECK_EQ(manager.active_world_context()->scene_id, 1U);
 
-    CHECK(engine.area_script()->state() == AreaScriptState::k_paused_unsupported);
-    CHECK_EQ(engine.area_script()->instruction_pointer(), 7U);
-    CHECK_EQ(engine.area_script()->pause_info().opcode, 0x47U);
+    CHECK(engine.area_script()->state() == AreaScriptState::k_ready);
+    REQUIRE(engine.runtime_area_slot(1)->scene_script.has_value());
+    CHECK(engine.runtime_area_slot(1)->scene_script->state() ==
+          AreaScriptState::k_paused_unsupported);
+    CHECK_EQ(engine.runtime_area_slot(1)->scene_script->pause_info().opcode, 0x57U);
+    CHECK_EQ(engine.area_mapping(222), std::optional<std::int32_t>{55});
     CHECK(seq_of(recorder, "AreaTransition.Accepted", "target=222").has_value());
     CHECK(seq_of(recorder, "AreaTransition.TargetPrepared", "model='AIMPASSE'").has_value());
-    CHECK(seq_of(recorder, "AreaTransition.Committed", "resumeIp=0x7").has_value());
+    CHECK(seq_of(recorder, "AreaTransition.Prepared", "resumeIp=0x7").has_value());
 
     const std::size_t trace_size{engine.area_script()->trace().size()};
     REQUIRE(engine.update(1.0F / 30.0F).has_value());

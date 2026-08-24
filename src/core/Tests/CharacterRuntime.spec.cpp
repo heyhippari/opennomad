@@ -15,6 +15,7 @@
 
 #include "Core/Character/CharacterRuntime.hpp"
 #include "Core/Omikron/IamArea.hpp"
+#include "Core/Omikron/IamScene.hpp"
 #include "Core/Omikron/Model3DO.hpp"
 #include "Core/RuntimeMath.hpp"
 #include "Core/Script/AreaScriptRuntime.hpp"
@@ -66,6 +67,40 @@ App::Omikron::IamAreaRecord make_area() {
   auto area{App::Omikron::IamAreaRecord::load(data)};
   REQUIRE(area.has_value());
   return std::move(area).value();
+}
+
+App::Omikron::IamSceneRecord make_scene() {
+  constexpr std::size_t k_placement_offset{App::Omikron::IamSceneRecord::k_header_size};
+  constexpr std::size_t k_definition_offset{k_placement_offset + 0x14U};
+  constexpr std::size_t k_record_size{k_definition_offset + 0x114U};
+  std::vector<std::byte> data(k_record_size, std::byte{});
+  write_u32(data,
+      App::Omikron::IamSceneRecord::k_offset_table_offsets,
+      static_cast<std::uint32_t>(k_placement_offset));
+  write_u16(data, App::Omikron::IamSceneRecord::k_offset_table_counts, 1);
+  for (const std::size_t table_index : {1U, 2U, 3U, 4U, 6U, 7U}) {
+    write_u32(data,
+        App::Omikron::IamSceneRecord::k_offset_table_offsets + (table_index * 4U),
+        static_cast<std::uint32_t>(table_index <= 4U ? k_definition_offset : k_record_size));
+  }
+  write_u16(data, App::Omikron::IamSceneRecord::k_offset_table_counts + (4U * 2U), 1);
+
+  write_i16(data, k_placement_offset + 0x00U, -1);
+  write_i16(data, k_placement_offset + 0x02U, 57);
+  write_i32(data, k_placement_offset + 0x04U, 49457);
+  write_i32(data, k_placement_offset + 0x08U, -511);
+  write_i32(data, k_placement_offset + 0x0CU, 19386);
+  write_i16(data, k_placement_offset + 0x10U, 4073);
+
+  constexpr std::string_view k_name{"LOCAL CHARACTER"};
+  constexpr std::string_view k_model{"DE1_FN"};
+  std::memcpy(data.data() + k_definition_offset + 0x08U, k_name.data(), k_name.size());
+  std::memcpy(data.data() + k_definition_offset + 0x90U, k_model.data(), k_model.size());
+  write_i16(data, k_definition_offset + 0x110U, 57);
+
+  auto scene{App::Omikron::IamSceneRecord::load(data)};
+  REQUIRE(scene.has_value());
+  return std::move(scene).value();
 }
 
 std::shared_ptr<const App::Character::ModelResource> fake_resource(const std::string_view name) {
@@ -185,6 +220,46 @@ TEST_SUITE("Core::Character::Runtime") {
     CHECK_EQ(character->transform.translation.y, 22.0F);
     CHECK_EQ(character->transform.translation.z, 33.0F);
     CHECK_EQ(character->transform.matrix.values, preserved_matrix.values);
+  }
+
+  TEST_CASE("SCENE-only characters use SCENE definitions and cleanly dematerialize") {
+    const App::Omikron::IamSceneRecord scene{make_scene()};
+    std::size_t loads{0};
+    App::Character::Runtime runtime{
+        [&loads](const std::string_view name)
+            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
+          ++loads;
+          return fake_resource(name);
+        }};
+
+    REQUIRE(runtime.materialize_scene_characters(222, 55, scene).has_value());
+    const App::Character::RuntimeCharacter* character{runtime.find(57)};
+    REQUIRE(character != nullptr);
+    REQUIRE(character->scene_id.has_value());
+    CHECK_EQ(character->scene_id.value(), 55);
+    CHECK_EQ(character->area_id, 222);
+    CHECK_EQ(character->model_resource_name, "DE1_FN");
+    CHECK_EQ(loads, 1U);
+    CHECK_EQ(character->transform.translation.x,
+        static_cast<float>(App::Runtime::area_position_to_inches(49457)));
+
+    const App::Omikron::IamAreaAddressRecord address{.serialized_position = {43922, 2592, 19656},
+        .orientation_units = 0,
+        .address_id = 654};
+    REQUIRE(runtime.place_character_at_address(57, address).has_value());
+    character = runtime.find(57);
+    REQUIRE(character != nullptr);
+    CHECK_EQ(character->serialized_area_position.at(0), 43922);
+    CHECK_EQ(character->serialized_orientation_units, 0);
+    CHECK_EQ(character->transform.translation.z,
+        static_cast<float>(App::Runtime::area_position_to_inches(19656)));
+
+    runtime.dematerialize_scene_characters(222, 55);
+    character = runtime.find(57);
+    REQUIRE(character != nullptr);
+    CHECK_FALSE(character->active);
+    CHECK_FALSE(character->area_present);
+    CHECK_FALSE(character->scene_id.has_value());
   }
 
   TEST_CASE("Special current-character ID remains distinct from table-0 lookup") {

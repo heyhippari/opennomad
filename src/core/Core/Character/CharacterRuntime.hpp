@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "Core/Omikron/IamArea.hpp"
+#include "Core/Omikron/IamScene.hpp"
 #include "Core/Omikron/Model3DO.hpp"
 #include "Core/Omikron/Texture3DT.hpp"
 #include "Core/RuntimeMath.hpp"
@@ -90,6 +91,7 @@ struct RuntimeCharacter {
   std::size_t instance_id{0};
   std::int16_t character_id{0};
   std::int32_t area_id{0};
+  std::optional<std::int32_t> scene_id;
   bool active{false};
   bool area_present{false};
 
@@ -138,6 +140,18 @@ class Runtime {
       const Omikron::IamAreaRecord& area,
       const Script::AreaCharacterActivationRequest& request);
 
+  /// Materializes every SCENE table-0 character against its SCENE-first
+  /// table-4 definitions. This never rematerializes AREA-local characters.
+  [[nodiscard]] std::expected<void, std::string> materialize_scene_characters(
+      std::int32_t area_id, std::int32_t scene_id, const Omikron::IamSceneRecord& scene);
+
+  /// Deactivates only characters currently owned by one attached SCENE.
+  void dematerialize_scene_characters(std::int32_t area_id, std::int32_t scene_id);
+
+  /// Applies a named AREA address transform to one established runtime character.
+  [[nodiscard]] std::expected<void, std::string> place_character_at_address(
+      std::int16_t character_id, const Omikron::IamAreaAddressRecord& address);
+
   [[nodiscard]] RuntimeCharacter* find(std::int16_t character_id);
   [[nodiscard]] const RuntimeCharacter* find(std::int16_t character_id) const;
   [[nodiscard]] std::span<const RuntimeCharacter> characters() const;
@@ -156,6 +170,15 @@ class Runtime {
  private:
   [[nodiscard]] static std::expected<std::shared_ptr<const ModelResource>, std::string>
   load_model_resource(std::string_view model_resource);
+
+  [[nodiscard]] std::expected<void, std::string> materialize_character(std::int32_t area_id,
+      std::optional<std::int32_t> scene_id,
+      std::int16_t character_id,
+      const std::array<std::int32_t, 3>& serialized_position,
+      std::int16_t orientation_units,
+      std::string_view definition_name,
+      std::string_view model_resource,
+      bool apply_transform);
 
   ModelLoader m_model_loader;
   std::vector<RuntimeCharacter> m_characters;

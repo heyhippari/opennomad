@@ -41,6 +41,8 @@
 >   AREA position and angle fields;
 > - [`startup-sequence.md`](startup-sequence.md) — `IAM/START` → `IAM/AREA`
 >   startup order;
+> - [`iam-scene.md`](iam-scene.md) — attached SCENE archive/record format and
+>   the subsequent AREA-to-SCENE presentation handoff;
 > - [`save-format.md`](save-format.md) — persistent state used by AREA character
 >   and object activation.
 
@@ -3501,10 +3503,9 @@ ScenarioManager::WorldSceneContext[2]
 ```
 
 The coordinator preserves the active source while parsing the destination
-record and preparing its authored decor/SCX dependencies. Commit changes the
-source world from `LoadedActive` to `LoadedInactive`, leaves its resources
-resident, and makes the prepared destination the sole `LoadedActive`
-presentation world. The old AREA bytecode context then resumes from the IP
+record and preparing its authored decor/SCX dependencies. Preparation leaves
+the destination `LoadedInactive` and source `LoadedActive`; it does not change
+presentation ownership. The old AREA bytecode context then resumes from the IP
 already following `0x2F`; the destination's primary event is not substituted
 for that handoff.
 
@@ -3519,14 +3520,19 @@ AREA 118 Introduction Kay'l
      sky3doName = ASKY (preserved diagnostically; no sky renderer yet)
 ```
 
-After the transition releases AREA 118, the authored handoff remains:
+The following authored operations complete the handoff:
 
 ```text
-+0x114  0x47 (222, 55)  not yet implemented
-+0x119  0x49 (654)      not yet implemented
-+0x11C  0x30 (118)      not yet implemented
++0x114  0x47 (222, 55)  attach/replace the resident AREA's SCENE and commit it active
++0x119  0x49 (654)      place the already-established controlled character at a resident AREA address
++0x11C  0x30 (118)      release the requested inactive source AREA
 +0x11F  0x03 EndEvent
 ```
 
 Opcode `0x2F` does not activate scene 55, position the player at address 654,
-release AREA 118, or skip any of those subsequent instructions.
+release AREA 118, or skip any of those subsequent instructions. Successful
+`0x47` is the presentation commit: source becomes `LoadedInactive`, the
+destination becomes `LoadedActive`, and the source remains resident until its
+explicit `0x30` release. Address lookup for `0x49` scans both resident AREA
+table-5 collections; it never guesses a current character when no authoritative
+selection exists.
