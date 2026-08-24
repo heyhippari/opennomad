@@ -16,6 +16,21 @@
 
 namespace App {
 
+namespace {
+
+/// Signed shortest angular displacement from `from` to `to`, in degrees.
+///
+/// Camera roll is periodic. A transition such as 345 -> 0 must therefore
+/// travel +15 degrees rather than -345 degrees.
+///
+/// std::remainder places the result in [-180, 180], which is exactly the
+/// shortest arc required for camera interpolation.
+float shortest_angle_delta_degrees(const float from, const float to) {
+  return std::remainder(to - from, 360.0F);
+}
+
+}  // namespace
+
 void WorldCameraSystem::set_aspect_ratio(const float aspect_ratio) {
   if (aspect_ratio > 0.0F) {
     m_camera.set_aspect_ratio(aspect_ratio);
@@ -128,7 +143,9 @@ WorldCameraPose WorldCameraSystem::interpolate(
   result.target = Runtime::Vec3{.x = from.target.x + ((to.target.x - from.target.x) * amount),
       .y = from.target.y + ((to.target.y - from.target.y) * amount),
       .z = from.target.z + ((to.target.z - from.target.z) * amount)};
-  result.roll_degrees = from.roll_degrees + ((to.roll_degrees - from.roll_degrees) * amount);
+  result.roll_degrees =
+      from.roll_degrees +
+      (shortest_angle_delta_degrees(from.roll_degrees, to.roll_degrees) * amount);
   result.horizontal_fov_degrees =
       from.horizontal_fov_degrees +
       ((to.horizontal_fov_degrees - from.horizontal_fov_degrees) * amount);

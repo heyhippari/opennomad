@@ -1,7 +1,8 @@
-#include <array>
-#include <cstdint>
-
 #include <doctest/doctest.h>
+
+#include <array>
+#include <cmath>
+#include <cstdint>
 
 // NOLINTBEGIN(misc-use-anonymous-namespace, cppcoreguidelines-avoid-do-while)
 
@@ -59,6 +60,40 @@ WorldCameraCommand camera_2148() {
 }  // namespace
 
 TEST_SUITE("Core::WorldCameraSystem") {
+  TEST_CASE("Camera roll interpolates through the shortest angular arc") {
+    WorldCameraSystem camera;
+
+    WorldCameraCommand tilted{.scene_id = 0,
+        .scene_generation = 0,
+        .camera_id = 2159,
+        .runtime_eye = {.x = 0.0F, .y = 0.0F, .z = 0.0F},
+        .runtime_target = {.x = 0.0F, .y = 0.0F, .z = 100.0F},
+        .duration_units = 0,
+        .roll_degrees = 345,
+        .horizontal_fov_degrees = 75};
+
+    WorldCameraCommand upright{tilted};
+    upright.camera_id = 2165;
+    upright.duration_units = 160;
+    upright.roll_degrees = 0;
+
+    camera.apply_command(tilted);
+    camera.apply_command(upright);
+
+    REQUIRE(camera.transitioning());
+
+    // At halfway through Runtime's quadratic ease-in/out the interpolation
+    // amount is exactly 0.5. The camera should therefore have travelled half
+    // of the ~15-degree short arc, not half of a 345-degree revolution.
+    camera.update((160.0F / 30.0F) * 0.5F);
+
+    const float roll{camera.pose().roll_degrees};
+
+    // Representation may remain in the 0..360 neighbourhood, so compare its
+    // equivalent signed angle.
+    CHECK(std::remainder(roll, 360.0F) == doctest::Approx(-7.5F).epsilon(0.01));
+  }
+
   TEST_CASE("Runtime dialogue camera pair snaps to A then travels to B") {
     WorldCameraSystem camera;
 
