@@ -1,7 +1,7 @@
 # Runtime structured SCX script lifecycle and scheduler
 
 > **Status:** work-in-progress reverse-engineering documentation for OpenNomad  
-> **Last updated:** 2026-08-22
+> **Last updated:** 2026-08-24
 >
 > This document describes the **runtime lifecycle and scheduler** of Omikron's
 > structured SCX `Script_*` system.
@@ -30,7 +30,7 @@
 > - handler-return group blocking;
 > - whole-script repetition and reinitialization;
 > - script/list elapsed clocks;
-> - AREA `0x39..0x3C` structured-script activation and tracking;
+> - AREA `0x2E`, `0x39..0x3C`, and `0x5A` structured-script activation and tracking;
 > - and the important places where OpenNomad's current `ScriptRuntime` is a
 >   **safe modern model rather than a byte-for-byte copy of Runtime ownership**.
 >
@@ -2578,12 +2578,13 @@ Operands:
 ```text
 Scalar16 characterId
 raw u16  scriptId
-Scalar16 parameter
+Scalar16 cameraDurationUnits
 ```
 
 It launches a character-bound structured script and continues AREA execution.
 
-The third parameter's exact semantic meaning remains unresolved.
+The third Scalar16 is presentation/camera-duration metadata and is not passed
+to `ScriptLaunchContext.parameter`.
 
 ---
 
@@ -2778,9 +2779,9 @@ fully recovered.
 
 # 99. Character-bound launch metadata
 
-`0x3B`/`0x3C` demonstrate that script execution can be launched with an
-external character binding not encoded in the script's ordinary command
-parameter arrays.
+`0x2E`/`0x5A` and `0x3B`/`0x3C` demonstrate that script execution can be
+launched with a current or explicit external character binding not encoded in
+the script's ordinary command parameter arrays.
 
 Current OpenNomad represents this with:
 
@@ -2791,7 +2792,11 @@ ScriptLaunchContext {
 };
 ```
 
-This is a useful modern abstraction.
+This is a useful modern abstraction. The compact `0x3B`/`0x3C` trailing
+Scalar16 is not the `ScriptLaunchContext.parameter`: it is presentation/camera
+duration metadata retained by the compact VM. Current-character `0x2E`/`0x5A`
+also preserve that field and leave `character_id` sourced from the session's
+controlled-character slot.
 
 It is **not** a recovered `RuntimeScript` embedded field.
 
@@ -2800,17 +2805,18 @@ context state and activation helpers.
 
 ---
 
-# 100. `SelectRelativeBodyAnimation` needs launch context
+# 100. Body-animation functions need launch context
 
 The current intro script proves why that external binding matters.
 
-Structured function:
+Structured functions:
 
 ```text
+Script_SelectBodyAnimation
 Script_SelectRelativeBodyAnimation
 ```
 
-uses an object/body binding name from the script's binding table but needs to
+use an object/body binding name from the script's binding table but need to
 know **which character instance** receives the body animation.
 
 OpenNomad's explicit:
@@ -2820,7 +2826,10 @@ character_id
 ```
 
 launch metadata is therefore semantically useful even though Runtime stores the
-relationship differently.
+relationship differently. The handler never infers the controlled character:
+an unbound instance is a structured error. Both functions use the same mutable
+previous/current progress slots and reinitialize those slots to `0`/`1`; only
+`SelectRelativeBodyAnimation` resolves a 3DP anchor.
 
 ---
 
@@ -3750,6 +3759,17 @@ end chain
 ```text
 AREA VM
     |
+    +-- 0x5A current-character fire-and-forget
+    |       |
+    |       v
+    |   character/world-bound activation
+    |
+    +-- 0x2E current-character tracked
+    |       |
+    |       v
+    |   character/world-bound activation
+    |   AREA state = 4
+    |
     +-- 0x39 generic fire-and-forget
     |       |
     |       v
@@ -4070,10 +4090,12 @@ tests can assert equivalent semantics.
 
 - [x] `0x39` launches and immediately continues AREA VM;
 - [x] `0x3A` launches and enters state 4;
-- [ ] `0x3B` preserves character ID + parameter and continues;
-- [ ] `0x3C` preserves character ID + parameter and enters state 4;
-- [ ] script ID is raw 16-bit lookup against `+0x1A`;
-- [ ] tracked completion is tied to the concrete activation, not “any script
+- [x] `0x3B` preserves explicit character ID + camera-duration metadata and continues;
+- [x] `0x3C` preserves explicit character ID + camera-duration metadata and enters state 4;
+- [x] `0x5A` selects the session current character and immediately continues;
+- [x] `0x2E` selects the session current character and waits on the exact child in state 4;
+- [x] script ID is raw 16-bit lookup against `+0x1A`;
+- [x] tracked completion is tied to the concrete activation, not “any script
       finished”;
 - [ ] primary script reactivation invokes reinit;
 - [ ] no test assumes AREA launch necessarily calls `Script_MakeInstance`.

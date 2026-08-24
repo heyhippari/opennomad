@@ -185,6 +185,21 @@ struct HandlerResult {
   std::string reason_text;
 };
 
+/// Typed request for Runtime's Script_SelectBodyAnimation operation. All
+/// coordinates and progress values remain in Runtime-native units.
+struct BodyAnimationRequest {
+  std::int16_t character_id{0};
+  std::string_view object_binding;
+  std::uint32_t animation_index{0};
+  float previous_progress{0.0F};
+  float current_progress{1.0F};
+  std::array<float, 3> body_animation_vector{};
+  std::array<float, 3> authored_offset{};
+  bool first_tick{true};
+  std::uint32_t execution_count{0};
+  std::uint32_t execution_limit{0};
+};
+
 /// Typed request for Runtime's Script_SelectRelativeBodyAnimation operation.
 /// All coordinates and progress values remain in Runtime-native units.
 struct RelativeBodyAnimationRequest {
@@ -202,7 +217,7 @@ struct RelativeBodyAnimationRequest {
   std::uint32_t execution_limit{0};
 };
 
-struct RelativeBodyAnimationResult {
+struct BodyAnimationResult {
   std::uint32_t max_frame_index{0};
 };
 
@@ -217,10 +232,13 @@ enum class BodyAnimationApplyError : std::uint8_t {
   k_resource_resolution,
 };
 
-struct RelativeBodyAnimationFailure {
+struct BodyAnimationFailure {
   BodyAnimationApplyError error{BodyAnimationApplyError::k_resource_resolution};
   std::string reason_text;
 };
+
+using RelativeBodyAnimationResult = BodyAnimationResult;
+using RelativeBodyAnimationFailure = BodyAnimationFailure;
 
 /// Abstract world service connecting script handlers to the existing sprite
 /// renderer/runtime. Implemented by ModelViewerScene; faked in tests.
@@ -274,7 +292,17 @@ class ScriptWorld {
   /// Compact audio context for the script debugger's audio diagnostics.
   [[nodiscard]] virtual Audio::AudioContextInfo audio_context() const = 0;
 
-  /// Resolves cached SCX resources and applies one relative body-animation
+  /// Resolves cached SCX resources and applies one non-path body-animation
+  /// interval to the explicitly character-bound model instance.
+  [[nodiscard]] virtual std::expected<BodyAnimationResult, BodyAnimationFailure>
+  select_body_animation(const BodyAnimationRequest& request) {
+    (void)request;
+    return std::expected<BodyAnimationResult, BodyAnimationFailure>{std::unexpect,
+        BodyAnimationFailure{.error = BodyAnimationApplyError::k_resource_resolution,
+            .reason_text = "body animation is unavailable in this world"}};
+  }
+
+  /// Resolves cached SCX resources and applies one path-anchored body-animation
   /// interval to the explicitly character-bound model instance.
   [[nodiscard]] virtual std::expected<RelativeBodyAnimationResult, RelativeBodyAnimationFailure>
   select_relative_body_animation(const RelativeBodyAnimationRequest& request) {
@@ -416,6 +444,8 @@ class ScriptRuntime {
   HandlerResult handle_play_sound(ScriptInstance& instance, RuntimeScriptCommand& command);
   HandlerResult handle_play_sync_sound(ScriptInstance& instance, RuntimeScriptCommand& command);
   HandlerResult handle_stop_sound(ScriptInstance& instance, RuntimeScriptCommand& command);
+  HandlerResult handle_select_body_animation(
+      ScriptInstance& instance, RuntimeScriptCommand& command, float script_delta_frames);
   HandlerResult handle_select_relative_body_animation(
       ScriptInstance& instance, RuntimeScriptCommand& command, float script_delta_frames);
 

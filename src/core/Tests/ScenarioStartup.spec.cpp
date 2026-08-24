@@ -22,12 +22,13 @@
 #include <string_view>
 #include <vector>
 
+#include "Core/Character/CharacterRuntime.hpp"
+#include "Core/Omikron/Model3DO.hpp"
 #include "Core/Scenario/ScenarioManager.hpp"
 #include "Core/Scenario/ScenarioRuntime.hpp"
 #include "Core/Scenario/ScenarioStartupController.hpp"
-#include "Core/Character/CharacterRuntime.hpp"
-#include "Core/Omikron/Model3DO.hpp"
 #include "Core/Script/AreaScriptRuntime.hpp"
+#include "Core/Script/ScriptRuntime.hpp"
 #include "OmikronTestBuffer.hpp"
 
 namespace {
@@ -103,7 +104,9 @@ std::vector<std::byte> make_new_game_script() {
   bytes.u8(0x5F).u16(2172).u16(0).u16(2);
   bytes.u8(0x5F).u16(2148).u16(130).u16(2);
   bytes.u8(0x4E).u16(310).u16(1);
-  bytes.u8(0x3C).u16(310).u16(1).u16(0);
+  // The trailing compact Scalar16 is presentation metadata, not an SCX
+  // ScriptLaunchContext parameter.
+  bytes.u8(0x3C).u16(310).u16(1).u16(123);
   bytes.zeros(0x11FU - bytes.data().size());
   bytes.u8(0x03);
   return bytes.data();
@@ -145,15 +148,12 @@ std::vector<std::byte> make_area_archive() {
   const std::int32_t position_x{-2588};
   const std::int32_t position_y{-271};
   const std::int32_t position_z{-816};
-  std::memcpy(data.data() + k_record_offset + k_placement_offset + 0x04U,
-      &position_x,
-      sizeof(position_x));
-  std::memcpy(data.data() + k_record_offset + k_placement_offset + 0x08U,
-      &position_y,
-      sizeof(position_y));
-  std::memcpy(data.data() + k_record_offset + k_placement_offset + 0x0CU,
-      &position_z,
-      sizeof(position_z));
+  std::memcpy(
+      data.data() + k_record_offset + k_placement_offset + 0x04U, &position_x, sizeof(position_x));
+  std::memcpy(
+      data.data() + k_record_offset + k_placement_offset + 0x08U, &position_y, sizeof(position_y));
+  std::memcpy(
+      data.data() + k_record_offset + k_placement_offset + 0x0CU, &position_z, sizeof(position_z));
   write_u16(data, k_record_offset + k_placement_offset + 0x10U, 4084);
   write_u16(data, k_record_offset + k_placement_offset + 0x12U, 468);
   write_u16(data, k_record_offset + k_second_placement_offset + 0x00U, 0xFFFF);
@@ -226,12 +226,15 @@ std::vector<std::byte> make_handoff_area_archive() {
   constexpr std::string_view k_source_name{"CURRENT CHARACTER"};
   constexpr std::string_view k_source_model{"CURRENT_BODY"};
   std::memcpy(data.data() + k_source_offset + k_source_definition_offset + 0x08U,
-      k_source_name.data(), k_source_name.size());
+      k_source_name.data(),
+      k_source_name.size());
   std::memcpy(data.data() + k_source_offset + k_source_definition_offset + 0x90U,
-      k_source_model.data(), k_source_model.size());
+      k_source_model.data(),
+      k_source_model.size());
   write_u16(data, k_source_offset + k_source_definition_offset + 0x110U, 136);
   std::memcpy(data.data() + k_source_offset + k_source_script_offset,
-      handoff.data().data(), handoff.data().size());
+      handoff.data().data(),
+      handoff.data().size());
 
   write_u32(data, 222U * 8U, static_cast<std::uint32_t>(k_target_offset));
   write_u32(data, (222U * 8U) + 4U, k_target_record_size);
@@ -248,14 +251,21 @@ std::vector<std::byte> make_handoff_area_archive() {
 }
 
 std::vector<std::byte> make_handoff_scene_archive() {
+  Buffer script;
+  script.u8(0x38).u16(57);
+  script.u8(0x4F).u16(0xFFFF);
+  script.u8(0x4E).u16(0xFFFF).u16(0);
+  script.u8(0x2E).u16(221).u16(0);
+  script.u8(0x03);
+
   constexpr std::size_t k_record_offset{0x800};
   constexpr std::size_t k_table0_offset{0x44};
   constexpr std::size_t k_table4_offset{k_table0_offset + 0x14U};
   constexpr std::size_t k_script_offset{k_table4_offset + 0x114U};
-  constexpr std::size_t k_table6_offset{k_script_offset + 12U};
-  std::vector<std::byte> data(k_record_offset + k_table6_offset, std::byte{});
+  const std::size_t table6_offset{k_script_offset + script.data().size()};
+  std::vector<std::byte> data(k_record_offset + table6_offset, std::byte{});
   write_u32(data, 0, static_cast<std::uint32_t>(k_record_offset));
-  write_u32(data, 4, static_cast<std::uint32_t>(k_table6_offset));
+  write_u32(data, 4, static_cast<std::uint32_t>(table6_offset));
   write_u32(data, k_record_offset + 0x04U, static_cast<std::uint32_t>(k_script_offset));
   write_u32(data, k_record_offset + 0x08U, static_cast<std::uint32_t>(k_table0_offset));
   write_u16(data, k_record_offset + 0x28U, 1);
@@ -265,12 +275,8 @@ std::vector<std::byte> make_handoff_scene_archive() {
         static_cast<std::uint32_t>(k_table4_offset));
   }
   write_u16(data, k_record_offset + 0x28U + (4U * 2U), 1);
-  write_u32(data,
-      k_record_offset + 0x08U + (6U * 4U),
-      static_cast<std::uint32_t>(k_table6_offset));
-  write_u32(data,
-      k_record_offset + 0x08U + (7U * 4U),
-      static_cast<std::uint32_t>(k_script_offset));
+  write_u32(data, k_record_offset + 0x08U + (6U * 4U), static_cast<std::uint32_t>(table6_offset));
+  write_u32(data, k_record_offset + 0x08U + (7U * 4U), static_cast<std::uint32_t>(k_script_offset));
 
   write_u16(data, k_record_offset + k_table0_offset + 0x00U, 0xFFFF);
   write_u16(data, k_record_offset + k_table0_offset + 0x02U, 57);
@@ -280,19 +286,13 @@ std::vector<std::byte> make_handoff_scene_archive() {
   write_u16(data, k_record_offset + k_table0_offset + 0x10U, 4073);
   constexpr std::string_view k_name{"LOCAL CHARACTER"};
   constexpr std::string_view k_model{"DE1_FN"};
-  std::memcpy(data.data() + k_record_offset + k_table4_offset + 0x08U,
-      k_name.data(), k_name.size());
-  std::memcpy(data.data() + k_record_offset + k_table4_offset + 0x90U,
-      k_model.data(), k_model.size());
+  std::memcpy(
+      data.data() + k_record_offset + k_table4_offset + 0x08U, k_name.data(), k_name.size());
+  std::memcpy(
+      data.data() + k_record_offset + k_table4_offset + 0x90U, k_model.data(), k_model.size());
   write_u16(data, k_record_offset + k_table4_offset + 0x110U, 57);
-  data.at(k_record_offset + k_script_offset + 0U) = std::byte{0x38};
-  write_u16(data, k_record_offset + k_script_offset + 1U, 57);
-  data.at(k_record_offset + k_script_offset + 3U) = std::byte{0x4F};
-  write_u16(data, k_record_offset + k_script_offset + 4U, 0xFFFF);
-  data.at(k_record_offset + k_script_offset + 6U) = std::byte{0x4E};
-  write_u16(data, k_record_offset + k_script_offset + 7U, 0xFFFF);
-  write_u16(data, k_record_offset + k_script_offset + 9U, 0);
-  data.at(k_record_offset + k_script_offset + 11U) = std::byte{0x03};
+  std::memcpy(
+      data.data() + k_record_offset + k_script_offset, script.data().data(), script.data().size());
   return data;
 }
 
@@ -306,10 +306,10 @@ std::vector<std::byte> make_minimal_scx() {
 /// Minimal SCX with source index 0 carrying authored script ID 1. The command
 /// intentionally omits arguments so this focused launch-lifecycle fixture
 /// stops after proving the exact character-bound instance was dispatched.
-std::vector<std::byte> make_kayl_arrives_scx() {
+std::vector<std::byte> make_kayl_arrives_scx(const std::uint16_t script_id = 1) {
   Buffer descriptor;
   descriptor.u32(K_SCRIPTS_TAG).u32(1);
-  descriptor.u32(0).chars("1KaylArrives", 22).u16(1).u16(0).u16(0);
+  descriptor.u32(0).chars("1KaylArrives", 22).u16(script_id).u16(0).u16(0);
   descriptor.u32(1).u32(0).u32(0);           // One root, current index, root placeholder.
   descriptor.u32(0).u32(0);                  // No linked commands, linked placeholder.
   descriptor.u32(0).u32(0);                  // field34 and runtime field38.
@@ -333,18 +333,39 @@ std::vector<std::byte> make_kayl_arrives_scx() {
 /// accepted by Model3DO::load without game data.
 std::vector<std::byte> make_minimal_3do() {
   Buffer bytes;
-  bytes.chars("OD3X", 4).u32(4).u32(0x2C)
-      .u32(416).u32(416).u32(416).u32(416).u32(416)
-      .u32(0).u32(0).u32(416)
-      .zeros(72).u32(0)
-      .zeros(104).u32(0).zeros(24).u32(0)
+  bytes.chars("OD3X", 4)
+      .u32(4)
+      .u32(0x2C)
+      .u32(416)
+      .u32(416)
+      .u32(416)
+      .u32(416)
+      .u32(416)
+      .u32(0)
+      .u32(0)
+      .u32(416)
+      .zeros(72)
+      .u32(0)
+      .zeros(104)
+      .u32(0)
+      .zeros(24)
+      .u32(0)
       .zeros(12)
-      .u32(0).u32(0)
-      .u32(0).u32(0).u32(0)
+      .u32(0)
+      .u32(0)
+      .u32(0)
+      .u32(0)
+      .u32(0)
       .u64(0)
-      .u32(0).u32(0).u32(0)
-      .u32(0).u32(0).u32(0)
-      .u32(0).u32(0).u32(0)
+      .u32(0)
+      .u32(0)
+      .u32(0)
+      .u32(0)
+      .u32(0)
+      .u32(0)
+      .u32(0)
+      .u32(0)
+      .u32(0)
       .zeros(84);
   return bytes.data();
 }
@@ -401,18 +422,69 @@ void write_boot_fixtures(const TempDirectory& temp) {
   write_bytes(temp.root() / "MESHES" / "DECORS" / "GRID.3DO", make_minimal_3do());
 }
 
+void write_current_character_script_fixtures(const TempDirectory& temp) {
+  Buffer script;
+  script.u8(0x2E).u16(221).u16(0).u8(0x03);
+  std::vector<std::byte> area{make_area_archive()};
+  std::memcpy(area.data() + 0x800U + 0x3FCU, script.data().data(), script.data().size());
+
+  write_bytes(temp.root() / "IAM" / "START", make_start());
+  write_bytes(temp.root() / "IAM" / "AREA", area);
+  write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
+  write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_kayl_arrives_scx(221));
+  write_bytes(temp.root() / "MESHES" / "DECORS" / "GRID.3DO", make_minimal_3do());
+}
+
 void write_handoff_fixtures(const TempDirectory& temp) {
   write_bytes(temp.root() / "IAM" / "START", make_start());
   write_bytes(temp.root() / "IAM" / "AREA", make_handoff_area_archive());
   write_bytes(temp.root() / "IAM" / "SCENE", make_handoff_scene_archive());
   write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
   write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_minimal_scx());
-  write_bytes(temp.root() / "SCPTDATA" / "DEST.SCX", make_minimal_scx());
+  write_bytes(temp.root() / "SCPTDATA" / "DEST.SCX", make_kayl_arrives_scx(221));
 }
 
 }  // namespace
 
 TEST_SUITE("Core::Scenario::ScenarioStartupController") {
+  TEST_CASE("current-character script bridge rejects missing or foreign session targets") {
+    SUBCASE("no current controlled character") {
+      const TempDirectory temp;
+      write_current_character_script_fixtures(temp);
+      const ScopedGameDataRoot root{temp.root()};
+
+      App::ScenarioManager manager;
+      App::ScenarioStartupController controller;
+      REQUIRE(controller.initialize(manager).has_value());
+
+      const auto result{controller.tick()};
+      REQUIRE_FALSE(result.has_value());
+      CHECK(result.error().find("current controlled character is not established") !=
+            std::string::npos);
+      REQUIRE(controller.area_script() != nullptr);
+      CHECK(controller.area_script()->state() == AreaScriptState::k_failed);
+    }
+
+    SUBCASE("current controlled character belongs to another world") {
+      const TempDirectory temp;
+      write_current_character_script_fixtures(temp);
+      const ScopedGameDataRoot root{temp.root()};
+
+      App::ScenarioManager manager;
+      App::ScenarioStartupController controller;
+      REQUIRE(controller.initialize(manager).has_value());
+      manager.set_controlled_character(
+          App::ControlledCharacterRef{.character_id = 49, .world_scene_id = 1});
+
+      const auto result{controller.tick()};
+      REQUIRE_FALSE(result.has_value());
+      CHECK(result.error().find("belongs to world 1") != std::string::npos);
+      CHECK(result.error().find("owner is world 0") != std::string::npos);
+      REQUIRE(controller.area_script() != nullptr);
+      CHECK(controller.area_script()->state() == AreaScriptState::k_failed);
+    }
+  }
+
   TEST_CASE("0x2F preserves the active source until 0x47 commits the attached SCENE") {
     const TempDirectory temp;
     write_handoff_fixtures(temp);
@@ -471,7 +543,10 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK_EQ(destination->primary_area_id, 222);
     CHECK_EQ(destination->scene_id, 0);
     REQUIRE(destination->scene_script.has_value());
-    CHECK(destination->scene_script->state() == AreaScriptState::k_ready);
+    CHECK(destination->scene_script->state() == AreaScriptState::k_waiting);
+    CHECK(destination->scene_script->wait_info().kind ==
+          App::Script::AreaWaitKind::k_character_script);
+    REQUIRE(destination->scene_script->wait_info().character_script_instance.has_value());
     CHECK_EQ(controller.active_area_slot(), 1U);
     CHECK_EQ(manager.world_contexts()[0].residency, WorldSceneResidencyState::Free);
     CHECK_EQ(manager.world_contexts()[1].residency, WorldSceneResidencyState::LoadedActive);
@@ -482,7 +557,8 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK_EQ(current->character_id, 57);
     CHECK_EQ(current->world_scene_id, 1U);
     CHECK_EQ(controller.current_controlled_character(), std::optional<std::int16_t>{57});
-    const App::Character::RuntimeCharacter* character{destination_runtime->character_runtime().find(136)};
+    const App::Character::RuntimeCharacter* character{
+        destination_runtime->character_runtime().find(136)};
     REQUIRE(character != nullptr);
     CHECK_EQ(character->serialized_area_position.at(0), 43922);
     CHECK_EQ(character->serialized_area_position.at(1), 2592);
@@ -496,6 +572,14 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK_EQ(destination_character->serialized_area_position.at(0), 49457);
     CHECK(destination_character->presentation_enabled);
     CHECK(destination_character->renderable());
+    App::Script::ScriptRuntime* const script_runtime{destination_runtime->script_runtime()};
+    REQUIRE(script_runtime != nullptr);
+    REQUIRE_EQ(script_runtime->instances().size(), 1U);
+    const App::Script::ScriptInstance* const instance{script_runtime->instance(
+        destination->scene_script->wait_info().character_script_instance.value())};
+    REQUIRE(instance != nullptr);
+    CHECK_EQ(instance->launch_context.character_id, std::optional<std::int16_t>{57});
+    CHECK_EQ(instance->launch_context.parameter, 0);
   }
 
   TEST_CASE("Startup reaches the main menu through START, AREA 118 and interface 29") {
@@ -607,9 +691,9 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
 
     REQUIRE(controller.tick().has_value());
     REQUIRE(controller
-                .complete_interface(App::InterfaceCompletion{
-                    .handle = App::InterfaceHandle{.interface_id = 29, .generation = 1}, .result = 3})
-                .has_value());
+            .complete_interface(App::InterfaceCompletion{
+                .handle = App::InterfaceHandle{.interface_id = 29, .generation = 1}, .result = 3})
+            .has_value());
     REQUIRE(controller.tick().has_value());  // 0x84 intent, then 0x77 yield.
     REQUIRE_EQ(manager.world_presentation().pending_letterbox_count(), 1U);
     const auto letterbox{manager.world_presentation().take_letterbox()};
@@ -631,6 +715,12 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK_EQ(area_script->instruction_pointer(), 0x9CU);
     CHECK(area_script->wait_info().kind == App::Script::AreaWaitKind::k_character_script);
     REQUIRE(area_script->wait_info().character_script_instance.has_value());
+    REQUIRE(area_script->last_character_script_request().has_value());
+    CHECK(area_script->last_character_script_request()->target ==
+          App::Script::AreaCharacterScriptTarget::k_explicit);
+    CHECK_EQ(area_script->last_character_script_request()->character_id,
+        std::optional<std::int16_t>{310});
+    CHECK_EQ(area_script->last_character_script_request()->camera_duration_units, 123);
 
     const App::Character::RuntimeCharacter* character{
         context->runtime->character_runtime().find(310)};
@@ -660,8 +750,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK_EQ(instance->pause_info.opcode, 0x0200002AU);
     CHECK_EQ(instance->pause_info.opcode_name, "Script_SelectRelativeBodyAnimation");
     CHECK_EQ(instance->pause_info.character_id, std::optional<std::int16_t>{310});
-    CHECK(instance->pause_info.reason ==
-          App::Script::ScriptPauseReason::k_invalid_argument_count);
+    CHECK(instance->pause_info.reason == App::Script::ScriptPauseReason::k_invalid_argument_count);
 
     // AREA remains on the exact malformed child and no duplicate launch was created.
     CHECK_EQ(area_script->runtime_state(), 4U);

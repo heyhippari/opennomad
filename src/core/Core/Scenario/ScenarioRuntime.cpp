@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -41,6 +42,254 @@
 #include "Core/Texture.hpp"
 
 namespace App {
+
+namespace {
+
+using BodyAnimationFailure = Script::BodyAnimationFailure;
+
+[[nodiscard]] BodyAnimationFailure body_animation_failure(
+    const Script::BodyAnimationApplyError error, std::string reason_text) {
+  return BodyAnimationFailure{.error = error, .reason_text = std::move(reason_text)};
+}
+
+/// The resolved selected object and whether this command established a fresh,
+/// instance-local 3DA pose from immutable 3DO defaults.
+struct BodyAnimationBinding {
+  std::size_t selected_index{0};
+  bool initialized{false};
+  Runtime::Vec3 initial_world_translation{};
+};
+
+[[nodiscard]] std::expected<BodyAnimationBinding, BodyAnimationFailure> prepare_body_animation(
+    Character::RuntimeCharacter& character,
+    const std::string_view object_binding,
+    const std::uint32_t animation_index,
+    const Omikron::Animation3DA& animation,
+    const bool first_tick) {
+  const Omikron::Model3DOData& model{character.model_resource->model};
+  const auto selected{
+      std::ranges::find(model.meshes, object_binding, &Omikron::MeshDescriptor::name)};
+  if (selected == model.meshes.end()) {
+    return std::expected<BodyAnimationBinding, BodyAnimationFailure>{std::unexpect,
+        body_animation_failure(Script::BodyAnimationApplyError::k_invalid_binding,
+            fmt::format("binding A object '{}' does not exist in character {} model '{}'",
+                object_binding,
+                character.character_id,
+                character.model_resource_name))};
+  }
+  const std::size_t selected_index{
+      static_cast<std::size_t>(std::distance(model.meshes.begin(), selected))};
+  const bool initialize{first_tick || character.runtime_objects.size() != model.meshes.size() ||
+                        character.body_animation.animation_descriptor_index != animation_index};
+  if (!initialize) {
+    return BodyAnimationBinding{.selected_index = selected_index};
+  }
+
+  character.runtime_objects = model.runtime_objects;
+  character.object_poses.assign(model.meshes.size(), Character::BodyAnimationObjectPose{});
+  for (std::size_t object_index{0}; object_index < model.meshes.size(); ++object_index) {
+    bool in_target_hierarchy{object_index == selected_index};
+    std::int32_t parent{model.hierarchy_parent_index.at(object_index)};
+    std::size_t parent_steps{0};
+    while (!in_target_hierarchy && parent != -1 && parent_steps < model.meshes.size()) {
+      in_target_hierarchy = std::cmp_equal(parent, selected_index);
+      parent = model.hierarchy_parent_index.at(static_cast<std::size_t>(parent));
+      ++parent_steps;
+    }
+    if (!in_target_hierarchy) {
+      continue;
+    }
+    const std::uint32_t script_id{model.meshes.at(object_index).script_id};
+    for (std::size_t channel_index{0}; channel_index < animation.channels.size(); ++channel_index) {
+      const Omikron::Animation3DAChannel& channel{animation.channels.at(channel_index)};
+      if (channel.channel_id != script_id) {
+        continue;
+      }
+      Character::BodyAnimationObjectPose& pose{character.object_poses.at(object_index)};
+      pose.channel_index = static_cast<std::uint32_t>(channel_index);
+      pose.channel_id = channel.channel_id;
+      pose.channel_name = channel.name;
+      break;
+    }
+  }
+
+  if (auto resolved{Omikron::Model3DO::resolve_runtime_transforms(
+          model, std::span{character.runtime_objects})};
+      !resolved) {
+    return std::expected<BodyAnimationBinding, BodyAnimationFailure>{std::unexpect,
+        body_animation_failure(
+            Script::BodyAnimationApplyError::k_resource_resolution, std::move(resolved).error())};
+  }
+  return BodyAnimationBinding{.selected_index = selected_index,
+      .initialized = true,
+      .initial_world_translation = character.runtime_objects.at(selected_index).world_translation};
+}
+
+[[nodiscard]] std::expected<Runtime::Matrix3, BodyAnimationFailure> inverse_matrix(
+    const Runtime::Matrix3& matrix) {
+  const float matrix_00{matrix.at(0, 0)};
+  const float matrix_01{matrix.at(0, 1)};
+  const float matrix_02{matrix.at(0, 2)};
+  const float matrix_10{matrix.at(1, 0)};
+  const float matrix_11{matrix.at(1, 1)};
+  const float matrix_12{matrix.at(1, 2)};
+  const float matrix_20{matrix.at(2, 0)};
+  const float matrix_21{matrix.at(2, 1)};
+  const float matrix_22{matrix.at(2, 2)};
+  const float determinant{(matrix_00 * ((matrix_11 * matrix_22) - (matrix_12 * matrix_21))) -
+                          (matrix_01 * ((matrix_10 * matrix_22) - (matrix_12 * matrix_20))) +
+                          (matrix_02 * ((matrix_10 * matrix_21) - (matrix_11 * matrix_20)))};
+  if (std::abs(determinant) <= 0.000001F) {
+    return std::expected<Runtime::Matrix3, BodyAnimationFailure>{std::unexpect,
+        body_animation_failure(Script::BodyAnimationApplyError::k_resource_resolution,
+            "cannot anchor a body animation below a singular parent transform")};
+  }
+  const float reciprocal{1.0F / determinant};
+  return Runtime::Matrix3{{((matrix_11 * matrix_22) - (matrix_12 * matrix_21)) * reciprocal,
+      ((matrix_02 * matrix_21) - (matrix_01 * matrix_22)) * reciprocal,
+      ((matrix_01 * matrix_12) - (matrix_02 * matrix_11)) * reciprocal,
+      ((matrix_12 * matrix_20) - (matrix_10 * matrix_22)) * reciprocal,
+      ((matrix_00 * matrix_22) - (matrix_02 * matrix_20)) * reciprocal,
+      ((matrix_02 * matrix_10) - (matrix_00 * matrix_12)) * reciprocal,
+      ((matrix_10 * matrix_21) - (matrix_11 * matrix_20)) * reciprocal,
+      ((matrix_01 * matrix_20) - (matrix_00 * matrix_21)) * reciprocal,
+      ((matrix_00 * matrix_11) - (matrix_01 * matrix_10)) * reciprocal}};
+}
+
+[[nodiscard]] std::expected<void, BodyAnimationFailure> set_body_animation_anchor(
+    Character::RuntimeCharacter& character,
+    const std::size_t selected_index,
+    const Runtime::Vec3& target_world) {
+  const Omikron::Model3DOData& model{character.model_resource->model};
+  const std::int32_t parent_index{model.hierarchy_parent_index.at(selected_index)};
+  if (parent_index < 0) {
+    character.transform.translation = target_world;
+    character.runtime_objects.at(selected_index).local_offset = Runtime::Vec3{};
+    return {};
+  }
+  if (static_cast<std::size_t>(parent_index) >= character.runtime_objects.size()) {
+    return std::expected<void, BodyAnimationFailure>{std::unexpect,
+        body_animation_failure(Script::BodyAnimationApplyError::k_resource_resolution,
+            "body-animation selected object has an invalid parent index")};
+  }
+
+  const Omikron::Model3DOData::RuntimeObjectState& parent{
+      character.runtime_objects.at(static_cast<std::size_t>(parent_index))};
+  auto inverse{inverse_matrix(parent.world_matrix)};
+  if (!inverse) {
+    return std::expected<void, BodyAnimationFailure>{std::unexpect, std::move(inverse).error()};
+  }
+  const Runtime::Vec3 relative_world{.x = target_world.x - parent.world_translation.x,
+      .y = target_world.y - parent.world_translation.y,
+      .z = target_world.z - parent.world_translation.z};
+  character.runtime_objects.at(selected_index).local_offset =
+      Runtime::transform_vector(relative_world, inverse.value());
+  return {};
+}
+
+void begin_body_animation(Character::RuntimeCharacter& character,
+    const BodyAnimationBinding& binding,
+    const Omikron::ScxAnimationRecord& descriptor,
+    const Omikron::Animation3DA& animation,
+    const std::uint32_t animation_index,
+    const Runtime::Vec3& authored_offset,
+    const Runtime::Vec3& anchor) {
+  const Omikron::MeshDescriptor& selected{
+      character.model_resource->model.meshes.at(binding.selected_index)};
+  Character::BodyAnimationPlayback& playback{character.body_animation};
+  playback = Character::BodyAnimationPlayback{};
+  playback.active = true;
+  playback.selected_object_index = binding.selected_index;
+  playback.selected_object_name = selected.name;
+  playback.animation_descriptor_index = animation_index;
+  playback.animation_name = descriptor.name;
+  playback.animation_id = descriptor.animation_id;
+  playback.max_frame_index = animation.max_frame_index;
+  playback.authored_offset = authored_offset;
+  playback.final_anchor = anchor;
+}
+
+[[nodiscard]] std::expected<void, BodyAnimationFailure> apply_body_animation(
+    Character::RuntimeCharacter& character,
+    const Omikron::Animation3DA& animation,
+    const float requested_previous,
+    const float requested_current,
+    const std::array<float, 3>& body_animation_vector,
+    const std::uint32_t execution_count,
+    const std::uint32_t execution_limit) {
+  const Omikron::Model3DOData& model{character.model_resource->model};
+  const float previous{
+      std::clamp(requested_previous, 0.0F, static_cast<float>(animation.max_frame_index))};
+  const float current{
+      std::clamp(requested_current, 0.0F, static_cast<float>(animation.max_frame_index))};
+  for (std::size_t object_index{0}; object_index < character.object_poses.size(); ++object_index) {
+    Character::BodyAnimationObjectPose& pose{character.object_poses.at(object_index)};
+    if (!pose.channel_index.has_value()) {
+      continue;
+    }
+    const Omikron::Animation3DAChannel& channel{animation.channels.at(pose.channel_index.value())};
+    const std::optional<Runtime::Quaternion> rotation{channel.sample_rotation(current)};
+    if (rotation.has_value()) {
+      pose.current_quaternion = rotation.value();
+      character.runtime_objects.at(object_index).animation_matrix =
+          Runtime::quaternion_matrix(rotation.value());
+    }
+  }
+
+  Runtime::Vec3 root_delta{};
+  if (model.root_mesh_index >= 0) {
+    const std::size_t root_index{static_cast<std::size_t>(model.root_mesh_index)};
+    const Character::BodyAnimationObjectPose& root_pose{character.object_poses.at(root_index)};
+    if (root_pose.channel_index.has_value()) {
+      const Omikron::Animation3DAChannel& root_channel{
+          animation.channels.at(root_pose.channel_index.value())};
+      const std::optional<Runtime::Vec3> integrated{
+          root_channel.integrate_translation(previous, current)};
+      if (integrated.has_value()) {
+        root_delta = integrated.value();
+        character.transform.translation.x += root_delta.x;
+        character.transform.translation.y += root_delta.y;
+        character.transform.translation.z += root_delta.z;
+      }
+    }
+  }
+
+  if (auto resolved{Omikron::Model3DO::resolve_runtime_transforms(
+          model, std::span{character.runtime_objects})};
+      !resolved) {
+    return std::expected<void, BodyAnimationFailure>{std::unexpect,
+        body_animation_failure(
+            Script::BodyAnimationApplyError::k_resource_resolution, std::move(resolved).error())};
+  }
+  auto groups{Omikron::Model3DO::build_posed_geometry(model,
+      std::span<const Omikron::Model3DOData::RuntimeObjectState>{character.runtime_objects})};
+  if (!groups) {
+    return std::expected<void, BodyAnimationFailure>{std::unexpect,
+        body_animation_failure(
+            Script::BodyAnimationApplyError::k_resource_resolution, std::move(groups).error())};
+  }
+  character.posed_groups = std::move(groups).value();
+  character.pose_revision += 1U;
+
+  Character::BodyAnimationPlayback& playback{character.body_animation};
+  playback.previous_progress = previous;
+  playback.current_progress = current;
+  playback.execution_count =
+      execution_count + (current >= static_cast<float>(animation.max_frame_index) ? 1U : 0U);
+  playback.execution_limit = execution_limit;
+  playback.root_motion_delta = root_delta;
+  playback.accumulated_root_translation.x += root_delta.x;
+  playback.accumulated_root_translation.y += root_delta.y;
+  playback.accumulated_root_translation.z += root_delta.z;
+  playback.body_animation_vector = Runtime::Vec3{.x = body_animation_vector.at(0),
+      .y = body_animation_vector.at(1),
+      .z = body_animation_vector.at(2)};
+  playback.completed = current >= static_cast<float>(animation.max_frame_index);
+  playback.active = !playback.completed;
+  return {};
+}
+
+}  // namespace
 
 ScenarioRuntime::~ScenarioRuntime() {
   // SFX teardown calls back into this runtime to destroy its owned handles;
@@ -607,203 +856,148 @@ std::expected<const Omikron::Path3DP*, std::string> ScenarioRuntime::path_resour
   return m_path_resources.at(resource_index).get();
 }
 
+std::expected<Script::BodyAnimationResult, Script::BodyAnimationFailure>
+ScenarioRuntime::select_body_animation(const Script::BodyAnimationRequest& request) {
+  Character::RuntimeCharacter* character{m_character_runtime.find(request.character_id)};
+  if (character == nullptr || !character->active || !character->area_present ||
+      character->model_resource == nullptr) {
+    return std::expected<Script::BodyAnimationResult, Script::BodyAnimationFailure>{std::unexpect,
+        body_animation_failure(Script::BodyAnimationApplyError::k_character_unavailable,
+            fmt::format("runtime character {} is not active and loaded", request.character_id))};
+  }
+  auto animation_result{animation_resource(request.animation_index)};
+  if (!animation_result) {
+    return std::expected<Script::BodyAnimationResult, Script::BodyAnimationFailure>{std::unexpect,
+        body_animation_failure(Script::BodyAnimationApplyError::k_missing_animation,
+            std::move(animation_result).error())};
+  }
+
+  const Omikron::Animation3DA& animation{**animation_result};
+  auto binding{prepare_body_animation(
+      *character, request.object_binding, request.animation_index, animation, request.first_tick)};
+  if (!binding) {
+    return std::expected<Script::BodyAnimationResult, Script::BodyAnimationFailure>{
+        std::unexpect, std::move(binding).error()};
+  }
+  if (binding->initialized) {
+    const Runtime::Vec3 authored{.x = request.authored_offset.at(0),
+        .y = request.authored_offset.at(1),
+        .z = request.authored_offset.at(2)};
+    const Runtime::Vec3 anchor{
+        Runtime::body_animation_anchor(binding->initial_world_translation, authored)};
+    if (auto positioned{set_body_animation_anchor(*character, binding->selected_index, anchor)};
+        !positioned) {
+      return std::expected<Script::BodyAnimationResult, Script::BodyAnimationFailure>{
+          std::unexpect, std::move(positioned).error()};
+    }
+    begin_body_animation(*character,
+        *binding,
+        m_scx.animations.at(request.animation_index),
+        animation,
+        request.animation_index,
+        authored,
+        anchor);
+  }
+  if (auto applied{apply_body_animation(*character,
+          animation,
+          request.previous_progress,
+          request.current_progress,
+          request.body_animation_vector,
+          request.execution_count,
+          request.execution_limit)};
+      !applied) {
+    return std::expected<Script::BodyAnimationResult, Script::BodyAnimationFailure>{
+        std::unexpect, std::move(applied).error()};
+  }
+  return Script::BodyAnimationResult{.max_frame_index = animation.max_frame_index};
+}
+
 std::expected<Script::RelativeBodyAnimationResult, Script::RelativeBodyAnimationFailure>
 ScenarioRuntime::select_relative_body_animation(
     const Script::RelativeBodyAnimationRequest& request) {
   Character::RuntimeCharacter* character{m_character_runtime.find(request.character_id)};
   if (character == nullptr || !character->active || !character->area_present ||
       character->model_resource == nullptr) {
-    return std::expected<Script::RelativeBodyAnimationResult,
-        Script::RelativeBodyAnimationFailure>{std::unexpect,
-        Script::RelativeBodyAnimationFailure{
-            .error = Script::BodyAnimationApplyError::k_character_unavailable,
-            .reason_text = fmt::format(
-                "runtime character {} is not active and loaded", request.character_id)}};
+    return std::expected<Script::RelativeBodyAnimationResult, Script::RelativeBodyAnimationFailure>{
+        std::unexpect,
+        body_animation_failure(Script::BodyAnimationApplyError::k_character_unavailable,
+            fmt::format("runtime character {} is not active and loaded", request.character_id))};
   }
-
   auto animation_result{animation_resource(request.animation_index)};
   if (!animation_result) {
-    return std::expected<Script::RelativeBodyAnimationResult,
-        Script::RelativeBodyAnimationFailure>{std::unexpect,
-        Script::RelativeBodyAnimationFailure{
-            .error = Script::BodyAnimationApplyError::k_missing_animation,
-            .reason_text = std::move(animation_result).error()}};
+    return std::expected<Script::RelativeBodyAnimationResult, Script::RelativeBodyAnimationFailure>{
+        std::unexpect,
+        body_animation_failure(Script::BodyAnimationApplyError::k_missing_animation,
+            std::move(animation_result).error())};
   }
   auto path_result{path_resource(request.path_index)};
   if (!path_result) {
-    return std::expected<Script::RelativeBodyAnimationResult,
-        Script::RelativeBodyAnimationFailure>{std::unexpect,
-        Script::RelativeBodyAnimationFailure{.error = Script::BodyAnimationApplyError::k_missing_path,
-            .reason_text = std::move(path_result).error()}};
+    return std::expected<Script::RelativeBodyAnimationResult, Script::RelativeBodyAnimationFailure>{
+        std::unexpect,
+        body_animation_failure(
+            Script::BodyAnimationApplyError::k_missing_path, std::move(path_result).error())};
   }
-  const Omikron::Animation3DA& animation{**animation_result};
   const Omikron::Path3DP& path{**path_result};
   if (request.subpath_index >= path.subpaths.size()) {
-    return std::expected<Script::RelativeBodyAnimationResult,
-        Script::RelativeBodyAnimationFailure>{std::unexpect,
-        Script::RelativeBodyAnimationFailure{.error = Script::BodyAnimationApplyError::k_invalid_binding,
-            .reason_text = fmt::format("subpath index {} out of range ({} subpaths)",
+    return std::expected<Script::RelativeBodyAnimationResult, Script::RelativeBodyAnimationFailure>{
+        std::unexpect,
+        body_animation_failure(Script::BodyAnimationApplyError::k_invalid_binding,
+            fmt::format("subpath index {} out of range ({} subpaths)",
                 request.subpath_index,
-                path.subpaths.size())}};
+                path.subpaths.size()))};
   }
 
-  const Omikron::Model3DOData& model{character->model_resource->model};
-  const auto selected{
-      std::ranges::find(model.meshes, request.object_binding, &Omikron::MeshDescriptor::name)};
-  if (selected == model.meshes.end()) {
-    return std::expected<Script::RelativeBodyAnimationResult,
-        Script::RelativeBodyAnimationFailure>{std::unexpect,
-        Script::RelativeBodyAnimationFailure{.error = Script::BodyAnimationApplyError::k_invalid_binding,
-            .reason_text = fmt::format("binding A object '{}' does not exist in character {} model '{}'",
-                request.object_binding,
-                request.character_id,
-                character->model_resource_name)}};
+  const Omikron::Animation3DA& animation{**animation_result};
+  auto binding{prepare_body_animation(
+      *character, request.object_binding, request.animation_index, animation, request.first_tick)};
+  if (!binding) {
+    return std::expected<Script::RelativeBodyAnimationResult, Script::RelativeBodyAnimationFailure>{
+        std::unexpect, std::move(binding).error()};
   }
-  const std::size_t selected_index{
-      static_cast<std::size_t>(std::distance(model.meshes.begin(), selected))};
-
-  if (request.first_tick || character->runtime_objects.size() != model.meshes.size() ||
-      character->body_animation.animation_descriptor_index != request.animation_index) {
-    character->runtime_objects = model.runtime_objects;
-    character->object_poses.assign(model.meshes.size(), Character::BodyAnimationObjectPose{});
-
-    for (std::size_t object_index{0}; object_index < model.meshes.size(); ++object_index) {
-      bool in_target_hierarchy{object_index == selected_index};
-      std::int32_t parent{model.hierarchy_parent_index.at(object_index)};
-      std::size_t parent_steps{0};
-      while (!in_target_hierarchy && parent != -1 && parent_steps < model.meshes.size()) {
-        in_target_hierarchy = std::cmp_equal(parent, selected_index);
-        parent = model.hierarchy_parent_index.at(static_cast<std::size_t>(parent));
-        ++parent_steps;
-      }
-      if (!in_target_hierarchy) {
-        continue;
-      }
-      const std::uint32_t script_id{model.meshes.at(object_index).script_id};
-      for (std::size_t channel_index{0}; channel_index < animation.channels.size();
-          ++channel_index) {
-        const Omikron::Animation3DAChannel& channel{animation.channels.at(channel_index)};
-        if (channel.channel_id != script_id) {
-          continue;
-        }
-        Character::BodyAnimationObjectPose& pose{character->object_poses.at(object_index)};
-        pose.channel_index = static_cast<std::uint32_t>(channel_index);
-        pose.channel_id = channel.channel_id;
-        pose.channel_name = channel.name;
-        break;
-      }
-    }
-
+  if (binding->initialized) {
     const Omikron::Path3DPSubpath& subpath{path.subpaths.at(request.subpath_index)};
     auto sampled{subpath.sample_mode_1(1.0F)};
     if (!sampled) {
       return std::expected<Script::RelativeBodyAnimationResult,
           Script::RelativeBodyAnimationFailure>{std::unexpect,
-          Script::RelativeBodyAnimationFailure{
-              .error = Script::BodyAnimationApplyError::k_resource_resolution,
-              .reason_text = std::move(sampled).error()}};
+          body_animation_failure(
+              Script::BodyAnimationApplyError::k_resource_resolution, std::move(sampled).error())};
     }
     const Runtime::Vec3 authored{.x = request.authored_offset.at(0),
         .y = request.authored_offset.at(1),
         .z = request.authored_offset.at(2)};
     const Runtime::Vec3 anchor{
         Runtime::relative_body_animation_anchor(sampled->position, authored)};
-    character->transform.translation = anchor;
-    if (std::cmp_equal(selected_index, model.root_mesh_index)) {
-      character->runtime_objects.at(selected_index).local_offset = Runtime::Vec3{};
+    if (auto positioned{set_body_animation_anchor(*character, binding->selected_index, anchor)};
+        !positioned) {
+      return std::expected<Script::RelativeBodyAnimationResult,
+          Script::RelativeBodyAnimationFailure>{std::unexpect, std::move(positioned).error()};
     }
-
-    const Omikron::ScxAnimationRecord& descriptor{m_scx.animations.at(request.animation_index)};
+    begin_body_animation(*character,
+        *binding,
+        m_scx.animations.at(request.animation_index),
+        animation,
+        request.animation_index,
+        authored,
+        anchor);
     Character::BodyAnimationPlayback& playback{character->body_animation};
-    playback = Character::BodyAnimationPlayback{};
-    playback.active = true;
-    playback.selected_object_index = selected_index;
-    playback.selected_object_name = selected->name;
-    playback.animation_descriptor_index = request.animation_index;
-    playback.animation_name = descriptor.name;
-    playback.animation_id = descriptor.animation_id;
-    playback.max_frame_index = animation.max_frame_index;
     playback.path_index = request.path_index;
     playback.path_name = m_scx.section0_records.at(request.path_index).name;
     playback.subpath_index = request.subpath_index;
     playback.subpath_name = subpath.name;
     playback.sampled_path_position = sampled->position;
-    playback.authored_offset = authored;
-    playback.final_anchor = anchor;
   }
-
-  const float previous{
-      std::clamp(request.previous_progress, 0.0F, static_cast<float>(animation.max_frame_index))};
-  const float current{
-      std::clamp(request.current_progress, 0.0F, static_cast<float>(animation.max_frame_index))};
-  for (std::size_t object_index{0}; object_index < character->object_poses.size(); ++object_index) {
-    Character::BodyAnimationObjectPose& pose{character->object_poses.at(object_index)};
-    if (!pose.channel_index.has_value()) {
-      continue;
-    }
-    const Omikron::Animation3DAChannel& channel{animation.channels.at(pose.channel_index.value())};
-    const std::optional<Runtime::Quaternion> rotation{channel.sample_rotation(current)};
-    if (rotation.has_value()) {
-      pose.current_quaternion = rotation.value();
-      character->runtime_objects.at(object_index).animation_matrix =
-          Runtime::quaternion_matrix(rotation.value());
-    }
+  if (auto applied{apply_body_animation(*character,
+          animation,
+          request.previous_progress,
+          request.current_progress,
+          request.body_animation_vector,
+          request.execution_count,
+          request.execution_limit)};
+      !applied) {
+    return std::expected<Script::RelativeBodyAnimationResult, Script::RelativeBodyAnimationFailure>{
+        std::unexpect, std::move(applied).error()};
   }
-
-  Runtime::Vec3 root_delta{};
-  if (model.root_mesh_index >= 0) {
-    const std::size_t root_index{static_cast<std::size_t>(model.root_mesh_index)};
-    const Character::BodyAnimationObjectPose& root_pose{character->object_poses.at(root_index)};
-    if (root_pose.channel_index.has_value()) {
-      const Omikron::Animation3DAChannel& root_channel{
-          animation.channels.at(root_pose.channel_index.value())};
-      const std::optional<Runtime::Vec3> integrated{
-          root_channel.integrate_translation(previous, current)};
-      if (integrated.has_value()) {
-        root_delta = integrated.value();
-        character->transform.translation.x += root_delta.x;
-        character->transform.translation.y += root_delta.y;
-        character->transform.translation.z += root_delta.z;
-      }
-    }
-  }
-
-  if (auto resolved{Omikron::Model3DO::resolve_runtime_transforms(
-          model, std::span{character->runtime_objects})};
-      !resolved) {
-    return std::expected<Script::RelativeBodyAnimationResult,
-        Script::RelativeBodyAnimationFailure>{std::unexpect,
-        Script::RelativeBodyAnimationFailure{
-            .error = Script::BodyAnimationApplyError::k_resource_resolution,
-            .reason_text = std::move(resolved).error()}};
-  }
-  auto groups{Omikron::Model3DO::build_posed_geometry(model,
-      std::span<const Omikron::Model3DOData::RuntimeObjectState>{character->runtime_objects})};
-  if (!groups) {
-    return std::expected<Script::RelativeBodyAnimationResult,
-        Script::RelativeBodyAnimationFailure>{std::unexpect,
-        Script::RelativeBodyAnimationFailure{
-            .error = Script::BodyAnimationApplyError::k_resource_resolution,
-            .reason_text = std::move(groups).error()}};
-  }
-  character->posed_groups = std::move(groups).value();
-  character->pose_revision += 1U;
-
-  Character::BodyAnimationPlayback& playback{character->body_animation};
-  playback.previous_progress = previous;
-  playback.current_progress = current;
-  playback.execution_count = request.execution_count +
-                             (current >= static_cast<float>(animation.max_frame_index) ? 1U : 0U);
-  playback.execution_limit = request.execution_limit;
-  playback.root_motion_delta = root_delta;
-  playback.accumulated_root_translation.x += root_delta.x;
-  playback.accumulated_root_translation.y += root_delta.y;
-  playback.accumulated_root_translation.z += root_delta.z;
-  playback.body_animation_vector = Runtime::Vec3{.x = request.body_animation_vector.at(0),
-      .y = request.body_animation_vector.at(1),
-      .z = request.body_animation_vector.at(2)};
-  playback.completed = current >= static_cast<float>(animation.max_frame_index);
-  playback.active = !playback.completed;
   return Script::RelativeBodyAnimationResult{.max_frame_index = animation.max_frame_index};
 }
 

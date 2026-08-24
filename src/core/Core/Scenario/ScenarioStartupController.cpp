@@ -168,6 +168,7 @@ void ScenarioStartupController::reset_session() {
     slot.world_scene_id = static_cast<std::uint32_t>(index);
   }
   m_active_area_slot = 0;
+  m_area_script_owner_slot = 0;
   m_area_transition.reset();
   m_next_area_transition_generation = 1;
   m_area_script.reset();
@@ -324,6 +325,7 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
   // This main AREA context continues to own its initial resident slot even
   // after a later compact handoff changes presentation to the alternate slot.
   const std::size_t area_script_owner_slot{m_active_area_slot};
+  m_area_script_owner_slot = area_script_owner_slot;
 
   area_script.set_area_transition_sink(
       [this](const Script::AreaTransitionRequest& request)
@@ -470,63 +472,10 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
         fmt::format("SCX script ID {} not found in active world", request.script_id)};
   });
 
-  // Runtime 0x3B/0x3C launches an SCX script against an already-materialized
-  // character. Resolve the authored script ID generically, then let the
-  // world-owned ScenarioRuntime validate the character and create the bound
-  // ScriptRuntime instance.
-  area_script.set_character_script_sink([this](const Script::AreaCharacterScriptRequest& request)
-                                            -> std::expected<std::size_t, std::string> {
-    if (m_manager == nullptr) {
-      return std::expected<std::size_t, std::string>{
-          std::unexpect, "scenario manager is not available"};
-    }
-    WorldSceneContext* context{m_manager->active_world_context()};
-    if (context == nullptr || !context->scx_data.has_value() || context->runtime == nullptr) {
-      return std::expected<std::size_t, std::string>{
-          std::unexpect, "no active world SCX/character runtime"};
-    }
-
-    const auto& scripts{context->scx_data->scripts};
-    std::optional<std::size_t> source_script_index;
-    for (std::size_t index{0}; index < scripts.size(); ++index) {
-      if (scripts.at(index).script_id == request.script_id) {
-        source_script_index = index;
-        break;
-      }
-    }
-    if (!source_script_index.has_value()) {
-      return std::expected<std::size_t, std::string>{std::unexpect,
-          fmt::format("SCX script ID {} not found in active world", request.script_id)};
-    }
-
-    auto created{context->runtime->spawn_character_script_instance(
-        source_script_index.value(), request.character_id, request.parameter)};
-    if (!created) {
-      return created;
-    }
-
-    const bool tracked{request.mode == Script::AreaCharacterScriptLaunchMode::k_tracked};
-    const std::string_view mode{tracked ? "tracked" : "fire-and-forget"};
-    const Omikron::ScxScript& script{scripts.at(source_script_index.value())};
-    record("AreaScript.CharacterScriptStarted",
-        fmt::format("character={} script={} name='{}' parameter={} mode={} instance={}",
-            request.character_id,
-            request.script_id,
-            script.name,
-            request.parameter,
-            mode,
-            created.value()));
-
-    App::Log::debug(LogCategory::Script,
-        "AREA opcode {:#04x} — started character {} script {} '{}' as instance {}, {}",
-        tracked ? 0x3C : 0x3B,
-        request.character_id,
-        request.script_id,
-        script.name,
-        created.value(),
-        mode);
-    return created;
-  });
+  area_script.set_character_script_sink(
+      [this, area_script_owner_slot](const Script::AreaCharacterScriptRequest& request) {
+        return launch_character_script(area_script_owner_slot, request);
+      });
 
   area_script.set_character_activation_sink(
       [this, area_script_owner_slot](const Script::AreaCharacterActivationRequest& request)
@@ -1003,46 +952,29 @@ void ScenarioStartupController::bind_scene_compact_services(
   runtime.set_character_script_sink(
       [this, owner_slot](const Script::AreaCharacterScriptRequest& request)
           -> std::expected<std::size_t, std::string> {
-        if (m_manager == nullptr) {
-          return std::expected<std::size_t, std::string>{std::unexpect, "scenario manager is not available"};
-        }
-        const RuntimeAreaSlot& slot{m_area_slots.at(owner_slot)};
-        const Omikron::ScxData* scx{m_manager->world_context_scx(slot.world_scene_id)};
-        ScenarioRuntime* scenario_runtime{m_manager->world_runtime(slot.world_scene_id)};
-        if (scx == nullptr || scenario_runtime == nullptr) {
-          return std::expected<std::size_t, std::string>{std::unexpect,
-              "SCENE owner has no loaded SCX/character runtime"};
-        }
-        for (std::size_t index{0}; index < scx->scripts.size(); ++index) {
-          if (scx->scripts.at(index).script_id == request.script_id) {
-            return scenario_runtime->spawn_character_script_instance(
-                index, request.character_id, request.parameter);
-          }
-        }
-        return std::expected<std::size_t, std::string>{std::unexpect,
-            fmt::format("SCENE owner character script ID {} was not found", request.script_id)};
+        return launch_character_script(owner_slot, request);
       });
   runtime.set_character_activation_sink(
       [this, owner_slot](const Script::AreaCharacterActivationRequest& request)
           -> std::expected<void, std::string> {
-        if (request.character_id == -1) {
-          return set_current_character_presentation(true);
-        }
-        if (m_manager == nullptr) {
-          return std::expected<void, std::string>{std::unexpect, "scenario manager is not available"};
-        }
-        const RuntimeAreaSlot& slot{m_area_slots.at(owner_slot)};
-        ScenarioRuntime* scenario_runtime{m_manager->world_runtime(slot.world_scene_id)};
-        if (scenario_runtime == nullptr || !slot.primary.has_value()) {
-          return std::expected<void, std::string>{std::unexpect,
-              "SCENE owner has no AREA character runtime"};
-        }
-        if (slot.scene.has_value() && slot.scene->character_by_id(request.character_id).has_value()) {
-          return scenario_runtime->character_runtime().materialize_scene_characters(
-              slot.primary_area_id, slot.scene_id, *slot.scene);
-        }
-        return scenario_runtime->activate_character(slot.primary_area_id, *slot.primary, request);
-      });
+    if (request.character_id == -1) {
+      return set_current_character_presentation(true);
+    }
+    if (m_manager == nullptr) {
+      return std::expected<void, std::string>{std::unexpect, "scenario manager is not available"};
+    }
+    const RuntimeAreaSlot& slot{m_area_slots.at(owner_slot)};
+    ScenarioRuntime* scenario_runtime{m_manager->world_runtime(slot.world_scene_id)};
+    if (scenario_runtime == nullptr || !slot.primary.has_value()) {
+      return std::expected<void, std::string>{std::unexpect,
+          "SCENE owner has no AREA character runtime"};
+    }
+    if (slot.scene.has_value() && slot.scene->character_by_id(request.character_id).has_value()) {
+      return scenario_runtime->character_runtime().materialize_scene_characters(
+          slot.primary_area_id, slot.scene_id, *slot.scene);
+    }
+    return scenario_runtime->activate_character(slot.primary_area_id, *slot.primary, request);
+  });
   runtime.set_interface_sink([this](const InterfaceOpenRequest& request)
                                  -> std::expected<InterfaceHandle, std::string> {
     return m_dispatcher.open(request);
@@ -1060,8 +992,8 @@ std::expected<void, std::string> ScenarioStartupController::attach_area_scene(
         fmt::format("AREA {} is not resident for SCENE attachment", request.area_id)};
   }
   if (request.scene_id < 0) {
-    return std::expected<void, std::string>{std::unexpect,
-        fmt::format("SCENE ID {} is negative", request.scene_id)};
+    return std::expected<void, std::string>{
+        std::unexpect, fmt::format("SCENE ID {} is negative", request.scene_id)};
   }
 
   if (!m_scene_archive.has_value()) {
@@ -1092,16 +1024,16 @@ std::expected<void, std::string> ScenarioStartupController::attach_area_scene(
   }
   ScenarioRuntime* scenario_runtime{m_manager->world_runtime(slot.world_scene_id)};
   if (scenario_runtime == nullptr) {
-    return std::expected<void, std::string>{std::unexpect,
-        fmt::format("AREA {} has no prepared world runtime", request.area_id)};
+    return std::expected<void, std::string>{
+        std::unexpect, fmt::format("AREA {} has no prepared world runtime", request.area_id)};
   }
   if (slot.scene.has_value()) {
     // The compact context must release its borrowed byte span before the owned
     // scene record is replaced, then only SCENE-owned entities are removed.
     slot.scene_script.reset();
     std::optional<std::int16_t> preserved_character_id;
-    if (const auto current{m_manager->controlled_character()}; current.has_value() &&
-        current->world_scene_id == slot.world_scene_id) {
+    if (const auto current{m_manager->controlled_character()};
+        current.has_value() && current->world_scene_id == slot.world_scene_id) {
       preserved_character_id = current->character_id;
     }
     scenario_runtime->character_runtime().dematerialize_scene_characters(
@@ -1118,8 +1050,8 @@ std::expected<void, std::string> ScenarioStartupController::attach_area_scene(
   const bool transfer_current{source_slot != slot_index.value() && current.has_value() &&
                               current->world_scene_id == source_world_scene_id};
   if (transfer_current) {
-    if (auto transferred{m_manager->transfer_controlled_character(
-            source_world_scene_id, slot.world_scene_id)};
+    if (auto transferred{
+            m_manager->transfer_controlled_character(source_world_scene_id, slot.world_scene_id)};
         !transferred) {
       slot.scene.reset();
       slot.scene_id = -1;
@@ -1131,11 +1063,12 @@ std::expected<void, std::string> ScenarioStartupController::attach_area_scene(
       !materialized) {
     const std::string materialize_error{std::move(materialized).error()};
     if (transfer_current) {
-      if (auto returned{m_manager->transfer_controlled_character(
-              slot.world_scene_id, source_world_scene_id)};
+      if (auto returned{
+              m_manager->transfer_controlled_character(slot.world_scene_id, source_world_scene_id)};
           !returned) {
         return std::expected<void, std::string>{std::unexpect,
-            fmt::format("SCENE character materialization failed: {}; current-character rollback failed: {}",
+            fmt::format(
+                "SCENE character materialization failed: {}; current-character rollback failed: {}",
                 materialize_error,
                 returned.error())};
       }
@@ -1155,8 +1088,8 @@ std::expected<void, std::string> ScenarioStartupController::attach_area_scene(
   }
 
   if (source_slot != slot_index.value()) {
-    if (auto switched{m_manager->switch_active_world_context(
-            source_world_scene_id, slot.world_scene_id)};
+    if (auto switched{
+            m_manager->switch_active_world_context(source_world_scene_id, slot.world_scene_id)};
         !switched) {
       const std::string switch_error{std::move(switched).error()};
       if (transfer_current) {
@@ -1164,7 +1097,8 @@ std::expected<void, std::string> ScenarioStartupController::attach_area_scene(
                 slot.world_scene_id, source_world_scene_id)};
             !returned) {
           return std::expected<void, std::string>{std::unexpect,
-              fmt::format("world residency switch failed: {}; current-character rollback failed: {}",
+              fmt::format(
+                  "world residency switch failed: {}; current-character rollback failed: {}",
                   switch_error,
                   returned.error())};
         }
@@ -1205,16 +1139,16 @@ std::expected<void, std::string> ScenarioStartupController::release_area(
   }
   const auto slot_index{resident_area_slot(request.area_id)};
   if (!slot_index.has_value()) {
-    return std::expected<void, std::string>{std::unexpect,
-        fmt::format("AREA {} is not resident for release", request.area_id)};
+    return std::expected<void, std::string>{
+        std::unexpect, fmt::format("AREA {} is not resident for release", request.area_id)};
   }
   if (slot_index.value() == m_active_area_slot) {
     return std::expected<void, std::string>{std::unexpect,
         fmt::format("AREA {} is currently active and cannot be released", request.area_id)};
   }
   RuntimeAreaSlot& slot{m_area_slots.at(slot_index.value())};
-  if (const auto current{m_manager->controlled_character()}; current.has_value() &&
-      current->world_scene_id == slot.world_scene_id) {
+  if (const auto current{m_manager->controlled_character()};
+      current.has_value() && current->world_scene_id == slot.world_scene_id) {
     return std::expected<void, std::string>{std::unexpect,
         fmt::format("AREA {} cannot be released because it owns current controlled character {}",
             request.area_id,
@@ -1223,7 +1157,8 @@ std::expected<void, std::string> ScenarioStartupController::release_area(
   if (ScenarioRuntime* runtime{m_manager->world_runtime(slot.world_scene_id)};
       runtime != nullptr && slot.scene.has_value()) {
     slot.scene_script.reset();
-    runtime->character_runtime().dematerialize_scene_characters(slot.primary_area_id, slot.scene_id);
+    runtime->character_runtime().dematerialize_scene_characters(
+        slot.primary_area_id, slot.scene_id);
   }
   slot.scene_script.reset();
   slot.scene.reset();
@@ -1236,7 +1171,9 @@ std::expected<void, std::string> ScenarioStartupController::release_area(
   slot.secondary_area_id = -1;
   m_area_mapping.erase(request.area_id);
   App::Log::info(LogCategory::Scenario,
-      "AREA {} released from resident slot {}", request.area_id, slot_index.value());
+      "AREA {} released from resident slot {}",
+      request.area_id,
+      slot_index.value());
   return {};
 }
 
@@ -1255,13 +1192,13 @@ std::expected<void, std::string> ScenarioStartupController::select_current_chara
 
   const RuntimeAreaSlot& slot{m_area_slots.at(owner_slot)};
   if (!slot.primary.has_value()) {
-    return std::expected<void, std::string>{std::unexpect,
-        "current-character selection owner has no parsed AREA record"};
+    return std::expected<void, std::string>{
+        std::unexpect, "current-character selection owner has no parsed AREA record"};
   }
   ScenarioRuntime* const runtime{m_manager->world_runtime(slot.world_scene_id)};
   if (runtime == nullptr) {
-    return std::expected<void, std::string>{std::unexpect,
-        "current-character selection owner has no world runtime"};
+    return std::expected<void, std::string>{
+        std::unexpect, "current-character selection owner has no world runtime"};
   }
 
   if (slot.primary->character_by_id(request.character_id).has_value()) {
@@ -1289,8 +1226,8 @@ std::expected<void, std::string> ScenarioStartupController::select_current_chara
     return std::expected<void, std::string>{std::unexpect,
         fmt::format("selected character {} was not materialized", request.character_id)};
   }
-  m_manager->set_controlled_character(
-      ControlledCharacterRef{.character_id = request.character_id, .world_scene_id = slot.world_scene_id});
+  m_manager->set_controlled_character(ControlledCharacterRef{
+      .character_id = request.character_id, .world_scene_id = slot.world_scene_id});
   record("AreaScript.CurrentCharacterSelected",
       fmt::format("character={} world={} model={}",
           character->character_id,
@@ -1311,8 +1248,8 @@ std::expected<void, std::string> ScenarioStartupController::set_current_characte
   }
   const std::optional<ControlledCharacterRef> current{m_manager->controlled_character()};
   if (!current.has_value()) {
-    return std::expected<void, std::string>{std::unexpect,
-        "current controlled character is not established"};
+    return std::expected<void, std::string>{
+        std::unexpect, "current controlled character is not established"};
   }
   ScenarioRuntime* const runtime{m_manager->world_runtime(current->world_scene_id)};
   if (runtime == nullptr) {
@@ -1321,8 +1258,8 @@ std::expected<void, std::string> ScenarioStartupController::set_current_characte
             current->character_id,
             current->world_scene_id)};
   }
-  if (auto changed{runtime->character_runtime().set_presentation_enabled(
-          current->character_id, enabled)};
+  if (auto changed{
+          runtime->character_runtime().set_presentation_enabled(current->character_id, enabled)};
       !changed) {
     return changed;
   }
@@ -1351,12 +1288,12 @@ std::expected<void, std::string> ScenarioStartupController::deactivate_owner_cha
   }
   const RuntimeAreaSlot& slot{m_area_slots.at(owner_slot)};
   if (!slot.primary.has_value()) {
-    return std::expected<void, std::string>{std::unexpect,
-        "character deactivation owner has no parsed AREA record"};
+    return std::expected<void, std::string>{
+        std::unexpect, "character deactivation owner has no parsed AREA record"};
   }
   const bool in_area{slot.primary->character_by_id(request.character_id).has_value()};
-  const bool in_scene{slot.scene.has_value() &&
-                      slot.scene->character_by_id(request.character_id).has_value()};
+  const bool in_scene{
+      slot.scene.has_value() && slot.scene->character_by_id(request.character_id).has_value()};
   if (!in_area && !in_scene) {
     return std::expected<void, std::string>{std::unexpect,
         fmt::format("character ID {} is not present in owner AREA or attached SCENE table 0",
@@ -1364,13 +1301,109 @@ std::expected<void, std::string> ScenarioStartupController::deactivate_owner_cha
   }
   ScenarioRuntime* const runtime{m_manager->world_runtime(slot.world_scene_id)};
   if (runtime == nullptr) {
-    return std::expected<void, std::string>{std::unexpect,
-        "character deactivation owner has no world runtime"};
+    return std::expected<void, std::string>{
+        std::unexpect, "character deactivation owner has no world runtime"};
   }
   if (runtime->character_runtime().find(request.character_id) == nullptr) {
     return {};
   }
   return runtime->character_runtime().deactivate_character(request.character_id);
+}
+
+std::expected<std::size_t, std::string> ScenarioStartupController::launch_character_script(
+    const std::size_t owner_slot, const Script::AreaCharacterScriptRequest& request) {
+  if (m_manager == nullptr) {
+    return std::expected<std::size_t, std::string>{
+        std::unexpect, "scenario manager is not available"};
+  }
+  if (owner_slot >= m_area_slots.size()) {
+    return std::expected<std::size_t, std::string>{
+        std::unexpect, "character-script owner slot is out of range"};
+  }
+
+  const RuntimeAreaSlot& slot{m_area_slots.at(owner_slot)};
+  const Omikron::ScxData* scx{m_manager->world_context_scx(slot.world_scene_id)};
+  ScenarioRuntime* const scenario_runtime{m_manager->world_runtime(slot.world_scene_id)};
+  if (scx == nullptr || scenario_runtime == nullptr) {
+    return std::expected<std::size_t, std::string>{
+        std::unexpect, "character-script owner has no loaded SCX/character runtime"};
+  }
+
+  std::int16_t character_id{0};
+  std::string_view target_name;
+  switch (request.target) {
+    case Script::AreaCharacterScriptTarget::k_explicit:
+      if (!request.character_id.has_value()) {
+        return std::expected<std::size_t, std::string>{
+            std::unexpect, "explicit character-script request has no character ID"};
+      }
+      character_id = request.character_id.value();
+      target_name = "explicit";
+      break;
+    case Script::AreaCharacterScriptTarget::k_current: {
+      const std::optional<ControlledCharacterRef> current{m_manager->controlled_character()};
+      if (!current.has_value()) {
+        return std::expected<std::size_t, std::string>{
+            std::unexpect, "current controlled character is not established"};
+      }
+      if (current->world_scene_id != slot.world_scene_id) {
+        return std::expected<std::size_t, std::string>{std::unexpect,
+            fmt::format("current controlled character {} belongs to world {}, but character-script "
+                        "owner is world {}",
+                current->character_id,
+                current->world_scene_id,
+                slot.world_scene_id)};
+      }
+      character_id = current->character_id;
+      target_name = "current";
+      break;
+    }
+  }
+
+  std::optional<std::size_t> source_script_index;
+  for (std::size_t index{0}; index < scx->scripts.size(); ++index) {
+    if (scx->scripts.at(index).script_id == request.script_id) {
+      source_script_index = index;
+      break;
+    }
+  }
+  if (!source_script_index.has_value()) {
+    return std::expected<std::size_t, std::string>{std::unexpect,
+        fmt::format("character-script ID {} was not found in owner world {}",
+            request.script_id,
+            slot.world_scene_id)};
+  }
+
+  // The compact trailing Scalar16 belongs to Runtime's presentation path, not
+  // ScriptLaunchContext. Retain it in the request but launch SCX with its
+  // neutral metadata value until that presentation path is modeled.
+  auto created{scenario_runtime->spawn_character_script_instance(
+      source_script_index.value(), character_id, 0)};
+  if (!created) {
+    return created;
+  }
+
+  const bool tracked{request.mode == Script::AreaCharacterScriptLaunchMode::k_tracked};
+  const Omikron::ScxScript& script{scx->scripts.at(source_script_index.value())};
+  record("AreaScript.CharacterScriptStarted",
+      fmt::format(
+          "target={} character={} script={} name='{}' cameraDuration={} mode={} instance={}",
+          target_name,
+          character_id,
+          request.script_id,
+          script.name,
+          request.camera_duration_units,
+          tracked ? "tracked" : "fire-and-forget",
+          created.value()));
+  App::Log::debug(LogCategory::Script,
+      "AREA character-script launch — target={} character={} script {} '{}' as instance {}, {}",
+      target_name,
+      character_id,
+      request.script_id,
+      script.name,
+      created.value(),
+      tracked ? "tracked" : "fire-and-forget");
+  return created;
 }
 
 std::expected<void, std::string> ScenarioStartupController::place_current_character_at_address(
@@ -1380,8 +1413,8 @@ std::expected<void, std::string> ScenarioStartupController::place_current_charac
   }
   const std::optional<ControlledCharacterRef> current{m_manager->controlled_character()};
   if (!current.has_value()) {
-    return std::expected<void, std::string>{std::unexpect,
-        "current controlled character is not established"};
+    return std::expected<void, std::string>{
+        std::unexpect, "current controlled character is not established"};
   }
   std::optional<Omikron::IamAreaAddressRecord> resolved_address;
   for (const RuntimeAreaSlot& slot : m_area_slots) {
@@ -1413,8 +1446,8 @@ std::expected<void, std::string> ScenarioStartupController::place_current_charac
   auto placed{runtime->character_runtime().place_character_at_address(
       current->character_id, resolved_address.value())};
   if (placed) {
-    App::Log::info(LogCategory::Scenario,
-        "current character placed at address {}", request.address_id);
+    App::Log::info(
+        LogCategory::Scenario, "current character placed at address {}", request.address_id);
   }
   return placed;
 }
@@ -1425,16 +1458,16 @@ std::expected<void, std::string> ScenarioStartupController::set_address_flag(
     return std::expected<void, std::string>{std::unexpect, "scenario manager is not available"};
   }
   if (request.address_id < 0) {
-    return std::expected<void, std::string>{std::unexpect,
-        fmt::format("ADDRESSES ID {} is negative", request.address_id)};
+    return std::expected<void, std::string>{
+        std::unexpect, fmt::format("ADDRESSES ID {} is negative", request.address_id)};
   }
   GameState* const game_state{m_manager->game_state()};
   if (game_state == nullptr) {
-    return std::expected<void, std::string>{std::unexpect,
-        "persistent IAM game state is not initialized"};
+    return std::expected<void, std::string>{
+        std::unexpect, "persistent IAM game state is not initialized"};
   }
-  auto updated{game_state->set_address_flag(static_cast<std::uint16_t>(request.address_id),
-      request.enabled)};
+  auto updated{game_state->set_address_flag(
+      static_cast<std::uint16_t>(request.address_id), request.enabled)};
   if (updated) {
     App::Log::debug(LogCategory::Script,
         "persistent ADDRESS {} {}",
@@ -1454,13 +1487,13 @@ std::expected<void, std::string> ScenarioStartupController::add_object_to_persis
         fmt::format("persistent object collection kind {} is negative", request.collection_kind)};
   }
   if (request.object_id < 0) {
-    return std::expected<void, std::string>{std::unexpect,
-        fmt::format("OBJECTS ID {} is negative", request.object_id)};
+    return std::expected<void, std::string>{
+        std::unexpect, fmt::format("OBJECTS ID {} is negative", request.object_id)};
   }
   GameState* const game_state{m_manager->game_state()};
   if (game_state == nullptr) {
-    return std::expected<void, std::string>{std::unexpect,
-        "persistent IAM game state is not initialized"};
+    return std::expected<void, std::string>{
+        std::unexpect, "persistent IAM game state is not initialized"};
   }
   auto added{game_state->add_object_to_collection(
       static_cast<std::uint16_t>(request.collection_kind), request.object_id)};
@@ -1476,12 +1509,67 @@ std::expected<void, std::string> ScenarioStartupController::add_object_to_persis
   return {};
 }
 
+std::expected<void, std::string> ScenarioStartupController::service_character_script_wait(
+    Script::AreaScriptRuntime& area_script, const std::size_t owner_slot) {
+  if (area_script.state() != Script::AreaScriptState::k_waiting ||
+      area_script.wait_info().kind != Script::AreaWaitKind::k_character_script) {
+    return {};
+  }
+  if (m_manager == nullptr || !area_script.wait_info().character_script_instance.has_value()) {
+    return std::expected<void, std::string>{
+        std::unexpect, "AREA character-script wait has no scenario owner or instance ID"};
+  }
+  if (owner_slot >= m_area_slots.size()) {
+    return std::expected<void, std::string>{
+        std::unexpect, "AREA character-script wait owner slot is out of range"};
+  }
+
+  const RuntimeAreaSlot& slot{m_area_slots.at(owner_slot)};
+  ScenarioRuntime* const scenario_runtime{m_manager->world_runtime(slot.world_scene_id)};
+  if (scenario_runtime == nullptr || scenario_runtime->script_runtime() == nullptr) {
+    return std::expected<void, std::string>{std::unexpect,
+        "AREA is waiting on a character script but its owner world runtime does not exist"};
+  }
+
+  const Script::ScriptRuntime* script_runtime{scenario_runtime->script_runtime()};
+  const std::size_t instance_id{area_script.wait_info().character_script_instance.value()};
+  const Script::ScriptInstance* instance{script_runtime->instance(instance_id)};
+  if (instance == nullptr) {
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format("AREA is waiting on missing character-script instance {}", instance_id)};
+  }
+  if (instance->paused &&
+      instance->pause_info.reason != Script::ScriptPauseReason::k_unhandled_opcode) {
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format("character-script instance {} '{}' paused with an error: {}",
+            instance_id,
+            instance->script_name,
+            instance->pause_info.reason_text)};
+  }
+  if (!instance->completed) {
+    return {};
+  }
+  if (auto completed{area_script.complete_character_script_wait(instance_id)}; !completed) {
+    return completed;
+  }
+  record("AreaScript.CharacterScriptCompleted", fmt::format("instance={}", instance_id));
+  return {};
+}
+
 void ScenarioStartupController::service_scene_scripts(const float delta_seconds) {
-  for (RuntimeAreaSlot& slot : m_area_slots) {
+  for (std::size_t index{0}; index < m_area_slots.size(); ++index) {
+    RuntimeAreaSlot& slot{m_area_slots.at(index)};
     if (!slot.scene_script.has_value()) {
       continue;
     }
     Script::AreaScriptRuntime& script{slot.scene_script.value()};
+    if (auto serviced{service_character_script_wait(script, index)}; !serviced) {
+      App::Log::warn(LogCategory::Script,
+          "SCENE {} character-script wait failed: {}",
+          slot.scene_id,
+          serviced.error());
+      continue;
+    }
     if (script.state() != Script::AreaScriptState::k_ready &&
         script.state() != Script::AreaScriptState::k_running) {
       continue;
@@ -1496,7 +1584,9 @@ void ScenarioStartupController::service_scene_scripts(const float delta_seconds)
           script.pause_info().nearby_bytes);
     } else if (state == Script::AreaScriptState::k_failed) {
       App::Log::warn(LogCategory::Script,
-          "SCENE {} compact VM failed: {}", slot.scene_id, script.pause_info().reason_text);
+          "SCENE {} compact VM failed: {}",
+          slot.scene_id,
+          script.pause_info().reason_text);
     }
   }
 }
@@ -1595,45 +1685,14 @@ std::expected<void, std::string> ScenarioStartupController::tick(const float del
     }
   }
 
-  // Opcode 0x3C waits on the exact character-bound child returned by its
-  // launch bridge. An unsupported-opcode pause is an intentional debugger
-  // breakpoint: keep AREA in Runtime state 4 and let rendering continue.
-  if (area_script.state() == Script::AreaScriptState::k_waiting &&
-      area_script.wait_info().kind == Script::AreaWaitKind::k_character_script) {
-    if (m_manager == nullptr || !area_script.wait_info().character_script_instance.has_value()) {
-      m_last_error = "AREA character-script wait has no scenario owner or instance ID";
-      return std::expected<void, std::string>{std::unexpect, m_last_error};
-    }
-    const WorldSceneContext* context{m_manager->active_world_context()};
-    if (context == nullptr || context->runtime == nullptr ||
-        context->runtime->script_runtime() == nullptr) {
-      m_last_error = "AREA is waiting on a character script but no active world runtime exists";
-      return std::expected<void, std::string>{std::unexpect, m_last_error};
-    }
-
-    const Script::ScriptRuntime* script_runtime{context->runtime->script_runtime()};
-    const std::size_t instance_id{area_script.wait_info().character_script_instance.value()};
-    const Script::ScriptInstance* instance{script_runtime->instance(instance_id)};
-    if (instance == nullptr) {
-      m_last_error =
-          fmt::format("AREA is waiting on missing character-script instance {}", instance_id);
-      return std::expected<void, std::string>{std::unexpect, m_last_error};
-    }
-    if (instance->paused &&
-        instance->pause_info.reason != Script::ScriptPauseReason::k_unhandled_opcode) {
-      m_last_error = fmt::format("character-script instance {} '{}' paused with an error: {}",
-          instance_id,
-          instance->script_name,
-          instance->pause_info.reason_text);
-      return std::expected<void, std::string>{std::unexpect, m_last_error};
-    }
-    if (instance->completed) {
-      if (auto completed{area_script.complete_character_script_wait(instance_id)}; !completed) {
-        m_last_error = completed.error();
-        return std::expected<void, std::string>{std::unexpect, m_last_error};
-      }
-      record("AreaScript.CharacterScriptCompleted", fmt::format("instance={}", instance_id));
-    }
+  // Opcodes 0x2E and 0x3C wait on the exact character-bound child returned
+  // by their launch bridge. Poll their compact-context owner rather than the
+  // current presentation world. An unsupported child opcode is a debugger
+  // breakpoint, so it intentionally leaves the AREA context in state 4.
+  if (auto serviced{service_character_script_wait(area_script, m_area_script_owner_slot)};
+      !serviced) {
+    m_last_error = serviced.error();
+    return std::expected<void, std::string>{std::unexpect, m_last_error};
   }
 
   // Event 1 is recorded as started exactly once; a resumed script continues
@@ -1697,8 +1756,8 @@ std::expected<void, std::string> ScenarioStartupController::complete_interface(
       return completed;
     }
   }
-  return std::expected<void, std::string>{std::unexpect,
-      "interface completion does not match an active compact IAM context"};
+  return std::expected<void, std::string>{
+      std::unexpect, "interface completion does not match an active compact IAM context"};
 }
 
 void ScenarioStartupController::set_trace_recorder(Startup::StartupTraceRecorder* trace) {

@@ -1,7 +1,7 @@
 # Omikron IAM scenario/event virtual machine
 
 > **Status:** work-in-progress reverse-engineering documentation for OpenNomad  
-> **Last updated:** 2026-08-22
+> **Last updated:** 2026-08-24
 >
 > This document describes the compact byte-oriented scenario/event interpreter
 > used by the Windows retail release of *Omikron: The Nomad Soul*.
@@ -881,7 +881,7 @@ For instance, a handler can decode:
 ```text
 Scalar16 characterId
 raw u16 scriptId
-Scalar16 parameter
+Scalar16 cameraDurationUnits
 ```
 
 within one instruction.
@@ -2131,7 +2131,7 @@ Operands:
 ```text
 Scalar16 characterId
 raw u16  scriptId
-Scalar16 parameter
+Scalar16 cameraDurationUnits
 ```
 
 Behavior:
@@ -2158,7 +2158,7 @@ Same operand shape:
 ```text
 Scalar16 characterId
 raw u16  scriptId
-Scalar16 parameter
+Scalar16 cameraDurationUnits
 ```
 
 After launch:
@@ -2172,31 +2172,43 @@ This is the tracked character-bound variant.
 
 ---
 
-# 78. State 4 is broader than “character-script wait”
+# 78. Character-script launch family
 
-Earlier documentation tied Runtime state 4 specifically to opcode `0x3C`.
+The compact VM has one two-by-two family. All four forms activate one
+character-bound structured SCX script through the same helper:
 
-That is too narrow.
+| Target | fire-and-forget | tracked, Runtime state 4 |
+|---|---|---|
+| session current controlled character | `0x5A StartCurrentCharacterScript` | `0x2E StartCurrentCharacterScriptTracked` |
+| explicit authored character | `0x3B StartCharacterScript` | `0x3C StartCharacterScriptTracked` |
 
-State 4 is also entered by:
+`0x2E` handler: `0x00402C30`. `0x5A` handler: `0x00404450`.
 
-```text
-0x3A
-```
-
-and at least one earlier native opcode path around:
-
-```text
-0x2E
-```
-
-Therefore use a broader working description:
+Both current-character forms consume exactly five bytes:
 
 ```text
-tracked native/child-operation wait
+raw u16  scriptId
+Scalar16 cameraDurationUnits
 ```
 
-until the common completion mechanism is fully named.
+The raw script ID must not receive Scalar16 `0x4000` parameter remapping. The
+trailing value does receive ordinary Scalar16 resolution. Runtime reads the
+target from its global current-character slot; it does not infer a body from
+the resident AREA, active entities, or the first character record.
+
+The SCX source is resolved against the compact context's owner world/AREA.
+Current-character launches whose selected body belongs to another world must
+fail rather than fall back to the active presentation world.
+
+`0x2E` records the exact child activation and enters state 4; completion of
+that exact child resumes the compact context. `0x5A` supplies no tracking
+context and immediately continues bytecode dispatch.
+
+The explicit `0x3B`/`0x3C` trailing Scalar16 is the same presentation/camera
+duration field, not a structured `ScriptLaunchContext.parameter`. OpenNomad
+preserves it in typed compact-request metadata. Runtime clamps a negative
+effective presentation duration to zero when relevant script context state is
+active; OpenNomad does not yet model that presentation-controller side effect.
 
 ---
 
@@ -2923,23 +2935,11 @@ Do not assign a final “LoadArea”/“ChangeArea” name yet.
 
 # 107. Opcode `0x2E`
 
-Handler:
-
-```text
-0x00402C30
-```
-
-enters state 4 in the recovered path.
-
-It is another tracked native operation.
-
-Working name:
-
-```text
-TrackedNativeOperation
-```
-
-until the actual subsystem/action is established.
+`0x2E` is `StartCurrentCharacterScriptTracked`, not a generic tracked native
+operation. It launches raw-u16 SCX script ID plus Scalar16 camera duration on
+the Runtime global current controlled character, resolves the script in the
+compact context owner world, and waits in state 4 for that exact child. See
+the full four-opcode matrix in section 78.
 
 ---
 
@@ -3252,7 +3252,7 @@ High-confidence or useful current names:
 | `0x2B` | compare top vs Scalar16 + branch | Runtime |
 | `0x2C` | compare top vs int32 + branch | Runtime |
 | `0x2D` | `AreaOperation` | provisional |
-| `0x2E` | tracked native operation | provisional |
+| `0x2E` | `StartCurrentCharacterScriptTracked` | implemented; raw script ID + Scalar16 duration; exact child state-4 wait |
 | `0x2F` | `BeginAreaTransition` | implemented; state-10 two-slot native wait |
 | `0x30` | `ReleaseArea` | implemented; one Scalar16, nonblocking |
 | `0x32` | `AddObjectToPersistentCollection` | implemented for START-backed kinds 0/1/2; newest-first, kind-2 duplicate suppression; kind 3 unresolved |
@@ -3266,6 +3266,7 @@ High-confidence or useful current names:
 | `0x49` | `PlaceCurrentCharacterAtAddress` | implemented; one Scalar16, nonblocking |
 | `0x4E` | `ActivateCharacter` | implemented current-body presentation enable for `-1`; other behavior traced |
 | `0x4F` | `DeactivateCharacter` | implemented; current-body presentation disable for `-1` |
+| `0x5A` | `StartCurrentCharacterScript` | implemented; raw script ID + Scalar16 duration; fire-and-forget |
 | `0x57` | `SetAddressFlag` | implemented; one Scalar16, nonblocking |
 | `0x58` | `ClearAddressFlag` | implemented; one Scalar16, nonblocking |
 | `0x5C` | object activation | provisional |
@@ -4072,8 +4073,10 @@ The static handler table makes this a finite catalogue task.
 - [ ] `0x3A` launches generic SCX script and enters state 4;
 - [ ] `0x3B` launches character-bound script and continues;
 - [ ] `0x3C` launches character-bound script and enters state 4;
+- [ ] `0x5A` launches current-character script and continues;
+- [ ] `0x2E` launches current-character script and enters state 4;
 - [ ] raw script ID is not Scalar16-remapped;
-- [ ] contextual argument Scalar16 fields are remapped;
+- [ ] camera-duration Scalar16 fields are remapped;
 - [ ] tracked completion resumes at already-advanced IP.
 
 ---
@@ -4150,6 +4153,7 @@ Core context/runtime:
 | `0x2A` | `0x00402940` | compare/branch int8 |
 | `0x2B` | `0x004029A0` | compare/branch Scalar16 |
 | `0x2C` | `0x00402A30` | compare/branch int32 |
+| `0x2E` | `0x00402C30` | StartCurrentCharacterScriptTracked |
 
 ---
 
@@ -4163,6 +4167,7 @@ Core context/runtime:
 | `0x3C` | `0x00403430` | StartCharacterScriptTracked |
 | `0x46` | `0x00403860` | OpenInterface |
 | `0x4E` | `0x00403CB0` | character activation path |
+| `0x5A` | `0x00404450` | StartCurrentCharacterScript |
 | `0x32` | `0x0040A4D0` | AddObjectToPersistentCollection |
 | `0x57` | `0x00404330` | SetAddressFlag |
 | `0x58` | `0x00404390` | ClearAddressFlag |
@@ -4309,7 +4314,8 @@ Map the common completion mechanism used by:
 0x3C
 ```
 
-rather than modeling it as only a character-script wait.
+while retaining the recovered distinction between generic and
+character-bound launches.
 
 ---
 
@@ -4536,6 +4542,14 @@ Not every 16-bit operand uses this decoder.
 
 3C StartCharacterScriptTracked
     explicit character
+    state 4
+
+5A StartCurrentCharacterScript
+    current character
+    fire-and-forget
+
+2E StartCurrentCharacterScriptTracked
+    current character
     state 4
 ```
 

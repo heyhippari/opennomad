@@ -30,21 +30,32 @@ enum class AreaScriptState : std::uint8_t {
   k_failed,              ///< Structured decode/execution error.
 };
 
-/// AREA opcodes 0x3B and 0x3C use the same explicit-character script request,
-/// differing only in whether the parent AREA context tracks completion.
+/// The four compact character-script opcodes differ only in target selection
+/// and whether the parent AREA context tracks completion.
 enum class AreaCharacterScriptLaunchMode : std::uint8_t {
-  k_fire_and_forget,  ///< 0x3B: request the script and continue.
-  k_tracked,          ///< 0x3C: request the script and block in Runtime state 4.
+  k_fire_and_forget,  ///< 0x3B/0x5A: request the script and continue.
+  k_tracked,          ///< 0x3C/0x2E: request it and block in Runtime state 4.
 };
 
-/// Explicit-character SCX-script launch requested by AREA opcodes 0x3B/0x3C.
+/// Selects whether a character-script operation has an authored target or
+/// reads Runtime's session-level controlled-character slot.
+enum class AreaCharacterScriptTarget : std::uint8_t {
+  k_explicit,
+  k_current,
+};
+
+/// SCX-script launch requested by an AREA compact opcode.
 ///
-/// This is intentionally distinct from AreaScxScriptRequest (opcode 0x39):
-/// the first operand is a CHARACTERS/table-0 ID, not an SCX script ID.
+/// 0x3B/0x3C use an explicit CHARACTERS/table-0 ID. 0x2E/0x5A have no
+/// authored character operand and use the session current controlled body.
+/// script_id is always a raw serialized u16. camera_duration_units preserves
+/// the trailing Scalar16 for the still-unmodeled presentation-controller path;
+/// it is not a ScriptLaunchContext parameter.
 struct AreaCharacterScriptRequest {
-  std::int16_t character_id{0};
+  AreaCharacterScriptTarget target{AreaCharacterScriptTarget::k_explicit};
+  std::optional<std::int16_t> character_id;
   std::uint16_t script_id{0};
-  std::int16_t parameter{0};
+  std::int16_t camera_duration_units{0};
   AreaCharacterScriptLaunchMode mode{AreaCharacterScriptLaunchMode::k_fire_and_forget};
 };
 
@@ -128,9 +139,9 @@ struct AreaWaitState {
   std::optional<std::uint16_t> interface_result_variable;
   /// SCX ScriptRuntime instance tracked by opcode 0x3A.
   std::optional<std::size_t> scx_script_instance;
-  /// Explicit-character request blocked by opcode 0x3C (debug metadata).
+  /// Character-script request blocked by opcode 0x2E or 0x3C (debug metadata).
   std::optional<AreaCharacterScriptRequest> character_script;
-  /// Exact ScriptRuntime instance spawned for a tracked 0x3C request.
+  /// Exact ScriptRuntime instance spawned for a tracked 0x2E or 0x3C request.
   std::optional<std::size_t> character_script_instance;
   /// Request and exact coordinator generation blocked by opcode 0x2F.
   std::optional<AreaTransitionRequest> area_transition;
@@ -233,7 +244,7 @@ class AreaScriptRuntime {
   using ScxScriptSink =
       std::function<std::expected<std::size_t, std::string>(const AreaScxScriptRequest&)>;
 
-  /// Bridge for explicit-character script requests from AREA 0x3B/0x3C.
+  /// Bridge for character-script requests from AREA 0x2E/0x3B/0x3C/0x5A.
   ///
   using CharacterScriptSink =
       std::function<std::expected<std::size_t, std::string>(const AreaCharacterScriptRequest&)>;
@@ -311,7 +322,7 @@ class AreaScriptRuntime {
   /// Wires AREA opcodes 0x39/0x3A to the active world's SCX ScriptRuntime.
   void set_scx_script_sink(ScxScriptSink sink);
 
-  /// Wires AREA opcodes 0x3B/0x3C to explicit-character script handling.
+  /// Wires AREA character-script opcodes to session/world character handling.
   void set_character_script_sink(CharacterScriptSink sink);
 
   /// Wires AREA opcode 0x3D to the session dialog runtime.
@@ -361,7 +372,7 @@ class AreaScriptRuntime {
   /// must match the one returned by the bridge sink.
   [[nodiscard]] std::expected<void, std::string> complete_scx_script_wait(std::size_t instance_id);
 
-  /// Resumes a tracked explicit-character script wait. The instance ID must
+  /// Resumes a tracked character-script wait. The instance ID must
   /// exactly match the concrete child returned by the launch bridge.
   [[nodiscard]] std::expected<void, std::string> complete_character_script_wait(
       std::size_t instance_id);
@@ -380,7 +391,7 @@ class AreaScriptRuntime {
   }
 
   /// The recovered legacy wait state (6 for interfaces); meaningful only
-  /// while Waiting. Opcodes 0x3A/0x3C use recovered state 4.
+  /// while Waiting. Opcodes 0x2E/0x3A/0x3C use recovered state 4.
   [[nodiscard]] std::uint16_t wait_state() const {
     return m_wait_state;
   }

@@ -66,11 +66,15 @@ Transform compose(const Transform& local, const Transform& parent) {
       .scale = local.scale};
 }
 
+Vec3 body_animation_anchor(const Vec3& base_coordinate, const Vec3& authored_argument) {
+  return Vec3{.x = base_coordinate.x - (authored_argument.x * -k_centimetres_to_inches),
+      .y = base_coordinate.y - (authored_argument.y * -k_centimetres_to_inches),
+      .z = base_coordinate.z - (authored_argument.z * -k_centimetres_to_inches)};
+}
+
 Vec3 relative_body_animation_anchor(
     const Vec3& sampled_path_coordinate, const Vec3& authored_argument) {
-  return Vec3{.x = sampled_path_coordinate.x - (authored_argument.x * -k_centimetres_to_inches),
-      .y = sampled_path_coordinate.y - (authored_argument.y * -k_centimetres_to_inches),
-      .z = sampled_path_coordinate.z - (authored_argument.z * -k_centimetres_to_inches)};
+  return body_animation_anchor(sampled_path_coordinate, authored_argument);
 }
 
 Matrix3 rotation_x(const float radians) {

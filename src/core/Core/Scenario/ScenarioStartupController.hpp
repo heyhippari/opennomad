@@ -214,6 +214,13 @@ class ScenarioStartupController {
   [[nodiscard]] std::expected<void, std::string> set_current_character_presentation(bool enabled);
   [[nodiscard]] std::expected<void, std::string> deactivate_owner_character(
       std::size_t owner_slot, const Script::AreaCharacterDeactivationRequest& request);
+  /// Resolves an owner-world SCX script and starts it on either the authored
+  /// target or the session-level current controlled character.
+  [[nodiscard]] std::expected<std::size_t, std::string> launch_character_script(
+      std::size_t owner_slot, const Script::AreaCharacterScriptRequest& request);
+  /// Polls a character-bound child through the compact context's owner world.
+  [[nodiscard]] std::expected<void, std::string> service_character_script_wait(
+      Script::AreaScriptRuntime& area_script, std::size_t owner_slot);
   void bind_scene_compact_services(Script::AreaScriptRuntime& runtime, std::size_t owner_slot);
   void service_scene_scripts(float delta_seconds);
   [[nodiscard]] std::optional<std::size_t> resident_area_slot(std::int32_t area_id) const;
@@ -253,6 +260,9 @@ class ScenarioStartupController {
           .world_scene_id = 1,
           .scene_script = std::nullopt}};
   std::size_t m_active_area_slot{0};
+  /// Resident slot that owns the main AREA compact context, which may differ
+  /// from the currently presented slot after a handoff.
+  std::size_t m_area_script_owner_slot{0};
   std::optional<PendingAreaTransition> m_area_transition;
   std::uint64_t m_next_area_transition_generation{1};
   std::optional<Script::AreaScriptRuntime> m_area_script;

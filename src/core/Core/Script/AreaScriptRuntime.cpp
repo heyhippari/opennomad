@@ -36,6 +36,7 @@ constexpr std::uint32_t K_OP_PUSH_GLOBAL_VARIABLE{0x0A};
 constexpr std::uint32_t K_OP_SET_GLOBAL_VARIABLE_ONE{0x0D};
 constexpr std::uint32_t K_OP_SET_GLOBAL_VARIABLE{0x0E};
 constexpr std::uint32_t K_OP_EQUAL{0x19};
+constexpr std::uint32_t K_OP_START_CURRENT_CHARACTER_SCRIPT_TRACKED{0x2E};
 constexpr std::uint32_t K_OP_BEGIN_AREA_TRANSITION{0x2F};
 constexpr std::uint32_t K_OP_RELEASE_AREA{0x30};
 constexpr std::uint32_t K_OP_ADD_OBJECT_TO_PERSISTENT_COLLECTION{0x32};
@@ -47,6 +48,7 @@ constexpr std::uint32_t K_OP_START_CHARACTER_SCRIPT_TRACKED{0x3C};
 constexpr std::uint32_t K_OP_START_DIALOG{0x3D};
 constexpr std::uint32_t K_OP_ACTIVATE_CHARACTER{0x4E};
 constexpr std::uint32_t K_OP_DEACTIVATE_CHARACTER{0x4F};
+constexpr std::uint32_t K_OP_START_CURRENT_CHARACTER_SCRIPT{0x5A};
 constexpr std::uint32_t K_OP_ACTIVATE_SUBSYSTEM{0x68};
 constexpr std::uint32_t K_OP_OBJECT_ACTIVATE{0x5C};
 constexpr std::uint32_t K_OP_CAMERA_SELECT{0x5F};
@@ -90,6 +92,8 @@ constexpr std::array<AreaOperandWidth, 1> K_OPERANDS_4F{AreaOperandWidth::k_int1
 constexpr std::array<AreaOperandWidth, 1> K_OPERANDS_5C{AreaOperandWidth::k_int16};
 constexpr std::array<AreaOperandWidth, 3> K_OPERANDS_3X_I16{
     AreaOperandWidth::k_int16, AreaOperandWidth::k_int16, AreaOperandWidth::k_int16};
+constexpr std::array<AreaOperandWidth, 2> K_OPERANDS_CURRENT_CHARACTER_SCRIPT{
+    AreaOperandWidth::k_int16, AreaOperandWidth::k_int16};
 constexpr std::array<AreaOperandWidth, 2> K_OPERANDS_83{
     AreaOperandWidth::k_int16, AreaOperandWidth::k_int16};
 constexpr std::array<AreaOperandWidth, 3> K_OPERANDS_67{
@@ -97,7 +101,7 @@ constexpr std::array<AreaOperandWidth, 3> K_OPERANDS_67{
 constexpr std::array<AreaOperandWidth, 3> K_OPERANDS_PRESENTATION{
     AreaOperandWidth::k_int32, AreaOperandWidth::k_int16, AreaOperandWidth::k_int16};
 
-constexpr std::array<AreaOpcodeInfo, 34> K_AREA_OPCODE_TABLE{
+constexpr std::array<AreaOpcodeInfo, 36> K_AREA_OPCODE_TABLE{
     AreaOpcodeInfo{.opcode = K_OP_END_EVENT,
         .name = "EndEvent",
         .support = OpcodeSupport::k_supported,
@@ -147,6 +151,14 @@ constexpr std::array<AreaOpcodeInfo, 34> K_AREA_OPCODE_TABLE{
         .notes = "pops rhs/lhs and pushes 1 when equal, otherwise 0",
         .operands = K_OPERANDS_NONE.data(),
         .operand_count = K_OPERANDS_NONE.size()},
+    AreaOpcodeInfo{.opcode = K_OP_START_CURRENT_CHARACTER_SCRIPT_TRACKED,
+        .name = "StartCurrentCharacterScriptTracked",
+        .support = OpcodeSupport::k_supported,
+        .provisional = false,
+        .notes = "starts raw-u16 SCX script ID on the session current character and blocks in "
+                 "Runtime state 4 on its exact instance; operand 1 is Scalar16 camera duration",
+        .operands = K_OPERANDS_CURRENT_CHARACTER_SCRIPT.data(),
+        .operand_count = K_OPERANDS_CURRENT_CHARACTER_SCRIPT.size()},
     AreaOpcodeInfo{.opcode = K_OP_BEGIN_AREA_TRANSITION,
         .name = "BeginAreaTransition",
         .support = OpcodeSupport::k_supported,
@@ -238,6 +250,14 @@ constexpr std::array<AreaOpcodeInfo, 34> K_AREA_OPCODE_TABLE{
                  "non-current body without waiting",
         .operands = K_OPERANDS_4F.data(),
         .operand_count = K_OPERANDS_4F.size()},
+    AreaOpcodeInfo{.opcode = K_OP_START_CURRENT_CHARACTER_SCRIPT,
+        .name = "StartCurrentCharacterScript",
+        .support = OpcodeSupport::k_supported,
+        .provisional = false,
+        .notes = "starts raw-u16 SCX script ID on the session current character without "
+                 "tracking it; operand 1 is Scalar16 camera duration",
+        .operands = K_OPERANDS_CURRENT_CHARACTER_SCRIPT.data(),
+        .operand_count = K_OPERANDS_CURRENT_CHARACTER_SCRIPT.size()},
     AreaOpcodeInfo{.opcode = K_OP_OBJECT_ACTIVATE,
         .name = "ObjectActivate",
         .support = OpcodeSupport::k_supported,
@@ -401,7 +421,8 @@ const char* area_opcode_name(const std::uint32_t opcode) {
 }
 
 AreaScriptRuntime::AreaScriptRuntime(const std::span<const std::byte> script_bytes)
-    : m_script_storage{script_bytes.begin(), script_bytes.end()}, m_script{m_script_storage} {}
+    : m_script_storage{script_bytes.begin(), script_bytes.end()},
+      m_script{m_script_storage} {}
 
 void AreaScriptRuntime::queue_event(const std::uint16_t event) {
   m_queued_events.push_back(event);
@@ -852,8 +873,9 @@ void AreaScriptRuntime::execute_instruction() {
     }
     case K_OP_BEGIN_AREA_TRANSITION: {
       std::array<std::int16_t, 3> resolved{};
-      constexpr std::array<std::string_view, 3> k_semantics{
-          "BeginAreaTransition target", "BeginAreaTransition operand_b", "BeginAreaTransition operand_c"};
+      constexpr std::array<std::string_view, 3> k_semantics{"BeginAreaTransition target",
+          "BeginAreaTransition operand_b",
+          "BeginAreaTransition operand_c"};
       for (std::size_t index{0}; index < resolved.size(); ++index) {
         auto value{resolve_scalar16(operands.at(index), k_semantics.at(index))};
         if (!value) {
@@ -876,8 +898,7 @@ void AreaScriptRuntime::execute_instruction() {
         m_pause_info = AreaPauseInfo{.offset = instruction_offset,
             .opcode = opcode,
             .opcode_name = std::string{info->name},
-            .reason_text = fmt::format(
-                "AREA transition variant ({}, {}) is not yet implemented",
+            .reason_text = fmt::format("AREA transition variant ({}, {}) is not yet implemented",
                 request.operand_b,
                 request.operand_c),
             .nearby_bytes = nearby_bytes_hex(instruction_offset)};
@@ -899,8 +920,9 @@ void AreaScriptRuntime::execute_instruction() {
         m_pause_info = AreaPauseInfo{.offset = instruction_offset,
             .opcode = opcode,
             .opcode_name = std::string{info->name},
-            .reason_text = fmt::format(
-                "failed to begin AREA transition to {}: {}", request.target_area_id, accepted.error()),
+            .reason_text = fmt::format("failed to begin AREA transition to {}: {}",
+                request.target_area_id,
+                accepted.error()),
             .nearby_bytes = nearby_bytes_hex(instruction_offset)};
         m_state = AreaScriptState::k_failed;
         return;
@@ -918,8 +940,9 @@ void AreaScriptRuntime::execute_instruction() {
           .area_transition_handle = accepted.value(),
           .remaining_scenario_frames = 0.0F};
       wait_after_instruction = true;
-      entry.effect = fmt::format("begin AREA transition to {} as generation {} and wait in "
-                                 "Runtime state 10",
+      entry.effect = fmt::format(
+          "begin AREA transition to {} as generation {} and wait in "
+          "Runtime state 10",
           request.target_area_id,
           accepted->generation);
       break;
@@ -950,7 +973,8 @@ void AreaScriptRuntime::execute_instruction() {
         m_pause_info = AreaPauseInfo{.offset = instruction_offset,
             .opcode = opcode,
             .opcode_name = std::string{info->name},
-            .reason_text = fmt::format("failed to release AREA {}: {}", request.area_id, released.error()),
+            .reason_text =
+                fmt::format("failed to release AREA {}: {}", request.area_id, released.error()),
             .nearby_bytes = nearby_bytes_hex(instruction_offset)};
         m_state = AreaScriptState::k_failed;
         return;
@@ -996,8 +1020,9 @@ void AreaScriptRuntime::execute_instruction() {
         m_state = AreaScriptState::k_failed;
         return;
       }
-      entry.effect = fmt::format(
-          "add OBJECTS ID {} to persistent collection {}", request.object_id, request.collection_kind);
+      entry.effect = fmt::format("add OBJECTS ID {} to persistent collection {}",
+          request.object_id,
+          request.collection_kind);
       break;
     }
     case K_OP_SELECT_CURRENT_CHARACTER: {
@@ -1084,8 +1109,10 @@ void AreaScriptRuntime::execute_instruction() {
       }
       break;
     }
+    case K_OP_START_CURRENT_CHARACTER_SCRIPT_TRACKED:
     case K_OP_START_CHARACTER_SCRIPT:
-    case K_OP_START_CHARACTER_SCRIPT_TRACKED: {
+    case K_OP_START_CHARACTER_SCRIPT_TRACKED:
+    case K_OP_START_CURRENT_CHARACTER_SCRIPT: {
       if (!m_character_script_sink) {
         m_pause_info = AreaPauseInfo{.offset = instruction_offset,
             .opcode = opcode,
@@ -1096,11 +1123,31 @@ void AreaScriptRuntime::execute_instruction() {
         return;
       }
 
-      const bool tracked{opcode == K_OP_START_CHARACTER_SCRIPT_TRACKED};
+      const bool current_target{opcode == K_OP_START_CURRENT_CHARACTER_SCRIPT_TRACKED ||
+                                opcode == K_OP_START_CURRENT_CHARACTER_SCRIPT};
+      const bool tracked{opcode == K_OP_START_CURRENT_CHARACTER_SCRIPT_TRACKED ||
+                         opcode == K_OP_START_CHARACTER_SCRIPT_TRACKED};
+      const std::size_t camera_duration_operand{current_target ? 1U : 2U};
+      auto camera_duration{resolve_scalar16(
+          operands.at(camera_duration_operand), "character-script camera duration")};
+      if (!camera_duration) {
+        m_pause_info = AreaPauseInfo{.offset = instruction_offset,
+            .opcode = opcode,
+            .opcode_name = std::string{info->name},
+            .reason_text = camera_duration.error(),
+            .nearby_bytes = nearby_bytes_hex(instruction_offset)};
+        m_state = AreaScriptState::k_failed;
+        return;
+      }
+
       const AreaCharacterScriptRequest request{
-          .character_id = static_cast<std::int16_t>(operands.at(0)),
-          .script_id = static_cast<std::uint16_t>(operands.at(1)),
-          .parameter = static_cast<std::int16_t>(operands.at(2)),
+          .target = current_target ? AreaCharacterScriptTarget::k_current
+                                   : AreaCharacterScriptTarget::k_explicit,
+          .character_id = current_target ? std::nullopt
+                                         : std::optional<std::int16_t>{static_cast<std::int16_t>(
+                                               operands.at(0))},
+          .script_id = static_cast<std::uint16_t>(operands.at(current_target ? 0U : 1U)),
+          .camera_duration_units = camera_duration.value(),
           .mode = tracked ? AreaCharacterScriptLaunchMode::k_tracked
                           : AreaCharacterScriptLaunchMode::k_fire_and_forget};
 
@@ -1108,11 +1155,13 @@ void AreaScriptRuntime::execute_instruction() {
 
       auto instance{m_character_script_sink(request)};
       if (!instance) {
+        const std::string_view target_name{
+            current_target ? "current character" : "explicit character"};
         m_pause_info = AreaPauseInfo{.offset = instruction_offset,
             .opcode = opcode,
             .opcode_name = std::string{info->name},
-            .reason_text = fmt::format("failed to request character {} script {}: {}",
-                request.character_id,
+            .reason_text = fmt::format("failed to request {} script {}: {}",
+                target_name,
                 request.script_id,
                 instance.error()),
             .nearby_bytes = nearby_bytes_hex(instruction_offset)};
@@ -1134,18 +1183,19 @@ void AreaScriptRuntime::execute_instruction() {
             .remaining_scenario_frames = 0.0F};
         wait_after_instruction = true;
         entry.effect = fmt::format(
-            "start character {} script {} parameter {} as instance {} and wait in "
-            "Runtime state 4",
-            request.character_id,
+            "start {} script {} camera duration {} as instance {} and wait "
+            "in Runtime state 4",
+            current_target ? "current character" : "explicit character",
             request.script_id,
-            request.parameter,
+            request.camera_duration_units,
             instance.value());
       } else {
         entry.effect = fmt::format(
-            "start character {} script {} parameter {} as instance {} (fire-and-forget)",
-            request.character_id,
+            "start {} script {} camera duration {} as instance {} "
+            "(fire-and-forget)",
+            current_target ? "current character" : "explicit character",
             request.script_id,
-            request.parameter,
+            request.camera_duration_units,
             instance.value());
       }
       break;
@@ -1246,9 +1296,8 @@ void AreaScriptRuntime::execute_instruction() {
         m_pause_info = AreaPauseInfo{.offset = instruction_offset,
             .opcode = opcode,
             .opcode_name = std::string{info->name},
-            .reason_text = fmt::format("failed to deactivate character {}: {}",
-                request.character_id,
-                deactivated.error()),
+            .reason_text = fmt::format(
+                "failed to deactivate character {}: {}", request.character_id, deactivated.error()),
             .nearby_bytes = nearby_bytes_hex(instruction_offset)};
         m_state = AreaScriptState::k_failed;
         return;
@@ -1335,7 +1384,8 @@ void AreaScriptRuntime::execute_instruction() {
         m_state = AreaScriptState::k_failed;
         return;
       }
-      const AreaSceneAttachRequest request{.area_id = area_id.value(), .scene_id = scene_id.value()};
+      const AreaSceneAttachRequest request{
+          .area_id = area_id.value(), .scene_id = scene_id.value()};
       m_last_area_scene_attach_request = request;
       if (auto attached{m_area_scene_attach_sink(request)}; !attached) {
         m_pause_info = AreaPauseInfo{.offset = instruction_offset,
@@ -1424,8 +1474,8 @@ void AreaScriptRuntime::execute_instruction() {
         m_state = AreaScriptState::k_failed;
         return;
       }
-      entry.effect = fmt::format(
-          "{} ADDRESSES ID {}", request.enabled ? "set" : "clear", request.address_id);
+      entry.effect =
+          fmt::format("{} ADDRESSES ID {}", request.enabled ? "set" : "clear", request.address_id);
       break;
     }
     case K_OP_CAMERA_SELECT:

@@ -848,10 +848,14 @@ void DebugUI::show_area_vm() {
     }
     if (context.wait.character_script.has_value()) {
       const Script::AreaCharacterScriptRequest& request{context.wait.character_script.value()};
-      ImGui::Text("Character %d | Script ID %u | parameter %d",
-          request.character_id,
+      const char* target{request.target == Script::AreaCharacterScriptTarget::k_current
+                             ? "Current character"
+                             : "Explicit character"};
+      ImGui::Text("%s | Character %d | Script ID %u | camera duration %d",
+          target,
+          request.character_id.value_or(-1),
           static_cast<unsigned int>(request.script_id),
-          request.parameter);
+          request.camera_duration_units);
     }
     if (context.wait.character_script_instance.has_value()) {
       ImGui::Text("Tracked ScriptRuntime instance: %zu",

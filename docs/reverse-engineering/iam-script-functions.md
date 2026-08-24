@@ -939,12 +939,26 @@ Script_SelectBodyAnimation()
 Script_Reinit_SelectBodyAnimation()
 ```
 
-The function:
+OpenNomad implements the recovered ten-slot mutable ABI:
 
-- resolves a target object/body in the current scene;
-- resolves/loads an animation;
-- has multiple timing/control parameters;
-- remains active while the animation operation is in progress.
+```text
+arg0  binding-table-A object index
+arg1  3DA animation descriptor index
+arg2  previous progress (mutable float)
+arg3  current progress (mutable float)
+arg4-6 body-animation vector (floats; meaning still unresolved)
+arg7-9 authored non-path anchor offset (floats)
+```
+
+It operates on the explicitly character-bound SCX instance. On its first tick
+it binds 3DA channels to the selected 3DO hierarchy by numeric `script_id`,
+anchors from the selected object's current runtime position plus the authored
+centimetre-to-inch offset, and then uses the shared 3DA rotation/root-motion
+playback path. `arg2`/`arg3` reset to `0`/`1` on command reinitialization.
+
+Unlike `SelectRelativeBodyAnimation`, it does not resolve a 3DP path or
+subpath. Both commands remain group-active while their 30 Hz script-frame
+progression has not reached the animation endpoint.
 
 Representative diagnostics:
 
@@ -1006,12 +1020,11 @@ Script_SelectRelativeBodyAnimation()
 Script_Reinit_SelectRelativeBodyAnimation()
 ```
 
-The action accesses:
-
-- a current-scene object;
-- an animation;
-- path-related data in at least one branch;
-- a larger parameter set than `SelectBodyAnimation`.
+The action uses the same selected-hierarchy 3DA playback and progress machinery
+as `SelectBodyAnimation`, but its 12-slot ABI additionally contains a 3DP
+resource/subpath pair. Its first anchor comes from the sampled 3DP position
+plus the authored offset rather than the selected object's current runtime
+position.
 
 The exact meaning of “relative” should remain Runtime terminology until the
 transform/root-motion semantics are traced.

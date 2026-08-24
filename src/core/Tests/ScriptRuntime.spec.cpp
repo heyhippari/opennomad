@@ -23,6 +23,7 @@
 namespace {
 
 constexpr std::uint32_t K_SET_SPRITE_TYPE{0x0400000CU};
+constexpr std::uint32_t K_SELECT_BODY_ANIMATION{0x02000004U};
 constexpr std::uint32_t K_SELECT_RELATIVE_BODY_ANIMATION{0x0200002AU};
 constexpr std::uint32_t K_SCALE_X{0x0400001BU};
 constexpr std::uint32_t K_SCALE_Y{0x0400001CU};
@@ -60,6 +61,7 @@ class FakeWorld final : public App::Script::ScriptWorld {
       .resource = App::Audio::SoundResourceId{7}, .name = "fx", .h_id = 0, .loaded = true};
   std::vector<App::Audio::SoundPlayRequest> play_requests;
   std::vector<std::pair<App::Audio::SoundResourceId, App::Audio::AudioOwnerToken>> stop_requests;
+  std::vector<App::Script::BodyAnimationRequest> select_body_animation_requests;
   std::vector<App::Script::RelativeBodyAnimationRequest> body_animation_requests;
   std::vector<std::int16_t> body_animation_resets;
   std::uint32_t body_animation_max_frame{3};
@@ -147,8 +149,18 @@ class FakeWorld final : public App::Script::ScriptWorld {
   App::Audio::AudioContextInfo audio_context() const override {
     return {};
   }
-  std::expected<App::Script::RelativeBodyAnimationResult,
-      App::Script::RelativeBodyAnimationFailure>
+  std::expected<App::Script::BodyAnimationResult, App::Script::BodyAnimationFailure>
+  select_body_animation(const App::Script::BodyAnimationRequest& request) override {
+    select_body_animation_requests.push_back(request);
+    if (fail_body_animation) {
+      return std::expected<App::Script::BodyAnimationResult, App::Script::BodyAnimationFailure>{
+          std::unexpect,
+          App::Script::BodyAnimationFailure{
+              .error = body_animation_failure, .reason_text = "body animation failed"}};
+    }
+    return App::Script::BodyAnimationResult{.max_frame_index = body_animation_max_frame};
+  }
+  std::expected<App::Script::RelativeBodyAnimationResult, App::Script::RelativeBodyAnimationFailure>
   select_relative_body_animation(
       const App::Script::RelativeBodyAnimationRequest& request) override {
     body_animation_requests.push_back(request);
@@ -216,6 +228,13 @@ App::Omikron::ScxScript relative_body_animation_script(const std::uint32_t execu
   return script;
 }
 
+App::Omikron::ScxScript body_animation_script(const std::uint32_t execution_limit = 1) {
+  App::Omikron::ScxScript script{
+      single_root_script(command(K_SELECT_BODY_ANIMATION, 0, 10, std::nullopt, execution_limit))};
+  script.binding_table_a.entries.push_back(App::Omikron::ScxBindingEntry{.name = "RootBody"});
+  return script;
+}
+
 std::vector<App::Omikron::ScriptValue> relative_body_animation_values() {
   std::vector<App::Omikron::ScriptValue> values(12);
   values.at(0).set_unsigned(0);
@@ -233,6 +252,21 @@ std::vector<App::Omikron::ScriptValue> relative_body_animation_values() {
   return values;
 }
 
+std::vector<App::Omikron::ScriptValue> body_animation_values() {
+  std::vector<App::Omikron::ScriptValue> values(10);
+  values.at(0).set_unsigned(0);
+  values.at(1).set_unsigned(2);
+  values.at(2).set_float(99.0F);
+  values.at(3).set_float(77.0F);
+  values.at(4).set_float(4.0F);
+  values.at(5).set_float(5.0F);
+  values.at(6).set_float(6.0F);
+  values.at(7).set_float(9.0F);
+  values.at(8).set_float(10.0F);
+  values.at(9).set_float(11.0F);
+  return values;
+}
+
 /// Fills `values` with `count` zero words, then overwrites from `words`.
 std::vector<App::Omikron::ScriptValue> make_values(
     const std::size_t count, const std::vector<std::uint32_t> words = {}) {
@@ -247,6 +281,11 @@ std::vector<App::Omikron::ScriptValue> make_values(
 
 TEST_SUITE("Core::Script::ScriptRuntime") {
   TEST_CASE("Opcode registry resolves confirmed opcodes") {
+    REQUIRE_NE(App::Script::opcode_info(K_SELECT_BODY_ANIMATION), nullptr);
+    CHECK_EQ(std::string{App::Script::opcode_name(K_SELECT_BODY_ANIMATION)},
+        "Script_SelectBodyAnimation");
+    CHECK(App::Script::opcode_info(K_SELECT_BODY_ANIMATION)->support ==
+          App::Script::OpcodeSupport::k_supported);
     REQUIRE_NE(App::Script::opcode_info(K_SELECT_RELATIVE_BODY_ANIMATION), nullptr);
     CHECK_EQ(std::string{App::Script::opcode_name(K_SELECT_RELATIVE_BODY_ANIMATION)},
         "Script_SelectRelativeBodyAnimation");
@@ -269,6 +308,103 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
     CHECK_FALSE(App::Script::opcode_owns_sprite(K_PLAY_SOUND));
     CHECK_EQ(std::string{App::Script::opcode_name(K_WAIT)}, "Wait");
     CHECK_FALSE(App::Script::opcode_owns_sprite(K_WAIT));
+  }
+
+  TEST_CASE("SelectBodyAnimation preserves its ten-slot ABI and progresses in script frames") {
+    RuntimeFixture fixture{{body_animation_script()}, body_animation_values()};
+    const std::size_t id{fixture.runtime
+            ->create_instance(
+                0, App::Script::ScriptLaunchContext{.character_id = 310, .parameter = 0})
+            .value()};
+    const App::Script::ScriptInstance* initial{fixture.runtime->instance(id)};
+    REQUIRE(initial != nullptr);
+    CHECK_EQ(initial->value_pool.at(2).as_float(), doctest::Approx(0.0F));
+    CHECK_EQ(initial->value_pool.at(3).as_float(), doctest::Approx(1.0F));
+    CHECK_EQ(initial->value_pool.at(9).as_float(), doctest::Approx(11.0F));
+
+    fixture.runtime->step_tick(1.0F);
+    REQUIRE_EQ(fixture.world.select_body_animation_requests.size(), std::size_t{1});
+    const App::Script::BodyAnimationRequest& first{
+        fixture.world.select_body_animation_requests.at(0)};
+    CHECK_EQ(first.character_id, 310);
+    CHECK_EQ(first.object_binding, "RootBody");
+    CHECK_EQ(first.animation_index, 2U);
+    CHECK_EQ(first.previous_progress, doctest::Approx(0.0F));
+    CHECK_EQ(first.current_progress, doctest::Approx(1.0F));
+    CHECK(first.first_tick);
+    CHECK_EQ(first.body_animation_vector.at(0), doctest::Approx(4.0F));
+    CHECK_EQ(first.body_animation_vector.at(2), doctest::Approx(6.0F));
+    CHECK_EQ(first.authored_offset.at(0), doctest::Approx(9.0F));
+    CHECK_EQ(first.authored_offset.at(2), doctest::Approx(11.0F));
+    CHECK_EQ(fixture.runtime->instance(id)->value_pool.at(2).as_float(), doctest::Approx(1.0F));
+    CHECK_EQ(fixture.runtime->instance(id)->value_pool.at(3).as_float(), doctest::Approx(2.0F));
+
+    fixture.runtime->step_tick(1.0F);
+    fixture.runtime->step_tick(1.0F);
+    REQUIRE_EQ(fixture.world.select_body_animation_requests.size(), std::size_t{3});
+    CHECK_EQ(
+        fixture.world.select_body_animation_requests.at(2).current_progress, doctest::Approx(3.0F));
+    CHECK_EQ(fixture.runtime->instances().at(0).root_commands.at(0).execution_count, 1U);
+    CHECK(fixture.runtime->instances().at(0).completed);
+
+    REQUIRE(fixture.runtime->reset_instance(id).has_value());
+    CHECK_EQ(fixture.runtime->instance(id)->value_pool.at(2).as_float(), doctest::Approx(0.0F));
+    CHECK_EQ(fixture.runtime->instance(id)->value_pool.at(3).as_float(), doctest::Approx(1.0F));
+    REQUIRE_EQ(fixture.world.body_animation_resets.size(), std::size_t{1});
+    CHECK_EQ(fixture.world.body_animation_resets.at(0), 310);
+  }
+
+  TEST_CASE("SelectBodyAnimation wraps executions and keeps absent bodies unresolved") {
+    RuntimeFixture fixture{{body_animation_script(2)}, body_animation_values()};
+    REQUIRE(fixture.runtime
+            ->create_instance(
+                0, App::Script::ScriptLaunchContext{.character_id = 310, .parameter = 0})
+            .has_value());
+    fixture.world.body_animation_max_frame = 1;
+
+    fixture.runtime->step_tick(1.0F);
+    const App::Script::ScriptInstance& wrapped{fixture.runtime->instances().at(0)};
+    CHECK_EQ(wrapped.root_commands.at(0).execution_count, 1U);
+    CHECK_EQ(wrapped.value_pool.at(2).as_float(), doctest::Approx(0.0F));
+    CHECK_EQ(wrapped.value_pool.at(3).as_float(), doctest::Approx(1.0F));
+    CHECK_FALSE(wrapped.completed);
+
+    fixture.world.fail_body_animation = true;
+    fixture.world.body_animation_failure =
+        App::Script::BodyAnimationApplyError::k_character_unavailable;
+    fixture.runtime->step_tick(1.0F);
+    const App::Script::ScriptInstance& unavailable{fixture.runtime->instances().at(0)};
+    CHECK_EQ(fixture.runtime->run_state(), App::Script::ScriptRunState::k_running);
+    CHECK_FALSE(unavailable.paused);
+    CHECK_FALSE(unavailable.completed);
+
+    fixture.world.body_animation_failure = App::Script::BodyAnimationApplyError::k_invalid_binding;
+    fixture.runtime->step_tick(1.0F);
+    CHECK_EQ(fixture.runtime->run_state(), App::Script::ScriptRunState::k_paused_on_error);
+    CHECK_EQ(
+        fixture.runtime->pause_info().reason, App::Script::ScriptPauseReason::k_missing_resource);
+  }
+
+  TEST_CASE("SelectBodyAnimation requires a bound character and all ten value slots") {
+    RuntimeFixture missing_character{{body_animation_script()}, body_animation_values()};
+    REQUIRE(missing_character.runtime->create_instance(0).has_value());
+    missing_character.runtime->step_tick(1.0F);
+    CHECK_EQ(
+        missing_character.runtime->run_state(), App::Script::ScriptRunState::k_paused_on_error);
+    CHECK_EQ(missing_character.runtime->pause_info().reason_text,
+        "Script_SelectBodyAnimation requires a character-bound instance");
+
+    App::Omikron::ScxScript malformed{body_animation_script()};
+    malformed.root_commands.at(0).value_count = 9;
+    RuntimeFixture short_abi{{std::move(malformed)}, make_values(10)};
+    REQUIRE(short_abi.runtime
+            ->create_instance(
+                0, App::Script::ScriptLaunchContext{.character_id = 310, .parameter = 0})
+            .has_value());
+    short_abi.runtime->step_tick(1.0F);
+    CHECK_EQ(short_abi.runtime->run_state(), App::Script::ScriptRunState::k_paused_on_error);
+    CHECK_EQ(short_abi.runtime->pause_info().reason,
+        App::Script::ScriptPauseReason::k_invalid_argument_count);
   }
 
   TEST_CASE("SelectRelativeBodyAnimation reinitializes only mutable progress arguments") {
@@ -327,7 +463,8 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
     CHECK(fixture.runtime->instances().at(0).completed);
   }
 
-  TEST_CASE("SelectRelativeBodyAnimation remains running when its body is deliberately unavailable") {
+  TEST_CASE(
+      "SelectRelativeBodyAnimation remains running when its body is deliberately unavailable") {
     RuntimeFixture fixture{
         {relative_body_animation_script(0xFFFFFFFFU)}, relative_body_animation_values()};
     REQUIRE(fixture.runtime
@@ -456,8 +593,7 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
     }
 
     SUBCASE("minus one repeats indefinitely") {
-      App::Omikron::ScxScript script{
-          single_root_script(command(K_SET_FRAME, 0, 2))};
+      App::Omikron::ScxScript script{single_root_script(command(K_SET_FRAME, 0, 2))};
       script.repeat_limit = -1;
       RuntimeFixture fixture{{script}, make_values(2, {0, 5})};
       const std::size_t id{fixture.runtime->create_instance(0).value()};
@@ -494,8 +630,8 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
   }
 
   TEST_CASE("Unlimited command remains eligible on every scheduler tick") {
-    App::Omikron::ScxScript script{single_root_script(
-        command(K_SET_FRAME, 0, 2, std::nullopt, 0xFFFFFFFFU))};
+    App::Omikron::ScxScript script{
+        single_root_script(command(K_SET_FRAME, 0, 2, std::nullopt, 0xFFFFFFFFU))};
     script.repeat_limit = -1;
     RuntimeFixture fixture{{script}, make_values(2, {0, 5})};
     REQUIRE(fixture.runtime->create_instance(0).has_value());
@@ -720,8 +856,7 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
         single_root_script(command(K_SCALE_X, 0, 6, std::nullopt, 0xFFFFFFFFU))};
     script.initial_repeat_index = 7;
     RuntimeFixture fixture{
-        {script},
-        make_values(6, {0, 0x3F800000U, 0x40000000U, 0x3F800000U, 0x41200000U, 0})};
+        {script}, make_values(6, {0, 0x3F800000U, 0x40000000U, 0x3F800000U, 0x41200000U, 0})};
     const std::size_t id{fixture.runtime->create_instance(0).value()};
 
     fixture.runtime->step_tick(2.0F);

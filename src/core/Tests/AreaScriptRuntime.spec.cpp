@@ -23,25 +23,26 @@ using App::InterfaceCompletion;
 using App::InterfaceHandle;
 using App::InterfaceOpenRequest;
 using App::Audio::MusicTrackRequest;
-using App::Script::AreaCameraRequest;
-using App::Script::AreaAddressPlacementRequest;
 using App::Script::AreaAddressFlagRequest;
+using App::Script::AreaAddressPlacementRequest;
+using App::Script::AreaCameraRequest;
 using App::Script::AreaCharacterActivationRequest;
 using App::Script::AreaCharacterDeactivationRequest;
-using App::Script::AreaCharacterSelectionRequest;
-using App::Script::AreaCinematicLetterboxRequest;
 using App::Script::AreaCharacterScriptLaunchMode;
 using App::Script::AreaCharacterScriptRequest;
+using App::Script::AreaCharacterScriptTarget;
+using App::Script::AreaCharacterSelectionRequest;
+using App::Script::AreaCinematicLetterboxRequest;
 using App::Script::AreaDialogRequest;
-using App::Script::AreaPresentationRequest;
 using App::Script::AreaPersistentObjectCollectionRequest;
+using App::Script::AreaPresentationRequest;
+using App::Script::AreaReleaseRequest;
+using App::Script::AreaSceneAttachRequest;
 using App::Script::AreaScriptRuntime;
 using App::Script::AreaScriptState;
 using App::Script::AreaScxScriptRequest;
 using App::Script::AreaTransitionHandle;
 using App::Script::AreaTransitionRequest;
-using App::Script::AreaReleaseRequest;
-using App::Script::AreaSceneAttachRequest;
 using App::Script::AreaWaitKind;
 
 /// The confirmed area-118 startup prefix (script-relative offsets 0..0x2C).
@@ -112,9 +113,13 @@ auto recording_interface_sink(
 
 void wire_startup_character_sinks(AreaScriptRuntime& runtime) {
   runtime.set_character_selection_sink(
-      [](const AreaCharacterSelectionRequest&) -> std::expected<void, std::string> { return {}; });
+      [](const AreaCharacterSelectionRequest&) -> std::expected<void, std::string> {
+        return {};
+      });
   runtime.set_character_deactivation_sink(
-      [](const AreaCharacterDeactivationRequest&) -> std::expected<void, std::string> { return {}; });
+      [](const AreaCharacterDeactivationRequest&) -> std::expected<void, std::string> {
+        return {};
+      });
 }
 
 }  // namespace
@@ -191,7 +196,8 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     std::optional<AreaSceneAttachRequest> captured;
     std::size_t calls{0};
     runtime.set_area_scene_attach_sink(
-        [&captured, &calls](const AreaSceneAttachRequest& request) -> std::expected<void, std::string> {
+        [&captured, &calls](
+            const AreaSceneAttachRequest& request) -> std::expected<void, std::string> {
           captured = request;
           ++calls;
           return {};
@@ -214,7 +220,8 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     AreaScriptRuntime runtime{bytes.data()};
     std::optional<AreaAddressPlacementRequest> captured;
     runtime.set_area_address_placement_sink(
-        [&captured](const AreaAddressPlacementRequest& request) -> std::expected<void, std::string> {
+        [&captured](
+            const AreaAddressPlacementRequest& request) -> std::expected<void, std::string> {
           captured = request;
           return {};
         });
@@ -234,8 +241,8 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     std::optional<AreaCharacterSelectionRequest> captured;
     std::size_t calls{0};
     runtime.set_character_selection_sink(
-        [&captured, &calls](const AreaCharacterSelectionRequest& request)
-            -> std::expected<void, std::string> {
+        [&captured, &calls](
+            const AreaCharacterSelectionRequest& request) -> std::expected<void, std::string> {
           captured = request;
           ++calls;
           return {};
@@ -333,7 +340,8 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     std::vector<AreaScxScriptRequest> requests;
     std::vector<std::uint32_t> instructions;
     runtime.set_scx_script_sink(
-        [&requests](const AreaScxScriptRequest& request) -> std::expected<std::size_t, std::string> {
+        [&requests](
+            const AreaScxScriptRequest& request) -> std::expected<std::size_t, std::string> {
           requests.push_back(request);
           return 42U;
         });
@@ -404,10 +412,9 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     bytes.u8(0x84).u8(0x85);
     AreaScriptRuntime runtime{bytes.data()};
     std::vector<bool> requests;
-    runtime.set_cinematic_letterbox_sink(
-        [&requests](const AreaCinematicLetterboxRequest& request) {
-          requests.push_back(request.enabled);
-        });
+    runtime.set_cinematic_letterbox_sink([&requests](const AreaCinematicLetterboxRequest& request) {
+      requests.push_back(request.enabled);
+    });
 
     runtime.queue_event(1);
     runtime.activate();
@@ -469,8 +476,8 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     std::optional<AreaCharacterActivationRequest> captured;
     std::size_t calls{0};
     runtime.set_character_activation_sink(
-        [&captured, &calls](const AreaCharacterActivationRequest& request)
-            -> std::expected<void, std::string> {
+        [&captured, &calls](
+            const AreaCharacterActivationRequest& request) -> std::expected<void, std::string> {
           captured = request;
           ++calls;
           return {};
@@ -508,8 +515,8 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     AreaScriptRuntime runtime{bytes.data()};
     std::vector<AreaCharacterActivationRequest> captured;
     runtime.set_character_activation_sink(
-        [&captured](const AreaCharacterActivationRequest& request)
-            -> std::expected<void, std::string> {
+        [&captured](
+            const AreaCharacterActivationRequest& request) -> std::expected<void, std::string> {
           captured.push_back(request);
           return {};
         });
@@ -716,7 +723,7 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
 
   TEST_CASE("0x3B requests an explicit-character script without blocking") {
     Buffer bytes;
-    bytes.u8(0x3B).u16(310).u16(1).u16(0);
+    bytes.u8(0x3B).u16(310).u16(1).u16(123);
 
     AreaScriptRuntime runtime{bytes.data()};
     std::optional<AreaCharacterScriptRequest> captured;
@@ -733,16 +740,17 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     CHECK(runtime.run() == AreaScriptState::k_completed);
     CHECK_EQ(runtime.instruction_pointer(), 7U);
     REQUIRE(captured.has_value());
-    CHECK_EQ(captured->character_id, 310);
+    CHECK(captured->target == AreaCharacterScriptTarget::k_explicit);
+    CHECK_EQ(captured->character_id, std::optional<std::int16_t>{310});
     CHECK_EQ(captured->script_id, 1U);
-    CHECK_EQ(captured->parameter, 0);
+    CHECK_EQ(captured->camera_duration_units, 123);
     CHECK(captured->mode == AreaCharacterScriptLaunchMode::k_fire_and_forget);
     CHECK(runtime.wait_info().kind == AreaWaitKind::k_none);
   }
 
   TEST_CASE("0x3C blocks in Runtime state 4 on the explicit character-script request") {
     Buffer bytes;
-    bytes.u8(0x3C).u16(310).u16(1).u16(0);
+    bytes.u8(0x3C).u16(310).u16(1).u16(123);
 
     AreaScriptRuntime runtime{bytes.data()};
     std::optional<AreaCharacterScriptRequest> captured;
@@ -763,13 +771,15 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     CHECK(runtime.wait_info().kind == AreaWaitKind::k_character_script);
 
     REQUIRE(captured.has_value());
-    CHECK_EQ(captured->character_id, 310);
+    CHECK(captured->target == AreaCharacterScriptTarget::k_explicit);
+    CHECK_EQ(captured->character_id, std::optional<std::int16_t>{310});
     CHECK_EQ(captured->script_id, 1U);
-    CHECK_EQ(captured->parameter, 0);
+    CHECK_EQ(captured->camera_duration_units, 123);
     CHECK(captured->mode == AreaCharacterScriptLaunchMode::k_tracked);
 
     REQUIRE(runtime.wait_info().character_script.has_value());
-    CHECK_EQ(runtime.wait_info().character_script->character_id, 310);
+    CHECK(runtime.wait_info().character_script->target == AreaCharacterScriptTarget::k_explicit);
+    CHECK_EQ(runtime.wait_info().character_script->character_id, std::optional<std::int16_t>{310});
     CHECK_EQ(runtime.wait_info().character_script->script_id, 1U);
     CHECK_EQ(runtime.wait_info().character_script_instance, std::optional<std::size_t>{77U});
 
@@ -788,6 +798,123 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     REQUIRE_FALSE(runtime.complete_character_script_wait(77U).has_value());
   }
 
+  TEST_CASE("0x2E starts the current character script and waits for its exact instance") {
+    Buffer bytes;
+    bytes.u8(0x2E).u16(221).u16(0).u8(0x03);
+
+    AreaScriptRuntime runtime{bytes.data()};
+    std::optional<AreaCharacterScriptRequest> captured;
+    runtime.set_character_script_sink(
+        [&captured](
+            const AreaCharacterScriptRequest& request) -> std::expected<std::size_t, std::string> {
+          captured = request;
+          return 42U;
+        });
+
+    const App::Script::AreaOpcodeInfo* info{App::Script::area_opcode_info(0x2E)};
+    REQUIRE(info != nullptr);
+    CHECK_EQ(info->name, "StartCurrentCharacterScriptTracked");
+    CHECK(info->support == App::Script::OpcodeSupport::k_supported);
+    CHECK_FALSE(info->provisional);
+    CHECK_EQ(info->operand_count, 2U);
+
+    runtime.queue_event(1);
+    runtime.activate();
+    REQUIRE(runtime.run() == AreaScriptState::k_waiting);
+    CHECK_EQ(runtime.instruction_pointer(), 5U);
+    CHECK_EQ(runtime.runtime_state(), 4U);
+    CHECK(runtime.wait_info().kind == AreaWaitKind::k_character_script);
+    CHECK_EQ(runtime.wait_info().character_script_instance, std::optional<std::size_t>{42U});
+
+    REQUIRE(captured.has_value());
+    CHECK(captured->target == AreaCharacterScriptTarget::k_current);
+    CHECK_FALSE(captured->character_id.has_value());
+    CHECK_EQ(captured->script_id, 221U);
+    CHECK_EQ(captured->camera_duration_units, 0);
+    CHECK(captured->mode == AreaCharacterScriptLaunchMode::k_tracked);
+
+    REQUIRE_FALSE(runtime.complete_character_script_wait(41U).has_value());
+    CHECK(runtime.state() == AreaScriptState::k_waiting);
+    REQUIRE(runtime.complete_character_script_wait(42U).has_value());
+    CHECK(runtime.state() == AreaScriptState::k_running);
+    CHECK(runtime.run() == AreaScriptState::k_ready);
+  }
+
+  TEST_CASE("0x5A starts the current character script without waiting") {
+    Buffer bytes;
+    bytes.u8(0x5A).u16(229).u16(0).u8(0x03);
+
+    AreaScriptRuntime runtime{bytes.data()};
+    std::optional<AreaCharacterScriptRequest> captured;
+    std::size_t calls{0};
+    runtime.set_character_script_sink(
+        [&captured, &calls](
+            const AreaCharacterScriptRequest& request) -> std::expected<std::size_t, std::string> {
+          captured = request;
+          ++calls;
+          return 43U;
+        });
+
+    const App::Script::AreaOpcodeInfo* info{App::Script::area_opcode_info(0x5A)};
+    REQUIRE(info != nullptr);
+    CHECK_EQ(info->name, "StartCurrentCharacterScript");
+    CHECK(info->support == App::Script::OpcodeSupport::k_supported);
+    CHECK_FALSE(info->provisional);
+    CHECK_EQ(info->operand_count, 2U);
+
+    runtime.queue_event(1);
+    runtime.activate();
+    CHECK(runtime.run() == AreaScriptState::k_ready);
+    CHECK_EQ(calls, 1U);
+    CHECK(runtime.wait_info().kind == AreaWaitKind::k_none);
+
+    REQUIRE(captured.has_value());
+    CHECK(captured->target == AreaCharacterScriptTarget::k_current);
+    CHECK_FALSE(captured->character_id.has_value());
+    CHECK_EQ(captured->script_id, 229U);
+    CHECK_EQ(captured->camera_duration_units, 0);
+    CHECK(captured->mode == AreaCharacterScriptLaunchMode::k_fire_and_forget);
+  }
+
+  TEST_CASE("current character script IDs remain raw while camera duration is Scalar16") {
+    SUBCASE("script ID retains the parameter-reference bit") {
+      Buffer bytes;
+      bytes.u8(0x5A).u16(0x4001).u16(0).u8(0x03);
+
+      AreaScriptRuntime runtime{bytes.data()};
+      std::optional<AreaCharacterScriptRequest> captured;
+      runtime.set_character_script_sink([&captured](const AreaCharacterScriptRequest& request)
+                                            -> std::expected<std::size_t, std::string> {
+        captured = request;
+        return 44U;
+      });
+      runtime.queue_event(1);
+      runtime.activate();
+
+      CHECK(runtime.run() == AreaScriptState::k_ready);
+      REQUIRE(captured.has_value());
+      CHECK_EQ(captured->script_id, 0x4001U);
+    }
+
+    SUBCASE("camera duration rejects an unresolved parameter reference") {
+      Buffer bytes;
+      bytes.u8(0x2E).u16(221).u16(0x4000).u8(0x03);
+
+      AreaScriptRuntime runtime{bytes.data()};
+      runtime.set_character_script_sink(
+          [](const AreaCharacterScriptRequest&) -> std::expected<std::size_t, std::string> {
+            return 45U;
+          });
+      runtime.queue_event(1);
+      runtime.activate();
+
+      CHECK(runtime.run() == AreaScriptState::k_failed);
+      CHECK(runtime.pause_info().reason_text.find("camera duration") != std::string::npos);
+      CHECK(runtime.pause_info().reason_text.find("parameter-indirected Scalar16") !=
+            std::string::npos);
+    }
+  }
+
   TEST_CASE("0x2F waits in Runtime state 10 and resumes only for its exact transition") {
     const App::Script::AreaOpcodeInfo* info{App::Script::area_opcode_info(0x2F)};
     REQUIRE(info != nullptr);
@@ -800,12 +927,11 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
 
     AreaScriptRuntime runtime{bytes.data()};
     std::vector<AreaTransitionRequest> requests;
-    runtime.set_area_transition_sink(
-        [&requests](const AreaTransitionRequest& request)
-            -> std::expected<AreaTransitionHandle, std::string> {
-          requests.push_back(request);
-          return AreaTransitionHandle{.generation = 42};
-        });
+    runtime.set_area_transition_sink([&requests](const AreaTransitionRequest& request)
+                                         -> std::expected<AreaTransitionHandle, std::string> {
+      requests.push_back(request);
+      return AreaTransitionHandle{.generation = 42};
+    });
     runtime.queue_event(1);
     runtime.activate();
 
@@ -828,8 +954,8 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     CHECK_EQ(requests.size(), 1U);
     REQUIRE_EQ(runtime.trace().size(), 1U);
 
-    REQUIRE_FALSE(runtime.complete_area_transition(AreaTransitionHandle{.generation = 41})
-                      .has_value());
+    REQUIRE_FALSE(
+        runtime.complete_area_transition(AreaTransitionHandle{.generation = 41}).has_value());
     CHECK(runtime.state() == AreaScriptState::k_waiting);
     REQUIRE(runtime.complete_area_transition(AreaTransitionHandle{.generation = 42}).has_value());
     CHECK(runtime.state() == AreaScriptState::k_running);
@@ -860,8 +986,7 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     AreaScriptRuntime runtime{bytes.data()};
     std::size_t calls{0};
     runtime.set_area_transition_sink(
-        [&calls](const AreaTransitionRequest&)
-            -> std::expected<AreaTransitionHandle, std::string> {
+        [&calls](const AreaTransitionRequest&) -> std::expected<AreaTransitionHandle, std::string> {
           ++calls;
           return std::expected<AreaTransitionHandle, std::string>{
               std::unexpect, "coordinator is busy"};
@@ -886,8 +1011,8 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
       runtime.queue_event(1);
       runtime.activate();
       CHECK(runtime.run() == AreaScriptState::k_failed);
-      CHECK(runtime.pause_info().reason_text.find("transition variant (0, -1)") !=
-            std::string::npos);
+      CHECK(
+          runtime.pause_info().reason_text.find("transition variant (0, -1)") != std::string::npos);
     }
     SUBCASE("parameter-indirected target") {
       Buffer bytes;
@@ -1137,9 +1262,10 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     CHECK(runtime.last_character_activation_request()->apply_area_transform);
 
     REQUIRE(character_script.has_value());
-    CHECK_EQ(character_script->character_id, 310);
+    CHECK(character_script->target == AreaCharacterScriptTarget::k_explicit);
+    CHECK_EQ(character_script->character_id, std::optional<std::int16_t>{310});
     CHECK_EQ(character_script->script_id, 1U);
-    CHECK_EQ(character_script->parameter, 0);
+    CHECK_EQ(character_script->camera_duration_units, 0);
     CHECK(character_script->mode == AreaCharacterScriptLaunchMode::k_tracked);
     CHECK_EQ(runtime.wait_info().character_script_instance, std::optional<std::size_t>{77U});
   }
@@ -1177,8 +1303,7 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     CHECK(App::Script::area_opcode_name(0x0D) != nullptr);
     CHECK(App::Script::area_opcode_name(0x19) != nullptr);
     CHECK(App::Script::area_opcode_name(0x2F) != nullptr);
-    CHECK_EQ(std::string{App::Script::area_opcode_name(0x32)},
-        "AddObjectToPersistentCollection");
+    CHECK_EQ(std::string{App::Script::area_opcode_name(0x32)}, "AddObjectToPersistentCollection");
     CHECK(App::Script::area_opcode_name(0x39) != nullptr);
     CHECK(App::Script::area_opcode_name(0x3A) != nullptr);
     CHECK(App::Script::area_opcode_name(0x3B) != nullptr);

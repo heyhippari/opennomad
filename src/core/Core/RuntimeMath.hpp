@@ -80,7 +80,12 @@ inline constexpr float k_default_clip_distance_metres{50.0F};
 [[nodiscard]] Vec3 transform_point(const Vec3& point, const Transform& transform);
 [[nodiscard]] Transform compose(const Transform& local, const Transform& parent);
 
-/// Runtime's body-animation placement formula: sampled - authored * -0.393700778.
+/// Runtime's body-animation placement formula: base - authored * -0.393700778.
+[[nodiscard]] Vec3 body_animation_anchor(
+    const Vec3& base_coordinate, const Vec3& authored_argument);
+
+/// Runtime's path-anchored body-animation placement formula. This is the
+/// path-specific spelling of `body_animation_anchor`.
 [[nodiscard]] Vec3 relative_body_animation_anchor(
     const Vec3& sampled_path_coordinate, const Vec3& authored_argument);
 

@@ -1613,7 +1613,7 @@ A generic 3DA decoder should expose frame indices, not bake in 30 Hz.
 
 ---
 
-# 39. Relationship to `SelectRelativeBodyAnimation`
+# 39. Relationship to SCX body-animation functions
 
 The currently recovered New Game intro path demonstrates how 3DA participates in
 the wider animation system.
@@ -1625,34 +1625,35 @@ IAM AREA event
     |
     v
 character-bound SCX script
+    +-- 0x02000004 SelectBodyAnimation
+    |       +-- selected object's current runtime position
+    |       +-- authored non-path offset
+    |
+    +-- 0x0200002A SelectRelativeBodyAnimation
+            +-- 3DP path and subpath
+            +-- authored offset
     |
     v
-0x0200002A SelectRelativeBodyAnimation
-    |
-    +-- 3DO target hierarchy
-    +-- 3DA animation
-    +-- 3DP path
-    +-- authored offset
-    |
-    v
-pose character + apply root motion
+shared 3DO hierarchy + 3DA playback -> pose character + apply root motion
 ```
 
-The SCX Script function supplies:
+Both SCX functions supply a selected object binding, an animation-table index,
+mutable previous/current progress, and the body-animation vector. They share
+the same numeric 3DA channel-to-3DO-`script_id` binding, discrete rotation
+sampling, interval root-motion integration, posed geometry rebuild, and 30 Hz
+script progression.
 
-- selected object binding;
-- animation-table index;
-- previous/current animation progress;
+`SelectRelativeBodyAnimation` additionally supplies:
+
 - path-table index;
 - subpath index;
-- authored offset.
 
 The 3DA itself supplies:
 
 - object/channel rotations;
 - root-motion increments.
 
-The 3DP supplies:
+Only the relative function's 3DP supplies:
 
 - path anchor/orientation information.
 

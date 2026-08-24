@@ -504,6 +504,77 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
     CHECK_EQ(animated->body_animation.root_motion_delta.x, doctest::Approx(5.0F));
     CHECK_EQ(animated->transform.translation.x, doctest::Approx(-463.393341F));
   }
+
+  TEST_CASE("Body animation uses the selected object anchor without a 3DP resource") {
+    BodyResourcesFixture resources{make_body_resources()};
+    resources.scx.section0_records.clear();
+    resources.scx.section0_resources.clear();
+    const std::shared_ptr<const App::Character::ModelResource> shared{make_body_model_resource()};
+    const auto loader = [shared](const std::string_view)
+        -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
+      return shared;
+    };
+
+    App::ScenarioRuntime runtime;
+    REQUIRE(runtime.initialize(resources.scx, resources.bytes, "body", nullptr, false).has_value());
+    runtime.character_runtime().set_model_loader(loader);
+    REQUIRE(runtime
+            .activate_character(118,
+                make_character_area(),
+                App::Script::AreaCharacterActivationRequest{
+                    .character_id = 310, .apply_area_transform = true})
+            .has_value());
+    const App::Character::RuntimeCharacter* before{runtime.character_runtime().find(310)};
+    REQUIRE(before != nullptr);
+    const std::uint64_t initial_revision{before->pose_revision};
+
+    const App::Script::BodyAnimationRequest root_request{.character_id = 310,
+        .object_binding = "RootBody",
+        .animation_index = 0,
+        .previous_progress = 0.0F,
+        .current_progress = 1.0F,
+        .body_animation_vector = {4.0F, 5.0F, 6.0F},
+        .authored_offset = {10.0F, 20.0F, 30.0F},
+        .first_tick = true,
+        .execution_count = 0,
+        .execution_limit = 1};
+    const auto root_applied{runtime.select_body_animation(root_request)};
+    REQUIRE(root_applied.has_value());
+    CHECK_EQ(root_applied->max_frame_index, 3U);
+
+    const App::Character::RuntimeCharacter* rooted{runtime.character_runtime().find(310)};
+    REQUIRE(rooted != nullptr);
+    CHECK_EQ(rooted->body_animation.final_anchor.x, doctest::Approx(3.93700778F));
+    CHECK_EQ(rooted->body_animation.final_anchor.y, doctest::Approx(7.87401556F));
+    CHECK_EQ(rooted->body_animation.final_anchor.z, doctest::Approx(11.8110233F));
+    CHECK_EQ(rooted->body_animation.root_motion_delta.x, doctest::Approx(10.0F));
+    CHECK_EQ(rooted->transform.translation.x, doctest::Approx(13.93700778F));
+    CHECK_EQ(rooted->object_poses.at(0).channel_id, std::optional<std::uint32_t>{2});
+    // This proves the 3DA channel binds by the 3DO script ID (3), not mesh ID 200.
+    CHECK_EQ(rooted->object_poses.at(1).channel_id, std::optional<std::uint32_t>{3});
+    CHECK(rooted->runtime_objects.at(0).animation_matrix.has_value());
+    CHECK(rooted->runtime_objects.at(1).animation_matrix.has_value());
+    CHECK_GT(rooted->pose_revision, initial_revision);
+
+    const float character_x_before_child{rooted->transform.translation.x};
+    App::Script::BodyAnimationRequest child_request{root_request};
+    child_request.object_binding = "Child";
+    child_request.authored_offset = {10.0F, 0.0F, 0.0F};
+    const auto child_applied{runtime.select_body_animation(child_request)};
+    REQUIRE(child_applied.has_value());
+
+    const App::Character::RuntimeCharacter* child{runtime.character_runtime().find(310)};
+    REQUIRE(child != nullptr);
+    CHECK_EQ(child->body_animation.selected_object_index, std::size_t{1});
+    CHECK_FALSE(child->object_poses.at(0).channel_index.has_value());
+    CHECK_EQ(child->object_poses.at(1).channel_id, std::optional<std::uint32_t>{3});
+    CHECK_FALSE(child->runtime_objects.at(0).animation_matrix.has_value());
+    CHECK(child->runtime_objects.at(1).animation_matrix.has_value());
+    CHECK_EQ(child->body_animation.final_anchor.x, doctest::Approx(5.93700778F));
+    CHECK_EQ(child->runtime_objects.at(1).world_translation.x, doctest::Approx(5.93700778F));
+    CHECK_EQ(child->transform.translation.x, doctest::Approx(character_x_before_child));
+    CHECK_EQ(child->body_animation.root_motion_delta.x, doctest::Approx(0.0F));
+  }
 }
 
 // NOLINTEND(misc-use-anonymous-namespace, cppcoreguidelines-avoid-do-while, cert-err33-c,
