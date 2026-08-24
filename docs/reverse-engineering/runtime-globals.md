@@ -1346,6 +1346,29 @@ g_secondaryEntityContext
 
 until transitions settle it.
 
+## OpenNomad current-body session state
+
+OpenNomad does not expose either uncertain native entity pointer as a direct
+player-character singleton. Compact IAM establishes the selected body through
+opcode `0x38`; no startup helper, name lookup, model lookup, or external UI
+assignment invents that identity.
+
+The durable session value is:
+
+```text
+ControlledCharacterRef {
+    int16 authoredCharacterId;
+    uint32 owningWorldSceneId;
+}
+```
+
+The world ID follows the unique live `RuntimeCharacter` when `0x47` hands the
+body to a prepared destination world. It is intentionally separate from the
+two resident AREA slots and from presentation activation. A selected body may
+be hidden by `0x4F/-1`, re-enabled by `0x4E/-1`, or remain materialized while a
+different body becomes selected; none of those operations reloads its shared
+model resource.
+
 ## Associated `0x60`-byte pool at `0x004E7EA0`
 
 Initialization clears:

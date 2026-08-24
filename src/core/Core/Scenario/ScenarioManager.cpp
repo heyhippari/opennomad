@@ -49,6 +49,7 @@ ScenarioManager::~ScenarioManager() = default;
 std::expected<void, std::string> ScenarioManager::reset_for_new_session() {
   APP_PROFILE_FUNCTION();
 
+  m_controlled_character.reset();
   // Tear down both world contexts directly rather than through the
   // scene-id-based public helpers: a Free context's default scene_id (0)
   // collides with a resident context, so lookups are ambiguous here.
@@ -373,6 +374,13 @@ std::expected<void, std::string> ScenarioManager::unload_world_context(
   if (context->residency == WorldSceneResidencyState::Free) {
     return {};  // Already free.
   }
+  if (m_controlled_character.has_value() &&
+      m_controlled_character->world_scene_id == scene_id) {
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format("Cannot unload world context {}: it owns current controlled character {}",
+            scene_id,
+            m_controlled_character->character_id)};
+  }
 
   App::Log::debug(LogCategory::Scenario,
       "world context {} \"{}\" unloading — generation={}",
@@ -384,6 +392,51 @@ std::expected<void, std::string> ScenarioManager::unload_world_context(
   context->residency = WorldSceneResidencyState::Free;
   ++context->generation;
 
+  return {};
+}
+
+std::optional<ControlledCharacterRef> ScenarioManager::controlled_character() const {
+  return m_controlled_character;
+}
+
+void ScenarioManager::set_controlled_character(const ControlledCharacterRef character) {
+  m_controlled_character = character;
+}
+
+void ScenarioManager::clear_controlled_character() {
+  m_controlled_character.reset();
+}
+
+std::expected<void, std::string> ScenarioManager::transfer_controlled_character(
+    const std::uint32_t source_scene_id, const std::uint32_t target_scene_id) {
+  if (!m_controlled_character.has_value() ||
+      m_controlled_character->world_scene_id != source_scene_id) {
+    return {};
+  }
+  if (source_scene_id == target_scene_id) {
+    return {};
+  }
+  ScenarioRuntime* const source{world_runtime(source_scene_id)};
+  ScenarioRuntime* const target{world_runtime(target_scene_id)};
+  if (source == nullptr || target == nullptr) {
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format("Cannot transfer current controlled character {} from world {} to {}: "
+                    "source or target runtime is unavailable",
+            m_controlled_character->character_id,
+            source_scene_id,
+            target_scene_id)};
+  }
+  if (auto transferred{source->character_runtime().transfer_character_to(
+          target->character_runtime(), m_controlled_character->character_id)};
+      !transferred) {
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format("Cannot transfer current controlled character {} from world {} to {}: {}",
+            m_controlled_character->character_id,
+            source_scene_id,
+            target_scene_id,
+            transferred.error())};
+  }
+  m_controlled_character->world_scene_id = target_scene_id;
   return {};
 }
 
@@ -803,7 +856,9 @@ WorldSceneContext* ScenarioManager::allocate_world_context_slot() {
 
   // Otherwise, prefer the first LoadedInactive entry.
   for (WorldSceneContext& ctx : m_world_contexts) {
-    if (ctx.residency == WorldSceneResidencyState::LoadedInactive) {
+    if (ctx.residency == WorldSceneResidencyState::LoadedInactive &&
+        (!m_controlled_character.has_value() ||
+            m_controlled_character->world_scene_id != ctx.scene_id)) {
       return &ctx;
     }
   }

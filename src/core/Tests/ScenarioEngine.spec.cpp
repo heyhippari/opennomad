@@ -15,6 +15,7 @@
 #include <filesystem>
 #include <fstream>
 #include <ios>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -23,6 +24,9 @@
 
 #include "Core/Scenario/ScenarioEngine.hpp"
 #include "Core/Scenario/ScenarioManager.hpp"
+#include "Core/Scenario/ScenarioRuntime.hpp"
+#include "Core/Character/CharacterRuntime.hpp"
+#include "Core/Omikron/Model3DO.hpp"
 #include "Core/Script/AreaScriptRuntime.hpp"
 #include "Core/Startup/StartupTraceRecorder.hpp"
 #include "OmikronTestBuffer.hpp"
@@ -96,6 +100,25 @@ std::vector<std::byte> make_area_archive(const std::vector<std::byte>& prefix) {
   write_u32(data, k_record_offset + 0x04, 0x3FC);
   write_name(data, k_record_offset + 0x58, "GRID");
   write_name(data, k_record_offset + 0x61, "GRID");
+  constexpr std::size_t k_placement_offset{0x0B4};
+  constexpr std::size_t k_definition_offset{k_placement_offset + 0x14U};
+  write_u32(data, k_record_offset + 0x28U, k_placement_offset);
+  write_u16(data, k_record_offset + 0x48U, 1);
+  write_u16(data, k_record_offset + k_placement_offset + 0x00U, 0xFFFF);
+  write_u16(data, k_record_offset + k_placement_offset + 0x02U, 136);
+  write_u32(data, k_record_offset + k_placement_offset + 0x04U, 100U);
+  write_u32(data, k_record_offset + k_placement_offset + 0x08U, 200U);
+  write_u32(data, k_record_offset + k_placement_offset + 0x0CU, 300U);
+  write_u16(data, k_record_offset + k_placement_offset + 0x10U, 0);
+  write_u32(data, k_record_offset + 0x28U + (4U * 4U), k_definition_offset);
+  write_u16(data, k_record_offset + 0x48U + (4U * 2U), 1);
+  constexpr std::string_view k_character_name{"CURRENT CHARACTER"};
+  constexpr std::string_view k_model_name{"CURRENT_BODY"};
+  std::memcpy(data.data() + k_record_offset + k_definition_offset + 0x08U,
+      k_character_name.data(), k_character_name.size());
+  std::memcpy(data.data() + k_record_offset + k_definition_offset + 0x90U,
+      k_model_name.data(), k_model_name.size());
+  write_u16(data, k_record_offset + k_definition_offset + 0x110U, 136);
   std::memcpy(data.data() + k_record_offset + 0x3FC, prefix.data(), prefix.size());
   return data;
 }
@@ -268,6 +291,22 @@ void write_transition_boot_fixtures(const TempDirectory& temp, const bool includ
   }
 }
 
+bool install_fake_current_character_loader(App::ScenarioManager& manager) {
+  App::ScenarioRuntime* const runtime{manager.world_runtime(0)};
+  if (runtime == nullptr) {
+    return false;
+  }
+  runtime->character_runtime().set_model_loader(
+      [](const std::string_view name)
+          -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
+        auto resource{std::make_shared<App::Character::ModelResource>()};
+        resource->name = name;
+        resource->groups.push_back(App::Omikron::MaterialGroup{});
+        return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
+      });
+  return true;
+}
+
 std::optional<std::uint32_t> seq_of(
     const App::Startup::StartupTraceRecorder& recorder,
     const std::string_view name,
@@ -300,6 +339,7 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
     REQUIRE(engine.select_permanent_mode_script().has_value());
     REQUIRE(engine.enter_mode(App::ScenarioMode::k_teardown, 0).has_value());
     REQUIRE(engine.enter_mode(App::ScenarioMode::k_new_session, 0).has_value());
+    REQUIRE(install_fake_current_character_loader(manager));
     REQUIRE(engine.enter_mode(App::ScenarioMode::k_tick, 0).has_value());
 
     // State invariants.
@@ -415,6 +455,7 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
     REQUIRE(engine.select_permanent_mode_script().has_value());
     REQUIRE(engine.enter_mode(App::ScenarioMode::k_teardown, 0).has_value());
     REQUIRE(engine.enter_mode(App::ScenarioMode::k_new_session, 0).has_value());
+    REQUIRE(install_fake_current_character_loader(manager));
     REQUIRE(engine.enter_mode(App::ScenarioMode::k_tick, 0).has_value());
 
     CHECK(engine.main_menu_active());
@@ -444,6 +485,7 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
     REQUIRE(engine.select_permanent_mode_script().has_value());
     REQUIRE(engine.enter_mode(App::ScenarioMode::k_teardown, 0).has_value());
     REQUIRE(engine.enter_mode(App::ScenarioMode::k_new_session, 0).has_value());
+    REQUIRE(install_fake_current_character_loader(manager));
     REQUIRE(engine.enter_mode(App::ScenarioMode::k_tick, 0).has_value());
 
     REQUIRE(engine.area_script() != nullptr);
@@ -496,6 +538,7 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
     REQUIRE(engine.select_permanent_mode_script().has_value());
     REQUIRE(engine.enter_mode(App::ScenarioMode::k_teardown, 0).has_value());
     REQUIRE(engine.enter_mode(App::ScenarioMode::k_new_session, 0).has_value());
+    REQUIRE(install_fake_current_character_loader(manager));
     REQUIRE(engine.enter_mode(App::ScenarioMode::k_tick, 0).has_value());
 
     // No Scene is involved: the scheduler drives the AREA script and the

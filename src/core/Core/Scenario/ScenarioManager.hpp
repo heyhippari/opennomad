@@ -67,6 +67,16 @@ enum class WorldSceneResidencyState : std::uint8_t {
   LoadedActive,
 };
 
+/// Durable session-level identity of the body currently controlled by compact
+/// IAM. The character ID is authored data; the world scene ID identifies the
+/// owning runtime instance rather than an AREA-slot array position.
+struct ControlledCharacterRef {
+  std::int16_t character_id{-1};
+  std::uint32_t world_scene_id{0};
+
+  bool operator==(const ControlledCharacterRef&) const = default;
+};
+
 /// Declarative definition of a gameplay mode: the logical mode and its
 /// scenario path. Only `Adventure` is loaded during default boot; the other
 /// mappings exist so a future milestone can replace the mode slot without
@@ -257,6 +267,18 @@ class ScenarioManager {
   /// context is LoadedActive (use deactivate first).
   [[nodiscard]] std::expected<void, std::string> unload_world_context(std::uint32_t scene_id);
 
+  /// Current controlled body for this game session, if compact IAM has
+  /// selected one. It deliberately survives AREA slot changes.
+  [[nodiscard]] std::optional<ControlledCharacterRef> controlled_character() const;
+  void set_controlled_character(ControlledCharacterRef character);
+  void clear_controlled_character();
+
+  /// Moves the selected body from source to target when the selection belongs
+  /// to source. No model/resource reload occurs; all live character state is
+  /// transferred with the single runtime owner.
+  [[nodiscard]] std::expected<void, std::string> transfer_controlled_character(
+      std::uint32_t source_scene_id, std::uint32_t target_scene_id);
+
   /// Tears down both world contexts for a new scenario session (mode 2).
   /// The gameplay-mode slot is left intact; only world-scene residency is
   /// cleared.
@@ -377,6 +399,7 @@ class ScenarioManager {
 
   GameplayModeSlot m_gameplay_mode_slot;
   std::array<WorldSceneContext, WorldSceneContext::k_capacity> m_world_contexts;
+  std::optional<ControlledCharacterRef> m_controlled_character;
 
   /// CPU-only command mailbox between AREA/scenario execution and the stable
   /// WorldScene presentation layer.
@@ -428,7 +451,8 @@ class ScenarioManager {
 
   /// Returns the best target context for allocation:
   /// 1. The first Free entry (by index).
-  /// 2. If none, the first LoadedInactive entry (by index).
+  /// 2. If none, the first LoadedInactive entry that does not own the
+  ///    controlled body (by index).
   /// 3. If none (both are LoadedActive), nullptr.
   [[nodiscard]] WorldSceneContext* allocate_world_context_slot();
 };

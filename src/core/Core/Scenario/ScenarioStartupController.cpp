@@ -174,7 +174,6 @@ void ScenarioStartupController::reset_session() {
   m_area_archive_bytes.clear();
   m_scene_archive_bytes.clear();
   m_area_mapping.clear();
-  m_current_controlled_character.reset();
   m_initial_area_id = 0;
   m_linked_area_id = 0;
   m_initial_world_scenario_path.clear();
@@ -315,6 +314,9 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
   // first interpreter tick runs in tick().
   m_area_script.emplace(area_record_view.script_bytes());
   Script::AreaScriptRuntime& area_script{*m_area_script};
+  // This main AREA context continues to own its initial resident slot even
+  // after a later compact handoff changes presentation to the alternate slot.
+  const std::size_t area_script_owner_slot{m_active_area_slot};
 
   area_script.set_area_transition_sink(
       [this](const Script::AreaTransitionRequest& request)
@@ -364,6 +366,14 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
   area_script.set_area_address_placement_sink(
       [this](const Script::AreaAddressPlacementRequest& request) {
         return place_current_character_at_address(request);
+      });
+  area_script.set_character_selection_sink(
+      [this, area_script_owner_slot](const Script::AreaCharacterSelectionRequest& request) {
+        return select_current_character(area_script_owner_slot, request);
+      });
+  area_script.set_character_deactivation_sink(
+      [this, area_script_owner_slot](const Script::AreaCharacterDeactivationRequest& request) {
+        return deactivate_owner_character(area_script_owner_slot, request);
       });
 
   area_script.set_dialog_sink(
@@ -506,34 +516,37 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
   });
 
   area_script.set_character_activation_sink(
-      [this](const Script::AreaCharacterActivationRequest& request)
+      [this, area_script_owner_slot](const Script::AreaCharacterActivationRequest& request)
           -> std::expected<void, std::string> {
-        const RuntimeAreaSlot& active_slot{m_area_slots.at(m_active_area_slot)};
-        if (m_manager == nullptr || !active_slot.primary.has_value()) {
-          return std::expected<void, std::string>{
-              std::unexpect, "no active AREA/world owner for character activation"};
+        if (request.character_id == -1) {
+          return set_current_character_presentation(true);
         }
-        WorldSceneContext* context{m_manager->active_world_context()};
-        if (context == nullptr || context->runtime == nullptr) {
+        const RuntimeAreaSlot& owner_slot{m_area_slots.at(area_script_owner_slot)};
+        if (m_manager == nullptr || !owner_slot.primary.has_value()) {
           return std::expected<void, std::string>{
-              std::unexpect, "no active world character runtime"};
+              std::unexpect, "main AREA owner has no character runtime"};
+        }
+        ScenarioRuntime* const scenario_runtime{m_manager->world_runtime(owner_slot.world_scene_id)};
+        if (scenario_runtime == nullptr) {
+          return std::expected<void, std::string>{
+              std::unexpect, "main AREA owner has no loaded world character runtime"};
         }
 
         std::expected<void, std::string> activated;
-        if (active_slot.scene.has_value() &&
-            active_slot.scene->character_by_id(request.character_id).has_value()) {
-          activated = context->runtime->character_runtime().materialize_scene_characters(
-              active_slot.primary_area_id, active_slot.scene_id, *active_slot.scene);
+        if (owner_slot.scene.has_value() &&
+            owner_slot.scene->character_by_id(request.character_id).has_value()) {
+          activated = scenario_runtime->character_runtime().materialize_scene_characters(
+              owner_slot.primary_area_id, owner_slot.scene_id, *owner_slot.scene);
         } else {
-          activated = context->runtime->activate_character(
-              active_slot.primary_area_id, *active_slot.primary, request);
+          activated = scenario_runtime->activate_character(
+              owner_slot.primary_area_id, *owner_slot.primary, request);
         }
         if (!activated) {
           return activated;
         }
 
         const Character::RuntimeCharacter* character{
-            context->runtime->character_runtime().find(request.character_id)};
+            scenario_runtime->character_runtime().find(request.character_id)};
         if (character != nullptr) {
           record("AreaScript.CharacterActivated",
               fmt::format("character={} model={} area={}",
@@ -867,6 +880,14 @@ void ScenarioStartupController::bind_scene_compact_services(
       [this](const Script::AreaAddressPlacementRequest& request) {
         return place_current_character_at_address(request);
       });
+  runtime.set_character_selection_sink(
+      [this, owner_slot](const Script::AreaCharacterSelectionRequest& request) {
+        return select_current_character(owner_slot, request);
+      });
+  runtime.set_character_deactivation_sink(
+      [this, owner_slot](const Script::AreaCharacterDeactivationRequest& request) {
+        return deactivate_owner_character(owner_slot, request);
+      });
   runtime.set_dialog_sink(
       [this](const Script::AreaDialogRequest& request) -> std::expected<void, std::string> {
         if (m_manager == nullptr) {
@@ -985,6 +1006,9 @@ void ScenarioStartupController::bind_scene_compact_services(
   runtime.set_character_activation_sink(
       [this, owner_slot](const Script::AreaCharacterActivationRequest& request)
           -> std::expected<void, std::string> {
+        if (request.character_id == -1) {
+          return set_current_character_presentation(true);
+        }
         if (m_manager == nullptr) {
           return std::expected<void, std::string>{std::unexpect, "scenario manager is not available"};
         }
@@ -1056,22 +1080,52 @@ std::expected<void, std::string> ScenarioStartupController::attach_area_scene(
     // The compact context must release its borrowed byte span before the owned
     // scene record is replaced, then only SCENE-owned entities are removed.
     slot.scene_script.reset();
+    std::optional<std::int16_t> preserved_character_id;
+    if (const auto current{m_manager->controlled_character()}; current.has_value() &&
+        current->world_scene_id == slot.world_scene_id) {
+      preserved_character_id = current->character_id;
+    }
     scenario_runtime->character_runtime().dematerialize_scene_characters(
-        slot.primary_area_id, slot.scene_id);
+        slot.primary_area_id, slot.scene_id, preserved_character_id);
     slot.scene.reset();
     slot.scene_id = -1;
   }
 
   slot.scene.emplace(std::move(parsed_scene).value());
   slot.scene_id = request.scene_id;
+  const std::size_t source_slot{m_active_area_slot};
+  const std::uint32_t source_world_scene_id{m_area_slots.at(source_slot).world_scene_id};
+  const std::optional<ControlledCharacterRef> current{m_manager->controlled_character()};
+  const bool transfer_current{source_slot != slot_index.value() && current.has_value() &&
+                              current->world_scene_id == source_world_scene_id};
+  if (transfer_current) {
+    if (auto transferred{m_manager->transfer_controlled_character(
+            source_world_scene_id, slot.world_scene_id)};
+        !transferred) {
+      slot.scene.reset();
+      slot.scene_id = -1;
+      return transferred;
+    }
+  }
   if (auto materialized{scenario_runtime->character_runtime().materialize_scene_characters(
           slot.primary_area_id, slot.scene_id, *slot.scene)};
       !materialized) {
+    const std::string materialize_error{std::move(materialized).error()};
+    if (transfer_current) {
+      if (auto returned{m_manager->transfer_controlled_character(
+              slot.world_scene_id, source_world_scene_id)};
+          !returned) {
+        return std::expected<void, std::string>{std::unexpect,
+            fmt::format("SCENE character materialization failed: {}; current-character rollback failed: {}",
+                materialize_error,
+                returned.error())};
+      }
+    }
     scenario_runtime->character_runtime().dematerialize_scene_characters(
         slot.primary_area_id, slot.scene_id);
     slot.scene.reset();
     slot.scene_id = -1;
-    return materialized;
+    return std::expected<void, std::string>{std::unexpect, materialize_error};
   }
   if (slot.scene->script_offset() != 0U) {
     slot.scene_script.emplace(slot.scene->script_bytes());
@@ -1081,17 +1135,27 @@ std::expected<void, std::string> ScenarioStartupController::attach_area_scene(
     App::Log::info(LogCategory::Script, "SCENE {} event 1 queued", request.scene_id);
   }
 
-  const std::size_t source_slot{m_active_area_slot};
   if (source_slot != slot_index.value()) {
     if (auto switched{m_manager->switch_active_world_context(
-            m_area_slots.at(source_slot).world_scene_id, slot.world_scene_id)};
+            source_world_scene_id, slot.world_scene_id)};
         !switched) {
+      const std::string switch_error{std::move(switched).error()};
+      if (transfer_current) {
+        if (auto returned{m_manager->transfer_controlled_character(
+                slot.world_scene_id, source_world_scene_id)};
+            !returned) {
+          return std::expected<void, std::string>{std::unexpect,
+              fmt::format("world residency switch failed: {}; current-character rollback failed: {}",
+                  switch_error,
+                  returned.error())};
+        }
+      }
       slot.scene_script.reset();
       scenario_runtime->character_runtime().dematerialize_scene_characters(
           slot.primary_area_id, slot.scene_id);
       slot.scene.reset();
       slot.scene_id = -1;
-      return switched;
+      return std::expected<void, std::string>{std::unexpect, switch_error};
     }
     m_active_area_slot = slot_index.value();
   }
@@ -1130,6 +1194,13 @@ std::expected<void, std::string> ScenarioStartupController::release_area(
         fmt::format("AREA {} is currently active and cannot be released", request.area_id)};
   }
   RuntimeAreaSlot& slot{m_area_slots.at(slot_index.value())};
+  if (const auto current{m_manager->controlled_character()}; current.has_value() &&
+      current->world_scene_id == slot.world_scene_id) {
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format("AREA {} cannot be released because it owns current controlled character {}",
+            request.area_id,
+            current->character_id)};
+  }
   if (ScenarioRuntime* runtime{m_manager->world_runtime(slot.world_scene_id)};
       runtime != nullptr && slot.scene.has_value()) {
     slot.scene_script.reset();
@@ -1150,14 +1221,148 @@ std::expected<void, std::string> ScenarioStartupController::release_area(
   return {};
 }
 
-std::expected<void, std::string> ScenarioStartupController::place_current_character_at_address(
-    const Script::AreaAddressPlacementRequest& request) {
-  if (!m_current_controlled_character.has_value()) {
+std::expected<void, std::string> ScenarioStartupController::select_current_character(
+    const std::size_t owner_slot, const Script::AreaCharacterSelectionRequest& request) {
+  if (m_manager == nullptr) {
+    return std::expected<void, std::string>{std::unexpect, "scenario manager is not available"};
+  }
+  const std::optional<ControlledCharacterRef> current{m_manager->controlled_character()};
+  if (current.has_value() && current->character_id == request.character_id) {
+    return {};
+  }
+  if (owner_slot >= m_area_slots.size()) {
+    return std::expected<void, std::string>{std::unexpect, "AREA owner slot is out of range"};
+  }
+
+  const RuntimeAreaSlot& slot{m_area_slots.at(owner_slot)};
+  if (!slot.primary.has_value()) {
+    return std::expected<void, std::string>{std::unexpect,
+        "current-character selection owner has no parsed AREA record"};
+  }
+  ScenarioRuntime* const runtime{m_manager->world_runtime(slot.world_scene_id)};
+  if (runtime == nullptr) {
+    return std::expected<void, std::string>{std::unexpect,
+        "current-character selection owner has no world runtime"};
+  }
+
+  if (slot.primary->character_by_id(request.character_id).has_value()) {
+    if (auto materialized{runtime->character_runtime().ensure_area_character(
+            slot.primary_area_id, *slot.primary, request.character_id)};
+        !materialized) {
+      return materialized;
+    }
+  } else if (slot.scene.has_value() &&
+             slot.scene->character_by_id(request.character_id).has_value()) {
+    if (auto materialized{runtime->character_runtime().ensure_scene_character(
+            slot.primary_area_id, slot.scene_id, *slot.scene, request.character_id)};
+        !materialized) {
+      return materialized;
+    }
+  } else {
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format("character ID {} is not present in owner AREA or attached SCENE table 0",
+            request.character_id)};
+  }
+
+  const Character::RuntimeCharacter* const character{
+      runtime->character_runtime().find(request.character_id)};
+  if (character == nullptr) {
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format("selected character {} was not materialized", request.character_id)};
+  }
+  m_manager->set_controlled_character(
+      ControlledCharacterRef{.character_id = request.character_id, .world_scene_id = slot.world_scene_id});
+  record("AreaScript.CurrentCharacterSelected",
+      fmt::format("character={} world={} model={}",
+          character->character_id,
+          slot.world_scene_id,
+          character->model_resource_name));
+  App::Log::info(LogCategory::Scenario,
+      "current character selected — id={} world={} model={}",
+      character->character_id,
+      slot.world_scene_id,
+      character->model_resource_name);
+  return {};
+}
+
+std::expected<void, std::string> ScenarioStartupController::set_current_character_presentation(
+    const bool enabled) {
+  if (m_manager == nullptr) {
+    return std::expected<void, std::string>{std::unexpect, "scenario manager is not available"};
+  }
+  const std::optional<ControlledCharacterRef> current{m_manager->controlled_character()};
+  if (!current.has_value()) {
     return std::expected<void, std::string>{std::unexpect,
         "current controlled character is not established"};
   }
+  ScenarioRuntime* const runtime{m_manager->world_runtime(current->world_scene_id)};
+  if (runtime == nullptr) {
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format("current controlled character {} world {} is not resident",
+            current->character_id,
+            current->world_scene_id)};
+  }
+  if (auto changed{runtime->character_runtime().set_presentation_enabled(
+          current->character_id, enabled)};
+      !changed) {
+    return changed;
+  }
+  App::Log::debug(LogCategory::Scenario,
+      "current character presentation {} — id={} world={}",
+      enabled ? "enabled" : "disabled",
+      current->character_id,
+      current->world_scene_id);
+  return {};
+}
+
+std::expected<void, std::string> ScenarioStartupController::deactivate_owner_character(
+    const std::size_t owner_slot, const Script::AreaCharacterDeactivationRequest& request) {
+  if (request.character_id == -1) {
+    return set_current_character_presentation(false);
+  }
   if (m_manager == nullptr) {
     return std::expected<void, std::string>{std::unexpect, "scenario manager is not available"};
+  }
+  const std::optional<ControlledCharacterRef> current{m_manager->controlled_character()};
+  if (current.has_value() && current->character_id == request.character_id) {
+    return {};
+  }
+  if (owner_slot >= m_area_slots.size()) {
+    return std::expected<void, std::string>{std::unexpect, "AREA owner slot is out of range"};
+  }
+  const RuntimeAreaSlot& slot{m_area_slots.at(owner_slot)};
+  if (!slot.primary.has_value()) {
+    return std::expected<void, std::string>{std::unexpect,
+        "character deactivation owner has no parsed AREA record"};
+  }
+  const bool in_area{slot.primary->character_by_id(request.character_id).has_value()};
+  const bool in_scene{slot.scene.has_value() &&
+                      slot.scene->character_by_id(request.character_id).has_value()};
+  if (!in_area && !in_scene) {
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format("character ID {} is not present in owner AREA or attached SCENE table 0",
+            request.character_id)};
+  }
+  ScenarioRuntime* const runtime{m_manager->world_runtime(slot.world_scene_id)};
+  if (runtime == nullptr) {
+    return std::expected<void, std::string>{std::unexpect,
+        "character deactivation owner has no world runtime"};
+  }
+  if (runtime->character_runtime().find(request.character_id) == nullptr) {
+    return {};
+  }
+  return runtime->character_runtime().deactivate_character(request.character_id);
+}
+
+std::expected<void, std::string> ScenarioStartupController::place_current_character_at_address(
+    const Script::AreaAddressPlacementRequest& request) {
+  if (m_manager == nullptr) {
+    return std::expected<void, std::string>{std::unexpect, "scenario manager is not available"};
+  }
+  const std::optional<ControlledCharacterRef> current{m_manager->controlled_character()};
+  if (!current.has_value()) {
+    return std::expected<void, std::string>{std::unexpect,
+        "current controlled character is not established"};
   }
   std::optional<Omikron::IamAreaAddressRecord> resolved_address;
   for (const RuntimeAreaSlot& slot : m_area_slots) {
@@ -1179,21 +1384,20 @@ std::expected<void, std::string> ScenarioStartupController::place_current_charac
         fmt::format("address {} was not found in resident AREAs", request.address_id)};
   }
 
-  for (const RuntimeAreaSlot& slot : m_area_slots) {
-    ScenarioRuntime* runtime{m_manager->world_runtime(slot.world_scene_id)};
-    if (runtime != nullptr && runtime->character_runtime().find(m_current_controlled_character.value()) != nullptr) {
-      auto placed{runtime->character_runtime().place_character_at_address(
-          m_current_controlled_character.value(), resolved_address.value())};
-      if (placed) {
-        App::Log::info(LogCategory::Scenario,
-            "current character placed at address {}", request.address_id);
-      }
-      return placed;
-    }
+  ScenarioRuntime* const runtime{m_manager->world_runtime(current->world_scene_id)};
+  if (runtime == nullptr) {
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format("current controlled character {} world {} is not resident",
+            current->character_id,
+            current->world_scene_id)};
   }
-  return std::expected<void, std::string>{std::unexpect,
-      fmt::format("current controlled character {} is not materialized",
-          m_current_controlled_character.value())};
+  auto placed{runtime->character_runtime().place_character_at_address(
+      current->character_id, resolved_address.value())};
+  if (placed) {
+    App::Log::info(LogCategory::Scenario,
+        "current character placed at address {}", request.address_id);
+  }
+  return placed;
 }
 
 void ScenarioStartupController::service_scene_scripts(const float delta_seconds) {
@@ -1482,9 +1686,12 @@ const Script::AreaScriptRuntime* ScenarioStartupController::area_script() const 
   return m_area_script.has_value() ? &*m_area_script : nullptr;
 }
 
-void ScenarioStartupController::set_current_controlled_character(
-    const std::optional<std::int16_t> character_id) {
-  m_current_controlled_character = character_id;
+std::optional<std::int16_t> ScenarioStartupController::current_controlled_character() const {
+  if (m_manager == nullptr) {
+    return std::nullopt;
+  }
+  const std::optional<ControlledCharacterRef> current{m_manager->controlled_character()};
+  return current.has_value() ? std::optional<std::int16_t>{current->character_id} : std::nullopt;
 }
 
 }  // namespace App

@@ -170,24 +170,83 @@ std::expected<void, std::string> Runtime::activate(const std::int32_t area_id,
       request.apply_area_transform);
 }
 
+std::expected<void, std::string> Runtime::ensure_area_character(const std::int32_t area_id,
+    const Omikron::IamAreaRecord& area,
+    const std::int16_t character_id) {
+  if (character_id < 0) {
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format("invalid negative character ID {}", character_id)};
+  }
+  const auto placement{area.character_by_id(character_id)};
+  if (!placement.has_value()) {
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format("character ID {} not found in owner AREA table 0", character_id)};
+  }
+  const auto definition{area.character_definition_by_character_id(character_id)};
+  if (!definition.has_value()) {
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format("character ID {} has no matching authored AREA table-4 record", character_id)};
+  }
+
+  if (RuntimeCharacter* const existing{find(character_id)}; existing != nullptr) {
+    existing->active = true;
+    existing->area_present = true;
+    existing->area_id = area_id;
+    existing->scene_id.reset();
+    return {};
+  }
+  return materialize_character(area_id,
+      std::nullopt,
+      character_id,
+      placement->serialized_position,
+      placement->orientation_units,
+      definition->name,
+      definition->model_resource,
+      true);
+}
+
+std::expected<void, std::string> Runtime::ensure_scene_character(const std::int32_t area_id,
+    const std::int32_t scene_id,
+    const Omikron::IamSceneRecord& scene,
+    const std::int16_t character_id) {
+  if (character_id < 0) {
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format("invalid negative character ID {}", character_id)};
+  }
+  const auto placement{scene.character_by_id(character_id)};
+  if (!placement.has_value()) {
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format("character ID {} not found in owner SCENE table 0", character_id)};
+  }
+  const auto definition{scene.character_definition_by_character_id(character_id)};
+  if (!definition.has_value()) {
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format("SCENE character {} has no matching definition", character_id)};
+  }
+
+  if (RuntimeCharacter* const existing{find(character_id)}; existing != nullptr) {
+    existing->active = true;
+    existing->area_present = true;
+    existing->area_id = area_id;
+    existing->scene_id = scene_id;
+    return {};
+  }
+  return materialize_character(area_id,
+      scene_id,
+      character_id,
+      placement->serialized_position,
+      placement->orientation_units,
+      definition->name,
+      definition->model_resource,
+      true);
+}
+
 std::expected<void, std::string> Runtime::materialize_scene_characters(const std::int32_t area_id,
     const std::int32_t scene_id,
     const Omikron::IamSceneRecord& scene) {
   const std::vector<Omikron::IamSceneCharacterRecord> placements{scene.character_placements()};
   for (const Omikron::IamSceneCharacterRecord& placement : placements) {
-    const auto definition{scene.character_definition_by_character_id(placement.character_id)};
-    if (!definition.has_value()) {
-      return std::expected<void, std::string>{std::unexpect,
-          fmt::format("SCENE character {} has no matching definition", placement.character_id)};
-    }
-    if (auto result{materialize_character(area_id,
-            scene_id,
-            placement.character_id,
-            placement.serialized_position,
-            placement.orientation_units,
-            definition->name,
-            definition->model_resource,
-            true)};
+    if (auto result{ensure_scene_character(area_id, scene_id, scene, placement.character_id)};
         !result) {
       return result;
     }
@@ -196,15 +255,86 @@ std::expected<void, std::string> Runtime::materialize_scene_characters(const std
 }
 
 void Runtime::dematerialize_scene_characters(const std::int32_t area_id,
-    const std::int32_t scene_id) {
+    const std::int32_t scene_id,
+    const std::optional<std::int16_t> preserved_character_id) {
   for (RuntimeCharacter& character : m_characters) {
     if (character.area_id == area_id && character.scene_id == scene_id) {
+      if (preserved_character_id.has_value() &&
+          character.character_id == preserved_character_id.value()) {
+        character.scene_id.reset();
+        continue;
+      }
       character.active = false;
       character.area_present = false;
       character.scene_id.reset();
       character.pose_revision += 1U;
     }
   }
+}
+
+std::expected<void, std::string> Runtime::set_presentation_enabled(
+    const std::int16_t character_id, const bool enabled) {
+  RuntimeCharacter* const character{find(character_id)};
+  if (character == nullptr) {
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format("current controlled character {} is not materialized", character_id)};
+  }
+  character->presentation_enabled = enabled;
+  return {};
+}
+
+std::expected<void, std::string> Runtime::deactivate_character(const std::int16_t character_id) {
+  RuntimeCharacter* const character{find(character_id)};
+  if (character == nullptr) {
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format("character {} is not materialized", character_id)};
+  }
+  character->active = false;
+  character->area_present = false;
+  character->pose_revision += 1U;
+  return {};
+}
+
+std::expected<RuntimeCharacter, std::string> Runtime::extract_character(
+    const std::int16_t character_id) {
+  const auto found{
+      std::ranges::find(m_characters, character_id, &RuntimeCharacter::character_id)};
+  if (found == m_characters.end()) {
+    return std::expected<RuntimeCharacter, std::string>{std::unexpect,
+        fmt::format("character {} is not materialized", character_id)};
+  }
+  RuntimeCharacter extracted{std::move(*found)};
+  m_characters.erase(found);
+  for (std::size_t index{0}; index < m_characters.size(); ++index) {
+    m_characters.at(index).instance_id = index;
+  }
+  return extracted;
+}
+
+std::expected<void, std::string> Runtime::adopt_character(RuntimeCharacter character) {
+  if (find(character.character_id) != nullptr) {
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format("character {} already belongs to target world", character.character_id)};
+  }
+  if (character.model_resource != nullptr && !character.model_resource_name.empty()) {
+    m_model_resources.try_emplace(character.model_resource_name, character.model_resource);
+  }
+  character.instance_id = m_characters.size();
+  m_characters.push_back(std::move(character));
+  return {};
+}
+
+std::expected<void, std::string> Runtime::transfer_character_to(
+    Runtime& target, const std::int16_t character_id) {
+  if (target.find(character_id) != nullptr) {
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format("character {} already belongs to target world", character_id)};
+  }
+  auto extracted{extract_character(character_id)};
+  if (!extracted) {
+    return std::expected<void, std::string>{std::unexpect, extracted.error()};
+  }
+  return target.adopt_character(std::move(extracted).value());
 }
 
 std::expected<void, std::string> Runtime::place_character_at_address(

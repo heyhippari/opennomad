@@ -2217,7 +2217,7 @@ The contextual arguments around it can still use Scalar16 indirection.
 
 ---
 
-# 80. `0x38` — character lookup/operation
+# 80. `0x38` — `SelectCurrentCharacter`
 
 Handler:
 
@@ -2225,16 +2225,24 @@ Handler:
 0x00402F60
 ```
 
-Current tracing associates this with character-related lookup/activation using
-AREA character context.
+The compact instruction is exactly one Scalar16 operand (three bytes total)
+and does not wait or request a dispatcher yield. OpenNomad resolves that scalar
+before emitting a typed `AreaCharacterSelectionRequest`; an unresolved
+`0x4000` parameter reference remains a structured failure until compact
+parameter blocks are modeled.
 
-Keep the working name:
+The session model keeps a durable selected-body reference:
 
 ```text
-CharacterLookup
+ControlledCharacterRef { authored character ID, owning world-scene ID }
 ```
 
-as provisional until the complete native call path is recovered.
+It is not an AREA-slot index and is not owned by the currently presented
+`WorldScene`. `0x38` resolves the requesting compact context's fixed owner:
+its AREA table 0 first, then its attached SCENE table 0. First selection
+materializes that authored placement and definition; reselection reuses the
+live body without restoring its authored transform or resetting mutable pose.
+The previous selected body remains materialized.
 
 ---
 
@@ -2259,9 +2267,16 @@ Current behavior includes:
 - restoring/reactivating resident runtime character state;
 - optionally applying AREA-authored transform;
 - updating persistent presence state;
-- special `-1` current-character path.
+- special `-1` current-body path, which enables its presentation bit without
+  changing selection or reloading its model.
 
 The original source name remains unknown.
+
+`0x4F` is implemented as `DeactivateCharacter`, also with one Scalar16 and no
+wait. `-1` disables only the selected body's presentation bit; it retains the
+selection and materialized model. A nonnegative authored ID resolves through
+the compact context owner and deactivates its live non-current body. Persistent
+state-bit effects remain an explicit compatibility gap.
 
 ---
 
@@ -2979,9 +2994,9 @@ AREA transition:
 
 | Opcode | Operands | Operation |
 | --- | --- | --- |
-| `0x30` | Scalar16 AREA ID | `ReleaseArea`: release the requested inactive resident AREA after resetting any attached SCENE context/state. |
-| `0x47` | Scalar16 AREA ID, Scalar16 SCENE ID | `AttachAreaScene`: replace/attach the SCENE, queue its independent compact event 1, then commit the prepared destination active. |
-| `0x49` | Scalar16 address ID | `PlaceCurrentCharacterAtAddress`: resolve the address across both resident AREA table-5 collections and move only the established controlled character. |
+| `0x30` | Scalar16 AREA ID | `ReleaseArea`: release the requested inactive resident AREA after resetting any attached SCENE context/state; a world that owns the selected body cannot be unloaded. |
+| `0x47` | Scalar16 AREA ID, Scalar16 SCENE ID | `AttachAreaScene`: replace/attach the SCENE, move a selected source-world body into the destination without reloading it, queue the independent compact event 1, then commit the prepared destination active. |
+| `0x49` | Scalar16 address ID | `PlaceCurrentCharacterAtAddress`: resolve the address across both resident AREA table-5 collections and move the selected body in its exact owning world. |
 
 `0x47`, `0x49`, and `0x30` do not enter a VM wait state. SCENE uses the same
 interpreter and service bridges as AREA, but its compact context is independent:
@@ -3215,7 +3230,7 @@ High-confidence or useful current names:
 | `0x2E` | tracked native operation | provisional |
 | `0x2F` | `BeginAreaTransition` | implemented; state-10 two-slot native wait |
 | `0x30` | `ReleaseArea` | implemented; one Scalar16, nonblocking |
-| `0x38` | `CharacterLookup` | provisional |
+| `0x38` | `SelectCurrentCharacter` | implemented; one Scalar16, nonblocking |
 | `0x39` | `StartScxScript` | strongly recovered |
 | `0x3A` | `StartScxScriptTracked` | strongly recovered |
 | `0x3B` | `StartCharacterScript` | strongly recovered |
@@ -3223,8 +3238,8 @@ High-confidence or useful current names:
 | `0x46` | `OpenInterface` | strongly recovered |
 | `0x47` | `AttachAreaScene` | implemented; two Scalar16 values, nonblocking |
 | `0x49` | `PlaceCurrentCharacterAtAddress` | implemented; one Scalar16, nonblocking |
-| `0x4E` | `ActivateCharacter` | provisional name, behavior traced |
-| `0x4F` | character selection/reset | provisional |
+| `0x4E` | `ActivateCharacter` | implemented current-body presentation enable for `-1`; other behavior traced |
+| `0x4F` | `DeactivateCharacter` | implemented; current-body presentation disable for `-1` |
 | `0x5C` | object activation | provisional |
 | `0x5F` | camera select | provisional |
 | `0x60` | camera move/wait | provisional |

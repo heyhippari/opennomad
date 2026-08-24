@@ -158,13 +158,9 @@ class ScenarioStartupController {
     return m_area_transition.has_value();
   }
   [[nodiscard]] const Script::AreaScriptRuntime* area_script() const;
-  /// Selects the current controlled character for systems which have already
-  /// established an authoritative player identity. This controller never
-  /// infers that identity from a name, model, or placement order.
-  void set_current_controlled_character(std::optional<std::int16_t> character_id);
-  [[nodiscard]] std::optional<std::int16_t> current_controlled_character() const {
-    return m_current_controlled_character;
-  }
+  /// Authored character ID selected by compact IAM for this session, if any.
+  /// The durable owner is ScenarioManager, not this transient AREA context.
+  [[nodiscard]] std::optional<std::int16_t> current_controlled_character() const;
   [[nodiscard]] bool ticked() const {
     return m_ticked;
   }
@@ -209,6 +205,11 @@ class ScenarioStartupController {
       const Script::AreaReleaseRequest& request);
   [[nodiscard]] std::expected<void, std::string> place_current_character_at_address(
       const Script::AreaAddressPlacementRequest& request);
+  [[nodiscard]] std::expected<void, std::string> select_current_character(
+      std::size_t owner_slot, const Script::AreaCharacterSelectionRequest& request);
+  [[nodiscard]] std::expected<void, std::string> set_current_character_presentation(bool enabled);
+  [[nodiscard]] std::expected<void, std::string> deactivate_owner_character(
+      std::size_t owner_slot, const Script::AreaCharacterDeactivationRequest& request);
   void bind_scene_compact_services(Script::AreaScriptRuntime& runtime, std::size_t owner_slot);
   void service_scene_scripts(float delta_seconds);
   [[nodiscard]] std::optional<std::size_t> resident_area_slot(std::int32_t area_id) const;
@@ -255,7 +256,6 @@ class ScenarioStartupController {
   /// Runtime-style AREA mapping: START initializes its linked-AREA value and
   /// 0x47 later replaces the entry with the attached SCENE ID.
   std::unordered_map<std::int32_t, std::int32_t> m_area_mapping;
-  std::optional<std::int16_t> m_current_controlled_character;
 
   std::int16_t m_initial_area_id{0};
   std::int16_t m_linked_area_id{0};

@@ -3533,6 +3533,8 @@ Opcode `0x2F` does not activate scene 55, position the player at address 654,
 release AREA 118, or skip any of those subsequent instructions. Successful
 `0x47` is the presentation commit: source becomes `LoadedInactive`, the
 destination becomes `LoadedActive`, and the source remains resident until its
-explicit `0x30` release. Address lookup for `0x49` scans both resident AREA
-table-5 collections; it never guesses a current character when no authoritative
-selection exists.
+explicit `0x30` release. If compact IAM has selected a current body with `0x38`,
+`0x47` first transfers that single live body to the destination world. Address
+lookup for `0x49` still scans both resident AREA table-5 collections, then
+applies the resolved address only to the selected body's recorded owner world;
+it never guesses a current character when no `0x38` selection exists.

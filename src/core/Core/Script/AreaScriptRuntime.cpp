@@ -38,14 +38,14 @@ constexpr std::uint32_t K_OP_SET_GLOBAL_VARIABLE{0x0E};
 constexpr std::uint32_t K_OP_EQUAL{0x19};
 constexpr std::uint32_t K_OP_BEGIN_AREA_TRANSITION{0x2F};
 constexpr std::uint32_t K_OP_RELEASE_AREA{0x30};
-constexpr std::uint32_t K_OP_CHARACTER_LOOKUP{0x38};
+constexpr std::uint32_t K_OP_SELECT_CURRENT_CHARACTER{0x38};
 constexpr std::uint32_t K_OP_START_SCX_SCRIPT{0x39};
 constexpr std::uint32_t K_OP_START_SCX_SCRIPT_TRACKED{0x3A};
 constexpr std::uint32_t K_OP_START_CHARACTER_SCRIPT{0x3B};
 constexpr std::uint32_t K_OP_START_CHARACTER_SCRIPT_TRACKED{0x3C};
 constexpr std::uint32_t K_OP_START_DIALOG{0x3D};
 constexpr std::uint32_t K_OP_ACTIVATE_CHARACTER{0x4E};
-constexpr std::uint32_t K_OP_CHARACTER_SELECTION_RESET{0x4F};
+constexpr std::uint32_t K_OP_DEACTIVATE_CHARACTER{0x4F};
 constexpr std::uint32_t K_OP_ACTIVATE_SUBSYSTEM{0x68};
 constexpr std::uint32_t K_OP_OBJECT_ACTIVATE{0x5C};
 constexpr std::uint32_t K_OP_CAMERA_SELECT{0x5F};
@@ -167,11 +167,12 @@ constexpr std::array<AreaOpcodeInfo, 31> K_AREA_OPCODE_TABLE{
         .notes = "sets START/global variable <operand 0> to <operand 1>",
         .operands = K_OPERANDS_0E.data(),
         .operand_count = K_OPERANDS_0E.size()},
-    AreaOpcodeInfo{.opcode = K_OP_CHARACTER_LOOKUP,
-        .name = "CharacterLookup",
+    AreaOpcodeInfo{.opcode = K_OP_SELECT_CURRENT_CHARACTER,
+        .name = "SelectCurrentCharacter",
         .support = OpcodeSupport::k_supported,
-        .provisional = true,
-        .notes = "character-related lookup/activation via area table 0",
+        .provisional = false,
+        .notes = "resolves Scalar16 and selects/materializes the owner AREA or attached SCENE "
+                 "character without waiting",
         .operands = K_OPERANDS_38.data(),
         .operand_count = K_OPERANDS_38.size()},
     AreaOpcodeInfo{.opcode = K_OP_START_SCX_SCRIPT,
@@ -216,14 +217,15 @@ constexpr std::array<AreaOpcodeInfo, 31> K_AREA_OPCODE_TABLE{
         .support = OpcodeSupport::k_supported,
         .provisional = true,
         .notes = "reactivates an AREA table-0 character and optionally applies its "
-                 "serialized position/orientation; -1 uses the current-character flag path",
+                 "serialized position/orientation; -1 enables current-body presentation",
         .operands = K_OPERANDS_4E.data(),
         .operand_count = K_OPERANDS_4E.size()},
-    AreaOpcodeInfo{.opcode = K_OP_CHARACTER_SELECTION_RESET,
-        .name = "CharacterSelectionReset",
+    AreaOpcodeInfo{.opcode = K_OP_DEACTIVATE_CHARACTER,
+        .name = "DeactivateCharacter",
         .support = OpcodeSupport::k_supported,
-        .provisional = true,
-        .notes = "character-related selection/reset behavior",
+        .provisional = false,
+        .notes = "-1 disables current-body presentation; other IDs deactivate an owner-resident "
+                 "non-current body without waiting",
         .operands = K_OPERANDS_4F.data(),
         .operand_count = K_OPERANDS_4F.size()},
     AreaOpcodeInfo{.opcode = K_OP_OBJECT_ACTIVATE,
@@ -423,6 +425,14 @@ void AreaScriptRuntime::set_area_address_placement_sink(AreaAddressPlacementSink
 
 void AreaScriptRuntime::set_character_activation_sink(CharacterActivationSink sink) {
   m_character_activation_sink = std::move(sink);
+}
+
+void AreaScriptRuntime::set_character_selection_sink(CharacterSelectionSink sink) {
+  m_character_selection_sink = std::move(sink);
+}
+
+void AreaScriptRuntime::set_character_deactivation_sink(CharacterDeactivationSink sink) {
+  m_character_deactivation_sink = std::move(sink);
 }
 
 void AreaScriptRuntime::set_camera_sink(CameraSink sink) {
@@ -916,6 +926,42 @@ void AreaScriptRuntime::execute_instruction() {
       entry.effect = fmt::format("release AREA {}", request.area_id);
       break;
     }
+    case K_OP_SELECT_CURRENT_CHARACTER: {
+      auto character_id{resolve_scalar16(operands.at(0), "SelectCurrentCharacter")};
+      if (!character_id) {
+        m_pause_info = AreaPauseInfo{.offset = instruction_offset,
+            .opcode = opcode,
+            .opcode_name = std::string{info->name},
+            .reason_text = character_id.error(),
+            .nearby_bytes = nearby_bytes_hex(instruction_offset)};
+        m_state = AreaScriptState::k_failed;
+        return;
+      }
+      if (!m_character_selection_sink) {
+        m_pause_info = AreaPauseInfo{.offset = instruction_offset,
+            .opcode = opcode,
+            .opcode_name = std::string{info->name},
+            .reason_text = "current-character selection bridge is not wired",
+            .nearby_bytes = nearby_bytes_hex(instruction_offset)};
+        m_state = AreaScriptState::k_failed;
+        return;
+      }
+      const AreaCharacterSelectionRequest request{.character_id = character_id.value()};
+      m_last_character_selection_request = request;
+      if (auto selected{m_character_selection_sink(request)}; !selected) {
+        m_pause_info = AreaPauseInfo{.offset = instruction_offset,
+            .opcode = opcode,
+            .opcode_name = std::string{info->name},
+            .reason_text = fmt::format("failed to select current character {}: {}",
+                request.character_id,
+                selected.error()),
+            .nearby_bytes = nearby_bytes_hex(instruction_offset)};
+        m_state = AreaScriptState::k_failed;
+        return;
+      }
+      entry.effect = fmt::format("select current character {}", request.character_id);
+      break;
+    }
     case K_OP_START_SCX_SCRIPT:
     case K_OP_START_SCX_SCRIPT_TRACKED: {
       if (!m_scx_script_sink) {
@@ -1072,18 +1118,9 @@ void AreaScriptRuntime::execute_instruction() {
       break;
     }
     case K_OP_ACTIVATE_CHARACTER: {
-      // Runtime handler 0x00403CB0:
-      //   operand 0 -> CHARACTERS ID, resolved through AREA table 0
-      //   operand 1 -> nonzero: apply table-0 position/orientation
-      //
-      // A normal character is reactivated through 0x0041CCA0 and its AREA
-      // presence bit is set through 0x0040AF30. When operand 1 is nonzero,
-      // 0x0041BDF0 applies the table record's x/y/z/orientation transform.
-      //
-      // character -1 instead operates on the current character and clears
-      // model flag bit 0x2 through 0x0041CED0.
-      //
-      // There is deliberately no wait or dispatcher yield here.
+      // A normal character is reactivated through the compact context's
+      // authored AREA/SCENE data. The -1 form acts on the durable selected
+      // body and changes presentation only. Neither form waits or yields.
       const AreaCharacterActivationRequest request{
           .character_id = static_cast<std::int16_t>(operands.at(0)),
           .apply_area_transform = operands.at(1) != 0};
@@ -1103,10 +1140,48 @@ void AreaScriptRuntime::execute_instruction() {
         }
       }
       entry.effect = request.character_id == -1
-                         ? "clear current-character runtime flag 0x2"
+                         ? "enable current-character presentation"
                          : fmt::format("activate character {}{}",
                                request.character_id,
                                request.apply_area_transform ? " at AREA transform" : "");
+      break;
+    }
+    case K_OP_DEACTIVATE_CHARACTER: {
+      auto character_id{resolve_scalar16(operands.at(0), "DeactivateCharacter")};
+      if (!character_id) {
+        m_pause_info = AreaPauseInfo{.offset = instruction_offset,
+            .opcode = opcode,
+            .opcode_name = std::string{info->name},
+            .reason_text = character_id.error(),
+            .nearby_bytes = nearby_bytes_hex(instruction_offset)};
+        m_state = AreaScriptState::k_failed;
+        return;
+      }
+      if (!m_character_deactivation_sink) {
+        m_pause_info = AreaPauseInfo{.offset = instruction_offset,
+            .opcode = opcode,
+            .opcode_name = std::string{info->name},
+            .reason_text = "character deactivation bridge is not wired",
+            .nearby_bytes = nearby_bytes_hex(instruction_offset)};
+        m_state = AreaScriptState::k_failed;
+        return;
+      }
+      const AreaCharacterDeactivationRequest request{.character_id = character_id.value()};
+      m_last_character_deactivation_request = request;
+      if (auto deactivated{m_character_deactivation_sink(request)}; !deactivated) {
+        m_pause_info = AreaPauseInfo{.offset = instruction_offset,
+            .opcode = opcode,
+            .opcode_name = std::string{info->name},
+            .reason_text = fmt::format("failed to deactivate character {}: {}",
+                request.character_id,
+                deactivated.error()),
+            .nearby_bytes = nearby_bytes_hex(instruction_offset)};
+        m_state = AreaScriptState::k_failed;
+        return;
+      }
+      entry.effect = request.character_id == -1
+                         ? "disable current-character presentation"
+                         : fmt::format("deactivate character {}", request.character_id);
       break;
     }
     case K_OP_PLAY_MUSIC: {

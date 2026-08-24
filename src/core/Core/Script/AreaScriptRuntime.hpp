@@ -73,6 +73,19 @@ struct AreaAddressPlacementRequest {
   std::int16_t address_id{0};
 };
 
+/// Current-character selection requested by compact IAM opcode 0x38. The
+/// scalar operand is an authored character ID; durable current-body ownership
+/// is established by the session sink, not by this compact VM context.
+struct AreaCharacterSelectionRequest {
+  std::int16_t character_id{0};
+};
+
+/// Character removal/presentation request emitted by compact IAM opcode 0x4F.
+/// The session sink interprets -1 as the current body's presentation bit.
+struct AreaCharacterDeactivationRequest {
+  std::int16_t character_id{0};
+};
+
 /// Stable identity of one accepted session-level AREA transition.
 struct AreaTransitionHandle {
   std::uint64_t generation{0};
@@ -134,8 +147,8 @@ struct AreaDialogRequest {
 /// presence bit. When apply_area_transform is true it also applies the
 /// position/orientation serialized in that table-0 record.
 ///
-/// character_id == -1 is Runtime's special current-character path; it clears
-/// model flag bit 0x2 instead of looking up a table-0 record.
+/// character_id == -1 is the current-character path; it enables presentation
+/// for the selected body instead of looking up a table-0 record.
 ///
 /// The AREA VM preserves this operation as a typed request; the active world
 /// owns materialization, model resources and presentation state.
@@ -229,6 +242,14 @@ class AreaScriptRuntime {
   using CharacterActivationSink =
       std::function<std::expected<void, std::string>(const AreaCharacterActivationRequest&)>;
 
+  /// Bridge from 0x38 to session-owned current-character selection.
+  using CharacterSelectionSink =
+      std::function<std::expected<void, std::string>(const AreaCharacterSelectionRequest&)>;
+
+  /// Bridge from 0x4F to the owner world's character lifecycle.
+  using CharacterDeactivationSink =
+      std::function<std::expected<void, std::string>(const AreaCharacterDeactivationRequest&)>;
+
   /// Presentation bridge for 0x5F/0x60. The VM still owns AREA wait/yield
   /// semantics; the sink receives each command exactly once for rendering.
   using CameraSink = std::function<void(const AreaCameraRequest&)>;
@@ -288,6 +309,12 @@ class AreaScriptRuntime {
 
   /// Wires AREA opcode 0x4E to runtime-character activation.
   void set_character_activation_sink(CharacterActivationSink sink);
+
+  /// Wires AREA opcode 0x38 to session-owned current-character selection.
+  void set_character_selection_sink(CharacterSelectionSink sink);
+
+  /// Wires AREA opcode 0x4F to current/non-current character lifecycle.
+  void set_character_deactivation_sink(CharacterDeactivationSink sink);
 
   /// Wires AREA camera opcodes to the world presentation mailbox.
   void set_camera_sink(CameraSink sink);
@@ -407,6 +434,14 @@ class AreaScriptRuntime {
   last_character_activation_request() const {
     return m_last_character_activation_request;
   }
+  [[nodiscard]] const std::optional<AreaCharacterSelectionRequest>&
+  last_character_selection_request() const {
+    return m_last_character_selection_request;
+  }
+  [[nodiscard]] const std::optional<AreaCharacterDeactivationRequest>&
+  last_character_deactivation_request() const {
+    return m_last_character_deactivation_request;
+  }
   [[nodiscard]] const std::optional<AreaCharacterScriptRequest>& last_character_script_request()
       const {
     return m_last_character_script_request;
@@ -496,11 +531,15 @@ class AreaScriptRuntime {
   AreaSceneAttachSink m_area_scene_attach_sink;
   AreaAddressPlacementSink m_area_address_placement_sink;
   CharacterActivationSink m_character_activation_sink;
+  CharacterSelectionSink m_character_selection_sink;
+  CharacterDeactivationSink m_character_deactivation_sink;
   CameraSink m_camera_sink;
   PresentationSink m_presentation_sink;
   CinematicLetterboxSink m_cinematic_letterbox_sink;
   InstructionSink m_instruction_sink;
   std::optional<AreaCharacterActivationRequest> m_last_character_activation_request;
+  std::optional<AreaCharacterSelectionRequest> m_last_character_selection_request;
+  std::optional<AreaCharacterDeactivationRequest> m_last_character_deactivation_request;
   std::optional<AreaCharacterScriptRequest> m_last_character_script_request;
   std::optional<AreaDialogRequest> m_last_dialog_request;
   std::optional<AreaTransitionRequest> m_last_area_transition_request;

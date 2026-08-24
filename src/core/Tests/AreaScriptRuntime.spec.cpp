@@ -26,6 +26,8 @@ using App::Audio::MusicTrackRequest;
 using App::Script::AreaCameraRequest;
 using App::Script::AreaAddressPlacementRequest;
 using App::Script::AreaCharacterActivationRequest;
+using App::Script::AreaCharacterDeactivationRequest;
+using App::Script::AreaCharacterSelectionRequest;
 using App::Script::AreaCinematicLetterboxRequest;
 using App::Script::AreaCharacterScriptLaunchMode;
 using App::Script::AreaCharacterScriptRequest;
@@ -106,6 +108,13 @@ auto recording_interface_sink(
   };
 }
 
+void wire_startup_character_sinks(AreaScriptRuntime& runtime) {
+  runtime.set_character_selection_sink(
+      [](const AreaCharacterSelectionRequest&) -> std::expected<void, std::string> { return {}; });
+  runtime.set_character_deactivation_sink(
+      [](const AreaCharacterDeactivationRequest&) -> std::expected<void, std::string> { return {}; });
+}
+
 }  // namespace
 
 TEST_SUITE("Core::Script::AreaScriptRuntime") {
@@ -150,6 +159,66 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     REQUIRE(captured.has_value());
     CHECK_EQ(captured->address_id, 654);
     CHECK(runtime.wait_info().kind == AreaWaitKind::k_none);
+  }
+
+  TEST_CASE("0x38 selects the current character once and continues through EndEvent") {
+    Buffer bytes;
+    bytes.u8(0x38).u16(73).u8(0x03);
+    AreaScriptRuntime runtime{bytes.data()};
+    std::optional<AreaCharacterSelectionRequest> captured;
+    std::size_t calls{0};
+    runtime.set_character_selection_sink(
+        [&captured, &calls](const AreaCharacterSelectionRequest& request)
+            -> std::expected<void, std::string> {
+          captured = request;
+          ++calls;
+          return {};
+        });
+    runtime.queue_event(1);
+    runtime.activate();
+
+    CHECK(runtime.run() == AreaScriptState::k_ready);
+    REQUIRE(captured.has_value());
+    CHECK_EQ(captured->character_id, 73);
+    CHECK_EQ(calls, 1U);
+    CHECK(runtime.last_character_selection_request().has_value());
+    CHECK(runtime.wait_info().kind == AreaWaitKind::k_none);
+    CHECK_EQ(runtime.instruction_pointer(), bytes.data().size());
+  }
+
+  TEST_CASE("0x38 rejects a parameter-indirected Scalar16 before calling its sink") {
+    Buffer bytes;
+    bytes.u8(0x38).u16(0x4002);
+    AreaScriptRuntime runtime{bytes.data()};
+    std::size_t calls{0};
+    runtime.set_character_selection_sink(
+        [&calls](const AreaCharacterSelectionRequest&) -> std::expected<void, std::string> {
+          ++calls;
+          return {};
+        });
+    runtime.queue_event(1);
+    runtime.activate();
+
+    CHECK(runtime.run() == AreaScriptState::k_failed);
+    CHECK_EQ(calls, 0U);
+    CHECK(runtime.pause_info().reason_text.find("parameter-indirected Scalar16") !=
+          std::string::npos);
+  }
+
+  TEST_CASE("0x38 reports a selection sink failure without advancing") {
+    Buffer bytes;
+    bytes.u8(0x38).u16(73);
+    AreaScriptRuntime runtime{bytes.data()};
+    runtime.set_character_selection_sink(
+        [](const AreaCharacterSelectionRequest&) -> std::expected<void, std::string> {
+          return std::expected<void, std::string>{std::unexpect, "selection unavailable"};
+        });
+    runtime.queue_event(1);
+    runtime.activate();
+
+    CHECK(runtime.run() == AreaScriptState::k_failed);
+    CHECK_EQ(runtime.instruction_pointer(), 0U);
+    CHECK(runtime.pause_info().reason_text.find("selection unavailable") != std::string::npos);
   }
 
   TEST_CASE("0x30 releases its requested AREA without waiting") {
@@ -411,6 +480,7 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     std::optional<MusicTrackRequest> music;
     const InterfaceHandle menu_handle{.interface_id = 29, .generation = 7};
     runtime.set_interface_sink(recording_interface_sink(opened, menu_handle));
+    wire_startup_character_sinks(runtime);
     runtime.set_music_sink([&music](const MusicTrackRequest& request) {
       music = request;
     });
@@ -443,6 +513,7 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
   TEST_CASE("The startup prefix advances using the exact instruction boundaries") {
     const Buffer bytes{make_startup_prefix()};
     AreaScriptRuntime runtime{bytes.data()};
+    wire_startup_character_sinks(runtime);
     runtime.queue_event(1);
     runtime.activate();
     static_cast<void>(runtime.run());
@@ -894,6 +965,7 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
           scripts.push_back(request);
           return 42U;
         });
+    wire_startup_character_sinks(runtime);
 
     runtime.queue_event(1);
     runtime.activate();
@@ -962,6 +1034,7 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
           character_script = request;
           return 77U;
         });
+    wire_startup_character_sinks(runtime);
 
     runtime.queue_event(1);
     runtime.activate();

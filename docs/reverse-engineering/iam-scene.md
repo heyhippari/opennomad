@@ -75,9 +75,18 @@ definitions, queues event 1, and sets `areaMapping[areaId] = sceneId`. A
 zero-object SCENE succeeds; nonempty scene-object materialization remains an
 explicit compatibility gap.
 
+When the durable selected body belongs to the source world, the same `0x47`
+handoff moves its complete `RuntimeCharacter` into the prepared destination
+world before activation. The transfer preserves transform, animation, pose,
+overlays, runtime objects, and immutable shared model resource; it creates no
+second logical owner and does not invoke the target model loader. SCENE
+replacement/dematerialization similarly leaves a selected body live.
+
 `0x2F` prepares the alternate AREA/world while it stays inactive. Successful
 `0x47` is the presentation commit: the prepared destination becomes active and
-the source remains loaded/inactive until `0x30` explicitly releases it.
+the source remains loaded/inactive until `0x30` explicitly releases it. Once a
+selected source body has transferred, that release can safely unload the source
+without invalidating session selection.
 
 Related: [`iam-area.md`](iam-area.md), [`iam-scenario-vm.md`](iam-scenario-vm.md),
 and [`startup-sequence.md`](startup-sequence.md).

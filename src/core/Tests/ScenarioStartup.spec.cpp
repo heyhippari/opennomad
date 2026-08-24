@@ -133,11 +133,13 @@ std::vector<std::byte> make_area_archive() {
   write_name(data, k_record_offset + 0x58, "GRID");
   write_name(data, k_record_offset + 0x61, "GRID");
 
-  // Retail-shaped AREA table-0 placement for character 310.
+  // AREA table-0 placements selected by the compact startup and New Game paths.
   constexpr std::size_t k_placement_offset{0x0B4};
   constexpr std::size_t k_definition_offset{0x1D4};
+  constexpr std::size_t k_second_placement_offset{k_placement_offset + 0x14U};
+  constexpr std::size_t k_second_definition_offset{k_definition_offset + 0x114U};
   write_u32(data, k_record_offset + 0x28, k_placement_offset);
-  write_u16(data, k_record_offset + 0x48, 1);
+  write_u16(data, k_record_offset + 0x48, 2);
   write_u16(data, k_record_offset + k_placement_offset + 0x00U, 0xFFFF);
   write_u16(data, k_record_offset + k_placement_offset + 0x02U, 310);
   const std::int32_t position_x{-2588};
@@ -154,10 +156,17 @@ std::vector<std::byte> make_area_archive() {
       sizeof(position_z));
   write_u16(data, k_record_offset + k_placement_offset + 0x10U, 4084);
   write_u16(data, k_record_offset + k_placement_offset + 0x12U, 468);
+  write_u16(data, k_record_offset + k_second_placement_offset + 0x00U, 0xFFFF);
+  write_u16(data, k_record_offset + k_second_placement_offset + 0x02U, 136);
+  write_u32(data, k_record_offset + k_second_placement_offset + 0x04U, 100U);
+  write_u32(data, k_record_offset + k_second_placement_offset + 0x08U, 200U);
+  write_u32(data, k_record_offset + k_second_placement_offset + 0x0CU, 300U);
+  write_u16(data, k_record_offset + k_second_placement_offset + 0x10U, 0);
+  write_u16(data, k_record_offset + k_second_placement_offset + 0x12U, 469);
 
   // The authored body resolves by the character identity stored at +0x110.
   write_u32(data, k_record_offset + 0x28U + (4U * 4U), k_definition_offset);
-  write_u16(data, k_record_offset + 0x48U + (4U * 2U), 1);
+  write_u16(data, k_record_offset + 0x48U + (4U * 2U), 2);
   constexpr std::string_view k_character_name{"KAY'L 669"};
   std::memcpy(data.data() + k_record_offset + k_definition_offset + 0x08U,
       k_character_name.data(),
@@ -167,6 +176,14 @@ std::vector<std::byte> make_area_archive() {
       k_model_name.data(),
       k_model_name.size());
   write_u16(data, k_record_offset + k_definition_offset + 0x110U, 310);
+  constexpr std::string_view k_current_character_name{"CURRENT CHARACTER"};
+  std::memcpy(data.data() + k_record_offset + k_second_definition_offset + 0x08U,
+      k_current_character_name.data(),
+      k_current_character_name.size());
+  std::memcpy(data.data() + k_record_offset + k_second_definition_offset + 0x90U,
+      k_model_name.data(),
+      k_model_name.size());
+  write_u16(data, k_record_offset + k_second_definition_offset + 0x110U, 136);
 
   std::memcpy(data.data() + k_record_offset + 0x3FC, script.data(), script.size());
   return data;
@@ -174,6 +191,8 @@ std::vector<std::byte> make_area_archive() {
 
 std::vector<std::byte> make_handoff_area_archive() {
   Buffer handoff;
+  handoff.u8(0x38).u16(136);
+  handoff.u8(0x4F).u16(0xFFFF);
   handoff.u8(0x2F).u16(222).u16(0xFFFF).u16(0xFFFF);
   handoff.u8(0x60).u16(0).u16(1).u16(0);
   handoff.u8(0x47).u16(222).u16(0);
@@ -182,15 +201,36 @@ std::vector<std::byte> make_handoff_area_archive() {
   handoff.u8(0x03);
 
   constexpr std::size_t k_source_offset{0x800};
-  constexpr std::size_t k_target_offset{0x900};
+  constexpr std::size_t k_target_offset{0xC00};
   constexpr std::size_t k_header_size{0xB4};
+  constexpr std::size_t k_source_placement_offset{k_header_size};
+  constexpr std::size_t k_source_definition_offset{k_source_placement_offset + 0x14U};
+  constexpr std::size_t k_source_script_offset{k_source_definition_offset + 0x114U};
+  const std::size_t source_record_size{k_source_script_offset + handoff.data().size()};
   constexpr std::size_t k_target_record_size{k_header_size + 0x10U};
   std::vector<std::byte> data(k_target_offset + k_target_record_size, std::byte{});
   write_u32(data, 118U * 8U, static_cast<std::uint32_t>(k_source_offset));
-  write_u32(data, (118U * 8U) + 4U, static_cast<std::uint32_t>(k_header_size + handoff.data().size()));
-  write_u32(data, k_source_offset + 0x04U, k_header_size);
+  write_u32(data, (118U * 8U) + 4U, static_cast<std::uint32_t>(source_record_size));
+  write_u32(data, k_source_offset + 0x04U, k_source_script_offset);
   write_name(data, k_source_offset + 0x61U, "GRID");
-  std::memcpy(data.data() + k_source_offset + k_header_size,
+  write_u32(data, k_source_offset + 0x28U, k_source_placement_offset);
+  write_u16(data, k_source_offset + 0x48U, 1);
+  write_u16(data, k_source_offset + k_source_placement_offset + 0x00U, 0xFFFF);
+  write_u16(data, k_source_offset + k_source_placement_offset + 0x02U, 136);
+  write_u32(data, k_source_offset + k_source_placement_offset + 0x04U, 100U);
+  write_u32(data, k_source_offset + k_source_placement_offset + 0x08U, 200U);
+  write_u32(data, k_source_offset + k_source_placement_offset + 0x0CU, 300U);
+  write_u16(data, k_source_offset + k_source_placement_offset + 0x10U, 0);
+  write_u32(data, k_source_offset + 0x28U + (4U * 4U), k_source_definition_offset);
+  write_u16(data, k_source_offset + 0x48U + (4U * 2U), 1);
+  constexpr std::string_view k_source_name{"CURRENT CHARACTER"};
+  constexpr std::string_view k_source_model{"CURRENT_BODY"};
+  std::memcpy(data.data() + k_source_offset + k_source_definition_offset + 0x08U,
+      k_source_name.data(), k_source_name.size());
+  std::memcpy(data.data() + k_source_offset + k_source_definition_offset + 0x90U,
+      k_source_model.data(), k_source_model.size());
+  write_u16(data, k_source_offset + k_source_definition_offset + 0x110U, 136);
+  std::memcpy(data.data() + k_source_offset + k_source_script_offset,
       handoff.data().data(), handoff.data().size());
 
   write_u32(data, 222U * 8U, static_cast<std::uint32_t>(k_target_offset));
@@ -212,7 +252,7 @@ std::vector<std::byte> make_handoff_scene_archive() {
   constexpr std::size_t k_table0_offset{0x44};
   constexpr std::size_t k_table4_offset{k_table0_offset + 0x14U};
   constexpr std::size_t k_script_offset{k_table4_offset + 0x114U};
-  constexpr std::size_t k_table6_offset{k_script_offset + 1U};
+  constexpr std::size_t k_table6_offset{k_script_offset + 12U};
   std::vector<std::byte> data(k_record_offset + k_table6_offset, std::byte{});
   write_u32(data, 0, static_cast<std::uint32_t>(k_record_offset));
   write_u32(data, 4, static_cast<std::uint32_t>(k_table6_offset));
@@ -245,7 +285,14 @@ std::vector<std::byte> make_handoff_scene_archive() {
   std::memcpy(data.data() + k_record_offset + k_table4_offset + 0x90U,
       k_model.data(), k_model.size());
   write_u16(data, k_record_offset + k_table4_offset + 0x110U, 57);
-  data.at(k_record_offset + k_script_offset) = std::byte{0x57};
+  data.at(k_record_offset + k_script_offset + 0U) = std::byte{0x38};
+  write_u16(data, k_record_offset + k_script_offset + 1U, 57);
+  data.at(k_record_offset + k_script_offset + 3U) = std::byte{0x4F};
+  write_u16(data, k_record_offset + k_script_offset + 4U, 0xFFFF);
+  data.at(k_record_offset + k_script_offset + 6U) = std::byte{0x4E};
+  write_u16(data, k_record_offset + k_script_offset + 7U, 0xFFFF);
+  write_u16(data, k_record_offset + k_script_offset + 9U, 0);
+  data.at(k_record_offset + k_script_offset + 11U) = std::byte{0x03};
   return data;
 }
 
@@ -375,7 +422,25 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     App::ScenarioStartupController controller;
     REQUIRE(controller.initialize(manager).has_value());
 
-    REQUIRE(controller.tick().has_value());  // 0x2F accepts and waits.
+    App::ScenarioRuntime* source_runtime{manager.world_runtime(0)};
+    REQUIRE(source_runtime != nullptr);
+    source_runtime->character_runtime().set_model_loader(
+        [](const std::string_view name)
+            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
+          auto resource{std::make_shared<App::Character::ModelResource>()};
+          resource->name = name;
+          resource->groups.push_back(App::Omikron::MaterialGroup{});
+          return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
+        });
+
+    REQUIRE(controller.tick().has_value());  // 0x38 selects, then 0x2F accepts and waits.
+    const App::Character::RuntimeCharacter* initial_current{
+        source_runtime->character_runtime().find(136)};
+    REQUIRE(initial_current != nullptr);
+    CHECK(initial_current->active);
+    CHECK(initial_current->area_present);
+    CHECK_EQ(initial_current->serialized_area_position.at(0), 100);
+    CHECK_FALSE(initial_current->presentation_enabled);
     REQUIRE(controller.tick().has_value());  // Target prepares, then camera wait.
     const App::RuntimeAreaSlot* source{controller.runtime_area_slot(0)};
     const App::RuntimeAreaSlot* destination{controller.runtime_area_slot(1)};
@@ -397,9 +462,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
           resource->groups.push_back(App::Omikron::MaterialGroup{});
           return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
         });
-    controller.set_current_controlled_character(57);
-
-    REQUIRE(controller.tick(1.0F).has_value());  // 0x47, 0x49, 0x30, then SCENE 0x57 pause.
+    REQUIRE(controller.tick(1.0F).has_value());  // 0x47, 0x49, 0x30, then SCENE selection.
     source = controller.runtime_area_slot(0);
     destination = controller.runtime_area_slot(1);
     REQUIRE(source != nullptr);
@@ -408,19 +471,31 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK_EQ(destination->primary_area_id, 222);
     CHECK_EQ(destination->scene_id, 0);
     REQUIRE(destination->scene_script.has_value());
-    CHECK(destination->scene_script->state() == AreaScriptState::k_paused_unsupported);
-    CHECK_EQ(destination->scene_script->pause_info().opcode, 0x57U);
+    CHECK(destination->scene_script->state() == AreaScriptState::k_ready);
     CHECK_EQ(controller.active_area_slot(), 1U);
     CHECK_EQ(manager.world_contexts()[0].residency, WorldSceneResidencyState::Free);
     CHECK_EQ(manager.world_contexts()[1].residency, WorldSceneResidencyState::LoadedActive);
     CHECK_EQ(controller.area_mapping(222), std::optional<std::int32_t>{0});
     CHECK_FALSE(controller.area_mapping(118).has_value());
-    const App::Character::RuntimeCharacter* character{destination_runtime->character_runtime().find(57)};
+    const std::optional<App::ControlledCharacterRef> current{manager.controlled_character()};
+    REQUIRE(current.has_value());
+    CHECK_EQ(current->character_id, 57);
+    CHECK_EQ(current->world_scene_id, 1U);
+    CHECK_EQ(controller.current_controlled_character(), std::optional<std::int16_t>{57});
+    const App::Character::RuntimeCharacter* character{destination_runtime->character_runtime().find(136)};
     REQUIRE(character != nullptr);
     CHECK_EQ(character->serialized_area_position.at(0), 43922);
     CHECK_EQ(character->serialized_area_position.at(1), 2592);
     CHECK_EQ(character->serialized_area_position.at(2), 19656);
     CHECK_EQ(character->serialized_orientation_units, 0);
+    CHECK_FALSE(character->presentation_enabled);
+    CHECK_FALSE(character->renderable());
+    const App::Character::RuntimeCharacter* destination_character{
+        destination_runtime->character_runtime().find(57)};
+    REQUIRE(destination_character != nullptr);
+    CHECK_EQ(destination_character->serialized_area_position.at(0), 49457);
+    CHECK(destination_character->presentation_enabled);
+    CHECK(destination_character->renderable());
   }
 
   TEST_CASE("Startup reaches the main menu through START, AREA 118 and interface 29") {
@@ -456,6 +531,17 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK(controller.area_script()->state() == AreaScriptState::k_ready);
     CHECK_FALSE(controller.main_menu_active());
 
+    App::ScenarioRuntime* runtime{manager.world_runtime(0)};
+    REQUIRE(runtime != nullptr);
+    runtime->character_runtime().set_model_loader(
+        [](const std::string_view name)
+            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
+          auto resource{std::make_shared<App::Character::ModelResource>()};
+          resource->name = name;
+          resource->groups.push_back(App::Omikron::MaterialGroup{});
+          return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
+        });
+
     controller.dispatcher().set_interface_open_sink(
         [](const App::InterfaceOpenRequest& request)
             -> std::expected<App::InterfaceHandle, std::string> {
@@ -468,6 +554,11 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK(controller.main_menu_active());
     CHECK(controller.area_script()->state() == AreaScriptState::k_waiting);
     CHECK_EQ(controller.area_script()->wait_state(), 6U);
+    CHECK_EQ(controller.current_controlled_character(), std::optional<std::int16_t>{136});
+    const App::Character::RuntimeCharacter* current{runtime->character_runtime().find(136)};
+    REQUIRE(current != nullptr);
+    CHECK_FALSE(current->presentation_enabled);
+    CHECK_FALSE(current->renderable());
   }
 
   TEST_CASE("A negative initial area ID fails startup cleanly") {

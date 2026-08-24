@@ -222,6 +222,64 @@ TEST_SUITE("Core::Character::Runtime") {
     CHECK_EQ(character->transform.matrix.values, preserved_matrix.values);
   }
 
+  TEST_CASE("Current-body ensure, presentation, and transfer retain live state without reloading") {
+    const App::Omikron::IamAreaRecord area{make_area()};
+    std::size_t source_loads{0};
+    std::size_t target_loads{0};
+    App::Character::Runtime source{
+        [&source_loads](const std::string_view name)
+            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
+          ++source_loads;
+          return fake_resource(name);
+        }};
+    App::Character::Runtime target{
+        [&target_loads](const std::string_view)
+            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
+          ++target_loads;
+          return std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string>{
+              std::unexpect, "target must adopt the shared source resource"};
+        }};
+
+    REQUIRE(source.ensure_area_character(118, area, 310).has_value());
+    App::Character::RuntimeCharacter* character{source.find(310)};
+    REQUIRE(character != nullptr);
+    const std::shared_ptr<const App::Character::ModelResource> source_resource{character->model_resource};
+    character->transform.translation = App::Runtime::Vec3{11.0F, 22.0F, 33.0F};
+    character->pose_revision = 17U;
+    REQUIRE(source.set_presentation_enabled(310, false).has_value());
+    CHECK_FALSE(character->renderable());
+
+    // Current-character reselection only reactivates the existing body; it
+    // does not restore its authored transform or reset its mutable pose.
+    REQUIRE(source.ensure_area_character(118, area, 310).has_value());
+    character = source.find(310);
+    REQUIRE(character != nullptr);
+    CHECK_EQ(character->transform.translation.x, 11.0F);
+    CHECK_EQ(character->pose_revision, 17U);
+    CHECK_FALSE(character->presentation_enabled);
+
+    REQUIRE(source.transfer_character_to(target, 310).has_value());
+    CHECK(source.find(310) == nullptr);
+    character = target.find(310);
+    REQUIRE(character != nullptr);
+    CHECK_EQ(character->instance_id, 0U);
+    CHECK(character->model_resource == source_resource);
+    CHECK_EQ(character->transform.translation.x, 11.0F);
+    CHECK_EQ(character->transform.translation.y, 22.0F);
+    CHECK_EQ(character->transform.translation.z, 33.0F);
+    CHECK_EQ(character->pose_revision, 17U);
+    CHECK_FALSE(character->presentation_enabled);
+    CHECK_FALSE(character->renderable());
+    CHECK_EQ(source_loads, 1U);
+    CHECK_EQ(target_loads, 0U);
+    CHECK_EQ(target.model_resource_count(), 1U);
+
+    REQUIRE(target.set_presentation_enabled(310, true).has_value());
+    character = target.find(310);
+    REQUIRE(character != nullptr);
+    CHECK(character->renderable());
+  }
+
   TEST_CASE("SCENE-only characters use SCENE definitions and cleanly dematerialize") {
     const App::Omikron::IamSceneRecord scene{make_scene()};
     std::size_t loads{0};
