@@ -21,6 +21,7 @@
 #include "Core/Omikron/Model3DO.hpp"
 #include "Core/Omikron/SCX.hpp"
 #include "Core/Omikron/SFX.hpp"
+#include "Core/RuntimeMath.hpp"
 #include "Core/Scenario/ScenarioRuntime.hpp"
 #include "Core/Script/AreaScriptRuntime.hpp"
 #include "Core/Script/ScriptRuntime.hpp"
@@ -209,6 +210,58 @@ App::Omikron::Model3DOData make_movable_decor() {
   decor.hierarchy_reachable = {1U};
   decor.skin_parent_index = {-1};
   decor.runtime_objects.push_back(App::Omikron::Model3DOData::RuntimeObjectState{});
+  return decor;
+}
+
+void append_world_pose_path(BodyResourcesFixture& fixture) {
+  Buffer path;
+  path.u32(1).chars("WorldPose", 20).u32(1).u32(2);
+  for (std::uint32_t parameter{0}; parameter < 2U; ++parameter) {
+    path.u32(parameter)
+        .f32(700.0F)
+        .f32(-120.0F)
+        .f32(325.0F)
+        .f32(0.70710677F)
+        .f32(0.0F)
+        .f32(0.0F)
+        .f32(0.70710677F);
+  }
+  const std::size_t payload_offset{fixture.bytes.size()};
+  fixture.bytes.insert(fixture.bytes.end(), path.data().begin(), path.data().end());
+  fixture.scx.section0_records.push_back(App::Omikron::ScxSection0Record{.name = "WorldPose.3dp"});
+  fixture.scx.section0_resources.push_back(App::Omikron::ScxEmbeddedResource{
+      .payload_offset = payload_offset, .payload_size = path.data().size()});
+}
+
+App::Omikron::Model3DOData make_parented_movable_decor() {
+  App::Omikron::Model3DOData decor;
+  decor.meshes.push_back(App::Omikron::MeshDescriptor{.mesh_id = 10U,
+      .name = "Parent",
+      .parent_id = -1,
+      .first_child_id = 11,
+      .next_sibling_id = -1});
+  decor.meshes.push_back(App::Omikron::MeshDescriptor{.mesh_id = 11U,
+      .name = "Movable",
+      .parent_id = 10,
+      .first_child_id = -1,
+      .next_sibling_id = 12});
+  decor.meshes.push_back(App::Omikron::MeshDescriptor{.mesh_id = 12U,
+      .name = "Sibling",
+      .parent_id = 10,
+      .first_child_id = -1,
+      .next_sibling_id = -1});
+  decor.root_mesh_index = 0;
+  decor.hierarchy_parent_index = {-1, 0, 0};
+  decor.hierarchy_first_child_index = {1, -1, -1};
+  decor.hierarchy_next_sibling_index = {-1, 2, -1};
+  decor.hierarchy_reachable = {1U, 1U, 1U};
+  decor.skin_parent_index = {-1, 0, 0};
+  decor.runtime_objects = {
+      App::Omikron::Model3DOData::RuntimeObjectState{.local_offset = {100.0F, 200.0F, 300.0F},
+          .local_matrix = App::Runtime::rotation_z(1.57079632679F)},
+      App::Omikron::Model3DOData::RuntimeObjectState{.local_offset = {4.0F, 0.0F, 0.0F}},
+      App::Omikron::Model3DOData::RuntimeObjectState{.local_offset = {0.0F, 5.0F, 0.0F}},
+  };
   return decor;
 }
 
@@ -650,6 +703,56 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
     REQUIRE(after.has_value());
     REQUIRE_EQ(after->size(), 1U);
     CHECK_EQ(after->front().vertices.front().position.at(0), doctest::Approx(-478.393341F));
+  }
+
+  TEST_CASE("MoveObjectOnPath converts a sampled world pose below a rotated parent") {
+    BodyResourcesFixture resources{make_body_resources()};
+    append_world_pose_path(resources);
+    App::ScenarioRuntime runtime;
+    REQUIRE(runtime.initialize(resources.scx, resources.bytes, "parented-decor", nullptr, false)
+            .has_value());
+
+    App::Omikron::Model3DOData decor{make_parented_movable_decor()};
+    REQUIRE(App::Omikron::Model3DO::resolve_runtime_transforms(decor, decor.runtime_objects)
+            .has_value());
+    const auto sibling_before{decor.runtime_objects.at(2)};
+    const auto immutable_child{decor.meshes.at(1)};
+    runtime.bind_decor_model(&decor);
+
+    const App::Script::MoveObjectOnPathRequest request{.object_binding = "Movable",
+        .path_descriptor_index = 1U,
+        .subpath_index = 0U,
+        .interpolation_mode = 1U,
+        .direction = 0U,
+        .transform_rebase_mode = 0U,
+        .duration_frames = 1.0F,
+        .previous_parameter = 0.0F,
+        .current_parameter = 1.0F};
+    REQUIRE(runtime.move_object_on_path(request).has_value());
+    CHECK_EQ(runtime.decor_pose_revision(), 1U);
+
+    const auto poses{runtime.decor_runtime_objects()};
+    const auto& moved{poses[1]};
+    CHECK_EQ(moved.world_translation.x, doctest::Approx(700.0F));
+    CHECK_EQ(moved.world_translation.y, doctest::Approx(-120.0F));
+    CHECK_EQ(moved.world_translation.z, doctest::Approx(325.0F));
+    const App::Runtime::Matrix3 expected_world{
+        App::Runtime::quaternion_matrix({.w = 0.70710677F, .z = 0.70710677F})};
+    for (std::size_t index{0}; index < expected_world.values.size(); ++index) {
+      CHECK_EQ(moved.world_matrix.values.at(index),
+          doctest::Approx(expected_world.values.at(index)).epsilon(0.0001));
+    }
+
+    const auto& sibling_after{poses[2]};
+    CHECK_EQ(
+        sibling_after.world_translation.x, doctest::Approx(sibling_before.world_translation.x));
+    CHECK_EQ(
+        sibling_after.world_translation.y, doctest::Approx(sibling_before.world_translation.y));
+    CHECK_EQ(
+        sibling_after.world_translation.z, doctest::Approx(sibling_before.world_translation.z));
+    CHECK_EQ(decor.meshes.at(1).name, immutable_child.name);
+    CHECK_EQ(decor.meshes.at(1).parent_id, immutable_child.parent_id);
+    CHECK_EQ(decor.meshes.at(1).mesh_id, immutable_child.mesh_id);
   }
 }
 

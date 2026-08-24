@@ -536,6 +536,15 @@ float InterfaceManager::render_dialog(const Dialog::DialogPresentation& dialog,
       dialog, selected_choice, scroll_offset, m_fonts, pixel_width, pixel_height, counters);
 }
 
+void InterfaceManager::render_world_subtitle(
+    const std::string_view text, const int pixel_width, const int pixel_height) {
+  if (m_renderer == nullptr || text.empty()) {
+    return;
+  }
+  Debug::I2DCounters counters;
+  m_renderer->render_world_subtitle(text, m_fonts, pixel_width, pixel_height, counters);
+}
+
 void InterfaceManager::set_background_interpolated(const bool interpolated) {
   for (const auto& instance : m_instances) {
     if (instance->background != nullptr) {

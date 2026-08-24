@@ -106,9 +106,10 @@ std::vector<std::byte> make_new_game_script() {
   bytes.u8(0x5F).u16(2172).u16(0).u16(2);
   bytes.u8(0x5F).u16(2148).u16(130).u16(2);
   bytes.u8(0x4E).u16(310).u16(1);
-  // The trailing compact Scalar16 is presentation metadata, not an SCX
-  // ScriptLaunchContext parameter.
-  bytes.u8(0x3C).u16(310).u16(1).u16(123);
+  bytes.u8(0x3C).u16(310).u16(1).u16(0);
+  bytes.u8(0x3B).u16(310).u16(6).u16(0);
+  bytes.u8(0x77).u32(0xFFFFFFFFU).u16(45).u16(0);
+  bytes.u8(0x3D).u16(272);
   bytes.zeros(0x11FU - bytes.data().size());
   bytes.u8(0x03);
   return bytes.data();
@@ -187,21 +188,53 @@ std::vector<std::byte> make_area_archive() {
   return data;
 }
 
+std::vector<std::byte> make_object_activation_area_archive(const std::uint16_t object_id) {
+  std::vector<std::byte> data{make_area_archive()};
+  Buffer script;
+  script.u8(0x5C).u16(object_id).u8(0x03);
+  constexpr std::size_t k_record_offset{0x800U};
+  constexpr std::size_t k_script_offset{0x3FCU};
+  std::memcpy(
+      data.data() + k_record_offset + k_script_offset, script.data().data(), script.data().size());
+  return data;
+}
+
+std::vector<std::byte> make_object_archive(const std::uint16_t object_id,
+    const std::uint16_t object_type,
+    const std::string_view stem,
+    const std::string_view subtitle) {
+  constexpr std::size_t k_record_stride{0x800U};
+  constexpr std::size_t k_record_size{0x518U};
+  constexpr std::size_t k_type_offset{0x02U};
+  constexpr std::size_t k_stem_offset{0x0EU};
+  constexpr std::size_t k_subtitle_offset{0x118U};
+  const std::size_t record_offset{static_cast<std::size_t>(object_id) * k_record_stride};
+  std::vector<std::byte> data(record_offset + k_record_stride, std::byte{});
+  write_u16(data, record_offset + k_type_offset, object_type);
+  std::memcpy(data.data() + record_offset + k_stem_offset, stem.data(), stem.size());
+  std::memcpy(data.data() + record_offset + k_subtitle_offset, subtitle.data(), subtitle.size());
+  return data;
+}
+
 /// Synthetic AREA-222-shaped contact fixture. The top-level context selects a
 /// current body and enables zone 3795; the record-relative zone event selects
 /// a move, toggles the controller, self-disables, waits on a camera, then
 /// toggles the controller off and ends.
-std::vector<std::byte> make_zone_contact_area_archive() {
+std::vector<std::byte> make_zone_contact_area_archive(const bool starts_dialog = false) {
   Buffer top_level;
   top_level.u8(0x38).u16(136);
   top_level.u8(0x40).u16(3795);
   top_level.u8(0x03);
   Buffer zone_event;
-  zone_event.u8(0x3F).u16(100);
-  zone_event.u8(0x68);
-  zone_event.u8(0x41).u16(3795);
-  zone_event.u8(0x60).u16(0).u16(1).u16(3);
-  zone_event.u8(0x69);
+  if (starts_dialog) {
+    zone_event.u8(0x3D).u16(272);
+  } else {
+    zone_event.u8(0x3F).u16(100);
+    zone_event.u8(0x68);
+    zone_event.u8(0x41).u16(3795);
+    zone_event.u8(0x60).u16(0).u16(1).u16(3);
+    zone_event.u8(0x69);
+  }
   zone_event.u8(0x03);
 
   constexpr std::size_t k_record_offset{0x800};
@@ -425,6 +458,129 @@ std::vector<std::byte> make_kayl_arrives_scx(const std::uint16_t script_id = 1) 
   return bytes.data();
 }
 
+/// One fixed 0x64-byte SCX source-script record.
+Buffer& append_scx_script_record(Buffer& descriptor,
+    const std::string_view name,
+    const std::uint16_t script_id,
+    const std::uint32_t root_count) {
+  descriptor.u32(0)
+      .chars(name, 22)
+      .u16(script_id)
+      .u16(0)
+      .u16(0)
+      .u32(root_count)
+      .u32(0)
+      .u32(0)
+      .u32(0)
+      .u32(0)
+      .i32(1)
+      .u32(0)
+      .zeros(3U * 4U)
+      .zeros(3U * 4U)
+      .u32(0)
+      .u32(0)
+      .zeros(8);
+  return descriptor;
+}
+
+/// Synthetic, fully executable shape of Grid's 1KaylArrives. It deliberately
+/// keeps the authored names/command shape but uses tiny in-memory resources so
+/// the tracked-child regression has no retail-data dependency.
+std::vector<std::byte> make_complete_kayl_arrives_scx() {
+  constexpr std::uint32_t k_section0_tag{0xDEAD0000U};
+  constexpr std::uint32_t k_animations_tag{0xDEAD0001U};
+  constexpr std::uint32_t k_select_relative_body_animation{0x0200002AU};
+
+  Buffer descriptor;
+  descriptor.u32(k_section0_tag).u32(1);
+  descriptor.chars("Grid_pb.3dp", 24).u32(0).u32(1);
+  descriptor.u32(k_animations_tag).u32(1);
+  descriptor.chars("INTRO1.3DA", 24).u32(0).u32(0).u32(77);
+  descriptor.u32(K_SCRIPTS_TAG).u32(2);
+  append_scx_script_record(descriptor, "1KaylArrives", 1, 1);
+  append_scx_script_record(descriptor, "KaylContinues", 6, 0);
+  descriptor.u32(12);
+  descriptor
+      .u32(0)     // binding table A index
+      .u32(0)     // animation index
+      .f32(0.0F)  // mutable previous frame
+      .f32(1.0F)  // mutable current frame
+      .f32(0.0F)
+      .f32(0.0F)
+      .f32(0.0F)
+      .u32(0)  // path index
+      .u32(0)  // subpath index
+      .f32(0.0F)
+      .f32(0.0F)
+      .f32(0.0F);
+  descriptor.u8(0);  // 1KaylArrives has no related script.
+  descriptor.u32(k_select_relative_body_animation).u32(12).u32(0).i32(-1).u32(1).u32(0);
+  descriptor.u32(1).u64(0).chars("UBassin", 21);  // binding table A
+  descriptor.u32(0);                              // binding table B
+  descriptor.u8(0);                               // script 6 has no related script.
+  descriptor.u32(0).u32(0);                       // empty binding tables
+  descriptor.u32(K_END_TAG);
+
+  Buffer path;
+  path.u32(1).chars("UBas.p1", 20).u32(2).u32(3);
+  for (std::uint32_t key{0}; key < 3U; ++key) {
+    path.u32(key).f32(10.0F).f32(20.0F).f32(30.0F).f32(1.0F).f32(0.0F).f32(0.0F).f32(0.0F);
+  }
+
+  constexpr std::uint32_t k_animation_descriptor_end{8U + 0x28U};
+  constexpr std::uint32_t k_rotation_offset{k_animation_descriptor_end + (3U * 12U)};
+  Buffer animation;
+  animation.u32(2).u32(1);
+  animation.u32(1)
+      .chars("UBassin", 20)
+      .u32(3)
+      .u32(k_animation_descriptor_end)
+      .u32(3)
+      .u32(k_rotation_offset);
+  for (std::uint32_t frame{0}; frame < 3U; ++frame) {
+    animation.f32(0.0F).f32(0.0F).f32(0.0F);
+  }
+  for (std::uint32_t frame{0}; frame < 3U; ++frame) {
+    animation.f32(1.0F).f32(0.0F).f32(0.0F).f32(0.0F);
+  }
+
+  Buffer header;
+  header.u32(K_SCX_MAGIC).u32(5).u32(8).u32(static_cast<std::uint32_t>(descriptor.data().size()));
+  std::vector<std::byte> result{header.data()};
+  result.insert(result.end(), descriptor.data().begin(), descriptor.data().end());
+  const auto append_resource = [&result](const std::vector<std::byte>& payload) {
+    const std::size_t resource_offset{result.size()};
+    result.resize(resource_offset + 8U, std::byte{});
+    write_u32(result, resource_offset, static_cast<std::uint32_t>(resource_offset));
+    write_u32(result, resource_offset + 4U, static_cast<std::uint32_t>(payload.size()));
+    result.insert(result.end(), payload.begin(), payload.end());
+  };
+  append_resource(path.data());
+  append_resource(animation.data());
+  return result;
+}
+
+std::vector<std::byte> make_dialog_archive(const std::uint16_t dialog_id) {
+  Buffer record;
+  record.u16(310).u16(1).u16(0).u16(0);
+  record.zeros(0x10U);  // Four condition offsets.
+  record.zeros(0x10U);  // Four action offsets.
+  record.u32(0x48U);
+  record.u16(0xFFFFU).u16(0xFFFFU).u16(0xFFFFU).u16(0xFFFFU);
+  record.u16(0).chars("FACE", 10);
+  record.u16(0xFFFFU).u16(0xFFFFU).u16(0xFFFFU).u16(0xFFFFU);
+  record.chars("Portal dialog", 15).zeros(5);
+
+  const std::size_t entry{(static_cast<std::size_t>(dialog_id >> 8U) * 0x800U) +
+                          (static_cast<std::size_t>(dialog_id & 0xFFU) * 8U)};
+  constexpr std::size_t k_record_offset{0x1000U};
+  std::vector<std::byte> archive(k_record_offset + record.data().size(), std::byte{});
+  write_u32(archive, entry, k_record_offset);
+  write_u32(archive, entry + 4U, static_cast<std::uint32_t>(record.data().size()));
+  std::memcpy(archive.data() + k_record_offset, record.data().data(), record.data().size());
+  return archive;
+}
+
 /// Minimal valid header-only .3DO (OD3X + version 4, all sections empty),
 /// accepted by Model3DO::load without game data.
 std::vector<std::byte> make_minimal_3do() {
@@ -521,6 +677,14 @@ void write_boot_fixtures(const TempDirectory& temp) {
 void write_zone_contact_fixtures(const TempDirectory& temp) {
   write_bytes(temp.root() / "IAM" / "START", make_start());
   write_bytes(temp.root() / "IAM" / "AREA", make_zone_contact_area_archive());
+  write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
+  write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_minimal_scx());
+}
+
+void write_zone_dialog_fixtures(const TempDirectory& temp) {
+  write_bytes(temp.root() / "IAM" / "START", make_start());
+  write_bytes(temp.root() / "IAM" / "AREA", make_zone_contact_area_archive(true));
+  write_bytes(temp.root() / "IAM" / "DIALOG", make_dialog_archive(272));
   write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
   write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_minimal_scx());
 }
@@ -622,6 +786,32 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     // The disabled zone is not recreated while the actor remains inside it.
     REQUIRE(controller.tick(1.0F / 30.0F).has_value());
     CHECK_EQ(controller.zone_contact_count(), 0U);
+  }
+
+  TEST_CASE("zone-owned StartDialog enters the shared global dialog takeover") {
+    const TempDirectory temp;
+    write_zone_dialog_fixtures(temp);
+    const ScopedGameDataRoot root{temp.root()};
+
+    App::ScenarioManager manager;
+    App::ScenarioStartupController controller;
+    REQUIRE(controller.initialize(manager).has_value());
+    App::ScenarioRuntime* runtime{manager.world_runtime(0)};
+    REQUIRE(runtime != nullptr);
+    runtime->character_runtime().set_model_loader(
+        [](const std::string_view name)
+            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
+          auto resource{std::make_shared<App::Character::ModelResource>()};
+          resource->name = name;
+          resource->groups.push_back(App::Omikron::MaterialGroup{});
+          return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
+        });
+
+    REQUIRE(controller.tick().has_value());
+    CHECK_EQ(controller.zone_contact_count(), 1U);
+    CHECK(controller.dialog_takeover_active());
+    CHECK_EQ(controller.dialog_takeover_id(), std::optional<std::int16_t>{272});
+    CHECK(manager.dialog_runtime().active());
   }
 
   TEST_CASE(
@@ -911,10 +1101,11 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK(result.error().find("negative") != std::string::npos);
   }
 
-  TEST_CASE("New Game materializes character 310 before tracked script state 4") {
+  TEST_CASE("New Game tracked 1KaylArrives completes and reaches dialog 272") {
     const TempDirectory temp;
     write_boot_fixtures(temp);
-    write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_kayl_arrives_scx());
+    write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_complete_kayl_arrives_scx());
+    write_bytes(temp.root() / "IAM" / "DIALOG", make_dialog_archive(272));
     const ScopedGameDataRoot root{temp.root()};
 
     App::ScenarioManager manager;
@@ -934,6 +1125,19 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
             -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
           auto resource{std::make_shared<App::Character::ModelResource>()};
           resource->name = name;
+          resource->model.meshes.push_back(App::Omikron::MeshDescriptor{.mesh_id = 1U,
+              .script_id = 1U,
+              .name = "UBassin",
+              .parent_id = -1,
+              .first_child_id = -1,
+              .next_sibling_id = -1});
+          resource->model.root_mesh_index = 0;
+          resource->model.hierarchy_parent_index = {-1};
+          resource->model.hierarchy_first_child_index = {-1};
+          resource->model.hierarchy_next_sibling_index = {-1};
+          resource->model.hierarchy_reachable = {1U};
+          resource->model.skin_parent_index = {-1};
+          resource->model.runtime_objects = {App::Omikron::Model3DOData::RuntimeObjectState{}};
           resource->groups.push_back(App::Omikron::MaterialGroup{});
           return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
         });
@@ -960,7 +1164,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     const App::Script::AreaScriptRuntime* area_script{controller.area_script()};
     REQUIRE(area_script != nullptr);
     CHECK(area_script->state() == App::Script::AreaScriptState::k_waiting);
-    CHECK_EQ(area_script->runtime_state(), 4U);
+    CHECK_EQ(area_script->runtime_state(), 1U);
     CHECK_EQ(area_script->instruction_pointer(), 0x9CU);
     CHECK(area_script->wait_info().kind == App::Script::AreaWaitKind::k_character_script);
     REQUIRE(area_script->wait_info().character_script_instance.has_value());
@@ -969,7 +1173,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
           App::Script::AreaCharacterScriptTarget::k_explicit);
     CHECK_EQ(area_script->last_character_script_request()->character_id,
         std::optional<std::int16_t>{310});
-    CHECK_EQ(area_script->last_character_script_request()->camera_duration_units, 123);
+    CHECK_EQ(area_script->last_character_script_request()->camera_duration_units, 0);
 
     const App::Character::RuntimeCharacter* character{
         context->runtime->character_runtime().find(310)};
@@ -994,19 +1198,106 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     context->runtime->tick(1.0F / 30.0F);
     instance = script_runtime->instance(instance_id);
     REQUIRE(instance != nullptr);
-    CHECK(instance->paused);
+    CHECK_FALSE(instance->paused);
     CHECK_FALSE(instance->completed);
-    CHECK_EQ(instance->pause_info.opcode, 0x0200002AU);
-    CHECK_EQ(instance->pause_info.opcode_name, "Script_SelectRelativeBodyAnimation");
-    CHECK_EQ(instance->pause_info.character_id, std::optional<std::int16_t>{310});
-    CHECK(instance->pause_info.reason == App::Script::ScriptPauseReason::k_invalid_argument_count);
+    context->runtime->tick(1.0F / 30.0F);
+    CHECK(instance->completed);
 
-    // AREA remains on the exact malformed child and no duplicate launch was created.
+    // Startup polls the exact completed child, resumes at +0x9C, launches
+    // script 310/6 once, yields for presentation, then enters DIALOG 272.
+    REQUIRE(controller.tick().has_value());
+    CHECK_EQ(area_script->instruction_pointer(), 0xACU);
+    REQUIRE_EQ(script_runtime->instances().size(), 2U);
+    REQUIRE(controller.tick().has_value());
+    CHECK(controller.dialog_takeover_active());
+    CHECK_EQ(controller.dialog_takeover_id(), std::optional<std::int16_t>{272});
+    CHECK(manager.dialog_runtime().active());
     CHECK_EQ(area_script->runtime_state(), 4U);
-    CHECK_EQ(area_script->instruction_pointer(), 0x9CU);
-    CHECK_EQ(area_script->wait_info().character_script_instance,
-        std::optional<std::size_t>{instance_id});
-    CHECK_EQ(script_runtime->instances().size(), 1U);
+    CHECK_EQ(area_script->instruction_pointer(), 0xAFU);
+    CHECK(area_script->wait_info().kind == App::Script::AreaWaitKind::k_none);
+  }
+
+  TEST_CASE("OBJECTS non-image types submit VOICEOFF audio and a recovered-lifetime subtitle") {
+    const TempDirectory temp;
+    write_bytes(temp.root() / "IAM" / "START", make_start());
+    write_bytes(temp.root() / "IAM" / "AREA", make_object_activation_area_archive(141U));
+    write_bytes(temp.root() / "IAM" / "OBJECT",
+        make_object_archive(141U, 7U, "ZVO M010 Agression", "123456789012345678901234567890"));
+    write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
+    write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_minimal_scx());
+    const ScopedGameDataRoot root{temp.root()};
+    App::ScenarioManager manager;
+    App::ScenarioStartupController controller;
+    REQUIRE(controller.initialize(manager).has_value());
+    REQUIRE(controller.tick().has_value());
+
+    const auto voice{manager.world_presentation().take_voice_over()};
+    REQUIRE(voice.has_value());
+    CHECK_EQ(voice->object_id, 141);
+    CHECK_EQ(voice->audio_path, "VOICEOFF/ZVO M010 Agression.ADP");
+    const auto subtitle{manager.world_presentation().take_subtitle()};
+    REQUIRE(subtitle.has_value());
+    CHECK_EQ(subtitle->text, "123456789012345678901234567890");
+    CHECK_EQ(subtitle->duration_ms, 2400U);
+    const App::Script::AreaScriptRuntime* runtime{controller.area_script()};
+    REQUIRE(runtime != nullptr);
+    CHECK(runtime->last_run_yielded());
+    CHECK(runtime->wait_info().kind == App::Script::AreaWaitKind::k_none);
+  }
+
+  TEST_CASE("OBJECTS ZVOT substitution, -1, and type 0x10 remain safe") {
+    SUBCASE("ZVOT uses the recovered JINGOFF3 replacement") {
+      const TempDirectory temp;
+      write_bytes(temp.root() / "IAM" / "START", make_start());
+      write_bytes(temp.root() / "IAM" / "AREA", make_object_activation_area_archive(141U));
+      write_bytes(
+          temp.root() / "IAM" / "OBJECT", make_object_archive(141U, 0U, "ZVOT Intro", "short"));
+      write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
+      write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_minimal_scx());
+      const ScopedGameDataRoot root{temp.root()};
+      App::ScenarioManager manager;
+      App::ScenarioStartupController controller;
+      REQUIRE(controller.initialize(manager).has_value());
+      REQUIRE(controller.tick().has_value());
+      const auto voice{manager.world_presentation().take_voice_over()};
+      REQUIRE(voice.has_value());
+      CHECK_EQ(voice->audio_path, "VOICEOFF/JINGOFF3.ADP");
+      const auto subtitle{manager.world_presentation().take_subtitle()};
+      REQUIRE(subtitle.has_value());
+      CHECK_EQ(subtitle->duration_ms, 2000U);
+    }
+
+    SUBCASE("-1 does not require IAM/OBJECT") {
+      const TempDirectory temp;
+      write_bytes(temp.root() / "IAM" / "START", make_start());
+      write_bytes(temp.root() / "IAM" / "AREA", make_object_activation_area_archive(0xFFFFU));
+      write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
+      write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_minimal_scx());
+      const ScopedGameDataRoot root{temp.root()};
+      App::ScenarioManager manager;
+      App::ScenarioStartupController controller;
+      REQUIRE(controller.initialize(manager).has_value());
+      REQUIRE(controller.tick().has_value());
+      CHECK_EQ(manager.world_presentation().pending_voice_over_count(), 0U);
+      CHECK_EQ(manager.world_presentation().pending_subtitle_count(), 0U);
+    }
+
+    SUBCASE("type 0x10 is not treated as voice-over") {
+      const TempDirectory temp;
+      write_bytes(temp.root() / "IAM" / "START", make_start());
+      write_bytes(temp.root() / "IAM" / "AREA", make_object_activation_area_archive(141U));
+      write_bytes(temp.root() / "IAM" / "OBJECT",
+          make_object_archive(141U, 0x10U, "NOT_A_VOICE", "not speech"));
+      write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
+      write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_minimal_scx());
+      const ScopedGameDataRoot root{temp.root()};
+      App::ScenarioManager manager;
+      App::ScenarioStartupController controller;
+      REQUIRE(controller.initialize(manager).has_value());
+      REQUIRE(controller.tick().has_value());
+      CHECK_EQ(manager.world_presentation().pending_voice_over_count(), 0U);
+      CHECK_EQ(manager.world_presentation().pending_subtitle_count(), 0U);
+    }
   }
 }
 

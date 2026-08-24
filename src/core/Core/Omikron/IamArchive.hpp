@@ -45,4 +45,33 @@ class IamIndexedArchive {
   std::span<const std::byte> m_data;
 };
 
+/// Checked reader for Runtime's other IAM file-storage mode: fixed-size
+/// records stored at a fixed byte stride, with no {offset,size} index.
+///
+/// Runtime's generic IAM loader takes both a record size and a final stride
+/// argument. When that stride is positive it seeks directly to:
+///
+///     record_id * stride
+///
+/// and reads exactly `record_size` bytes. IAM/OBJECT uses this mode with a
+/// 0x518-byte record in each 0x800-byte slot.
+class IamFixedStrideArchive {
+ public:
+  IamFixedStrideArchive(std::span<const std::byte> data,
+      std::size_t record_size,
+      std::size_t stride)
+      : m_data(data), m_record_size(record_size), m_stride(stride) {}
+
+  /// Returns the fixed-size record for `id`. A zero-filled slot is still a
+  /// present record; unlike IamIndexedArchive there is no serialized size
+  /// field whose zero value can mean "absent".
+  [[nodiscard]] std::expected<std::span<const std::byte>, std::string> read_record(
+      std::uint32_t id) const;
+
+ private:
+  std::span<const std::byte> m_data;
+  std::size_t m_record_size{0};
+  std::size_t m_stride{0};
+};
+
 }  // namespace App::Omikron

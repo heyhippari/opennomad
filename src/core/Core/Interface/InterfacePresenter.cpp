@@ -1,6 +1,7 @@
 #include "Core/Interface/InterfacePresenter.hpp"
 
 #include <cstddef>
+#include <string_view>
 
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Dialog/DialogRuntime.hpp"
@@ -46,6 +47,13 @@ float InterfacePresenter::render_dialog(const Dialog::DialogPresentation& dialog
         dialog, selected_choice, scroll_offset, pixel_width, pixel_height);
   }
   return 0.0F;
+}
+
+void InterfacePresenter::render_world_subtitle(
+    const std::string_view text, const int pixel_width, const int pixel_height) {
+  if (m_manager != nullptr) {
+    m_manager->render_world_subtitle(text, pixel_width, pixel_height);
+  }
 }
 
 }  // namespace App::Interface

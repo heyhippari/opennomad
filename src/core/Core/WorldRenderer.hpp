@@ -124,6 +124,9 @@ class WorldRenderer {
   std::unordered_map<std::size_t, std::unique_ptr<CharacterGpuModel>> m_character_models;
   std::vector<std::string> m_failed_character_models;
   std::uint64_t m_decor_pose_revision{0};
+  /// Last accepted posed-decor bounds, retained only for mutation diagnostics.
+  WorldBounds m_decor_pose_bounds{};
+  std::size_t m_decor_pose_vertex_count{0};
 
   WorldBounds m_bounds{};
 };

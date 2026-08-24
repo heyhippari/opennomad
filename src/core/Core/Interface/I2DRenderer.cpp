@@ -184,8 +184,8 @@ std::expected<void, std::string> I2DRenderer::initialize() {
 
   auto overlay_shader{Shader::create(K_OVERLAY_VERTEX_SOURCE, K_OVERLAY_FRAGMENT_SOURCE)};
   if (!overlay_shader) {
-    return std::expected<void, std::string>{std::unexpect,
-        fmt::format("I2D presentation overlay shader: {}", overlay_shader.error())};
+    return std::expected<void, std::string>{
+        std::unexpect, fmt::format("I2D presentation overlay shader: {}", overlay_shader.error())};
   }
   m_overlay_shader = std::make_unique<Shader>(std::move(overlay_shader).value());
 
@@ -371,9 +371,8 @@ void I2DRenderer::render(const InterfaceInstance& instance,
         // elements divide the RGB components by two.
         const float red{
             encoded_from_byte(selected ? text->red : static_cast<std::uint8_t>(text->red / 2U))};
-        const float green{
-            encoded_from_byte(
-                selected ? text->green : static_cast<std::uint8_t>(text->green / 2U))};
+        const float green{encoded_from_byte(
+            selected ? text->green : static_cast<std::uint8_t>(text->green / 2U))};
         const float blue{
             encoded_from_byte(selected ? text->blue : static_cast<std::uint8_t>(text->blue / 2U))};
         const std::array<float, 4> tint{red, green, blue, 1.0F};
@@ -543,16 +542,15 @@ float I2DRenderer::render_dialog(const Dialog::DialogPresentation& dialog,
         k_dialog_text_width,
         k_dialog_main_viewport_height,
         dialog_font->line_height(),
-        [dialog_font](const std::string_view text) { return dialog_font->measure(text); })};
+        [dialog_font](const std::string_view text) {
+          return dialog_font->measure(text);
+        })};
     maximum_scroll = layout.max_scroll();
-    float origin_y{k_dialog_main_viewport_top -
-        std::clamp(scroll_offset, 0.0F, layout.max_scroll())};
+    float origin_y{
+        k_dialog_main_viewport_top - std::clamp(scroll_offset, 0.0F, layout.max_scroll())};
     for (const DialogTextLine& line : layout.lines) {
-      draw_line(*dialog_font,
-          line.text,
-          k_dialog_text_left,
-          origin_y,
-          dialog_main_tint(dialog.state));
+      draw_line(
+          *dialog_font, line.text, k_dialog_text_left, origin_y, dialog_main_tint(dialog.state));
       origin_y += dialog_font->line_height();
     }
 
@@ -560,24 +558,23 @@ float I2DRenderer::render_dialog(const Dialog::DialogPresentation& dialog,
     glGetIntegerv(GL_SCISSOR_BOX, previous_scissor.data());
     const GLboolean scissor_was_enabled{glIsEnabled(GL_SCISSOR_TEST)};
     const float scale{transform.pixels_per_reference_unit};
-    const int scissor_x{std::clamp(static_cast<int>(std::lround(
-                                        (k_dialog_text_left - transform.logical_left) * scale)),
+    const int scissor_x{std::clamp(
+        static_cast<int>(std::lround((k_dialog_text_left - transform.logical_left) * scale)),
         0,
         pixel_width)};
-    const int scissor_right{std::clamp(static_cast<int>(std::lround(
-                                            ((k_dialog_text_left + k_dialog_text_width) -
-                                                transform.logical_left) *
-                                            scale)),
+    const int scissor_right{std::clamp(
+        static_cast<int>(std::lround(
+            ((k_dialog_text_left + k_dialog_text_width) - transform.logical_left) * scale)),
         0,
         pixel_width)};
-    const int scissor_y{std::clamp(static_cast<int>(std::lround(
-                                        (k_reference_height - (k_dialog_main_viewport_top +
-                                                                  k_dialog_main_viewport_height)) *
-                                        scale)),
+    const int scissor_y{std::clamp(
+        static_cast<int>(std::lround(
+            (k_reference_height - (k_dialog_main_viewport_top + k_dialog_main_viewport_height)) *
+            scale)),
         0,
         pixel_height)};
-    const int scissor_top{std::clamp(static_cast<int>(std::lround(
-                                          (k_reference_height - k_dialog_main_viewport_top) * scale)),
+    const int scissor_top{std::clamp(
+        static_cast<int>(std::lround((k_reference_height - k_dialog_main_viewport_top) * scale)),
         0,
         pixel_height)};
     glEnable(GL_SCISSOR_TEST);
@@ -611,7 +608,9 @@ float I2DRenderer::render_dialog(const Dialog::DialogPresentation& dialog,
           k_dialog_text_width,
           k_dialog_response_max_height,
           dialog_font->line_height(),
-          [dialog_font](const std::string_view text) { return dialog_font->measure(text); }));
+          [dialog_font](const std::string_view text) {
+            return dialog_font->measure(text);
+          }));
       const std::size_t visible_line_count{
           std::min(maximum_response_lines, response_layouts.back().lines.size())};
       response_heights.push_back(
@@ -644,6 +643,79 @@ float I2DRenderer::render_dialog(const Dialog::DialogPresentation& dialog,
   Texture2D::unbind();
   VertexArray::unbind();
   return maximum_scroll;
+}
+
+void I2DRenderer::render_world_subtitle(const std::string_view text,
+    FontManager& fonts,
+    const int pixel_width,
+    const int pixel_height,
+    Debug::I2DCounters& counters) {
+  if (!m_initialized || text.empty() || pixel_width <= 0 || pixel_height <= 0) {
+    return;
+  }
+  const I2DPresentationTransform transform{make_presentation_transform(pixel_width, pixel_height)};
+  const FontResource* font{
+      fonts.ensure_font(dialog_font_key(), transform.pixels_per_reference_unit)};
+  if (font == nullptr) {
+    return;
+  }
+  const DialogTextLayout layout{format_dialog_text(text,
+      k_dialog_text_width,
+      k_dialog_main_viewport_height,
+      font->line_height(),
+      [font](const std::string_view value) {
+        return font->measure(value);
+      })};
+  if (layout.lines.empty()) {
+    return;
+  }
+  glViewport(0, 0, pixel_width, pixel_height);
+  glDisable(GL_DEPTH_TEST);
+  glDisable(GL_CULL_FACE);
+  glEnable(GL_BLEND);
+  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+  m_shader->bind();
+  m_shader->set_uniform_mat4(
+      "u_mvp", std::span<const GLfloat, 16>{glm::value_ptr(transform.projection), 16});
+  m_shader->set_uniform_int("u_texture0", 0);
+  reset();
+  float origin_y{k_dialog_main_viewport_top +
+                 ((k_dialog_main_viewport_height - layout.formatted_height) * 0.5F)};
+  for (const DialogTextLine& line : layout.lines) {
+    float cursor_x{(k_reference_width - line.width) * 0.5F};
+    std::size_t byte_offset{0};
+    while (byte_offset < line.text.size()) {
+      const auto glyph{font->next_glyph(line.text, byte_offset)};
+      if (!glyph.has_value()) {
+        continue;
+      }
+      if (glyph->visible) {
+        push_quad(font->texture(),
+            cursor_x + glyph->x0,
+            origin_y + glyph->y0,
+            cursor_x + glyph->x1,
+            origin_y + glyph->y1,
+            glyph->u_left,
+            glyph->v_top,
+            glyph->u_right,
+            glyph->v_bottom,
+            k_dialog_white,
+            I2DBlitOptions{});
+        counters.glyphs += 1U;
+        counters.quads += 1U;
+      }
+      cursor_x += glyph->advance_x;
+    }
+    origin_y += font->line_height();
+  }
+  flush();
+  counters.draw_calls += m_commands.size();
+  glDisable(GL_BLEND);
+  glEnable(GL_CULL_FACE);
+  glEnable(GL_DEPTH_TEST);
+  Shader::unbind();
+  Texture2D::unbind();
+  VertexArray::unbind();
 }
 
 void I2DRenderer::reset() {

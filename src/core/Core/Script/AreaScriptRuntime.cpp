@@ -386,8 +386,8 @@ constexpr std::array<AreaOpcodeInfo, 49> K_AREA_OPCODE_TABLE{
     AreaOpcodeInfo{.opcode = K_OP_OBJECT_ACTIVATE,
         .name = "ObjectActivate",
         .support = OpcodeSupport::k_supported,
-        .provisional = true,
-        .notes = "object-related activation/load behavior",
+        .provisional = false,
+        .notes = "submits a nonblocking IAM/OBJECT presentation and yields one dispatcher turn",
         .operands = K_OPERANDS_5C.data(),
         .operand_count = K_OPERANDS_5C.size()},
     AreaOpcodeInfo{.opcode = K_OP_CAMERA_SELECT,
@@ -594,6 +594,10 @@ void AreaScriptRuntime::set_character_script_sink(CharacterScriptSink sink) {
 
 void AreaScriptRuntime::set_dialog_sink(DialogSink sink) {
   m_dialog_sink = std::move(sink);
+}
+
+void AreaScriptRuntime::set_object_activation_sink(ObjectActivationSink sink) {
+  m_object_activation_sink = std::move(sink);
 }
 
 void AreaScriptRuntime::set_area_transition_sink(AreaTransitionSink sink) {
@@ -1795,6 +1799,32 @@ void AreaScriptRuntime::execute_instruction() {
                          : fmt::format("deactivate character {}", request.character_id);
       break;
     }
+    case K_OP_OBJECT_ACTIVATE: {
+      auto object_id{resolve_scalar16(operands.at(0), "ObjectActivate OBJECTS ID")};
+      if (!object_id) {
+        fail_instruction(object_id.error());
+        return;
+      }
+      if (!m_object_activation_sink) {
+        fail_instruction("OBJECTS activation bridge is not wired");
+        return;
+      }
+      const AreaObjectActivationRequest request{.object_id = object_id.value()};
+      m_last_object_activation_request = request;
+      if (auto activated{m_object_activation_sink(request)}; !activated) {
+        fail_instruction(fmt::format(
+            "OBJECTS ID {} activation failed: {}", request.object_id, activated.error()));
+        return;
+      }
+      // The recovered handler marks the ordinary compact dispatcher yield
+      // flag but does not install a typed wait.  The next scenario tick
+      // resumes at the instruction following ObjectActivate.
+      m_yield_requested = true;
+      entry.effect = request.object_id == -1
+                         ? "OBJECTS activation skipped for -1"
+                         : fmt::format("activate OBJECTS ID {}", request.object_id);
+      break;
+    }
     case K_OP_PLAY_MUSIC: {
       const Audio::MusicTrackRequest request{
           .track_id = static_cast<std::int16_t>(operands.at(0)),
@@ -2082,6 +2112,16 @@ void AreaScriptRuntime::execute_instruction() {
         "area script waiting (kind={}, wait state={})",
         static_cast<int>(m_wait.kind),
         m_wait_state);
+    if (m_wait.kind == AreaWaitKind::k_character_script && m_wait.character_script.has_value() &&
+        m_wait.character_script_instance.has_value()) {
+      App::Log::debug(LogCategory::Script,
+          "tracked character-script wait entered — compactIp=+{:#x} target={} script={} "
+          "instance={}",
+          m_ip,
+          m_wait.character_script->character_id.value_or(-1),
+          m_wait.character_script->script_id,
+          m_wait.character_script_instance.value());
+    }
   }
 }
 

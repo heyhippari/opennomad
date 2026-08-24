@@ -7,6 +7,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "Core/Dialog/DialogRuntime.hpp"
@@ -164,6 +165,10 @@ class InterfaceManager {
       float scroll_offset,
       int pixel_width,
       int pixel_height);
+
+  /// Renders neutral world subtitle presentation using the shared I2D font
+  /// resources, without making it an interface or dialog runtime state.
+  void render_world_subtitle(std::string_view text, int pixel_width, int pixel_height);
 
   /// Creates a state owned by `instance`; returns its address (nullptr when
   /// the allocation fails).

@@ -38,6 +38,7 @@ using App::Script::AreaCharacterSelectionRequest;
 using App::Script::AreaCharacterValueRequest;
 using App::Script::AreaCinematicLetterboxRequest;
 using App::Script::AreaDialogRequest;
+using App::Script::AreaObjectActivationRequest;
 using App::Script::AreaPersistentObjectCollectionRequest;
 using App::Script::AreaPresentationRequest;
 using App::Script::AreaReleaseRequest;
@@ -123,11 +124,14 @@ Buffer make_new_game_event_script() {
   bytes.u8(0x04).u16(0x00A6);  // +0x76 -> +0x11F
 
   // Retail branch at +0x79, selected when interface-29 result != 0.
-  bytes.u8(0x77).u32(0).u16(30).u16(0);      // +0x79
-  bytes.u8(0x5F).u16(2172).u16(0).u16(2);    // +0x82
-  bytes.u8(0x5F).u16(2148).u16(130).u16(2);  // +0x89
-  bytes.u8(0x4E).u16(310).u16(1);            // +0x90
-  bytes.u8(0x3C).u16(310).u16(1).u16(0);     // +0x95
+  bytes.u8(0x77).u32(0).u16(30).u16(0);            // +0x79
+  bytes.u8(0x5F).u16(2172).u16(0).u16(2);          // +0x82
+  bytes.u8(0x5F).u16(2148).u16(130).u16(2);        // +0x89
+  bytes.u8(0x4E).u16(310).u16(1);                  // +0x90
+  bytes.u8(0x3C).u16(310).u16(1).u16(0);           // +0x95
+  bytes.u8(0x3B).u16(310).u16(6).u16(0);           // +0x9C
+  bytes.u8(0x77).u32(0xFFFFFFFFU).u16(45).u16(0);  // +0xA3
+  bytes.u8(0x3D).u16(272);                         // +0xAC
 
   bytes.zeros(0x11FU - bytes.data().size());
   bytes.u8(0x03);  // +0x11F
@@ -151,6 +155,10 @@ void wire_startup_character_sinks(AreaScriptRuntime& runtime) {
       });
   runtime.set_character_deactivation_sink(
       [](const AreaCharacterDeactivationRequest&) -> std::expected<void, std::string> {
+        return {};
+      });
+  runtime.set_object_activation_sink(
+      [](const AreaObjectActivationRequest&) -> std::expected<void, std::string> {
         return {};
       });
 }
@@ -562,6 +570,81 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     CHECK_EQ(request->object_id, 314);
     CHECK(runtime.wait_info().kind == AreaWaitKind::k_none);
     CHECK_EQ(runtime.instruction_pointer(), bytes.data().size());
+  }
+
+  TEST_CASE("0x5C resolves Scalar16, skips -1 loading, and yields without a typed wait") {
+    Buffer bytes;
+    bytes.u8(0x5C).u16(0x4000).u8(0x03);
+    AreaScriptRuntime runtime{bytes.data()};
+    const std::array<std::int16_t, 1> parameters{141};
+    runtime.set_scalar16_parameters(parameters);
+    std::vector<AreaObjectActivationRequest> requests;
+    runtime.set_object_activation_sink(
+        [&requests](
+            const AreaObjectActivationRequest& request) -> std::expected<void, std::string> {
+          requests.push_back(request);
+          return {};
+        });
+    runtime.queue_event(1);
+    runtime.activate();
+
+    CHECK(runtime.run() == AreaScriptState::k_running);
+    CHECK(runtime.last_run_yielded());
+    CHECK(runtime.wait_info().kind == AreaWaitKind::k_none);
+    REQUIRE_EQ(requests.size(), 1U);
+    CHECK_EQ(requests.front().object_id, 141);
+    CHECK_EQ(runtime.instruction_pointer(), 3U);
+    CHECK(runtime.run() == AreaScriptState::k_ready);
+
+    Buffer minus_one;
+    minus_one.u8(0x5C).u16(0xFFFF).u8(0x03);
+    AreaScriptRuntime skipped{minus_one.data()};
+    std::optional<AreaObjectActivationRequest> skipped_request;
+    skipped.set_object_activation_sink(
+        [&skipped_request](
+            const AreaObjectActivationRequest& request) -> std::expected<void, std::string> {
+          skipped_request = request;
+          return {};
+        });
+    skipped.queue_event(1);
+    skipped.activate();
+    CHECK(skipped.run() == AreaScriptState::k_running);
+    REQUIRE(skipped_request.has_value());
+    CHECK_EQ(skipped_request->object_id, -1);
+    CHECK(skipped.wait_info().kind == AreaWaitKind::k_none);
+  }
+
+  TEST_CASE("OBJECTS presentation is submitted before a following tracked character launch") {
+    Buffer bytes;
+    bytes.u8(0x5C).u16(141);
+    bytes.u8(0x3C).u16(58).u16(267).u16(0);
+    AreaScriptRuntime runtime{bytes.data()};
+    std::vector<std::string> order;
+    runtime.set_object_activation_sink(
+        [&order](const AreaObjectActivationRequest&) -> std::expected<void, std::string> {
+          order.emplace_back("object");
+          return {};
+        });
+    runtime.set_character_script_sink(
+        [&order](
+            const AreaCharacterScriptRequest& request) -> std::expected<std::size_t, std::string> {
+          order.emplace_back("tracked");
+          CHECK_EQ(request.character_id, std::optional<std::int16_t>{58});
+          CHECK_EQ(request.script_id, 267U);
+          CHECK(request.mode == AreaCharacterScriptLaunchMode::k_tracked);
+          return 44U;
+        });
+    runtime.queue_event(1);
+    runtime.activate();
+
+    CHECK(runtime.run() == AreaScriptState::k_running);
+    REQUIRE_EQ(order.size(), 1U);
+    CHECK_EQ(order.front(), "object");
+    CHECK(runtime.last_run_yielded());
+    CHECK(runtime.run() == AreaScriptState::k_waiting);
+    REQUIRE_EQ(order.size(), 2U);
+    CHECK_EQ(order.back(), "tracked");
+    CHECK(runtime.wait_info().kind == AreaWaitKind::k_character_script);
   }
 
   TEST_CASE("0x47 attaches a SCENE without waiting and continues to EndEvent") {
@@ -1597,7 +1680,7 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     CHECK_EQ(runtime.evaluation_stack_depth(), 0U);
   }
 
-  TEST_CASE("Retail New Game result 3 reaches tracked character script 310/1 and blocks") {
+  TEST_CASE("Retail New Game result 3 resumes after tracked 310/1 and starts dialog 272") {
     const Buffer bytes{make_new_game_event_script()};
     AreaScriptRuntime runtime{bytes.data()};
     SharedGlobalStore globals;
@@ -1609,13 +1692,18 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
           return menu_handle;
         });
 
-    std::optional<AreaCharacterScriptRequest> character_script;
+    std::vector<AreaCharacterScriptRequest> character_scripts;
     runtime.set_character_script_sink(
-        [&character_script](
+        [&character_scripts](
             const AreaCharacterScriptRequest& request) -> std::expected<std::size_t, std::string> {
-          character_script = request;
-          return 77U;
+          character_scripts.push_back(request);
+          return request.script_id == 1U ? 77U : 78U;
         });
+    std::vector<AreaDialogRequest> dialogs;
+    runtime.set_dialog_sink([&dialogs](const AreaDialogRequest& request) {
+      dialogs.push_back(request);
+      return std::expected<void, std::string>{};
+    });
     wire_startup_character_sinks(runtime);
 
     runtime.queue_event(1);
@@ -1652,13 +1740,30 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     CHECK_EQ(runtime.last_character_activation_request()->character_id, 310);
     CHECK(runtime.last_character_activation_request()->apply_area_transform);
 
-    REQUIRE(character_script.has_value());
-    CHECK(character_script->target == AreaCharacterScriptTarget::k_explicit);
-    CHECK_EQ(character_script->character_id, std::optional<std::int16_t>{310});
-    CHECK_EQ(character_script->script_id, 1U);
-    CHECK_EQ(character_script->camera_duration_units, 0);
-    CHECK(character_script->mode == AreaCharacterScriptLaunchMode::k_tracked);
+    REQUIRE_EQ(character_scripts.size(), 1U);
+    CHECK(character_scripts.front().target == AreaCharacterScriptTarget::k_explicit);
+    CHECK_EQ(character_scripts.front().character_id, std::optional<std::int16_t>{310});
+    CHECK_EQ(character_scripts.front().script_id, 1U);
+    CHECK_EQ(character_scripts.front().camera_duration_units, 0);
+    CHECK(character_scripts.front().mode == AreaCharacterScriptLaunchMode::k_tracked);
     CHECK_EQ(runtime.wait_info().character_script_instance, std::optional<std::size_t>{77U});
+
+    // The exact child completion resumes at the post-launch compact IP, not
+    // at event start. It launches script 310/6 once, yields for 0x77, then
+    // reaches the documented DIALOG 272 0x3D.
+    REQUIRE(runtime.complete_character_script_wait(77U).has_value());
+    CHECK_EQ(runtime.instruction_pointer(), 0x9CU);
+    REQUIRE(runtime.run() == AreaScriptState::k_running);
+    REQUIRE_EQ(character_scripts.size(), 2U);
+    CHECK_EQ(character_scripts.at(1).script_id, 6U);
+    CHECK(character_scripts.at(1).mode == AreaCharacterScriptLaunchMode::k_fire_and_forget);
+    REQUIRE(runtime.last_presentation_request().has_value());
+    CHECK_EQ(runtime.last_presentation_request()->mode, 2U);
+    CHECK_EQ(runtime.last_presentation_request()->color, 0xFFFFFFFFU);
+
+    REQUIRE(runtime.run() == AreaScriptState::k_running);
+    REQUIRE_EQ(dialogs.size(), 1U);
+    CHECK_EQ(dialogs.front().dialog_id, 272);
   }
 
   TEST_CASE("A failed character-script launch enters structured failure once") {

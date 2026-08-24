@@ -15,6 +15,7 @@
 
 namespace {
 
+using App::Omikron::IamFixedStrideArchive;
 using App::Omikron::IamIndexedArchive;
 
 void write_u32(std::vector<std::byte>& data, const std::size_t offset, const std::uint32_t value) {
@@ -110,6 +111,37 @@ TEST_SUITE("Core::Omikron::IamIndexedArchive") {
     const auto result{archive.read_record(118)};
     REQUIRE_FALSE(result.has_value());
     CHECK(result.error().find("absent") != std::string::npos);
+  }
+}
+
+TEST_SUITE("Core::Omikron::IamFixedStrideArchive") {
+  TEST_CASE("High IDs use id times stride rather than an index-page entry") {
+    constexpr std::uint32_t k_id{997U};
+    constexpr std::size_t k_stride{0x800U};
+    constexpr std::size_t k_record_size{0x518U};
+    constexpr std::size_t k_offset{static_cast<std::size_t>(k_id) * k_stride};
+    std::vector<std::byte> data(k_offset + k_record_size, std::byte{});
+    data.at(k_offset + 0x0EU) = std::byte{'Z'};
+
+    const IamFixedStrideArchive archive{data, k_record_size, k_stride};
+    const auto result{archive.read_record(k_id)};
+    REQUIRE(result.has_value());
+    CHECK_EQ(result->size(), k_record_size);
+    CHECK_EQ(result->subspan(0x0EU, 1U).front(), std::byte{'Z'});
+  }
+
+  TEST_CASE("A zero-filled fixed slot is still a present record") {
+    std::vector<std::byte> data(0x518U, std::byte{});
+    const IamFixedStrideArchive archive{data, 0x518U, 0x800U};
+    const auto result{archive.read_record(0U)};
+    REQUIRE(result.has_value());
+    CHECK_EQ(result->size(), 0x518U);
+  }
+
+  TEST_CASE("A truncated fixed slot fails safely") {
+    std::vector<std::byte> data(0x517U, std::byte{});
+    const IamFixedStrideArchive archive{data, 0x518U, 0x800U};
+    CHECK_FALSE(archive.read_record(0U).has_value());
   }
 }
 

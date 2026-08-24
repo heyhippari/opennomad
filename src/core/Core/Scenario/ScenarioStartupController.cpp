@@ -29,6 +29,7 @@
 #include "Core/Omikron/IamArea.hpp"
 #include "Core/Omikron/IamCamera.hpp"
 #include "Core/Omikron/IamCharacterDefinition.hpp"
+#include "Core/Omikron/IamObject.hpp"
 #include "Core/Omikron/IamScene.hpp"
 #include "Core/Omikron/IamStart.hpp"
 #include "Core/Omikron/IamZone.hpp"
@@ -48,6 +49,7 @@ namespace {
 constexpr std::string_view K_IAM_START_PATH{"IAM/START"};
 constexpr std::string_view K_IAM_AREA_PATH{"IAM/AREA"};
 constexpr std::string_view K_IAM_SCENE_PATH{"IAM/SCENE"};
+constexpr std::string_view K_IAM_OBJECT_PATH{"IAM/OBJECT"};
 constexpr std::string_view K_SCPTDATA_DIRECTORY{"SCPTDATA"};
 /// Provisional directory for area decor models. The original decor directory
 /// is recovered separately from the INI preference system, which is deferred;
@@ -161,6 +163,7 @@ void ScenarioStartupController::reset_session() {
   m_start.reset();
   m_area_archive.reset();
   m_scene_archive.reset();
+  m_object_archive.reset();
   for (std::size_t index{0}; index < m_area_slots.size(); ++index) {
     RuntimeAreaSlot& slot{m_area_slots.at(index)};
     slot.scene_script.reset();
@@ -181,6 +184,7 @@ void ScenarioStartupController::reset_session() {
   m_start_bytes.clear();
   m_area_archive_bytes.clear();
   m_scene_archive_bytes.clear();
+  m_object_archive_bytes.clear();
   m_initial_area_id = 0;
   m_linked_area_id = 0;
   m_initial_world_scenario_path.clear();
@@ -414,23 +418,7 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
 
   area_script.set_dialog_sink(
       [this](const Script::AreaDialogRequest& request) -> std::expected<void, std::string> {
-        if (m_manager == nullptr) {
-          return std::expected<void, std::string>{
-              std::unexpect, "scenario manager is not available"};
-        }
-
-        if (auto started{m_manager->start_dialog(static_cast<std::uint16_t>(request.dialog_id))};
-            !started) {
-          return std::expected<void, std::string>{std::unexpect, started.error()};
-        }
-
-        m_dialog_takeover_active = true;
-        m_dialog_takeover_id = request.dialog_id;
-        record("AreaScript.DialogStarted", fmt::format("id={}", request.dialog_id));
-        record("DialogTakeover.Entered", fmt::format("id={}", request.dialog_id));
-        App::Log::info(
-            LogCategory::Script, "AREA opcode 0x3D — started dialog {}", request.dialog_id);
-        return {};
+        return start_compact_dialog(request);
       });
 
   area_script.set_music_sink([this](const Audio::MusicTrackRequest& request) {
@@ -884,6 +872,9 @@ void ScenarioStartupController::bind_compact_state_services(Script::AreaScriptRu
   runtime.set_zone_activation_sink([this](const Script::AreaZoneActivationRequest& request) {
     return set_zone_activation(request);
   });
+  runtime.set_object_activation_sink([this](const Script::AreaObjectActivationRequest& request) {
+    return present_compact_object(request);
+  });
   runtime.set_current_character_move_sink(
       [this](const Script::AreaCurrentCharacterMoveRequest& request) {
         return select_current_character_move(request);
@@ -1046,11 +1037,7 @@ void ScenarioStartupController::bind_scene_compact_services(Script::AreaScriptRu
       });
   runtime.set_dialog_sink(
       [this](const Script::AreaDialogRequest& request) -> std::expected<void, std::string> {
-        if (m_manager == nullptr) {
-          return std::expected<void, std::string>{
-              std::unexpect, "scenario manager is not available"};
-        }
-        return m_manager->start_dialog(static_cast<std::uint16_t>(request.dialog_id));
+        return start_compact_dialog(request);
       });
   runtime.set_music_sink([this](const Audio::MusicTrackRequest& request) {
     if (m_audio != nullptr) {
@@ -1536,6 +1523,128 @@ std::expected<void, std::string> ScenarioStartupController::set_current_characte
   return {};
 }
 
+std::expected<void, std::string> ScenarioStartupController::start_compact_dialog(
+    const Script::AreaDialogRequest& request) {
+  if (m_manager == nullptr) {
+    return std::expected<void, std::string>{std::unexpect, "scenario manager is not available"};
+  }
+  if (auto started{m_manager->start_dialog(static_cast<std::uint16_t>(request.dialog_id))};
+      !started) {
+    return std::expected<void, std::string>{std::unexpect, started.error()};
+  }
+
+  m_dialog_takeover_active = true;
+  m_dialog_takeover_id = request.dialog_id;
+  record("AreaScript.DialogStarted", fmt::format("id={}", request.dialog_id));
+  record("DialogTakeover.Entered", fmt::format("id={}", request.dialog_id));
+  App::Log::info(LogCategory::Script, "AREA opcode 0x3D — started dialog {}", request.dialog_id);
+  return {};
+}
+
+std::expected<void, std::string> ScenarioStartupController::present_compact_object(
+    const Script::AreaObjectActivationRequest& request) {
+  if (request.object_id == -1) {
+    record("AreaScript.ObjectActivate", "id=-1 skipped");
+    return {};
+  }
+  if (request.object_id < 0) {
+    return std::expected<void, std::string>{
+        std::unexpect, fmt::format("OBJECTS ID {} is negative", request.object_id)};
+  }
+  if (m_manager == nullptr) {
+    return std::expected<void, std::string>{std::unexpect, "scenario manager is not available"};
+  }
+
+  if (!m_object_archive.has_value()) {
+    auto bytes{read_file(std::string{K_IAM_OBJECT_PATH})};
+    if (!bytes) {
+      // Object presentation is explicitly fire-and-forget.  A missing archive
+      // must be observable but cannot deadlock an otherwise valid compact
+      // scenario context (and preserves title-screen fixtures without OBJECT).
+      App::Log::warn(LogCategory::Scenario,
+          "OBJECTS ID {} skipped because IAM/OBJECT could not be loaded: {}",
+          request.object_id,
+          bytes.error());
+      record("AreaScript.ObjectActivateUnavailable", fmt::format("id={}", request.object_id));
+      return {};
+    }
+    m_object_archive_bytes = std::move(bytes).value();
+    m_object_archive.emplace(std::span<const std::byte>{m_object_archive_bytes},
+        Omikron::IamObjectRecord::k_serialized_size,
+        Omikron::IamObjectRecord::k_archive_stride);
+  }
+
+  auto object_bytes{m_object_archive->read_record(static_cast<std::uint16_t>(request.object_id))};
+  if (!object_bytes) {
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format("IAM/OBJECT {}: {}", request.object_id, object_bytes.error())};
+  }
+  auto object{Omikron::IamObjectRecord::load(object_bytes.value())};
+  if (!object) {
+    return std::expected<void, std::string>{
+        std::unexpect, fmt::format("IAM/OBJECT {}: {}", request.object_id, object.error())};
+  }
+
+  // Runtime branches only on type 0x10, which owns the distinct IMAGES path.
+  // Every other object type continues through the recovered VOICEOFF/subtitle
+  // presentation path; do not narrow that retail behavior to an invented
+  // "voice-over type 0".
+  constexpr std::uint16_t k_image_type{0x10U};
+  if (object->object_type() == k_image_type) {
+    App::Log::debug(LogCategory::Scenario,
+        "OBJECTS ID {} type {:#x} uses the deferred IMAGES presentation path",
+        request.object_id,
+        object->object_type());
+    record("AreaScript.ObjectActivateUnsupported",
+        fmt::format("id={} type={:#x} path=IMAGES", request.object_id, object->object_type()));
+    return {};
+  }
+
+  const WorldSceneContext* context{m_manager->active_world_context()};
+  if (context == nullptr) {
+    return std::expected<void, std::string>{
+        std::unexpect, "OBJECTS activation has no active world presentation context"};
+  }
+  const std::string& stem{object->audio_stem()};
+  std::optional<std::string> audio_path;
+  if (!stem.empty()) {
+    audio_path = stem.starts_with("ZVOT") || stem.starts_with("ZVOP")
+                     ? "VOICEOFF/JINGOFF3.ADP"
+                     : fmt::format("VOICEOFF/{}.ADP", stem);
+  }
+  constexpr std::uint32_t k_minimum_subtitle_duration_ms{2000U};
+  constexpr std::uint32_t k_subtitle_milliseconds_per_character{80U};
+  const std::uint32_t subtitle_duration_ms{std::max(k_minimum_subtitle_duration_ms,
+      static_cast<std::uint32_t>(object->subtitle().size()) *
+          k_subtitle_milliseconds_per_character)};
+
+  if (audio_path.has_value()) {
+    m_manager->world_presentation().enqueue_voice_over(
+        WorldVoiceOverCommand{.scene_id = context->scene_id,
+            .scene_generation = context->generation,
+            .object_id = request.object_id,
+            .audio_path = audio_path.value()});
+  }
+  m_manager->world_presentation().enqueue_subtitle(
+      WorldSubtitleCommand{.scene_id = context->scene_id,
+          .scene_generation = context->generation,
+          .object_id = request.object_id,
+          .text = object->subtitle(),
+          .duration_ms = subtitle_duration_ms});
+  record("AreaScript.ObjectActivate",
+      fmt::format("id={} type={:#x} voice={} subtitleMs={}",
+          request.object_id,
+          object->object_type(),
+          audio_path.value_or("<none>"),
+          subtitle_duration_ms));
+  App::Log::debug(LogCategory::Scenario,
+      "OBJECTS ID {} voice-over '{}' subtitle={} ms",
+      request.object_id,
+      audio_path.value_or("<none>"),
+      subtitle_duration_ms);
+  return {};
+}
+
 std::expected<void, std::string> ScenarioStartupController::deactivate_owner_character(
     const std::size_t owner_slot, const Script::AreaCharacterDeactivationRequest& request) {
   if (request.character_id == -1) {
@@ -1652,7 +1761,9 @@ std::expected<std::size_t, std::string> ScenarioStartupController::launch_charac
   const Omikron::ScxScript& script{scx->scripts.at(source_script_index.value())};
   record("AreaScript.CharacterScriptStarted",
       fmt::format(
-          "target={} character={} script={} name='{}' cameraDuration={} mode={} instance={}",
+          "ownerSlot={} target={} character={} script={} name='{}' cameraDuration={} mode={} "
+          "instance={}",
+          owner_slot,
           target_name,
           character_id,
           request.script_id,
@@ -1661,7 +1772,9 @@ std::expected<std::size_t, std::string> ScenarioStartupController::launch_charac
           tracked ? "tracked" : "fire-and-forget",
           created.value()));
   App::Log::debug(LogCategory::Script,
-      "AREA character-script launch — target={} character={} script {} '{}' as instance {}, {}",
+      "AREA character-script launch — owner slot={} target={} character={} script {} '{}' as "
+      "instance {}, {}",
+      owner_slot,
       target_name,
       character_id,
       request.script_id,
@@ -1873,7 +1986,8 @@ std::expected<void, std::string> ScenarioStartupController::service_character_sc
       area_script.wait_info().kind != Script::AreaWaitKind::k_character_script) {
     return {};
   }
-  if (m_manager == nullptr || !area_script.wait_info().character_script_instance.has_value()) {
+  if (m_manager == nullptr || !area_script.wait_info().character_script_instance.has_value() ||
+      !area_script.wait_info().character_script.has_value()) {
     return std::expected<void, std::string>{
         std::unexpect, "AREA character-script wait has no scenario owner or instance ID"};
   }
@@ -1891,6 +2005,8 @@ std::expected<void, std::string> ScenarioStartupController::service_character_sc
 
   const Script::ScriptRuntime* script_runtime{scenario_runtime->script_runtime()};
   const std::size_t instance_id{area_script.wait_info().character_script_instance.value()};
+  const Script::AreaCharacterScriptRequest wait_request{
+      area_script.wait_info().character_script.value()};
   const Script::ScriptInstance* instance{script_runtime->instance(instance_id)};
   if (instance == nullptr) {
     return std::expected<void, std::string>{std::unexpect,
@@ -1911,6 +2027,19 @@ std::expected<void, std::string> ScenarioStartupController::service_character_sc
     return completed;
   }
   record("AreaScript.CharacterScriptCompleted", fmt::format("instance={}", instance_id));
+  App::Log::debug(LogCategory::Script,
+      "tracked character-script wait completed — owner slot={} compactIp=+{:#x} target={} "
+      "script={} instance={} name='{}' group={} paused={} execution={}/{}",
+      owner_slot,
+      area_script.instruction_pointer(),
+      wait_request.character_id.value_or(-1),
+      wait_request.script_id,
+      instance_id,
+      instance->script_name,
+      instance->current_group_index,
+      instance->paused,
+      instance->root_commands.empty() ? 0U : instance->root_commands.at(0).execution_count,
+      instance->root_commands.empty() ? 0U : instance->root_commands.at(0).execution_limit);
   return {};
 }
 

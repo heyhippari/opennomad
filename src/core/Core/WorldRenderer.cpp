@@ -158,6 +158,56 @@ constexpr std::array<GLfloat, 4> K_WIREFRAME_COLOR{0.15F, 0.95F, 1.0F, 0.9F};
 /// Legacy fallback lighting used when the decor relies on ordinary normals
 /// rather than baked vertex lighting. Keep these aligned with ModelViewerScene.
 constexpr std::array<GLfloat, 3> K_LIGHT_DIRECTION{0.35F, 0.75F, 0.55F};
+
+/// CPU-side integrity summary for one posed decor rebuild. Keep it beside the
+/// renderer boundary so an invalid gameplay pose never reaches GL buffers.
+struct DecorPoseGeometry {
+  WorldBounds bounds;
+  std::size_t vertex_count{0};
+};
+
+[[nodiscard]] std::optional<DecorPoseGeometry> describe_decor_pose(
+    const std::span<const Omikron::MaterialGroup> groups) {
+  if (groups.empty()) {
+    return std::nullopt;
+  }
+  std::array<float, 3> minimum{std::numeric_limits<float>::max(),
+      std::numeric_limits<float>::max(),
+      std::numeric_limits<float>::max()};
+  std::array<float, 3> maximum{std::numeric_limits<float>::lowest(),
+      std::numeric_limits<float>::lowest(),
+      std::numeric_limits<float>::lowest()};
+  std::size_t vertex_count{0};
+  for (const Omikron::MaterialGroup& group : groups) {
+    for (const Vertex& native_vertex : group.vertices) {
+      const Vertex vertex{Runtime::Presentation::to_gl(native_vertex)};
+      for (const float coordinate : vertex.position) {
+        if (!std::isfinite(coordinate)) {
+          return std::nullopt;
+        }
+      }
+      for (std::size_t axis{0}; axis < minimum.size(); ++axis) {
+        minimum.at(axis) = std::min(minimum.at(axis), vertex.position.at(axis));
+        maximum.at(axis) = std::max(maximum.at(axis), vertex.position.at(axis));
+      }
+      ++vertex_count;
+    }
+  }
+  if (vertex_count == 0U) {
+    return std::nullopt;
+  }
+  WorldBounds bounds;
+  for (std::size_t axis{0}; axis < bounds.center.size(); ++axis) {
+    bounds.center.at(axis) = (minimum.at(axis) + maximum.at(axis)) * 0.5F;
+  }
+  const float extent_x{maximum.at(0) - minimum.at(0)};
+  const float extent_y{maximum.at(1) - minimum.at(1)};
+  const float extent_z{maximum.at(2) - minimum.at(2)};
+  bounds.radius = std::max(
+      0.5F * std::sqrt((extent_x * extent_x) + (extent_y * extent_y) + (extent_z * extent_z)),
+      1.0F);
+  return DecorPoseGeometry{.bounds = bounds, .vertex_count = vertex_count};
+}
 constexpr float K_AMBIENT_STRENGTH{0.35F};
 
 bool is_blended(const Omikron::BlendMode mode) {
@@ -396,6 +446,13 @@ std::expected<std::unique_ptr<WorldRenderer>, std::string> WorldRenderer::create
         0.5F * std::sqrt((extent_x * extent_x) + (extent_y * extent_y) + (extent_z * extent_z)),
         1.0F);
   }
+  if (const auto pose_geometry{describe_decor_pose(groups.value())}; pose_geometry.has_value()) {
+    renderer->m_decor_pose_bounds = pose_geometry->bounds;
+    renderer->m_decor_pose_vertex_count = pose_geometry->vertex_count;
+  } else {
+    App::Log::warn(LogCategory::Renderer,
+        "World decor initial geometry has no finite vertices; pose rebuilds will be rejected");
+  }
 
   if (special_flags_seen) {
     App::Log::debug(LogCategory::Renderer,
@@ -476,6 +533,28 @@ void WorldRenderer::sync_decor_model(const ScenarioRuntime& runtime) {
         groups->size());
     return;
   }
+  const auto geometry{describe_decor_pose(groups.value())};
+  if (!geometry.has_value()) {
+    App::Log::warn(LogCategory::Renderer,
+        "World decor pose rebuild produced empty or non-finite geometry; preserving prior GPU "
+        "geometry");
+    return;
+  }
+  if (m_decor_pose_vertex_count != 0U) {
+    App::Log::debug(LogCategory::Renderer,
+        "World decor pose rebuild — groups={} vertices={} bounds center=({}, {}, {}) radius={} "
+        "(previous center=({}, {}, {}) radius={})",
+        groups->size(),
+        geometry->vertex_count,
+        geometry->bounds.center.at(0),
+        geometry->bounds.center.at(1),
+        geometry->bounds.center.at(2),
+        geometry->bounds.radius,
+        m_decor_pose_bounds.center.at(0),
+        m_decor_pose_bounds.center.at(1),
+        m_decor_pose_bounds.center.at(2),
+        m_decor_pose_bounds.radius);
+  }
   m_meshes.clear();
   for (const Omikron::MaterialGroup& group : groups.value()) {
     std::vector<Vertex> presentation_vertices;
@@ -485,6 +564,8 @@ void WorldRenderer::sync_decor_model(const ScenarioRuntime& runtime) {
     }
     m_meshes.emplace_back(presentation_vertices, group.indices);
   }
+  m_decor_pose_bounds = geometry->bounds;
+  m_decor_pose_vertex_count = geometry->vertex_count;
   m_decor_pose_revision = runtime.decor_pose_revision();
 }
 

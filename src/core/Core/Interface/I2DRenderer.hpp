@@ -8,6 +8,7 @@
 #include <expected>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "Core/Buffers.hpp"
@@ -67,6 +68,14 @@ class I2DRenderer {
   [[nodiscard]] float render_dialog(const Dialog::DialogPresentation& dialog,
       std::size_t selected_choice,
       float scroll_offset,
+      FontManager& fonts,
+      int pixel_width,
+      int pixel_height,
+      Debug::I2DCounters& counters);
+
+  /// Renders a neutral centered world subtitle above normal interfaces and
+  /// below the interactive dialog layer.
+  void render_world_subtitle(std::string_view text,
       FontManager& fonts,
       int pixel_width,
       int pixel_height,

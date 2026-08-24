@@ -131,7 +131,10 @@ struct BodyAnimationBinding {
       .initial_world_translation = character.runtime_objects.at(selected_index).world_translation};
 }
 
-[[nodiscard]] std::expected<Runtime::Matrix3, BodyAnimationFailure> inverse_matrix(
+/// Inverts a row-vector Runtime object matrix. Both body-animation anchoring
+/// and Script_MoveObjectOnPath convert an authored world-space pose into a
+/// parent-local pose through this one convention-sensitive helper.
+[[nodiscard]] std::expected<Runtime::Matrix3, std::string> inverse_runtime_matrix(
     const Runtime::Matrix3& matrix) {
   const float matrix_00{matrix.at(0, 0)};
   const float matrix_01{matrix.at(0, 1)};
@@ -146,9 +149,8 @@ struct BodyAnimationBinding {
                           (matrix_01 * ((matrix_10 * matrix_22) - (matrix_12 * matrix_20))) +
                           (matrix_02 * ((matrix_10 * matrix_21) - (matrix_11 * matrix_20)))};
   if (std::abs(determinant) <= 0.000001F) {
-    return std::expected<Runtime::Matrix3, BodyAnimationFailure>{std::unexpect,
-        body_animation_failure(Script::BodyAnimationApplyError::k_resource_resolution,
-            "cannot anchor a body animation below a singular parent transform")};
+    return std::expected<Runtime::Matrix3, std::string>{
+        std::unexpect, "cannot convert a world pose below a singular parent transform"};
   }
   const float reciprocal{1.0F / determinant};
   return Runtime::Matrix3{{((matrix_11 * matrix_22) - (matrix_12 * matrix_21)) * reciprocal,
@@ -181,9 +183,11 @@ struct BodyAnimationBinding {
 
   const Omikron::Model3DOData::RuntimeObjectState& parent{
       character.runtime_objects.at(static_cast<std::size_t>(parent_index))};
-  auto inverse{inverse_matrix(parent.world_matrix)};
+  auto inverse{inverse_runtime_matrix(parent.world_matrix)};
   if (!inverse) {
-    return std::expected<void, BodyAnimationFailure>{std::unexpect, std::move(inverse).error()};
+    return std::expected<void, BodyAnimationFailure>{std::unexpect,
+        body_animation_failure(
+            Script::BodyAnimationApplyError::k_resource_resolution, std::move(inverse).error())};
   }
   const Runtime::Vec3 relative_world{.x = target_world.x - parent.world_translation.x,
       .y = target_world.y - parent.world_translation.y,
@@ -1096,6 +1100,18 @@ ScenarioRuntime::move_object_on_path(const Script::MoveObjectOnPathRequest& requ
         move_object_on_path_failure(Script::MoveObjectOnPathApplyError::k_invalid_binding,
             fmt::format("decor binding A object '{}' does not exist", request.object_binding))};
   }
+  // The runtime state is copied from immutable 3DO defaults. Resolve it before
+  // extracting a parent pose: the selected child may be the first mutable
+  // command after decor binding, when its cached world fields have not yet
+  // been populated.
+  if (auto resolved{Omikron::Model3DO::resolve_runtime_transforms(
+          *m_decor_model, std::span{m_decor_runtime_objects})};
+      !resolved) {
+    return std::expected<Script::MoveObjectOnPathResult, Script::MoveObjectOnPathFailure>{
+        std::unexpect,
+        move_object_on_path_failure(Script::MoveObjectOnPathApplyError::k_resource_resolution,
+            std::move(resolved).error())};
+  }
   auto sampled{subpath.sample_mode_1(request.current_parameter)};
   if (!sampled) {
     return std::expected<Script::MoveObjectOnPathResult, Script::MoveObjectOnPathFailure>{
@@ -1106,8 +1122,36 @@ ScenarioRuntime::move_object_on_path(const Script::MoveObjectOnPathRequest& requ
   const std::size_t object_index{
       static_cast<std::size_t>(std::distance(m_decor_model->meshes.begin(), selected))};
   Omikron::Model3DOData::RuntimeObjectState& object{m_decor_runtime_objects.at(object_index)};
-  object.local_offset = sampled->position;
-  object.local_matrix = Runtime::quaternion_matrix(sampled->quaternion);
+  const Runtime::Matrix3 desired_world_matrix{Runtime::quaternion_matrix(sampled->quaternion)};
+  const std::int32_t parent_index{m_decor_model->hierarchy_parent_index.at(object_index)};
+  if (parent_index < 0) {
+    object.local_offset = sampled->position;
+    object.local_matrix = desired_world_matrix;
+  } else {
+    if (static_cast<std::size_t>(parent_index) >= m_decor_runtime_objects.size()) {
+      return std::expected<Script::MoveObjectOnPathResult, Script::MoveObjectOnPathFailure>{
+          std::unexpect,
+          move_object_on_path_failure(Script::MoveObjectOnPathApplyError::k_resource_resolution,
+              "MoveObjectOnPath selected object has an invalid parent index")};
+    }
+    const Omikron::Model3DOData::RuntimeObjectState& parent{
+        m_decor_runtime_objects.at(static_cast<std::size_t>(parent_index))};
+    auto inverse{inverse_runtime_matrix(parent.world_matrix)};
+    if (!inverse) {
+      return std::expected<Script::MoveObjectOnPathResult, Script::MoveObjectOnPathFailure>{
+          std::unexpect,
+          move_object_on_path_failure(Script::MoveObjectOnPathApplyError::k_resource_resolution,
+              std::move(inverse).error())};
+    }
+    const Runtime::Vec3 world_delta{.x = sampled->position.x - parent.world_translation.x,
+        .y = sampled->position.y - parent.world_translation.y,
+        .z = sampled->position.z - parent.world_translation.z};
+    // 3DP positions and quaternions are desired world poses. The resolver
+    // composes child values as local * parent, so derive both local components
+    // with the parent's inverse rather than assigning world data directly.
+    object.local_offset = Runtime::transform_vector(world_delta, inverse.value());
+    object.local_matrix = Runtime::multiply(desired_world_matrix, inverse.value());
+  }
   object.animation_matrix.reset();
   if (auto resolved{Omikron::Model3DO::resolve_runtime_transforms(
           *m_decor_model, std::span{m_decor_runtime_objects})};

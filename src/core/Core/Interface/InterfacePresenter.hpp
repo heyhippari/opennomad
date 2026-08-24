@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <string_view>
 
 #include "Core/Dialog/DialogRuntime.hpp"
 #include "Core/Input/InputManager.hpp"
@@ -37,6 +38,8 @@ class InterfacePresenter {
       float scroll_offset,
       int pixel_width,
       int pixel_height);
+
+  void render_world_subtitle(std::string_view text, int pixel_width, int pixel_height);
 
  private:
   InterfaceManager* m_manager{nullptr};

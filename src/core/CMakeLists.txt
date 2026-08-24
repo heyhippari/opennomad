@@ -24,6 +24,7 @@ add_library(${NAME} STATIC
   Core/Audio/MusicPlayer.hpp Core/Audio/MusicPlayer.cpp
   Core/Audio/DialogVoiceCodec.hpp Core/Audio/DialogVoiceCodec.cpp
   Core/Audio/DialogVoicePlayer.hpp Core/Audio/DialogVoicePlayer.cpp
+  Core/Audio/VoiceOverPlayer.hpp Core/Audio/VoiceOverPlayer.cpp
   Core/Audio/AudioSystem.hpp Core/Audio/AudioSystem.cpp
   Core/Renderer.cpp Core/Renderer.hpp
   Core/ColorManagement.hpp Core/ColorManagement.cpp
@@ -80,6 +81,7 @@ add_library(${NAME} STATIC
   Core/Omikron/IamArea.hpp Core/Omikron/IamArea.cpp
   Core/Omikron/IamScene.hpp Core/Omikron/IamScene.cpp
   Core/Omikron/IamDialog.hpp Core/Omikron/IamDialog.cpp
+  Core/Omikron/IamObject.hpp Core/Omikron/IamObject.cpp
   Core/Sprite/SpriteInstance.hpp
   Core/Sprite/SpriteRenderMode.hpp
   Core/Sprite/SpriteFrame.hpp Core/Sprite/SpriteFrame.cpp

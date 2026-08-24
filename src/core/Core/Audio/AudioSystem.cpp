@@ -30,6 +30,7 @@
 #include "Core/Audio/LegacySpatializer.hpp"
 #include "Core/Audio/MusicPlayer.hpp"
 #include "Core/Audio/SoundResourceCache.hpp"
+#include "Core/Audio/VoiceOverPlayer.hpp"
 #include "Core/Audio/VoicePool.hpp"
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Log.hpp"
@@ -192,6 +193,7 @@ std::expected<std::unique_ptr<AudioSystem>, std::string> AudioSystem::create() {
   system->m_cache = std::make_unique<SoundResourceCache>(mixer);
   system->m_music.attach(mixer);
   system->m_dialog_voice.attach(mixer);
+  system->m_voice_over.attach(mixer);
   system->set_master_gain(1.0F);
   system->set_sfx_gain(1.0F);
   system->set_music_gain(1.0F);
@@ -211,6 +213,7 @@ AudioSystem::~AudioSystem() {
   // 2. Stop music and every SFX track.
   m_music.stop(0);
   m_dialog_voice.stop();
+  m_voice_over.stop();
   for (MIX_Track* track : m_tracks) {
     if (track != nullptr) {
       MIX_StopTrack(track, 0);
@@ -236,6 +239,7 @@ AudioSystem::~AudioSystem() {
   }
   m_music.shutdown();
   m_dialog_voice.shutdown();
+  m_voice_over.shutdown();
 
   // 6. Destroy cached MIX_Audio objects.
   m_cache.reset();
@@ -405,6 +409,38 @@ void AudioSystem::stop_dialog_voice() {
 
 bool AudioSystem::dialog_voice_playing() const {
   return m_dialog_voice.is_playing();
+}
+
+std::expected<void, std::string> AudioSystem::play_voice_over(std::string relative_path) {
+  if (!available()) {
+    return std::expected<void, std::string>{std::unexpect, "audio subsystem unavailable"};
+  }
+  auto file{read_game_file(relative_path)};
+  if (!file) {
+    return std::expected<void, std::string>{std::unexpect, file.error()};
+  }
+  auto decoder{Omikron::QdAdpDecoder::create(std::span<const std::byte>{file.value()})};
+  if (!decoder) {
+    return std::expected<void, std::string>{std::unexpect, decoder.error()};
+  }
+  const std::size_t sample_count{static_cast<std::size_t>(
+      decoder->total_frames() * static_cast<std::uint64_t>(decoder->channels()))};
+  auto samples{std::make_shared<std::vector<std::int16_t>>(sample_count)};
+  const std::size_t decoded{decoder->decode_frames(std::span<std::int16_t>{*samples})};
+  if (decoded != decoder->total_frames()) {
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format(
+            "{} decoded {} of {} ADP frames", relative_path, decoded, decoder->total_frames())};
+  }
+  SDL_AudioSpec spec{};
+  spec.format = SDL_AUDIO_S16LE;
+  spec.channels = decoder->channels();
+  spec.freq = decoder->sample_rate();
+  if (!m_voice_over.play(std::move(relative_path), spec, std::move(samples))) {
+    return std::expected<void, std::string>{
+        std::unexpect, fmt::format("OBJECTS voice-over playback failed: {}", SDL_GetError())};
+  }
+  return {};
 }
 
 std::optional<VoiceHandle> AudioSystem::audition(const SoundResourceId resource) {
@@ -636,6 +672,7 @@ void AudioSystem::set_sfx_gain(const float gain) {
   if (available()) {
     MIX_SetTagGain(m_mixer.get(), "sfx", m_sfx_gain);
     MIX_SetTagGain(m_mixer.get(), "dialog", m_sfx_gain);
+    MIX_SetTagGain(m_mixer.get(), "voiceover", m_sfx_gain);
   }
 }
 

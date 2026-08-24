@@ -1512,10 +1512,9 @@ HandlerResult ScriptRuntime::handle_play_sync_sound(
         .reason_text = {}};
   }
 
-  // The per-instance clock is stored in 30 Hz frames, while this authored
-  // schedule value is seconds. Compare in its serialized time domain.
-  const float elapsed_seconds{instance.elapsed_script_frames / k_script_frames_per_second};
-  if (elapsed_seconds < scheduled) {
+  // Runtime stores both the per-instance clock and PlaySyncSound's authored
+  // schedule in native 30 Hz script/scenario-frame units.
+  if (instance.elapsed_script_frames < scheduled) {
     return HandlerResult{.status = ScriptCommandStatus::k_running,
         .pause_reason = ScriptPauseReason::k_none,
         .reason_text = {}};

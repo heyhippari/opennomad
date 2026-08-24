@@ -21,6 +21,7 @@
 #include "Core/Audio/DialogVoicePlayer.hpp"
 #include "Core/Audio/MusicPlayer.hpp"
 #include "Core/Audio/SoundResourceCache.hpp"
+#include "Core/Audio/VoiceOverPlayer.hpp"
 #include "Core/Audio/VoicePool.hpp"
 
 namespace App::Audio {
@@ -89,6 +90,10 @@ class AudioSystem {
   void stop_dialog_voice();
   [[nodiscard]] bool dialog_voice_playing() const;
 
+  /// Loads and plays one nonspatial IAM/OBJECT ADP voice-over.  The caller
+  /// supplies the game-data-relative VOICEOFF path recovered by 0x5C.
+  [[nodiscard]] std::expected<void, std::string> play_voice_over(std::string relative_path);
+
   /// Nonspatial debug audition through the normal 16-voice pool.
   [[nodiscard]] std::optional<VoiceHandle> audition(SoundResourceId resource);
 
@@ -122,8 +127,7 @@ class AudioSystem {
   /// resource resolver, decodes the ADP to PCM and starts it on the existing
   /// music track. Never restarts a track whose numeric ID equals the current
   /// one. Failure is non-fatal: a useful error is logged and recorded.
-  [[nodiscard]] std::expected<void, std::string> play_music_track(
-      const MusicTrackRequest& request);
+  [[nodiscard]] std::expected<void, std::string> play_music_track(const MusicTrackRequest& request);
 
   /// Stops music, fading out over `fade_out_ms`. Clears the current-track id.
   void stop_music(std::int64_t fade_out_ms = 0);
@@ -192,6 +196,7 @@ class AudioSystem {
   VoicePool m_pool;
   MusicPlayer m_music;
   DialogVoicePlayer m_dialog_voice;
+  VoiceOverPlayer m_voice_over;
   AudioListenerState m_listener{};
   EmitterResolver m_emitter_resolver;
   StopEventQueue m_stop_events;

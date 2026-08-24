@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <deque>
 #include <optional>
+#include <string>
 #include <utility>
 
 #include "Core/RuntimeMath.hpp"
@@ -177,6 +178,64 @@ struct WorldLetterboxCommand {
   bool enabled{false};
 };
 
+/// Fire-and-forget, nonspatial voice-over submitted by compact OBJECTS.
+struct WorldVoiceOverCommand {
+  std::uint32_t scene_id{0};
+  std::uint32_t scene_generation{0};
+  std::int16_t object_id{0};
+  std::string audio_path;
+};
+
+/// Centered subtitle submitted with a voice-over.  Lifetime is recovered in
+/// milliseconds and remains independent of render-frame cadence.
+struct WorldSubtitleCommand {
+  std::uint32_t scene_id{0};
+  std::uint32_t scene_generation{0};
+  std::int16_t object_id{0};
+  std::string text;
+  std::uint32_t duration_ms{0};
+};
+
+/// CPU state for one current world subtitle.
+class WorldSubtitleState {
+ public:
+  [[nodiscard]] bool apply_command(
+      WorldSubtitleCommand command, const std::uint32_t scene_id, const std::uint32_t generation) {
+    if (command.scene_id != scene_id || command.scene_generation != generation) {
+      return false;
+    }
+    m_text = std::move(command.text);
+    m_remaining_seconds = static_cast<float>(command.duration_ms) / 1000.0F;
+    return true;
+  }
+
+  void update(const float delta_seconds) {
+    m_remaining_seconds = std::max(0.0F, m_remaining_seconds - std::max(delta_seconds, 0.0F));
+    if (m_remaining_seconds == 0.0F) {
+      m_text.clear();
+    }
+  }
+
+  void reset() {
+    m_text.clear();
+    m_remaining_seconds = 0.0F;
+  }
+
+  [[nodiscard]] bool active() const {
+    return !m_text.empty() && m_remaining_seconds > 0.0F;
+  }
+  [[nodiscard]] const std::string& text() const {
+    return m_text;
+  }
+  [[nodiscard]] float remaining_seconds() const {
+    return m_remaining_seconds;
+  }
+
+ private:
+  std::string m_text;
+  float m_remaining_seconds{0.0F};
+};
+
 /// CPU-only state for OpenNomad's cinematic top/bottom presentation mask.
 ///
 /// Runtime confirms the transition endpoints and its 60-unit duration. The
@@ -276,6 +335,14 @@ class WorldPresentationState {
     m_letterbox_commands.push_back(std::move(command));
   }
 
+  void enqueue_voice_over(WorldVoiceOverCommand command) {
+    m_voice_over_commands.push_back(std::move(command));
+  }
+
+  void enqueue_subtitle(WorldSubtitleCommand command) {
+    m_subtitle_commands.push_back(std::move(command));
+  }
+
   [[nodiscard]] std::optional<WorldCameraCommand> take_camera() {
     if (m_camera_commands.empty()) {
       return std::nullopt;
@@ -303,6 +370,24 @@ class WorldPresentationState {
     return command;
   }
 
+  [[nodiscard]] std::optional<WorldVoiceOverCommand> take_voice_over() {
+    if (m_voice_over_commands.empty()) {
+      return std::nullopt;
+    }
+    WorldVoiceOverCommand command{std::move(m_voice_over_commands.front())};
+    m_voice_over_commands.pop_front();
+    return command;
+  }
+
+  [[nodiscard]] std::optional<WorldSubtitleCommand> take_subtitle() {
+    if (m_subtitle_commands.empty()) {
+      return std::nullopt;
+    }
+    WorldSubtitleCommand command{std::move(m_subtitle_commands.front())};
+    m_subtitle_commands.pop_front();
+    return command;
+  }
+
   [[nodiscard]] std::size_t pending_camera_count() const {
     return m_camera_commands.size();
   }
@@ -314,17 +399,27 @@ class WorldPresentationState {
   [[nodiscard]] std::size_t pending_letterbox_count() const {
     return m_letterbox_commands.size();
   }
+  [[nodiscard]] std::size_t pending_voice_over_count() const {
+    return m_voice_over_commands.size();
+  }
+  [[nodiscard]] std::size_t pending_subtitle_count() const {
+    return m_subtitle_commands.size();
+  }
 
   void clear() {
     m_camera_commands.clear();
     m_fade_commands.clear();
     m_letterbox_commands.clear();
+    m_voice_over_commands.clear();
+    m_subtitle_commands.clear();
   }
 
  private:
   std::deque<WorldCameraCommand> m_camera_commands;
   std::deque<WorldFadeCommand> m_fade_commands;
   std::deque<WorldLetterboxCommand> m_letterbox_commands;
+  std::deque<WorldVoiceOverCommand> m_voice_over_commands;
+  std::deque<WorldSubtitleCommand> m_subtitle_commands;
 };
 
 }  // namespace App

@@ -201,6 +201,13 @@ struct AreaDialogRequest {
   std::int16_t dialog_id{0};
 };
 
+/// Nonblocking OBJECTS activation requested by compact opcode 0x5C.  The
+/// session-owned sink resolves the checked IAM/OBJECT record and submits any
+/// resulting presentation; the compact VM keeps only the authored ID.
+struct AreaObjectActivationRequest {
+  std::int16_t object_id{0};
+};
+
 /// Recovered AREA opcode 0x4E character activation request.
 ///
 /// Runtime resolves character_id through the active AREA's table 0. For a
@@ -287,6 +294,10 @@ class AreaScriptRuntime {
 
   /// Bridge from opcode 0x3D to the session-owned IAM/DIALOG runtime.
   using DialogSink = std::function<std::expected<void, std::string>(const AreaDialogRequest&)>;
+
+  /// Bridge from opcode 0x5C to session-owned IAM/OBJECT presentation.
+  using ObjectActivationSink =
+      std::function<std::expected<void, std::string>(const AreaObjectActivationRequest&)>;
 
   /// Bridge from opcode 0x2F to the session-level two-slot AREA coordinator.
   using AreaTransitionSink =
@@ -390,6 +401,9 @@ class AreaScriptRuntime {
 
   /// Wires AREA opcode 0x3D to the session dialog runtime.
   void set_dialog_sink(DialogSink sink);
+
+  /// Wires AREA opcode 0x5C to session-owned OBJECTS presentation.
+  void set_object_activation_sink(ObjectActivationSink sink);
 
   /// Wires AREA opcode 0x2F to native AREA-transition coordination.
   void set_area_transition_sink(AreaTransitionSink sink);
@@ -573,6 +587,10 @@ class AreaScriptRuntime {
   [[nodiscard]] const std::optional<AreaDialogRequest>& last_dialog_request() const {
     return m_last_dialog_request;
   }
+  [[nodiscard]] const std::optional<AreaObjectActivationRequest>& last_object_activation_request()
+      const {
+    return m_last_object_activation_request;
+  }
   [[nodiscard]] const std::optional<AreaTransitionRequest>& last_area_transition_request() const {
     return m_last_area_transition_request;
   }
@@ -669,6 +687,7 @@ class AreaScriptRuntime {
   ScxScriptSink m_scx_script_sink;
   CharacterScriptSink m_character_script_sink;
   DialogSink m_dialog_sink;
+  ObjectActivationSink m_object_activation_sink;
   AreaTransitionSink m_area_transition_sink;
   AreaReleaseSink m_area_release_sink;
   AreaSceneAttachSink m_area_scene_attach_sink;
@@ -697,6 +716,7 @@ class AreaScriptRuntime {
   std::optional<AreaCurrentCharacterControllerRequest> m_last_current_character_controller_request;
   std::optional<AreaCharacterScriptRequest> m_last_character_script_request;
   std::optional<AreaDialogRequest> m_last_dialog_request;
+  std::optional<AreaObjectActivationRequest> m_last_object_activation_request;
   std::optional<AreaTransitionRequest> m_last_area_transition_request;
   std::optional<AreaReleaseRequest> m_last_area_release_request;
   std::optional<AreaSceneAttachRequest> m_last_area_scene_attach_request;

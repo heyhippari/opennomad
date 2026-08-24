@@ -1332,22 +1332,42 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
   }
 
   TEST_CASE("PlaySyncSound waits for its scheduled time and starts once") {
-    // arg1 = 0.1f (0x3DCCCCCD); one 30 Hz frame is 1/30 ≈ 0.0333 s.
+    // arg1 = 3.0 script frames. ScriptRuntime::step_tick() already speaks
+    // native 30 Hz script-frame units; do not convert this authored schedule
+    // to seconds a second time.
     RuntimeFixture fixture{{single_root_script(command(K_PLAY_SYNC_SOUND, 0, 5))},
-        make_values(5, {9, 0x3DCCCCCDU, 0, 0, 0xFFFFFFFFU})};
+        make_values(5, {9, 0x40400000U, 0, 0, 0xFFFFFFFFU})};
     REQUIRE(fixture.runtime->create_instance(0).has_value());
 
     fixture.runtime->step_tick(1.0F);
     fixture.runtime->step_tick(1.0F);
     CHECK(fixture.world.play_requests.empty());  // not due yet.
 
-    fixture.runtime->step_tick(1.0F);  // elapsed reaches 0.1 -> due.
+    fixture.runtime->step_tick(1.0F);  // elapsed reaches frame 3 -> due.
     REQUIRE_EQ(fixture.world.play_requests.size(), 1U);
     // voiceIndex + 1 = 3 + 1.
     CHECK_EQ(fixture.runtime->instances().at(0).value_pool.at(3).raw, 4U);
 
     fixture.runtime->step_tick(1.0F);  // exhausted: no second start.
     CHECK_EQ(fixture.world.play_requests.size(), 1U);
+  }
+
+  TEST_CASE("PlaySyncSound retail-style schedule 180 means six seconds at 30 Hz") {
+    // Grid.SCX 1KaylArrives contains synchronized sounds scheduled as high as
+    // 180.0 while INTRO1.3DA ends at frame 185. Runtime therefore interprets
+    // 180.0 as script frames (6 seconds), not 180 wall-clock seconds.
+    RuntimeFixture fixture{{single_root_script(command(K_PLAY_SYNC_SOUND, 0, 5))},
+        make_values(5, {9, 0x43340000U, 0, 0, 0xFFFFFFFFU})};
+    REQUIRE(fixture.runtime->create_instance(0).has_value());
+
+    for (std::size_t frame{0}; frame < 179U; ++frame) {
+      fixture.runtime->step_tick(1.0F);
+    }
+    CHECK(fixture.world.play_requests.empty());
+
+    fixture.runtime->step_tick(1.0F);
+    REQUIRE_EQ(fixture.world.play_requests.size(), 1U);
+    CHECK_EQ(fixture.runtime->instances().at(0).value_pool.at(3).raw, 4U);
   }
 
   TEST_CASE("Attached PlaySyncSound uses the recovered 0/30 distance defaults") {

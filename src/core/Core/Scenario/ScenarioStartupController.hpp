@@ -274,6 +274,14 @@ class ScenarioStartupController {
       const Script::AreaCurrentCharacterMoveRequest& request);
   [[nodiscard]] std::expected<void, std::string> set_current_character_controller(
       const Script::AreaCurrentCharacterControllerRequest& request);
+  /// Starts a compact-owned dialog and enters the session-global scheduling
+  /// takeover shared by AREA, SCENE, and contact contexts.
+  [[nodiscard]] std::expected<void, std::string> start_compact_dialog(
+      const Script::AreaDialogRequest& request);
+  /// Resolves the recovered IAM/OBJECT voice-over variant and submits its
+  /// independent audio/subtitle presentation to the owner world.
+  [[nodiscard]] std::expected<void, std::string> present_compact_object(
+      const Script::AreaObjectActivationRequest& request);
   [[nodiscard]] std::expected<void, std::string> deactivate_owner_character(
       std::size_t owner_slot, const Script::AreaCharacterDeactivationRequest& request);
   /// Resolves an owner-world SCX script and starts it on either the authored
@@ -310,10 +318,12 @@ class ScenarioStartupController {
   std::vector<std::byte> m_start_bytes;
   std::vector<std::byte> m_area_archive_bytes;
   std::vector<std::byte> m_scene_archive_bytes;
+  std::vector<std::byte> m_object_archive_bytes;
 
   std::optional<Omikron::IamStart> m_start;
   std::optional<Omikron::IamIndexedArchive> m_area_archive;
   std::optional<Omikron::IamIndexedArchive> m_scene_archive;
+  std::optional<Omikron::IamFixedStrideArchive> m_object_archive;
   /// Two resident Runtime AREA slots. Slot 0 holds the initial area; opcode
   /// 0x2F prepares the inactive alternate slot, and 0x47 later commits it.
   std::array<RuntimeAreaSlot, 2> m_area_slots{RuntimeAreaSlot{.primary = std::nullopt,
@@ -361,7 +371,7 @@ class ScenarioStartupController {
   Audio::AudioSystem* m_audio{nullptr};
   /// Scenario owner used by the AREA -> SCX ScriptRuntime bridge.
   ScenarioManager* m_manager{nullptr};
-  /// Global scheduling takeover entered only by a successful AREA 0x3D.
+  /// Global scheduling takeover entered by any successful compact 0x3D.
   bool m_dialog_takeover_active{false};
   std::optional<std::int16_t> m_dialog_takeover_id;
   /// UI dispatch; pure transport, no lifecycle policy.

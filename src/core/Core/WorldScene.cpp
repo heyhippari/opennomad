@@ -637,6 +637,49 @@ void WorldScene::consume_letterbox_commands(const WorldSceneContext* const conte
   }
 }
 
+void WorldScene::consume_object_presentation_commands(const WorldSceneContext* const context) {
+  if (m_scenarios == nullptr || context == nullptr) {
+    return;
+  }
+  while (std::optional<WorldVoiceOverCommand> command{
+      m_scenarios->world_presentation().take_voice_over()}) {
+    if (command->scene_id != context->scene_id ||
+        command->scene_generation != context->generation) {
+      App::Log::debug(LogCategory::Audio,
+          "WorldScene: discarded stale OBJECTS voice-over for scene={} generation={}",
+          command->scene_id,
+          command->scene_generation);
+      continue;
+    }
+    Audio::AudioSystem* const audio{
+        context->runtime == nullptr ? nullptr : context->runtime->audio_system()};
+    if (audio == nullptr) {
+      App::Log::warn(LogCategory::Audio,
+          "OBJECTS {} voice-over '{}' requested without audio",
+          command->object_id,
+          command->audio_path);
+      continue;
+    }
+    if (auto played{audio->play_voice_over(command->audio_path)}; !played) {
+      App::Log::warn(LogCategory::Audio,
+          "OBJECTS {} voice-over '{}' unavailable: {}",
+          command->object_id,
+          command->audio_path,
+          played.error());
+    }
+  }
+  while (std::optional<WorldSubtitleCommand> command{
+      m_scenarios->world_presentation().take_subtitle()}) {
+    const bool applied{m_subtitle.apply_command(*command, context->scene_id, context->generation)};
+    if (!applied) {
+      App::Log::debug(LogCategory::Renderer,
+          "WorldScene: discarded stale OBJECTS subtitle for scene={} generation={}",
+          command->scene_id,
+          command->scene_generation);
+    }
+  }
+}
+
 bool WorldScene::update_dialog_input(const float delta_time, const Input::InputManager& input) {
   if (m_scenarios == nullptr) {
     return false;
@@ -718,6 +761,7 @@ void WorldScene::update(const float delta_time, const Input::InputManager& input
         m_camera.reset();
         m_fade.reset();
         m_letterbox.reset();
+        m_subtitle.reset();
         auto renderer{WorldRenderer::create(*context)};
         if (!renderer) {
           App::Log::error(LogCategory::Renderer,
@@ -745,6 +789,7 @@ void WorldScene::update(const float delta_time, const Input::InputManager& input
       m_camera.reset();
       m_fade.reset();
       m_letterbox.reset();
+      m_subtitle.reset();
       m_world_observed = false;
     }
   }
@@ -777,8 +822,10 @@ void WorldScene::update(const float delta_time, const Input::InputManager& input
 
   consume_fade_commands(context);
   consume_letterbox_commands(context);
+  consume_object_presentation_commands(context);
   m_fade.update(delta_time);
   m_letterbox.update(delta_time);
+  m_subtitle.update(delta_time);
   m_uv_phases.update(delta_time);
 
   m_camera.update(delta_time);
@@ -838,6 +885,7 @@ void WorldScene::render() {
       m_scenarios != nullptr ? m_scenarios->active_world_context() : nullptr};
   consume_fade_commands(context);
   consume_letterbox_commands(context);
+  consume_object_presentation_commands(context);
 
   // A world context may be replaced between update and render; never
   // dereference a runtime cached by the renderer. If generation no longer
@@ -880,6 +928,9 @@ void WorldScene::render() {
   // background therefore covers the world while the main menu is active,
   // exactly as the stable WorldScene architecture intends.
   m_interfaces.render(m_width, m_height);
+  if (m_subtitle.active()) {
+    m_interfaces.render_world_subtitle(m_subtitle.text(), m_width, m_height);
+  }
   if (m_scenarios != nullptr) {
     if (const auto dialog{m_scenarios->dialog_runtime().presentation()}; dialog.has_value()) {
       const std::size_t selected{dialog->choices.empty() ? 0U

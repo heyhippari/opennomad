@@ -8,8 +8,8 @@
 #include <string>
 
 #include "Core/Debug/SceneDebugView.hpp"
-#include "Core/Interface/InterfacePresenter.hpp"
 #include "Core/Interface/DialogTextLayout.hpp"
+#include "Core/Interface/InterfacePresenter.hpp"
 #include "Core/Scene.hpp"
 #include "Core/WorldCamera.hpp"
 #include "Core/WorldPresentation.hpp"
@@ -69,6 +69,7 @@ class WorldScene final : public Scene, public Debug::SceneDebugView {
 
   void consume_fade_commands(const WorldSceneContext* context);
   void consume_letterbox_commands(const WorldSceneContext* context);
+  void consume_object_presentation_commands(const WorldSceneContext* context);
   [[nodiscard]] bool update_dialog_input(float delta_time, const Input::InputManager& input);
 
   ScenarioManager* m_scenarios{nullptr};
@@ -80,6 +81,7 @@ class WorldScene final : public Scene, public Debug::SceneDebugView {
   WorldCameraSystem m_camera;
   WorldFadeState m_fade;
   WorldLetterboxState m_letterbox;
+  WorldSubtitleState m_subtitle;
   WorldUvPhaseState m_uv_phases;
   int m_width{640};
   int m_height{480};

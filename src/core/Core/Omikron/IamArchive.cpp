@@ -98,4 +98,38 @@ std::expected<std::span<const std::byte>, std::string> IamIndexedArchive::read_r
   return m_data.subspan(offset, size);
 }
 
+std::expected<std::span<const std::byte>, std::string> IamFixedStrideArchive::read_record(
+    const std::uint32_t id) const {
+  APP_PROFILE_FUNCTION();
+
+  if (m_record_size == 0U || m_stride == 0U) {
+    return std::expected<std::span<const std::byte>, std::string>{
+        std::unexpect, "IAM fixed-stride archive has a zero record size or stride"};
+  }
+  if (m_record_size > m_stride) {
+    return std::expected<std::span<const std::byte>, std::string>{std::unexpect,
+        fmt::format("IAM fixed-stride archive record size {:#x} exceeds stride {:#x}",
+            m_record_size,
+            m_stride)};
+  }
+
+  const std::uint64_t offset{
+      static_cast<std::uint64_t>(id) * static_cast<std::uint64_t>(m_stride)};
+  const std::uint64_t end{offset + static_cast<std::uint64_t>(m_record_size)};
+  if (offset > std::numeric_limits<std::size_t>::max() ||
+      end > std::numeric_limits<std::size_t>::max()) {
+    return std::expected<std::span<const std::byte>, std::string>{
+        std::unexpect, fmt::format("IAM fixed-stride record {} offset overflows size_t", id)};
+  }
+  if (end > m_data.size()) {
+    return std::expected<std::span<const std::byte>, std::string>{std::unexpect,
+        fmt::format("IAM fixed-stride record {} range [{:#x}, {:#x}) is outside the {} byte archive",
+            id,
+            offset,
+            end,
+            m_data.size())};
+  }
+  return m_data.subspan(static_cast<std::size_t>(offset), m_record_size);
+}
+
 }  // namespace App::Omikron
