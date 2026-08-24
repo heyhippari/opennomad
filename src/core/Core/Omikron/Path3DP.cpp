@@ -35,22 +35,21 @@ std::string read_fixed_string(BinaryReader& reader, const std::size_t length) {
   return result;
 }
 
-Runtime::Quaternion normalized_lerp(
+Runtime::Quaternion runtime_quaternion_interpolation(
     const Runtime::Quaternion& from, const Runtime::Quaternion& to, const float amount) {
-  Runtime::Quaternion result{.w = from.w + ((to.w - from.w) * amount),
-      .x = from.x + ((to.x - from.x) * amount),
-      .y = from.y + ((to.y - from.y) * amount),
-      .z = from.z + ((to.z - from.z) * amount)};
-  const float length{std::sqrt((result.w * result.w) + (result.x * result.x) +
-                               (result.y * result.y) + (result.z * result.z))};
-  if (length <= 0.0F) {
-    return Runtime::Quaternion{};
+  const float dot{(from.w * to.w) + (from.x * to.x) + (from.y * to.y) + (from.z * to.z)};
+  const float angle{std::acos(dot)};
+  float from_weight{1.0F - amount};
+  float to_weight{amount};
+  if (angle > 0.1F) {
+    const float sine{std::sin(angle)};
+    from_weight = std::sin(angle * (1.0F - amount)) / sine;
+    to_weight = std::sin(angle * amount) / sine;
   }
-  result.w /= length;
-  result.x /= length;
-  result.y /= length;
-  result.z /= length;
-  return result;
+  return Runtime::Quaternion{.w = (from.w * from_weight) + (to.w * to_weight),
+      .x = (from.x * from_weight) + (to.x * to_weight),
+      .y = (from.y * from_weight) + (to.y * to_weight),
+      .z = (from.z * from_weight) + (to.z * to_weight)};
 }
 
 }  // namespace
@@ -61,13 +60,23 @@ std::expected<Path3DPSample, std::string> Path3DPSubpath::sample_mode_1(
     return std::expected<Path3DPSample, std::string>{
         std::unexpect, fmt::format("3DP subpath '{}' contains no points", name)};
   }
-  if (points.size() == 1U || parameter <= static_cast<float>(points.front().key)) {
+  if (points.size() == 1U || parameter == static_cast<float>(points.front().key)) {
     return Path3DPSample{
         .position = points.front().position, .quaternion = points.front().quaternion};
   }
-  if (parameter >= static_cast<float>(points.back().key)) {
+  if (parameter == static_cast<float>(points.back().key)) {
     return Path3DPSample{
         .position = points.back().position, .quaternion = points.back().quaternion};
+  }
+
+  if (parameter < static_cast<float>(points.front().key) ||
+      parameter > static_cast<float>(points.back().key)) {
+    return std::expected<Path3DPSample, std::string>{std::unexpect,
+        fmt::format("3DP subpath '{}' parameter {} is outside [{}, {}]",
+            name,
+            parameter,
+            points.front().key,
+            points.back().key)};
   }
 
   for (std::size_t index{1}; index < points.size(); ++index) {
@@ -77,16 +86,17 @@ std::expected<Path3DPSample, std::string> Path3DPSubpath::sample_mode_1(
     }
     const Path3DPPoint& from{points.at(index - 1U)};
     if (to.key <= from.key) {
-      return std::expected<Path3DPSample, std::string>{std::unexpect,
-          fmt::format("3DP subpath '{}' keys are not strictly increasing", name)};
+      return std::expected<Path3DPSample, std::string>{
+          std::unexpect, fmt::format("3DP subpath '{}' keys are not strictly increasing", name)};
     }
-    const float amount{(parameter - static_cast<float>(from.key)) /
-                       static_cast<float>(to.key - from.key)};
-    return Path3DPSample{.position = Runtime::Vec3{
-                             .x = from.position.x + ((to.position.x - from.position.x) * amount),
-                             .y = from.position.y + ((to.position.y - from.position.y) * amount),
-                             .z = from.position.z + ((to.position.z - from.position.z) * amount)},
-        .quaternion = normalized_lerp(from.quaternion, to.quaternion, amount)};
+    const float amount{
+        (parameter - static_cast<float>(from.key)) / static_cast<float>(to.key - from.key)};
+    return Path3DPSample{
+        .position =
+            Runtime::Vec3{.x = from.position.x + ((to.position.x - from.position.x) * amount),
+                .y = from.position.y + ((to.position.y - from.position.y) * amount),
+                .z = from.position.z + ((to.position.z - from.position.z) * amount)},
+        .quaternion = runtime_quaternion_interpolation(from.quaternion, to.quaternion, amount)};
   }
   return std::expected<Path3DPSample, std::string>{
       std::unexpect, fmt::format("3DP subpath '{}' cannot bracket parameter {}", name, parameter)};
@@ -107,18 +117,19 @@ std::expected<Path3DP, std::string> Path3DP::load(const std::span<const std::byt
   for (std::uint32_t index{0}; index < path_count; ++index) {
     Path3DPSubpath subpath;
     subpath.name = read_fixed_string(reader, 20);
-    subpath.field_14 = reader.read_u32();
+    subpath.max_parameter = reader.read_u32();
     const std::uint32_t point_count{reader.read_u32()};
     if (point_count > K_MAX_POINT_COUNT) {
       return std::expected<Path3DP, std::string>{std::unexpect,
-          fmt::format("3DP subpath '{}' has implausible point count {}", subpath.name, point_count)};
+          fmt::format(
+              "3DP subpath '{}' has implausible point count {}", subpath.name, point_count)};
     }
     subpath.points.reserve(point_count);
     for (std::uint32_t point_index{0}; point_index < point_count; ++point_index) {
       Path3DPPoint point;
       point.key = reader.read_u32();
-      point.position = Runtime::Vec3{
-          .x = reader.read_f32(), .y = reader.read_f32(), .z = reader.read_f32()};
+      point.position =
+          Runtime::Vec3{.x = reader.read_f32(), .y = reader.read_f32(), .z = reader.read_f32()};
       point.quaternion = Runtime::Quaternion{.w = reader.read_f32(),
           .x = reader.read_f32(),
           .y = reader.read_f32(),
@@ -126,8 +137,8 @@ std::expected<Path3DP, std::string> Path3DP::load(const std::span<const std::byt
       subpath.points.push_back(point);
     }
     if (reader.has_error()) {
-      return std::expected<Path3DP, std::string>{std::unexpect,
-          fmt::format("3DP subpath {}: {}", index, reader.error())};
+      return std::expected<Path3DP, std::string>{
+          std::unexpect, fmt::format("3DP subpath {}: {}", index, reader.error())};
     }
     path.subpaths.push_back(std::move(subpath));
   }

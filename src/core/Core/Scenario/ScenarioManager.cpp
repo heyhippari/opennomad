@@ -19,8 +19,8 @@
 #include "Core/Character/CharacterRuntime.hpp"
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Dialog/DialogRuntime.hpp"
-#include "Core/GameState.hpp"
 #include "Core/GameDataLoader.hpp"
+#include "Core/GameState.hpp"
 #include "Core/Log.hpp"
 #include "Core/LogCategory.hpp"
 #include "Core/Omikron/IamCamera.hpp"
@@ -201,8 +201,7 @@ std::expected<WorldSceneContext*, std::string> ScenarioManager::load_world_conte
 
   WorldSceneContext* target{allocate_world_context_slot()};
   if (target == nullptr) {
-    return std::expected<WorldSceneContext*, std::string>{
-        std::unexpect,
+    return std::expected<WorldSceneContext*, std::string>{std::unexpect,
         fmt::format("Cannot allocate world context slot for scene {}: no free or recyclable "
                     "entry (both are LoadedActive)",
             scene_id)};
@@ -233,10 +232,12 @@ std::expected<WorldSceneContext*, std::string> ScenarioManager::load_world_conte
         resolved_decor_path = decor_file->resolved.string();
         decor_model.emplace(std::move(parsed).value());
       } else {
-        App::Log::warn(LogCategory::Scenario, "World decor parse failed (non-fatal): {}", parsed.error());
+        App::Log::warn(
+            LogCategory::Scenario, "World decor parse failed (non-fatal): {}", parsed.error());
       }
     } else {
-      App::Log::warn(LogCategory::Scenario, "World decor unavailable (non-fatal): {}", decor_file.error());
+      App::Log::warn(
+          LogCategory::Scenario, "World decor unavailable (non-fatal): {}", decor_file.error());
     }
   }
 
@@ -250,8 +251,7 @@ std::expected<WorldSceneContext*, std::string> ScenarioManager::load_world_conte
         cache_index,
         scene_id,
         loaded.error());
-    return std::expected<WorldSceneContext*, std::string>{
-        std::unexpect, std::move(loaded).error()};
+    return std::expected<WorldSceneContext*, std::string>{std::unexpect, std::move(loaded).error()};
   }
 
   // Build the replacement runtime from the freshly parsed package before
@@ -306,8 +306,8 @@ std::expected<void, std::string> ScenarioManager::activate_world_context(
     const std::uint32_t scene_id) {
   WorldSceneContext* context{find_world_context(scene_id)};
   if (context == nullptr || context->residency == WorldSceneResidencyState::Free) {
-    return std::expected<void, std::string>{
-        std::unexpect, fmt::format("Cannot activate world context {}: not found or free", scene_id)};
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format("Cannot activate world context {}: not found or free", scene_id)};
   }
 
   if (context->residency == WorldSceneResidencyState::LoadedActive) {
@@ -328,8 +328,8 @@ std::expected<void, std::string> ScenarioManager::deactivate_world_context(
     const std::uint32_t scene_id) {
   WorldSceneContext* context{find_world_context(scene_id)};
   if (context == nullptr || context->residency == WorldSceneResidencyState::Free) {
-    return std::expected<void, std::string>{
-        std::unexpect, fmt::format("Cannot deactivate world context {}: not found or free", scene_id)};
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format("Cannot deactivate world context {}: not found or free", scene_id)};
   }
 
   if (context->residency == WorldSceneResidencyState::LoadedInactive) {
@@ -357,8 +357,8 @@ std::expected<void, std::string> ScenarioManager::switch_active_world_context(
   WorldSceneContext* target{find_world_context(target_scene_id)};
   if (source == nullptr || source->residency != WorldSceneResidencyState::LoadedActive) {
     return std::expected<void, std::string>{std::unexpect,
-        fmt::format("Cannot switch world residency: source context {} is not active",
-            source_scene_id)};
+        fmt::format(
+            "Cannot switch world residency: source context {} is not active", source_scene_id)};
   }
   if (target == nullptr || target->residency != WorldSceneResidencyState::LoadedInactive) {
     return std::expected<void, std::string>{std::unexpect,
@@ -369,8 +369,8 @@ std::expected<void, std::string> ScenarioManager::switch_active_world_context(
   for (const WorldSceneContext& context : m_world_contexts) {
     if (&context != source && context.residency == WorldSceneResidencyState::LoadedActive) {
       return std::expected<void, std::string>{std::unexpect,
-          fmt::format("Cannot switch world residency: unexpected active context {}",
-              context.scene_id)};
+          fmt::format(
+              "Cannot switch world residency: unexpected active context {}", context.scene_id)};
     }
   }
 
@@ -397,17 +397,15 @@ std::expected<void, std::string> ScenarioManager::unload_world_context(
   }
 
   if (context->residency == WorldSceneResidencyState::LoadedActive) {
-    return std::expected<void, std::string>{
-        std::unexpect,
-        fmt::format("Cannot unload world context {}: still LoadedActive (deactivate first)",
-            scene_id)};
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format(
+            "Cannot unload world context {}: still LoadedActive (deactivate first)", scene_id)};
   }
 
   if (context->residency == WorldSceneResidencyState::Free) {
     return {};  // Already free.
   }
-  if (m_controlled_character.has_value() &&
-      m_controlled_character->world_scene_id == scene_id) {
+  if (m_controlled_character.has_value() && m_controlled_character->world_scene_id == scene_id) {
     return std::expected<void, std::string>{std::unexpect,
         fmt::format("Cannot unload world context {}: it owns current controlled character {}",
             scene_id,
@@ -682,13 +680,11 @@ void ScenarioManager::service_dialog_camera() {
 
   // A camera pair is a presentation-generation operation, not something that
   // should be continuously resubmitted while a subtitle remains visible.
-  if (m_dialog_camera_generation.has_value() &&
-      m_dialog_camera_generation.value() == generation) {
+  if (m_dialog_camera_generation.has_value() && m_dialog_camera_generation.value() == generation) {
     return;
   }
 
-  const std::optional<Dialog::DialogPresentation> presentation{
-      m_dialog_runtime.presentation()};
+  const std::optional<Dialog::DialogPresentation> presentation{m_dialog_runtime.presentation()};
 
   if (!presentation.has_value()) {
     // Remember inactive/completed generations too. A later dialog/node/state
@@ -723,8 +719,7 @@ void ScenarioManager::service_dialog_camera() {
     return;
   }
 
-  const std::optional<Omikron::IamCameraRecord> immediate_camera{
-      pair->cameras.at(0)};
+  const std::optional<Omikron::IamCameraRecord> immediate_camera{pair->cameras.at(0)};
   if (!immediate_camera.has_value()) {
     App::Log::warn(LogCategory::Scenario,
         "Dialog camera {} is authored but unresolved",
@@ -740,39 +735,31 @@ void ScenarioManager::service_dialog_camera() {
     return;
   }
 
-  const auto enqueue =
-      [this, context](const Omikron::IamCameraRecord& camera,
-          const std::int16_t duration_units) {
-        m_world_presentation.enqueue_camera(
-            WorldCameraCommand{
-                .scene_id = context->scene_id,
-                .scene_generation = context->generation,
-                .camera_id = static_cast<std::uint16_t>(camera.camera_id),
+  const auto enqueue = [this, context](const Omikron::IamCameraRecord& camera,
+                           const std::int16_t duration_units) {
+    m_world_presentation.enqueue_camera(WorldCameraCommand{.scene_id = context->scene_id,
+        .scene_generation = context->generation,
+        .camera_id = static_cast<std::uint16_t>(camera.camera_id),
 
-                .serialized_eye = camera.serialized_eye,
-                .serialized_target = camera.serialized_target,
-                .runtime_eye =
-                    Runtime::area_position_to_inches(camera.serialized_eye),
-                .runtime_target =
-                    Runtime::area_position_to_inches(camera.serialized_target),
+        .serialized_eye = camera.serialized_eye,
+        .serialized_target = camera.serialized_target,
+        .runtime_eye = Runtime::area_position_to_inches(camera.serialized_eye),
+        .runtime_target = Runtime::area_position_to_inches(camera.serialized_target),
 
-                .duration_units = duration_units,
-                .flags = 0,
-                .wait_for_completion = false,
+        .duration_units = duration_units,
+        .flags = 0,
+        .wait_for_completion = false,
 
-                .camera_type = camera.camera_type,
-                .roll_units = camera.roll_units,
-                .horizontal_fov_units = camera.horizontal_fov_units,
-                .roll_degrees =
-                    Runtime::area_angle_to_degrees(camera.roll_units),
-                .horizontal_fov_degrees =
-                    Runtime::area_angle_to_degrees(
-                        camera.horizontal_fov_units),
+        .camera_type = camera.camera_type,
+        .roll_units = camera.roll_units,
+        .horizontal_fov_units = camera.horizontal_fov_units,
+        .roll_degrees = Runtime::area_angle_to_degrees(camera.roll_units),
+        .horizontal_fov_degrees = Runtime::area_angle_to_degrees(camera.horizontal_fov_units),
 
-                .field_20 = camera.field_20,
-                .field_22 = camera.field_22,
-                .tail_fields = camera.tail_fields});
-      };
+        .target_attachment_selector = camera.target_attachment_selector,
+        .eye_attachment_selector = camera.eye_attachment_selector,
+        .tail_fields = camera.tail_fields});
+  };
 
   // Native dialog pair:
   //
@@ -785,15 +772,13 @@ void ScenarioManager::service_dialog_camera() {
 
   // Then travel to camera B over Runtime's fixed 160-unit interval.
   if (pair->authored_ids.at(1) >= 0) {
-    const std::optional<Omikron::IamCameraRecord> transition_camera{
-        pair->cameras.at(1)};
+    const std::optional<Omikron::IamCameraRecord> transition_camera{pair->cameras.at(1)};
     if (!transition_camera.has_value()) {
       App::Log::warn(LogCategory::Scenario,
           "Dialog camera {} is authored but unresolved",
           pair->authored_ids.at(1));
     } else {
-      enqueue(transition_camera.value(),
-          K_DIALOG_CAMERA_TRANSITION_UNITS);
+      enqueue(transition_camera.value(), K_DIALOG_CAMERA_TRANSITION_UNITS);
     }
   }
 
@@ -817,7 +802,8 @@ void ScenarioManager::service_dialog_performance(const float real_delta_seconds)
   const WorldSceneContext* context{active_world_context()};
   ScenarioRuntime* runtime{context == nullptr ? nullptr : context->runtime.get()};
   Character::Runtime* characters{runtime == nullptr ? nullptr : &runtime->character_runtime()};
-  const std::uint64_t identity{context == nullptr
+  const std::uint64_t identity{
+      context == nullptr
           ? 0U
           : (static_cast<std::uint64_t>(context->generation) << 32U) | context->scene_id};
   m_dialog_performance.tick(
@@ -934,9 +920,8 @@ std::expected<std::unique_ptr<ScenarioRuntime>, std::string> ScenarioManager::pr
   return runtime;
 }
 
-void ScenarioManager::install_gameplay_mode(const GameplayMode mode,
-    LoadedScenario loaded,
-    std::unique_ptr<ScenarioRuntime> runtime) {
+void ScenarioManager::install_gameplay_mode(
+    const GameplayMode mode, LoadedScenario loaded, std::unique_ptr<ScenarioRuntime> runtime) {
   m_gameplay_mode_slot.current_mode = mode;
   m_gameplay_mode_slot.scenario_path = std::string{gameplay_mode_scenario_path(mode)};
   m_gameplay_mode_slot.resolved_path = std::move(loaded.resolved_path);
@@ -987,6 +972,10 @@ void ScenarioManager::install_world_context(WorldSceneContext& context,
   context.sfx_file_buffer = std::move(loaded.sfx_file_buffer);
   context.sfx_data = std::move(loaded.sfx_data);
   context.runtime = std::move(runtime);
+  if (context.runtime != nullptr) {
+    context.runtime->bind_decor_model(
+        context.decor_model.has_value() ? &context.decor_model.value() : nullptr);
+  }
   context.file_size_bytes = context.scx_file_buffer.size();
   context.residency = residency;
   context.last_error.clear();

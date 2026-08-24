@@ -82,6 +82,11 @@ class IamSceneRecord {
   /// includes the physically following camera records.
   [[nodiscard]] std::span<const std::byte> script_bytes() const;
 
+  /// Complete immutable serialized record used by record-relative zone events.
+  [[nodiscard]] std::span<const std::byte> record_bytes() const {
+    return m_bytes;
+  }
+
   [[nodiscard]] std::vector<IamSceneCharacterRecord> character_placements() const;
   [[nodiscard]] std::optional<IamSceneCharacterRecord> character_by_id(
       std::int16_t character_id) const;

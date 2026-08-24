@@ -144,8 +144,7 @@ class WorldFadeRenderer {
 
     m_shader->bind();
     constexpr float k_byte_to_float{1.0F / 255.0F};
-    const std::array<GLfloat, 3> rgb{
-        static_cast<GLfloat>((color >> 16U) & 0xFFU) * k_byte_to_float,
+    const std::array<GLfloat, 3> rgb{static_cast<GLfloat>((color >> 16U) & 0xFFU) * k_byte_to_float,
         static_cast<GLfloat>((color >> 8U) & 0xFFU) * k_byte_to_float,
         static_cast<GLfloat>(color & 0xFFU) * k_byte_to_float};
     m_shader->set_uniform_vec3("u_color", std::span<const GLfloat, 3>{rgb});
@@ -278,7 +277,25 @@ std::expected<std::unique_ptr<WorldScene>, std::string> WorldScene::create(
 
 WorldScene::WorldScene(ScenarioManager& scenarios, Interface::InterfaceManager& interfaces)
     : m_scenarios(&scenarios),
-      m_interfaces(interfaces) {}
+      m_interfaces(interfaces) {
+  m_camera.set_attachment_pose_provider([this]() -> std::optional<WorldCameraAttachmentPose> {
+    if (m_scenarios == nullptr) {
+      return std::nullopt;
+    }
+    const std::optional<ControlledCharacterRef> current{m_scenarios->controlled_character()};
+    if (!current.has_value()) {
+      return std::nullopt;
+    }
+    ScenarioRuntime* const runtime{m_scenarios->world_runtime(current->world_scene_id)};
+    const Character::RuntimeCharacter* const character{
+        runtime == nullptr ? nullptr : runtime->character_runtime().find(current->character_id)};
+    if (character == nullptr) {
+      return std::nullopt;
+    }
+    return WorldCameraAttachmentPose{.translation = character->transform.translation,
+        .orientation = character->transform.matrix};
+  });
+}
 
 WorldScene::~WorldScene() = default;
 
@@ -584,8 +601,7 @@ void WorldScene::consume_fade_commands(const WorldSceneContext* const context) {
       continue;
     }
 
-    if (!m_fade.apply_command(
-            command.value(), context->scene_id, context->generation)) {
+    if (!m_fade.apply_command(command.value(), context->scene_id, context->generation)) {
       App::Log::debug(LogCategory::Renderer,
           "WorldScene: presentation mode {} remains unsupported",
           command->mode);
@@ -621,8 +637,7 @@ void WorldScene::consume_letterbox_commands(const WorldSceneContext* const conte
   }
 }
 
-bool WorldScene::update_dialog_input(
-    const float delta_time, const Input::InputManager& input) {
+bool WorldScene::update_dialog_input(const float delta_time, const Input::InputManager& input) {
   if (m_scenarios == nullptr) {
     return false;
   }

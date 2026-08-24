@@ -121,6 +121,27 @@ std::expected<IamAreaRecord, std::string> IamAreaRecord::load(
     }
   }
 
+  constexpr std::size_t k_zone_table_index{2};
+  constexpr std::size_t k_zone_stride{0x44};
+  const std::uint32_t zone_offset{
+      read_u32_at(data, k_offset_table_offsets + (k_zone_table_index * 4U))};
+  const std::uint16_t zone_count{
+      read_u16_at(data, k_offset_table_counts + (k_zone_table_index * 2U))};
+  for (std::size_t index{0}; index < zone_count; ++index) {
+    const std::span<const std::byte> zone{
+        data.subspan(zone_offset + (index * k_zone_stride), k_zone_stride)};
+    for (std::size_t event{0}; event < 3U; ++event) {
+      const std::uint32_t event_offset{read_u32_at(zone, event * sizeof(std::uint32_t))};
+      if (event_offset != 0U && event_offset >= data.size()) {
+        return std::expected<IamAreaRecord, std::string>{std::unexpect,
+            fmt::format("IAM/AREA record: zone {} event {} offset {:#x} is outside record",
+                index,
+                event + 1U,
+                event_offset)};
+      }
+    }
+  }
+
   constexpr std::size_t k_definition_table_index{4};
   constexpr std::size_t k_definition_stride{0x114};
   const std::uint32_t definition_offset{

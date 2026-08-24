@@ -1055,6 +1055,27 @@ Script_Reinit_MoveObjectOnPath(): Can't find object "%s" in current scene.
 The function is one of the strongest links between IAM actions and world/path
 resources authored by Quantic Dream's tooling.
 
+The recovered supported base case has 15 positional values. Binding-table-A
+object index, 3DP descriptor index, subpath index, interpolation mode,
+direction, transform/rebase mode, duration, mutable current parameter, mutable
+previous parameter, and six unresolved transform values retain their authored
+slots. For mode `1`, direction `0`, transform/rebase `0`, and all six
+unresolved values zero, Runtime samples the current parameter, writes sampled
+XYZ plus the quaternion-derived matrix to the named mutable decor object,
+resolves its hierarchy, then advances by:
+
+```text
+maxParameter * scriptDeltaFrames / duration
+```
+
+(without the division when duration is zero). The command blocks its
+synchronized group until the endpoint and increments `execution_count` there.
+Direction zero reinitializes mutable progress to `0/0`; direction one uses the
+validated subpath maximum. Repeating traversals reseed near `1/0` forward and
+`max/max` backward. Nonzero transform/rebase data is intentionally diagnosed
+as an unsupported variant rather than guessed. Mode 2 and the remaining
+transform semantics remain deferred.
+
 ### `0x0300001A` — `AnimationFromExternalScene`
 
 ```text

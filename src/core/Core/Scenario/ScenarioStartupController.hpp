@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -61,6 +62,18 @@ struct ActiveZoneRef {
   std::int32_t area_id{-1};
   std::int32_t scene_id{-1};
   Omikron::IamZoneRecord zone;
+};
+
+/// One transient spatial-contact VM context. Its backing IAM record remains
+/// immutable; only the compact context and lifecycle flags are mutable.
+struct ZoneContactContext {
+  std::size_t resident_slot{0};
+  ActiveZoneSource source{ActiveZoneSource::k_area};
+  std::int32_t area_id{-1};
+  std::int32_t scene_id{-1};
+  Omikron::IamZoneRecord zone;
+  std::unique_ptr<Script::AreaScriptRuntime> script;
+  bool departure_queued{false};
 };
 
 /// Staged startup that follows the recovered Runtime.exe path:
@@ -176,6 +189,10 @@ class ScenarioStartupController {
   [[nodiscard]] std::span<const ActiveZoneRef> active_zones() const {
     return m_active_zones;
   }
+  /// Number of live zone-owned compact contexts, exposed for focused lifecycle tests.
+  [[nodiscard]] std::size_t zone_contact_count() const {
+    return m_zone_contacts.size();
+  }
   [[nodiscard]] bool area_transition_pending() const {
     return m_area_transition.has_value();
   }
@@ -253,6 +270,10 @@ class ScenarioStartupController {
   [[nodiscard]] std::expected<void, std::string> select_current_character(
       std::size_t owner_slot, const Script::AreaCharacterSelectionRequest& request);
   [[nodiscard]] std::expected<void, std::string> set_current_character_presentation(bool enabled);
+  [[nodiscard]] std::expected<void, std::string> select_current_character_move(
+      const Script::AreaCurrentCharacterMoveRequest& request);
+  [[nodiscard]] std::expected<void, std::string> set_current_character_controller(
+      const Script::AreaCurrentCharacterControllerRequest& request);
   [[nodiscard]] std::expected<void, std::string> deactivate_owner_character(
       std::size_t owner_slot, const Script::AreaCharacterDeactivationRequest& request);
   /// Resolves an owner-world SCX script and starts it on either the authored
@@ -262,11 +283,21 @@ class ScenarioStartupController {
   /// Polls a character-bound child through the compact context's owner world.
   [[nodiscard]] std::expected<void, std::string> service_character_script_wait(
       Script::AreaScriptRuntime& area_script, std::size_t owner_slot);
-  void bind_scene_compact_services(Script::AreaScriptRuntime& runtime, std::size_t owner_slot);
+  void bind_scene_compact_services(Script::AreaScriptRuntime& runtime,
+      std::size_t owner_slot,
+      bool prefer_scene_definition = true);
+  /// Finds an owner-resident IAM camera and submits its unbaked serialized
+  /// fields to presentation, where live attachment resolution occurs.
+  void enqueue_compact_camera(std::size_t owner_slot,
+      bool prefer_scene_definition,
+      const Script::AreaCameraRequest& request);
   void service_scene_scripts(float delta_seconds);
+  [[nodiscard]] std::expected<void, std::string> service_zone_contacts(float delta_seconds);
+  [[nodiscard]] bool zone_contact_backing_resident(const ZoneContactContext& contact) const;
+  [[nodiscard]] bool zone_contact_eligible(const ZoneContactContext& contact) const;
+  [[nodiscard]] std::expected<void, std::string> create_zone_contact(
+      const ActiveZoneRef& active_zone);
   [[nodiscard]] std::optional<std::size_t> resident_area_slot(std::int32_t area_id) const;
-  [[nodiscard]] std::optional<Omikron::IamCameraRecord> active_resident_camera(
-      std::int16_t camera_id) const;
 
   struct PendingAreaTransition {
     Script::AreaTransitionHandle handle;
@@ -307,6 +338,7 @@ class ScenarioStartupController {
   std::uint64_t m_next_area_transition_generation{1};
   std::optional<Script::AreaScriptRuntime> m_area_script;
   std::vector<ActiveZoneRef> m_active_zones;
+  std::vector<std::unique_ptr<ZoneContactContext>> m_zone_contacts;
 
   std::int16_t m_initial_area_id{0};
   std::int16_t m_linked_area_id{0};

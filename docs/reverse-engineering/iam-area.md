@@ -1,7 +1,7 @@
 # Omikron IAM `AREA` archive and area-record format
 
 > **Status:** work-in-progress reverse-engineering documentation for OpenNomad  
-> **Last updated:** 2026-08-22
+> **Last updated:** 2026-08-25
 >
 > This document describes the Windows retail `IAM/AREA` archive and the
 > serialized AREA records stored inside it.
@@ -1200,34 +1200,36 @@ Record size:
 0x44 bytes
 ```
 
-AREA table 2 now shares OpenNomad's immutable `IamZoneRecord` representation
-with SCENE table 2. Its three `event_offsets[0..2]` remain record-relative
-serialized offsets with deliberately neutral event naming; the parser and
-active-zone residency registry never relocate or execute them.
+AREA table 2 shares the immutable `IamZoneRecord` representation with SCENE
+table 2. The event names remain deliberately neutral: only `event1` is
+confirmed as first qualifying spatial contact; `event2` must not be promoted
+to a per-frame “stay” event.
 
-Strong current sparse layout:
+Confirmed layout:
 
 ```c
 struct AreaZoneRecord {
-    uint32_t eventOffset;         // +0x00, 0 or AREA-bytecode entrypoint
-
-    uint32_t field04;             // +0x04
-    uint32_t field08;             // +0x08
+    uint32_t event1Offset;        // +0x00, 0 means no entry
+    uint32_t event2Offset;        // +0x04, 0 means no entry
+    uint32_t event3Offset;        // +0x08, 0 means no entry
 
     int32_t point0[3];            // +0x0C
     int32_t point1[3];            // +0x18
     int32_t point2[3];            // +0x24
     int32_t point3[3];            // +0x30
 
-    uint16_t field3C;             // +0x3C
-    uint16_t field3E;             // +0x3E
+    int16_t  orientationCenter;   // +0x3C, Runtime angle units
+    int16_t  orientationSpan;     // +0x3E, Runtime angle units
 
-    uint16_t zoneIdAndFlags;      // +0x40
-    int16_t  field42;             // +0x42, commonly -1
+    int16_t  zoneId;              // +0x40
+    int16_t  unknown42;           // +0x42, commonly -1; semantics unknown
 }; // 0x44
 ```
 
-The four serialized 3D points strongly fit quadrilateral trigger/zone geometry.
+The four serialized XYZ points form an X/Z quadrilateral for spatial contact;
+Y is ignored. Runtime uses an ordinary even/odd ray-crossing test. A zero
+orientation span accepts every heading; otherwise the heading must lie within
+the wrapped center ± half-span interval.
 
 ---
 
@@ -1236,7 +1238,7 @@ The four serialized 3D points strongly fit quadrilateral trigger/zone geometry.
 Across the full retail corpus:
 
 ```text
-nonzero table2[i].eventOffset
+nonzero table2[i].event1Offset/event2Offset/event3Offset
 ```
 
 always lies within that AREA record's shared bytecode pool.
@@ -1253,7 +1255,10 @@ zero zone event offsets:
 
 No nonzero value falls outside the bytecode span.
 
-Thus `+0x00` is confidently a record-relative event/script entrypoint.
+All three fields are record-relative event entrypoints. Zone contexts use the
+complete owning AREA record as immutable byte storage, because a zone entry is
+not limited to the top-level `script_bytes()` span. A nonzero entry must be
+within the owning record; zero is a missing, harmless event.
 
 ---
 
@@ -1689,8 +1694,8 @@ struct AreaCameraRecord {
     int16_t rollUnits;         // +0x1C
     int16_t horizontalFovUnits;// +0x1E
 
-    int16_t field20;           // +0x20
-    int16_t field22;           // +0x22
+    int16_t targetAttachmentSelector; // +0x20
+    int16_t eyeAttachmentSelector;    // +0x22
 
     uint16_t tail24;           // +0x24
     uint16_t tail26;           // +0x26
@@ -1700,7 +1705,11 @@ struct AreaCameraRecord {
 ```
 
 Runtime camera-selection handlers copy the first two position vectors and use
-the recovered roll/FOV fields.
+the recovered roll/FOV fields. Selector `-1` makes the corresponding vector
+absolute. Selector `0` anchors that vector to the current actor and is solved
+live during camera update as `actorAnchor - transform_vector(relative,
+actorOrientation)`. Selectors `1..9` have separate unresolved resolvers and
+must not be treated as selector `0`.
 
 ---
 

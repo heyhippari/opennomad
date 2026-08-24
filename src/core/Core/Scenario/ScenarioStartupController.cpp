@@ -8,6 +8,7 @@
 #include <expected>
 #include <filesystem>
 #include <iterator>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -26,6 +27,7 @@
 #include "Core/Log.hpp"
 #include "Core/LogCategory.hpp"
 #include "Core/Omikron/IamArea.hpp"
+#include "Core/Omikron/IamCamera.hpp"
 #include "Core/Omikron/IamCharacterDefinition.hpp"
 #include "Core/Omikron/IamScene.hpp"
 #include "Core/Omikron/IamStart.hpp"
@@ -47,9 +49,9 @@ constexpr std::string_view K_IAM_START_PATH{"IAM/START"};
 constexpr std::string_view K_IAM_AREA_PATH{"IAM/AREA"};
 constexpr std::string_view K_IAM_SCENE_PATH{"IAM/SCENE"};
 constexpr std::string_view K_SCPTDATA_DIRECTORY{"SCPTDATA"};
-/// Provisional directory for area decor models (same as Anekbah.3DO). The
-/// original decor directory is recovered separately from the INI preference
-/// system, which is deferred; this path is a best-effort, non-mandatory load.
+/// Provisional directory for area decor models. The original decor directory
+/// is recovered separately from the INI preference system, which is deferred;
+/// this path is a best-effort, non-mandatory load.
 constexpr std::string_view K_DECOR_DIRECTORY{"MESHES/DECORS"};
 /// Extensions appended by the original AREA dependency loader.
 constexpr std::string_view K_SCX_EXTENSION{".SCX"};
@@ -175,6 +177,7 @@ void ScenarioStartupController::reset_session() {
   m_next_area_transition_generation = 1;
   m_area_script.reset();
   m_active_zones.clear();
+  m_zone_contacts.clear();
   m_start_bytes.clear();
   m_area_archive_bytes.clear();
   m_scene_archive_bytes.clear();
@@ -598,55 +601,7 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
       });
 
   area_script.set_camera_sink([this](const Script::AreaCameraRequest& request) {
-    const RuntimeAreaSlot& active_slot{m_area_slots.at(m_active_area_slot)};
-    if (m_manager == nullptr || !active_slot.primary.has_value()) {
-      App::Log::warn(LogCategory::Scenario,
-          "AREA camera {} requested without an active AREA/world owner",
-          request.camera_id);
-      return;
-    }
-
-    const auto camera{active_resident_camera(static_cast<std::int16_t>(request.camera_id))};
-    if (!camera.has_value()) {
-      App::Log::warn(
-          LogCategory::Scenario, "AREA camera {} not found in table 6", request.camera_id);
-      return;
-    }
-
-    const WorldSceneContext* context{m_manager->active_world_context()};
-    if (context == nullptr) {
-      App::Log::warn(LogCategory::Scenario,
-          "AREA camera {} requested without an active world context",
-          request.camera_id);
-      return;
-    }
-
-    m_manager->world_presentation().enqueue_camera(WorldCameraCommand{.scene_id = context->scene_id,
-        .scene_generation = context->generation,
-        .camera_id = request.camera_id,
-        .serialized_eye = camera->serialized_eye,
-        .serialized_target = camera->serialized_target,
-        .runtime_eye = Runtime::area_position_to_inches(camera->serialized_eye),
-        .runtime_target = Runtime::area_position_to_inches(camera->serialized_target),
-        .duration_units = request.duration_units,
-        .flags = request.flags,
-        .wait_for_completion = request.wait_for_completion,
-        .camera_type = camera->camera_type,
-        .roll_units = camera->roll_units,
-        .horizontal_fov_units = camera->horizontal_fov_units,
-        .roll_degrees = Runtime::area_angle_to_degrees(camera->roll_units),
-        .horizontal_fov_degrees = Runtime::area_angle_to_degrees(camera->horizontal_fov_units),
-        .field_20 = camera->field_20,
-        .field_22 = camera->field_22,
-        .tail_fields = camera->tail_fields});
-
-    record("AreaScript.CameraRequested",
-        fmt::format("id={} duration={} flags={} type={} hFov={}deg",
-            request.camera_id,
-            request.duration_units,
-            request.flags,
-            camera->camera_type,
-            Runtime::area_angle_to_degrees(camera->horizontal_fov_units)));
+    enqueue_compact_camera(m_area_script_owner_slot, false, request);
   });
 
   area_script.set_interface_sink([this](const InterfaceOpenRequest& request)
@@ -841,16 +796,64 @@ std::optional<std::size_t> ScenarioStartupController::resident_area_slot(
   return std::nullopt;
 }
 
-std::optional<Omikron::IamCameraRecord> ScenarioStartupController::active_resident_camera(
-    const std::int16_t camera_id) const {
-  const RuntimeAreaSlot& slot{m_area_slots.at(m_active_area_slot)};
-  if (!slot.primary.has_value()) {
-    return std::nullopt;
+void ScenarioStartupController::enqueue_compact_camera(const std::size_t owner_slot,
+    const bool prefer_scene_definition,
+    const Script::AreaCameraRequest& request) {
+  if (m_manager == nullptr || owner_slot >= m_area_slots.size()) {
+    App::Log::warn(LogCategory::Scenario,
+        "compact camera {} requested without a resident owner",
+        request.camera_id);
+    return;
   }
-  if (const auto area_camera{slot.primary->camera_by_id(camera_id)}; area_camera.has_value()) {
-    return area_camera;
+  const RuntimeAreaSlot& slot{m_area_slots.at(owner_slot)};
+  const std::int16_t camera_id{static_cast<std::int16_t>(request.camera_id)};
+  const std::optional<Omikron::IamCameraRecord> area_camera{
+      slot.primary.has_value() ? slot.primary->camera_by_id(camera_id)
+                               : std::optional<Omikron::IamCameraRecord>{}};
+  const std::optional<Omikron::IamCameraRecord> scene_camera{
+      slot.scene.has_value() ? slot.scene->camera_by_id(camera_id)
+                             : std::optional<Omikron::IamCameraRecord>{}};
+  std::optional<Omikron::IamCameraRecord> camera;
+  if (prefer_scene_definition) {
+    camera = scene_camera.has_value() ? scene_camera : area_camera;
+  } else {
+    camera = area_camera.has_value() ? area_camera : scene_camera;
   }
-  return slot.scene.has_value() ? slot.scene->camera_by_id(camera_id) : std::nullopt;
+  const WorldSceneContext* context{m_manager->active_world_context()};
+  if (!camera.has_value() || context == nullptr) {
+    App::Log::warn(LogCategory::Scenario,
+        "compact camera {} has no owner-resident definition or active world",
+        request.camera_id);
+    return;
+  }
+
+  // Preserve serialized vectors/selectors. WorldCameraSystem obtains the
+  // current actor pose through its narrow provider on every update.
+  m_manager->world_presentation().enqueue_camera(WorldCameraCommand{.scene_id = context->scene_id,
+      .scene_generation = context->generation,
+      .camera_id = request.camera_id,
+      .serialized_eye = camera->serialized_eye,
+      .serialized_target = camera->serialized_target,
+      .runtime_eye = Runtime::area_position_to_inches(camera->serialized_eye),
+      .runtime_target = Runtime::area_position_to_inches(camera->serialized_target),
+      .duration_units = request.duration_units,
+      .flags = request.flags,
+      .wait_for_completion = request.wait_for_completion,
+      .camera_type = camera->camera_type,
+      .roll_units = camera->roll_units,
+      .horizontal_fov_units = camera->horizontal_fov_units,
+      .roll_degrees = Runtime::area_angle_to_degrees(camera->roll_units),
+      .horizontal_fov_degrees = Runtime::area_angle_to_degrees(camera->horizontal_fov_units),
+      .target_attachment_selector = camera->target_attachment_selector,
+      .eye_attachment_selector = camera->eye_attachment_selector,
+      .tail_fields = camera->tail_fields});
+  record("AreaScript.CameraRequested",
+      fmt::format("id={} duration={} flags={} type={} hFov={}deg",
+          request.camera_id,
+          request.duration_units,
+          request.flags,
+          camera->camera_type,
+          Runtime::area_angle_to_degrees(camera->horizontal_fov_units)));
 }
 
 void ScenarioStartupController::bind_compact_state_services(Script::AreaScriptRuntime& runtime,
@@ -881,6 +884,14 @@ void ScenarioStartupController::bind_compact_state_services(Script::AreaScriptRu
   runtime.set_zone_activation_sink([this](const Script::AreaZoneActivationRequest& request) {
     return set_zone_activation(request);
   });
+  runtime.set_current_character_move_sink(
+      [this](const Script::AreaCurrentCharacterMoveRequest& request) {
+        return select_current_character_move(request);
+      });
+  runtime.set_current_character_controller_sink(
+      [this](const Script::AreaCurrentCharacterControllerRequest& request) {
+        return set_current_character_controller(request);
+      });
   runtime.set_character_value_read_sink(
       [this, owner_slot, prefer_scene_definition](const Script::AreaCharacterValueRequest& request)
           -> std::expected<std::int32_t, std::string> {
@@ -1004,9 +1015,10 @@ std::expected<void, std::string> ScenarioStartupController::set_character_value(
       character_id.value(), request.value_kind, value);
 }
 
-void ScenarioStartupController::bind_scene_compact_services(
-    Script::AreaScriptRuntime& runtime, const std::size_t owner_slot) {
-  bind_compact_state_services(runtime, owner_slot, true);
+void ScenarioStartupController::bind_scene_compact_services(Script::AreaScriptRuntime& runtime,
+    const std::size_t owner_slot,
+    const bool prefer_scene_definition) {
+  bind_compact_state_services(runtime, owner_slot, prefer_scene_definition);
   runtime.set_area_release_sink([this](const Script::AreaReleaseRequest& request) {
     return release_area(request);
   });
@@ -1048,37 +1060,10 @@ void ScenarioStartupController::bind_scene_compact_services(
       }
     }
   });
-  runtime.set_camera_sink([this](const Script::AreaCameraRequest& request) {
-    if (m_manager == nullptr) {
-      return;
-    }
-    const auto camera{active_resident_camera(static_cast<std::int16_t>(request.camera_id))};
-    const WorldSceneContext* context{m_manager->active_world_context()};
-    if (!camera.has_value() || context == nullptr) {
-      App::Log::warn(LogCategory::Scenario,
-          "SCENE camera {} has no active resident camera/world owner",
-          request.camera_id);
-      return;
-    }
-    m_manager->world_presentation().enqueue_camera(WorldCameraCommand{.scene_id = context->scene_id,
-        .scene_generation = context->generation,
-        .camera_id = request.camera_id,
-        .serialized_eye = camera->serialized_eye,
-        .serialized_target = camera->serialized_target,
-        .runtime_eye = Runtime::area_position_to_inches(camera->serialized_eye),
-        .runtime_target = Runtime::area_position_to_inches(camera->serialized_target),
-        .duration_units = request.duration_units,
-        .flags = request.flags,
-        .wait_for_completion = request.wait_for_completion,
-        .camera_type = camera->camera_type,
-        .roll_units = camera->roll_units,
-        .horizontal_fov_units = camera->horizontal_fov_units,
-        .roll_degrees = Runtime::area_angle_to_degrees(camera->roll_units),
-        .horizontal_fov_degrees = Runtime::area_angle_to_degrees(camera->horizontal_fov_units),
-        .field_20 = camera->field_20,
-        .field_22 = camera->field_22,
-        .tail_fields = camera->tail_fields});
-  });
+  runtime.set_camera_sink(
+      [this, owner_slot, prefer_scene_definition](const Script::AreaCameraRequest& request) {
+        enqueue_compact_camera(owner_slot, prefer_scene_definition, request);
+      });
   runtime.set_presentation_sink([this](const Script::AreaPresentationRequest& request) {
     if (m_manager == nullptr) {
       return;
@@ -1133,7 +1118,7 @@ void ScenarioStartupController::bind_scene_compact_services(
           -> std::expected<std::size_t, std::string> {
         return launch_character_script(owner_slot, request);
       });
-  runtime.set_character_activation_sink([this, owner_slot](
+  runtime.set_character_activation_sink([this, owner_slot, prefer_scene_definition](
                                             const Script::AreaCharacterActivationRequest& request)
                                             -> std::expected<void, std::string> {
     if (request.character_id == -1) {
@@ -1148,7 +1133,8 @@ void ScenarioStartupController::bind_scene_compact_services(
       return std::expected<void, std::string>{
           std::unexpect, "SCENE owner has no AREA character runtime"};
     }
-    if (slot.scene.has_value() && slot.scene->character_by_id(request.character_id).has_value()) {
+    if (prefer_scene_definition && slot.scene.has_value() &&
+        slot.scene->character_by_id(request.character_id).has_value()) {
       return scenario_runtime->character_runtime().materialize_scene_characters(
           slot.primary_area_id, slot.scene_id, *slot.scene);
     }
@@ -1480,6 +1466,71 @@ std::expected<void, std::string> ScenarioStartupController::set_current_characte
   App::Log::debug(LogCategory::Scenario,
       "current character presentation {} — id={} world={}",
       enabled ? "enabled" : "disabled",
+      current->character_id,
+      current->world_scene_id);
+  return {};
+}
+
+std::expected<void, std::string> ScenarioStartupController::select_current_character_move(
+    const Script::AreaCurrentCharacterMoveRequest& request) {
+  if (m_manager == nullptr) {
+    return std::expected<void, std::string>{std::unexpect, "scenario manager is not available"};
+  }
+  const std::optional<ControlledCharacterRef> current{m_manager->controlled_character()};
+  if (!current.has_value()) {
+    App::Log::debug(LogCategory::Scenario,
+        "current character move/control selection {} ignored — no controlled character",
+        request.move_id);
+    return {};
+  }
+  ScenarioRuntime* const runtime{m_manager->world_runtime(current->world_scene_id)};
+  Character::RuntimeCharacter* const character{
+      runtime == nullptr ? nullptr : runtime->character_runtime().find(current->character_id)};
+  if (character == nullptr) {
+    App::Log::debug(LogCategory::Scenario,
+        "current character move/control selection {} ignored — character {} world {} is not "
+        "resident",
+        request.move_id,
+        current->character_id,
+        current->world_scene_id);
+    return {};
+  }
+  character->current_move_id = request.move_id;
+  App::Log::debug(LogCategory::Scenario,
+      "current character move/control selection {} — id={} world={}",
+      request.move_id,
+      current->character_id,
+      current->world_scene_id);
+  return {};
+}
+
+std::expected<void, std::string> ScenarioStartupController::set_current_character_controller(
+    const Script::AreaCurrentCharacterControllerRequest& request) {
+  if (m_manager == nullptr) {
+    return std::expected<void, std::string>{std::unexpect, "scenario manager is not available"};
+  }
+  const std::optional<ControlledCharacterRef> current{m_manager->controlled_character()};
+  if (!current.has_value()) {
+    App::Log::debug(LogCategory::Scenario,
+        "current character controller {} ignored — no controlled character",
+        request.enabled ? "enabled" : "disabled");
+    return {};
+  }
+  ScenarioRuntime* const runtime{m_manager->world_runtime(current->world_scene_id)};
+  Character::RuntimeCharacter* const character{
+      runtime == nullptr ? nullptr : runtime->character_runtime().find(current->character_id)};
+  if (character == nullptr) {
+    App::Log::debug(LogCategory::Scenario,
+        "current character controller {} ignored — character {} world {} is not resident",
+        request.enabled ? "enabled" : "disabled",
+        current->character_id,
+        current->world_scene_id);
+    return {};
+  }
+  character->controller_enabled = request.enabled;
+  App::Log::debug(LogCategory::Scenario,
+      "current character controller {} — id={} world={}",
+      request.enabled ? "enabled" : "disabled",
       current->character_id,
       current->world_scene_id);
   return {};
@@ -1898,6 +1949,193 @@ void ScenarioStartupController::service_scene_scripts(const float delta_seconds)
   }
 }
 
+bool ScenarioStartupController::zone_contact_backing_resident(
+    const ZoneContactContext& contact) const {
+  if (contact.resident_slot >= m_area_slots.size()) {
+    return false;
+  }
+  const RuntimeAreaSlot& slot{m_area_slots.at(contact.resident_slot)};
+  if (slot.primary_area_id != contact.area_id ||
+      (contact.source == ActiveZoneSource::k_scene && slot.scene_id != contact.scene_id)) {
+    return false;
+  }
+  std::vector<Omikron::IamZoneRecord> zones;
+  if (contact.source == ActiveZoneSource::k_area) {
+    if (slot.primary.has_value()) {
+      zones = slot.primary->zones();
+    }
+  } else if (slot.scene.has_value()) {
+    zones = slot.scene->zones();
+  }
+  return std::ranges::any_of(zones, [&contact](const Omikron::IamZoneRecord& candidate) {
+    return candidate.zone_id == contact.zone.zone_id &&
+           candidate.event_offsets == contact.zone.event_offsets;
+  });
+}
+
+bool ScenarioStartupController::zone_contact_eligible(const ZoneContactContext& contact) const {
+  if (m_manager == nullptr || contact.resident_slot >= m_area_slots.size()) {
+    return false;
+  }
+  const RuntimeAreaSlot& slot{m_area_slots.at(contact.resident_slot)};
+  const std::optional<ControlledCharacterRef> current{m_manager->controlled_character()};
+  if (!current.has_value() || current->world_scene_id != slot.world_scene_id) {
+    return false;
+  }
+  ScenarioRuntime* const runtime{m_manager->world_runtime(slot.world_scene_id)};
+  const Character::RuntimeCharacter* const character{
+      runtime == nullptr ? nullptr : runtime->character_runtime().find(current->character_id)};
+  if (character == nullptr || !character->active || !character->area_present) {
+    return false;
+  }
+  const bool still_enabled{
+      std::ranges::any_of(m_active_zones, [&contact](const ActiveZoneRef& active) {
+        return active.resident_slot == contact.resident_slot && active.source == contact.source &&
+               active.area_id == contact.area_id && active.scene_id == contact.scene_id &&
+               active.zone.zone_id == contact.zone.zone_id &&
+               active.zone.event_offsets == contact.zone.event_offsets;
+      })};
+  return still_enabled &&
+         contact.zone.contains_xz(character->serialized_area_position.at(0),
+             character->serialized_area_position.at(2)) &&
+         contact.zone.accepts_orientation(character->serialized_orientation_units);
+}
+
+std::expected<void, std::string> ScenarioStartupController::create_zone_contact(
+    const ActiveZoneRef& active_zone) {
+  const bool exists{std::ranges::any_of(
+      m_zone_contacts, [&active_zone](const std::unique_ptr<ZoneContactContext>& existing) {
+        return existing != nullptr && existing->resident_slot == active_zone.resident_slot &&
+               existing->source == active_zone.source && existing->area_id == active_zone.area_id &&
+               existing->scene_id == active_zone.scene_id &&
+               existing->zone.zone_id == active_zone.zone.zone_id &&
+               existing->zone.event_offsets == active_zone.zone.event_offsets;
+      })};
+  if (exists) {
+    return {};
+  }
+  if (m_zone_contacts.size() >= 16U) {
+    App::Log::warn(LogCategory::Scenario,
+        "zone {} contact ignored — recovered spatial-contact capacity 16 reached",
+        active_zone.zone.zone_id);
+    return {};
+  }
+  if (active_zone.resident_slot >= m_area_slots.size()) {
+    return std::expected<void, std::string>{std::unexpect, "zone resident slot is out of range"};
+  }
+  const RuntimeAreaSlot& slot{m_area_slots.at(active_zone.resident_slot)};
+  std::span<const std::byte> record_bytes;
+  if (active_zone.source == ActiveZoneSource::k_area) {
+    if (slot.primary.has_value()) {
+      record_bytes = slot.primary->record_bytes();
+    }
+  } else if (slot.scene.has_value()) {
+    record_bytes = slot.scene->record_bytes();
+  }
+  if (record_bytes.empty()) {
+    return std::expected<void, std::string>{
+        std::unexpect, "zone owner record is no longer resident"};
+  }
+
+  auto contact{std::make_unique<ZoneContactContext>()};
+  contact->resident_slot = active_zone.resident_slot;
+  contact->source = active_zone.source;
+  contact->area_id = active_zone.area_id;
+  contact->scene_id = active_zone.scene_id;
+  contact->zone = active_zone.zone;
+  contact->script = std::make_unique<Script::AreaScriptRuntime>(record_bytes);
+  const auto entry_or_missing = [](const std::uint32_t offset) -> std::optional<std::size_t> {
+    return offset == 0U ? std::nullopt : std::optional<std::size_t>{offset};
+  };
+  if (auto entries{contact->script->set_event_entries(Script::AreaScriptEventEntries{
+          .event1 = entry_or_missing(active_zone.zone.event_offsets.at(0)),
+          .event2 = entry_or_missing(active_zone.zone.event_offsets.at(1)),
+          .event3 = entry_or_missing(active_zone.zone.event_offsets.at(2))})};
+      !entries) {
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format("zone {} event entries: {}", active_zone.zone.zone_id, entries.error())};
+  }
+  bind_scene_compact_services(
+      *contact->script, active_zone.resident_slot, active_zone.source == ActiveZoneSource::k_scene);
+  if (contact->script->event_entries().event1.has_value()) {
+    contact->script->queue_event(1);
+  }
+  contact->script->activate();
+  App::Log::info(LogCategory::Scenario,
+      "zone {} first contact / event 1 — source={} slot={}",
+      active_zone.zone.zone_id,
+      active_zone.source == ActiveZoneSource::k_area ? "AREA" : "SCENE",
+      active_zone.resident_slot);
+  m_zone_contacts.push_back(std::move(contact));
+  return {};
+}
+
+std::expected<void, std::string> ScenarioStartupController::service_zone_contacts(
+    const float delta_seconds) {
+  std::erase_if(m_zone_contacts, [this](const std::unique_ptr<ZoneContactContext>& contact) {
+    if (contact != nullptr && zone_contact_backing_resident(*contact)) {
+      return false;
+    }
+    if (contact != nullptr) {
+      App::Log::debug(LogCategory::Scenario,
+          "zone {} contact removed — backing record is no longer resident",
+          contact->zone.zone_id);
+    }
+    return true;
+  });
+
+  for (const ActiveZoneRef& active_zone : m_active_zones) {
+    const ZoneContactContext candidate{.resident_slot = active_zone.resident_slot,
+        .source = active_zone.source,
+        .area_id = active_zone.area_id,
+        .scene_id = active_zone.scene_id,
+        .zone = active_zone.zone,
+        .script = nullptr,
+        .departure_queued = false};
+    if (zone_contact_eligible(candidate)) {
+      if (auto created{create_zone_contact(active_zone)}; !created) {
+        return created;
+      }
+    }
+  }
+
+  std::erase_if(
+      m_zone_contacts, [this, delta_seconds](const std::unique_ptr<ZoneContactContext>& contact) {
+        if (contact == nullptr || contact->script == nullptr) {
+          return true;
+        }
+        Script::AreaScriptRuntime& script{*contact->script};
+        const bool eligible{zone_contact_eligible(*contact)};
+        if (!eligible && !contact->departure_queued && script.event_entries().event3.has_value()) {
+          script.queue_event(3);
+          contact->departure_queued = true;
+        }
+        if (auto serviced{service_character_script_wait(script, contact->resident_slot)};
+            !serviced) {
+          App::Log::warn(LogCategory::Script,
+              "zone {} character-script wait failed: {}",
+              contact->zone.zone_id,
+              serviced.error());
+        }
+        const Script::AreaScriptState state{script.run(delta_seconds)};
+        if (state == Script::AreaScriptState::k_paused_unsupported ||
+            state == Script::AreaScriptState::k_failed) {
+          App::Log::warn(LogCategory::Script,
+              "zone {} compact VM {}: {}",
+              contact->zone.zone_id,
+              state == Script::AreaScriptState::k_failed ? "failed" : "paused",
+              script.pause_info().reason_text);
+        }
+        const bool idle{script.state() == Script::AreaScriptState::k_ready};
+        if (!eligible && idle) {
+          App::Log::debug(LogCategory::Scenario, "zone {} event completed", contact->zone.zone_id);
+          return true;
+        }
+        return false;
+      });
+  return {};
+}
+
 std::expected<void, std::string> ScenarioStartupController::tick(const float delta_seconds) {
   APP_PROFILE_FUNCTION();
 
@@ -2043,6 +2281,10 @@ std::expected<void, std::string> ScenarioStartupController::tick(const float del
   // serviced after the parent AREA dispatch returns, never recursively from
   // opcode 0x47; a paused SCENE therefore cannot freeze its AREA parent.
   service_scene_scripts(delta_seconds);
+  if (auto zones{service_zone_contacts(delta_seconds)}; !zones) {
+    m_last_error = zones.error();
+    return std::expected<void, std::string>{std::unexpect, m_last_error};
+  }
   return {};
 }
 
@@ -2060,6 +2302,14 @@ std::expected<void, std::string> ScenarioStartupController::complete_interface(
       continue;
     }
     if (auto completed{slot.scene_script->complete_interface_wait(completion)}; completed) {
+      return completed;
+    }
+  }
+  for (const std::unique_ptr<ZoneContactContext>& contact : m_zone_contacts) {
+    if (contact == nullptr || contact->script == nullptr) {
+      continue;
+    }
+    if (auto completed{contact->script->complete_interface_wait(completion)}; completed) {
       return completed;
     }
   }

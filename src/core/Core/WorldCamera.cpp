@@ -37,6 +37,10 @@ void WorldCameraSystem::set_aspect_ratio(const float aspect_ratio) {
   }
 }
 
+void WorldCameraSystem::set_attachment_pose_provider(AttachmentPoseProvider provider) {
+  m_attachment_pose_provider = std::move(provider);
+}
+
 void WorldCameraSystem::reset() {
   m_current = WorldCameraPose{};
   m_transition_start = WorldCameraPose{};
@@ -70,10 +74,7 @@ void WorldCameraSystem::set_fallback_pose(const std::array<float, 3>& center, co
 void WorldCameraSystem::apply_command(const WorldCameraCommand& command) {
   APP_PROFILE_FUNCTION();
 
-  const WorldCameraPose requested{.eye = command.runtime_eye,
-      .target = command.runtime_target,
-      .roll_degrees = static_cast<float>(command.roll_degrees),
-      .horizontal_fov_degrees = static_cast<float>(command.horizontal_fov_degrees)};
+  const WorldCameraPose requested{resolve_command_pose(command)};
 
   m_last_command = command;
   m_active_camera_id = command.camera_id;
@@ -105,8 +106,17 @@ void WorldCameraSystem::apply_command(const WorldCameraCommand& command) {
 void WorldCameraSystem::update(const float delta_seconds) {
   APP_PROFILE_FUNCTION();
 
-  if (!m_has_pose || m_transition_duration <= 0.0F) {
+  if (!m_has_pose) {
     return;
+  }
+
+  if (m_last_command.has_value()) {
+    m_transition_target = resolve_command_pose(m_last_command.value());
+    if (m_transition_duration <= 0.0F) {
+      m_current = m_transition_target;
+      commit_pose();
+      return;
+    }
   }
 
   m_transition_elapsed += std::max(delta_seconds, 0.0F);
@@ -134,6 +144,37 @@ void WorldCameraSystem::update(const float delta_seconds) {
   }
 }
 
+WorldCameraPose WorldCameraSystem::resolve_command_pose(const WorldCameraCommand& command) const {
+  return WorldCameraPose{
+      .eye = resolve_attachment_point(
+          command.serialized_eye, command.eye_attachment_selector, command.runtime_eye),
+      .target = resolve_attachment_point(
+          command.serialized_target, command.target_attachment_selector, command.runtime_target),
+      .roll_degrees = static_cast<float>(command.roll_degrees),
+      .horizontal_fov_degrees = static_cast<float>(command.horizontal_fov_degrees)};
+}
+
+Runtime::Vec3 WorldCameraSystem::resolve_attachment_point(
+    const std::array<std::int32_t, 3>& serialized,
+    const std::int16_t selector,
+    const Runtime::Vec3& absolute_fallback) const {
+  if (selector == -1) {
+    return absolute_fallback;
+  }
+  if (selector != 0 || !m_attachment_pose_provider) {
+    return absolute_fallback;
+  }
+  const std::optional<WorldCameraAttachmentPose> attachment{m_attachment_pose_provider()};
+  if (!attachment.has_value()) {
+    return absolute_fallback;
+  }
+  const Runtime::Vec3 relative{Runtime::area_position_to_inches(serialized)};
+  const Runtime::Vec3 rotated{Runtime::transform_vector(relative, attachment->orientation)};
+  return Runtime::Vec3{.x = attachment->translation.x - rotated.x,
+      .y = attachment->translation.y - rotated.y,
+      .z = attachment->translation.z - rotated.z};
+}
+
 WorldCameraPose WorldCameraSystem::interpolate(
     const WorldCameraPose& from, const WorldCameraPose& to, const float amount) {
   WorldCameraPose result;
@@ -143,9 +184,8 @@ WorldCameraPose WorldCameraSystem::interpolate(
   result.target = Runtime::Vec3{.x = from.target.x + ((to.target.x - from.target.x) * amount),
       .y = from.target.y + ((to.target.y - from.target.y) * amount),
       .z = from.target.z + ((to.target.z - from.target.z) * amount)};
-  result.roll_degrees =
-      from.roll_degrees +
-      (shortest_angle_delta_degrees(from.roll_degrees, to.roll_degrees) * amount);
+  result.roll_degrees = from.roll_degrees +
+                        (shortest_angle_delta_degrees(from.roll_degrees, to.roll_degrees) * amount);
   result.horizontal_fov_degrees =
       from.horizontal_fov_degrees +
       ((to.horizontal_fov_degrees - from.horizontal_fov_degrees) * amount);

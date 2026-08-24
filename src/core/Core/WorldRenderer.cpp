@@ -296,7 +296,10 @@ std::expected<std::unique_ptr<WorldRenderer>, std::string> WorldRenderer::create
   }
 
   const Omikron::Model3DOData& model{context.decor_model.value()};
-  auto groups{Omikron::Model3DO::build_static_geometry(model)};
+  auto groups{
+      context.runtime != nullptr && context.runtime->decor_model() == &model
+          ? Omikron::Model3DO::build_posed_geometry(model, context.runtime->decor_runtime_objects())
+          : Omikron::Model3DO::build_static_geometry(model)};
   if (!groups) {
     return std::expected<std::unique_ptr<WorldRenderer>, std::string>{
         std::unexpect, std::move(groups).error()};
@@ -330,6 +333,8 @@ std::expected<std::unique_ptr<WorldRenderer>, std::string> WorldRenderer::create
   renderer->m_legacy_shader = std::make_unique<Shader>(std::move(legacy_shader).value());
   renderer->m_wireframe_shader = std::make_unique<Shader>(std::move(wireframe_shader).value());
   renderer->m_textures = std::move(textures).value();
+  renderer->m_decor_pose_revision =
+      context.runtime != nullptr ? context.runtime->decor_pose_revision() : 0U;
 
   std::array<float, 3> bounds_min{std::numeric_limits<float>::max(),
       std::numeric_limits<float>::max(),
@@ -452,6 +457,35 @@ Debug::SpriteRenderDebugState WorldRenderer::sprite_render_debug_state() const {
 void WorldRenderer::set_sprite_grayscale(const bool enabled) {
   m_sprite_renderer.set_grayscale(enabled);
   m_sprite_grayscale = enabled;
+}
+
+void WorldRenderer::sync_decor_model(const ScenarioRuntime& runtime) {
+  if (runtime.decor_model() == nullptr || runtime.decor_pose_revision() == m_decor_pose_revision) {
+    return;
+  }
+  auto groups{Omikron::Model3DO::build_posed_geometry(
+      *runtime.decor_model(), runtime.decor_runtime_objects())};
+  if (!groups) {
+    App::Log::warn(LogCategory::Renderer, "World decor pose rebuild failed: {}", groups.error());
+    return;
+  }
+  if (groups->size() != m_meshes.size()) {
+    App::Log::warn(LogCategory::Renderer,
+        "World decor pose rebuild changed group count from {} to {}; preserving prior GPU geometry",
+        m_meshes.size(),
+        groups->size());
+    return;
+  }
+  m_meshes.clear();
+  for (const Omikron::MaterialGroup& group : groups.value()) {
+    std::vector<Vertex> presentation_vertices;
+    presentation_vertices.reserve(group.vertices.size());
+    for (const Vertex& vertex : group.vertices) {
+      presentation_vertices.push_back(Runtime::Presentation::to_gl(vertex));
+    }
+    m_meshes.emplace_back(presentation_vertices, group.indices);
+  }
+  m_decor_pose_revision = runtime.decor_pose_revision();
 }
 
 void WorldRenderer::draw_group(const std::size_t index,
@@ -693,6 +727,7 @@ void WorldRenderer::render(const Camera& camera,
   }
 
   if (runtime != nullptr) {
+    sync_decor_model(*runtime);
     sync_character_models(*runtime);
   }
 

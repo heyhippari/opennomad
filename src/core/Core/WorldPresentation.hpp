@@ -45,8 +45,15 @@ class WorldUvPhaseState {
   double m_v_phase{0.0};
 };
 
-/// One resolved Runtime AREA camera command waiting to be consumed by the
-/// presentation layer.
+/// One live Runtime actor attachment pose supplied across the narrow
+/// gameplay-to-presentation capability boundary.
+struct WorldCameraAttachmentPose {
+  Runtime::Vec3 translation{};
+  Runtime::Matrix3 orientation{};
+};
+
+/// One Runtime AREA camera command waiting to be consumed by the presentation
+/// layer.
 ///
 /// Serialized AREA integers are retained for diagnostics alongside normalized
 /// Runtime-native positions. Scenario code never depends on GL conventions.
@@ -57,6 +64,8 @@ struct WorldCameraCommand {
 
   std::array<std::int32_t, 3> serialized_eye{};
   std::array<std::int32_t, 3> serialized_target{};
+  /// Absolute fallback vectors. Actor-attached vectors are re-resolved from
+  /// serialized data every presentation update, never baked at command issue.
   Runtime::Vec3 runtime_eye{};
   Runtime::Vec3 runtime_target{};
 
@@ -72,9 +81,10 @@ struct WorldCameraCommand {
   std::int16_t horizontal_fov_units{0};
   std::int32_t roll_degrees{0};
   std::int32_t horizontal_fov_degrees{0};
-  /// Attachment-related fields remain unresolved.
-  std::int16_t field_20{0};
-  std::int16_t field_22{0};
+  /// IAM +0x20 / +0x22. -1 is absolute, 0 is the current actor. Other
+  /// selectors stay explicitly unsupported and use the safe absolute fallback.
+  std::int16_t target_attachment_selector{-1};
+  std::int16_t eye_attachment_selector{-1};
   std::array<std::uint16_t, 4> tail_fields{};
 };
 
@@ -107,8 +117,7 @@ class WorldFadeState {
 
     m_mode = command.mode;
     m_color = command.color & 0x00FFFFFFU;
-    m_duration_seconds =
-        std::abs(static_cast<float>(command.duration_units)) / k_frames_per_second;
+    m_duration_seconds = std::abs(static_cast<float>(command.duration_units)) / k_frames_per_second;
     m_elapsed_seconds = 0.0F;
     m_alpha = command.mode == 1U ? 0.0F : 1.0F;
     if (m_duration_seconds <= 0.0F) {
@@ -122,8 +131,7 @@ class WorldFadeState {
       return;
     }
     m_elapsed_seconds += std::max(delta_time, 0.0F);
-    const float progress{
-        std::clamp(m_elapsed_seconds / m_duration_seconds, 0.0F, 1.0F)};
+    const float progress{std::clamp(m_elapsed_seconds / m_duration_seconds, 0.0F, 1.0F)};
     m_alpha = m_mode == 1U ? progress : 1.0F - progress;
   }
 
@@ -135,11 +143,21 @@ class WorldFadeState {
     m_duration_seconds = 0.0F;
   }
 
-  [[nodiscard]] std::uint8_t mode() const { return m_mode; }
-  [[nodiscard]] std::uint32_t color() const { return m_color; }
-  [[nodiscard]] float alpha() const { return m_alpha; }
-  [[nodiscard]] float elapsed_seconds() const { return m_elapsed_seconds; }
-  [[nodiscard]] float duration_seconds() const { return m_duration_seconds; }
+  [[nodiscard]] std::uint8_t mode() const {
+    return m_mode;
+  }
+  [[nodiscard]] std::uint32_t color() const {
+    return m_color;
+  }
+  [[nodiscard]] float alpha() const {
+    return m_alpha;
+  }
+  [[nodiscard]] float elapsed_seconds() const {
+    return m_elapsed_seconds;
+  }
+  [[nodiscard]] float duration_seconds() const {
+    return m_duration_seconds;
+  }
   [[nodiscard]] bool transitioning() const {
     return m_duration_seconds > 0.0F && m_elapsed_seconds < m_duration_seconds;
   }
@@ -205,8 +223,7 @@ class WorldLetterboxState {
       return;
     }
     m_elapsed += std::max(delta_time, 0.0F);
-    const float progress{
-        std::clamp(m_elapsed / k_transition_duration_seconds, 0.0F, 1.0F)};
+    const float progress{std::clamp(m_elapsed / k_transition_duration_seconds, 0.0F, 1.0F)};
     // Provisional linear curve; Runtime duration and endpoints are confirmed.
     m_amount = m_start_amount + ((m_target_amount - m_start_amount) * progress);
   }

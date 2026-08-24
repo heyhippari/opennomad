@@ -187,6 +187,84 @@ std::vector<std::byte> make_area_archive() {
   return data;
 }
 
+/// Synthetic AREA-222-shaped contact fixture. The top-level context selects a
+/// current body and enables zone 3795; the record-relative zone event selects
+/// a move, toggles the controller, self-disables, waits on a camera, then
+/// toggles the controller off and ends.
+std::vector<std::byte> make_zone_contact_area_archive() {
+  Buffer top_level;
+  top_level.u8(0x38).u16(136);
+  top_level.u8(0x40).u16(3795);
+  top_level.u8(0x03);
+  Buffer zone_event;
+  zone_event.u8(0x3F).u16(100);
+  zone_event.u8(0x68);
+  zone_event.u8(0x41).u16(3795);
+  zone_event.u8(0x60).u16(0).u16(1).u16(3);
+  zone_event.u8(0x69);
+  zone_event.u8(0x03);
+
+  constexpr std::size_t k_record_offset{0x800};
+  constexpr std::size_t k_table0_offset{0x0B4};
+  constexpr std::size_t k_table2_offset{k_table0_offset + 0x14U};
+  constexpr std::size_t k_table4_offset{k_table2_offset + 0x44U};
+  constexpr std::size_t k_script_offset{k_table4_offset + 0x114U};
+  const std::size_t zone_event_offset{k_script_offset + top_level.data().size()};
+  const std::size_t record_size{zone_event_offset + zone_event.data().size()};
+  std::vector<std::byte> data(k_record_offset + record_size, std::byte{});
+  write_u32(data, 118U * 8U, static_cast<std::uint32_t>(k_record_offset));
+  write_u32(data, (118U * 8U) + 4U, static_cast<std::uint32_t>(record_size));
+  write_u32(data, k_record_offset + 0x04U, k_script_offset);
+  write_name(data, k_record_offset + 0x61U, "GRID");
+
+  write_u32(data, k_record_offset + 0x28U, k_table0_offset);
+  write_u16(data, k_record_offset + 0x48U, 1);
+  write_u16(data, k_record_offset + k_table0_offset + 0x00U, 0xFFFF);
+  write_u16(data, k_record_offset + k_table0_offset + 0x02U, 136);
+  write_u32(data, k_record_offset + k_table0_offset + 0x04U, 5);
+  write_u32(data, k_record_offset + k_table0_offset + 0x08U, 999);
+  write_u32(data, k_record_offset + k_table0_offset + 0x0CU, 5);
+  write_u16(data, k_record_offset + k_table0_offset + 0x10U, 4090);
+  write_u16(data, k_record_offset + k_table0_offset + 0x12U, 136);
+
+  write_u32(data, k_record_offset + 0x28U + (2U * 4U), k_table2_offset);
+  write_u16(data, k_record_offset + 0x48U + (2U * 2U), 1);
+  write_u32(data, k_record_offset + k_table2_offset, static_cast<std::uint32_t>(zone_event_offset));
+  // Four X/Y/Z vertices; y deliberately varies to prove contact is X/Z-only.
+  constexpr std::array<std::array<std::uint32_t, 3>, 4> k_vertices{
+      {{0U, 100U, 0U}, {10U, 200U, 0U}, {10U, 300U, 10U}, {0U, 400U, 10U}}};
+  for (std::size_t index{0}; index < k_vertices.size(); ++index) {
+    for (std::size_t coordinate{0}; coordinate < k_vertices.at(index).size(); ++coordinate) {
+      write_u32(data,
+          k_record_offset + k_table2_offset + 0x0CU + ((index * 3U + coordinate) * 4U),
+          k_vertices.at(index).at(coordinate));
+    }
+  }
+  write_u16(data, k_record_offset + k_table2_offset + 0x3CU, 4090);
+  write_u16(data, k_record_offset + k_table2_offset + 0x3EU, 0);
+  write_u16(data, k_record_offset + k_table2_offset + 0x40U, 3795);
+  write_u16(data, k_record_offset + k_table2_offset + 0x42U, 0xFFFF);
+
+  write_u32(data, k_record_offset + 0x28U + (4U * 4U), k_table4_offset);
+  write_u16(data, k_record_offset + 0x48U + (4U * 2U), 1);
+  constexpr std::string_view k_character_name{"CURRENT CHARACTER"};
+  constexpr std::string_view k_model_name{"CURRENT_BODY"};
+  std::memcpy(data.data() + k_record_offset + k_table4_offset + 0x08U,
+      k_character_name.data(),
+      k_character_name.size());
+  std::memcpy(data.data() + k_record_offset + k_table4_offset + 0x90U,
+      k_model_name.data(),
+      k_model_name.size());
+  write_u16(data, k_record_offset + k_table4_offset + 0x110U, 136);
+  std::memcpy(data.data() + k_record_offset + k_script_offset,
+      top_level.data().data(),
+      top_level.data().size());
+  std::memcpy(data.data() + k_record_offset + zone_event_offset,
+      zone_event.data().data(),
+      zone_event.data().size());
+  return data;
+}
+
 std::vector<std::byte> make_handoff_area_archive() {
   Buffer handoff;
   handoff.u8(0x38).u16(136);
@@ -237,9 +315,7 @@ std::vector<std::byte> make_handoff_area_archive() {
       k_source_model.data(),
       k_source_model.size());
   write_u16(data, k_source_offset + k_source_definition_offset + 0x110U, 136);
-  write_u32(data, k_source_offset + k_source_zone_offset + 0x00U, 0x10203040U);
   write_u16(data, k_source_offset + k_source_zone_offset + 0x40U, 5);
-  write_u32(data, k_source_offset + k_source_zone_offset + 0x44U, 0x50607080U);
   write_u16(data, k_source_offset + k_source_zone_offset + 0x44U + 0x40U, 6);
   std::memcpy(data.data() + k_source_offset + k_source_script_offset,
       handoff.data().data(),
@@ -253,9 +329,7 @@ std::vector<std::byte> make_handoff_area_archive() {
   write_u16(data, k_target_offset + 0x48U + (2U * 2U), 2);
   write_u32(data, k_target_offset + 0x28U + (5U * 4U), k_target_address_offset);
   write_u16(data, k_target_offset + 0x48U + (5U * 2U), 1);
-  write_u32(data, k_target_offset + k_target_zone_offset + 0x00U, 0x50607080U);
   write_u16(data, k_target_offset + k_target_zone_offset + 0x40U, 5);
-  write_u32(data, k_target_offset + k_target_zone_offset + 0x44U, 0x90A0B0C0U);
   write_u16(data, k_target_offset + k_target_zone_offset + 0x44U + 0x40U, 0x8005U);
   write_u32(data, k_target_offset + k_target_address_offset + 0x00U, 43922U);
   write_u32(data, k_target_offset + k_target_address_offset + 0x04U, 2592U);
@@ -444,6 +518,13 @@ void write_boot_fixtures(const TempDirectory& temp) {
   write_bytes(temp.root() / "MESHES" / "DECORS" / "GRID.3DO", make_minimal_3do());
 }
 
+void write_zone_contact_fixtures(const TempDirectory& temp) {
+  write_bytes(temp.root() / "IAM" / "START", make_start());
+  write_bytes(temp.root() / "IAM" / "AREA", make_zone_contact_area_archive());
+  write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
+  write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_minimal_scx());
+}
+
 void write_current_character_script_fixtures(const TempDirectory& temp) {
   Buffer script;
   script.u8(0x2E).u16(221).u16(0).u8(0x03);
@@ -504,6 +585,45 @@ void write_handoff_fixtures(const TempDirectory& temp) {
 }  // namespace
 
 TEST_SUITE("Core::Scenario::ScenarioStartupController") {
+  TEST_CASE("AREA-shaped zone contact runs record-relative event one through self-deactivation") {
+    const TempDirectory temp;
+    write_zone_contact_fixtures(temp);
+    const ScopedGameDataRoot root{temp.root()};
+
+    App::ScenarioManager manager;
+    App::ScenarioStartupController controller;
+    REQUIRE(controller.initialize(manager).has_value());
+    App::ScenarioRuntime* runtime{manager.world_runtime(0)};
+    REQUIRE(runtime != nullptr);
+    runtime->character_runtime().set_model_loader(
+        [](const std::string_view name)
+            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
+          auto resource{std::make_shared<App::Character::ModelResource>()};
+          resource->name = name;
+          resource->groups.push_back(App::Omikron::MaterialGroup{});
+          return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
+        });
+
+    REQUIRE(controller.tick().has_value());
+    REQUIRE(manager.game_state() != nullptr);
+    CHECK_FALSE(manager.game_state()->zone_flag(3795).value());
+    CHECK_EQ(controller.zone_contact_count(), 1U);
+    const App::Character::RuntimeCharacter* character{runtime->character_runtime().find(136)};
+    REQUIRE(character != nullptr);
+    CHECK_EQ(character->current_move_id, std::optional<std::int16_t>{100});
+    CHECK(character->controller_enabled);
+
+    // 0x41 refreshed the persistent zone table, but the context must remain
+    // alive long enough to complete its state-7 camera wait and EndEvent.
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+    CHECK_EQ(controller.zone_contact_count(), 0U);
+    CHECK_FALSE(character->controller_enabled);
+
+    // The disabled zone is not recreated while the actor remains inside it.
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+    CHECK_EQ(controller.zone_contact_count(), 0U);
+  }
+
   TEST_CASE(
       "compact character values use current and explicit owner profiles without body reload") {
     const TempDirectory temp;

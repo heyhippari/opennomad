@@ -3,6 +3,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <optional>
 
 // NOLINTBEGIN(misc-use-anonymous-namespace, cppcoreguidelines-avoid-do-while)
 
@@ -31,8 +32,8 @@ WorldCameraCommand camera_2172() {
       .horizontal_fov_units = 853,
       .roll_degrees = 0,
       .horizontal_fov_degrees = 74,
-      .field_20 = -1,
-      .field_22 = -1,
+      .target_attachment_selector = -1,
+      .eye_attachment_selector = -1,
       .tail_fields = {0, 0, 0, 0}};
 }
 
@@ -52,8 +53,8 @@ WorldCameraCommand camera_2148() {
       .horizontal_fov_units = 853,
       .roll_degrees = 0,
       .horizontal_fov_degrees = 74,
-      .field_20 = -1,
-      .field_22 = -1,
+      .target_attachment_selector = -1,
+      .eye_attachment_selector = -1,
       .tail_fields = {0, 0, 0, 0}};
 }
 
@@ -198,6 +199,43 @@ TEST_SUITE("Core::WorldCameraSystem") {
     CHECK(camera.pose().horizontal_fov_degrees == doctest::Approx(74.0F));
     CHECK(camera.camera().get_near_plane() == doctest::Approx(2.0F));
     CHECK(camera.camera().get_far_plane() == doctest::Approx(1968.503937F));
+  }
+
+  TEST_CASE("Selector-zero cameras resolve against the live current-actor pose") {
+    WorldCameraSystem camera;
+    App::WorldCameraAttachmentPose attachment{.translation = {.x = 100.0F, .y = 20.0F, .z = 300.0F},
+        .orientation = App::Runtime::Matrix3::identity()};
+    camera.set_attachment_pose_provider([&attachment]() {
+      return std::optional{attachment};
+    });
+    const std::array<std::int32_t, 3> eye_serialized{256, 0, 0};
+    const std::array<std::int32_t, 3> target_serialized{0, 256, 0};
+    WorldCameraCommand command{.camera_id = 9,
+        .serialized_eye = eye_serialized,
+        .serialized_target = target_serialized,
+        .runtime_eye = App::Runtime::area_position_to_inches(eye_serialized),
+        .runtime_target = App::Runtime::area_position_to_inches(target_serialized),
+        .duration_units = 0,
+        .target_attachment_selector = 0,
+        .eye_attachment_selector = 0};
+    camera.apply_command(command);
+    CHECK(camera.pose().eye.x ==
+          doctest::Approx(
+              attachment.translation.x - App::Runtime::area_position_to_inches(eye_serialized).x));
+
+    attachment.translation = {.x = 500.0F, .y = 40.0F, .z = 50.0F};
+    attachment.orientation = App::Runtime::rotation_y(1.57079632679F);
+    camera.update(0.0F);
+    const App::Runtime::Vec3 expected_eye{App::Runtime::transform_vector(
+        App::Runtime::area_position_to_inches(eye_serialized), attachment.orientation)};
+    CHECK(camera.pose().eye.x == doctest::Approx(attachment.translation.x - expected_eye.x));
+    CHECK(camera.pose().eye.z == doctest::Approx(attachment.translation.z - expected_eye.z));
+
+    command.eye_attachment_selector = 3;
+    command.target_attachment_selector = -1;
+    camera.apply_command(command);
+    CHECK(camera.pose().eye.x == doctest::Approx(command.runtime_eye.x));
+    CHECK(camera.pose().target.y == doctest::Approx(command.runtime_target.y));
   }
 }
 

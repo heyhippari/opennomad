@@ -126,6 +126,27 @@ struct AreaCharacterDeactivationRequest {
   std::int16_t character_id{0};
 };
 
+/// Nonblocking current-actor control-bank selection requested by opcode 0x3F.
+/// The selected ID is preserved for diagnostics; CTL execution is deferred.
+struct AreaCurrentCharacterMoveRequest {
+  std::int16_t move_id{0};
+};
+
+/// Nonblocking current-actor controller boolean requested by 0x68/0x69.
+/// Its original gameplay-facing label remains unresolved.
+struct AreaCurrentCharacterControllerRequest {
+  bool enabled{false};
+};
+
+/// Explicit compact event entry offsets in the immutable execution storage.
+/// Top-level AREA/SCENE contexts keep event 1 at byte zero; zone contexts use
+/// their record-relative table-2 offsets.
+struct AreaScriptEventEntries {
+  std::optional<std::size_t> event1{0U};
+  std::optional<std::size_t> event2;
+  std::optional<std::size_t> event3;
+};
+
 /// Stable identity of one accepted session-level AREA transition.
 struct AreaTransitionHandle {
   std::uint64_t generation{0};
@@ -310,6 +331,13 @@ class AreaScriptRuntime {
   using CharacterDeactivationSink =
       std::function<std::expected<void, std::string>(const AreaCharacterDeactivationRequest&)>;
 
+  /// Bridges current-actor control selection (0x3F) to the world runtime.
+  using CurrentCharacterMoveSink =
+      std::function<std::expected<void, std::string>(const AreaCurrentCharacterMoveRequest&)>;
+  /// Bridges the neutral current-actor controller boolean pair (0x68/0x69).
+  using CurrentCharacterControllerSink =
+      std::function<std::expected<void, std::string>(const AreaCurrentCharacterControllerRequest&)>;
+
   /// Presentation bridge for 0x5F/0x60. The VM still owns AREA wait/yield
   /// semantics; the sink receives each command exactly once for rendering.
   using CameraSink = std::function<void(const AreaCameraRequest&)>;
@@ -336,6 +364,10 @@ class AreaScriptRuntime {
 
   /// Queues one event/state (the recovered "queued event"). Does not execute.
   void queue_event(std::uint16_t event);
+
+  /// Replaces the event-entry map after validating every non-missing offset
+  /// against this context's immutable execution storage.
+  [[nodiscard]] std::expected<void, std::string> set_event_entries(AreaScriptEventEntries entries);
 
   /// Marks the context as the active scenario context. Idempotent.
   void activate();
@@ -394,6 +426,9 @@ class AreaScriptRuntime {
 
   /// Wires AREA opcode 0x4F to current/non-current character lifecycle.
   void set_character_deactivation_sink(CharacterDeactivationSink sink);
+
+  void set_current_character_move_sink(CurrentCharacterMoveSink sink);
+  void set_current_character_controller_sink(CurrentCharacterControllerSink sink);
 
   /// Wires AREA camera opcodes to the world presentation mailbox.
   void set_camera_sink(CameraSink sink);
@@ -476,6 +511,9 @@ class AreaScriptRuntime {
   [[nodiscard]] std::span<const std::byte> bytecode() const {
     return m_script;
   }
+  [[nodiscard]] const AreaScriptEventEntries& event_entries() const {
+    return m_event_entries;
+  }
 
   /// OpenNomad event currently executing, waiting, or paused. This is
   /// observability state corresponding conceptually (but not layout-wise) to
@@ -519,6 +557,14 @@ class AreaScriptRuntime {
   [[nodiscard]] const std::optional<AreaCharacterDeactivationRequest>&
   last_character_deactivation_request() const {
     return m_last_character_deactivation_request;
+  }
+  [[nodiscard]] const std::optional<AreaCurrentCharacterMoveRequest>&
+  last_current_character_move_request() const {
+    return m_last_current_character_move_request;
+  }
+  [[nodiscard]] const std::optional<AreaCurrentCharacterControllerRequest>&
+  last_current_character_controller_request() const {
+    return m_last_current_character_controller_request;
   }
   [[nodiscard]] const std::optional<AreaCharacterScriptRequest>& last_character_script_request()
       const {
@@ -608,6 +654,7 @@ class AreaScriptRuntime {
   std::vector<std::byte> m_script_storage;
   std::span<const std::byte> m_script;
   std::deque<std::uint16_t> m_queued_events;
+  AreaScriptEventEntries m_event_entries;
   std::optional<std::uint16_t> m_active_event;
   bool m_active{false};
   AreaScriptState m_state{AreaScriptState::k_ready};
@@ -637,6 +684,8 @@ class AreaScriptRuntime {
   CharacterActivationSink m_character_activation_sink;
   CharacterSelectionSink m_character_selection_sink;
   CharacterDeactivationSink m_character_deactivation_sink;
+  CurrentCharacterMoveSink m_current_character_move_sink;
+  CurrentCharacterControllerSink m_current_character_controller_sink;
   CameraSink m_camera_sink;
   PresentationSink m_presentation_sink;
   CinematicLetterboxSink m_cinematic_letterbox_sink;
@@ -644,6 +693,8 @@ class AreaScriptRuntime {
   std::optional<AreaCharacterActivationRequest> m_last_character_activation_request;
   std::optional<AreaCharacterSelectionRequest> m_last_character_selection_request;
   std::optional<AreaCharacterDeactivationRequest> m_last_character_deactivation_request;
+  std::optional<AreaCurrentCharacterMoveRequest> m_last_current_character_move_request;
+  std::optional<AreaCurrentCharacterControllerRequest> m_last_current_character_controller_request;
   std::optional<AreaCharacterScriptRequest> m_last_character_script_request;
   std::optional<AreaDialogRequest> m_last_dialog_request;
   std::optional<AreaTransitionRequest> m_last_area_transition_request;
@@ -669,6 +720,8 @@ class AreaScriptRuntime {
   /// Bound on instructions per run() call (defensive, malformed-bytecode
   /// safety). Budget exhaustion leaves the context Running for the next call.
   static constexpr std::size_t k_instruction_budget{4096};
+  /// Recovered Runtime pending-event capacity.
+  static constexpr std::size_t k_event_queue_capacity{4};
 };
 
 }  // namespace App::Script

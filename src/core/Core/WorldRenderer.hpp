@@ -95,6 +95,7 @@ class WorldRenderer {
       bool legacy_effect);
   void render_geometry_wireframe(const Camera& camera, const ScenarioRuntime* runtime);
   void sync_character_models(const ScenarioRuntime& runtime);
+  void sync_decor_model(const ScenarioRuntime& runtime);
 
   struct CharacterGpuModel {
     std::shared_ptr<const Character::ModelResource> resource;
@@ -122,6 +123,7 @@ class WorldRenderer {
   bool m_geometry_wireframe{false};
   std::unordered_map<std::size_t, std::unique_ptr<CharacterGpuModel>> m_character_models;
   std::vector<std::string> m_failed_character_models;
+  std::uint64_t m_decor_pose_revision{0};
 
   WorldBounds m_bounds{};
 };

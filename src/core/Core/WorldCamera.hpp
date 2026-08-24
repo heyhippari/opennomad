@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <optional>
 
 #include "Core/Camera.hpp"
@@ -25,9 +26,13 @@ struct WorldCameraPose {
 /// forcing visible camera motion to 30 Hz.
 class WorldCameraSystem {
  public:
+  using AttachmentPoseProvider = std::function<std::optional<WorldCameraAttachmentPose>()>;
   WorldCameraSystem() = default;
 
   void set_aspect_ratio(float aspect_ratio);
+  /// Supplies the live current-actor attachment pose without coupling this
+  /// presentation class to ScenarioManager or a gameplay runtime.
+  void set_attachment_pose_provider(AttachmentPoseProvider provider);
 
   /// Clears the current scripted/fallback pose while preserving projection
   /// settings such as the current aspect ratio.
@@ -74,6 +79,11 @@ class WorldCameraSystem {
 
  private:
   void commit_pose();
+  [[nodiscard]] WorldCameraPose resolve_command_pose(const WorldCameraCommand& command) const;
+  [[nodiscard]] Runtime::Vec3 resolve_attachment_point(
+      const std::array<std::int32_t, 3>& serialized,
+      std::int16_t selector,
+      const Runtime::Vec3& absolute_fallback) const;
   [[nodiscard]] static WorldCameraPose interpolate(
       const WorldCameraPose& from, const WorldCameraPose& to, float amount);
 
@@ -96,6 +106,7 @@ class WorldCameraSystem {
   bool m_has_scripted_pose{false};
   std::optional<std::uint16_t> m_active_camera_id;
   std::optional<WorldCameraCommand> m_last_command;
+  AttachmentPoseProvider m_attachment_pose_provider;
 };
 
 }  // namespace App

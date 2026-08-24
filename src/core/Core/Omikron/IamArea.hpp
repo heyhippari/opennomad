@@ -104,6 +104,11 @@ class IamAreaRecord {
   /// The startup script bytes: `[scriptOffset, record end)`.
   [[nodiscard]] std::span<const std::byte> script_bytes() const;
 
+  /// Complete immutable serialized record used by record-relative zone events.
+  [[nodiscard]] std::span<const std::byte> record_bytes() const {
+    return m_bytes;
+  }
+
   /// Raw table offset (+0x28 + 4 * index).
   [[nodiscard]] std::uint32_t table_offset(std::size_t index) const;
   /// Raw table count (+0x48 + 2 * index).

@@ -1719,6 +1719,75 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     CHECK(App::Script::area_opcode_name(0x85) != nullptr);
     CHECK(App::Script::area_opcode_name(0x99) == nullptr);
   }
+
+  TEST_CASE("Explicit event entries select record-relative bytecode safely") {
+    Buffer top_level_bytes;
+    top_level_bytes.u8(0x03);
+    AreaScriptRuntime top_level{top_level_bytes.data()};
+    top_level.queue_event(1);
+    top_level.activate();
+    CHECK(top_level.run() == AreaScriptState::k_ready);
+
+    Buffer bytes;
+    bytes.u8(0x99);  // record prefix must never run for the configured events.
+    bytes.u8(0x03);  // event 1
+    bytes.u8(0x03);  // event 2
+    bytes.u8(0x03);  // event 3
+
+    AreaScriptRuntime runtime{bytes.data()};
+    REQUIRE(runtime
+            .set_event_entries(
+                App::Script::AreaScriptEventEntries{.event1 = 1U, .event2 = 2U, .event3 = 3U})
+            .has_value());
+    runtime.queue_event(1);
+    runtime.activate();
+    CHECK(runtime.run() == AreaScriptState::k_ready);
+    CHECK_FALSE(runtime.active_event().has_value());
+
+    runtime.queue_event(2);
+    runtime.queue_event(2);
+    CHECK_EQ(runtime.queued_events().size(), 1U);
+    CHECK(runtime.run() == AreaScriptState::k_ready);
+    runtime.queue_event(3);
+    CHECK(runtime.run() == AreaScriptState::k_ready);
+
+    AreaScriptRuntime missing{bytes.data()};
+    REQUIRE(missing
+            .set_event_entries(App::Script::AreaScriptEventEntries{
+                .event1 = std::nullopt, .event2 = std::nullopt, .event3 = std::nullopt})
+            .has_value());
+    missing.queue_event(1);
+    missing.activate();
+    CHECK(missing.run() == AreaScriptState::k_ready);
+  }
+
+  TEST_CASE("Current-character control records are nonblocking typed requests") {
+    Buffer bytes;
+    bytes.u8(0x3F).u16(100);
+    bytes.u8(0x68);
+    bytes.u8(0x69);
+    bytes.u8(0x03);
+    AreaScriptRuntime runtime{bytes.data()};
+    std::optional<std::int16_t> move;
+    std::vector<bool> controller;
+    runtime.set_current_character_move_sink(
+        [&move](const App::Script::AreaCurrentCharacterMoveRequest& request) {
+          move = request.move_id;
+          return std::expected<void, std::string>{};
+        });
+    runtime.set_current_character_controller_sink(
+        [&controller](const App::Script::AreaCurrentCharacterControllerRequest& request) {
+          controller.push_back(request.enabled);
+          return std::expected<void, std::string>{};
+        });
+    runtime.queue_event(1);
+    runtime.activate();
+    CHECK(runtime.run() == AreaScriptState::k_ready);
+    CHECK_EQ(move, std::optional<std::int16_t>{100});
+    REQUIRE_EQ(controller.size(), 2U);
+    CHECK(controller.at(0));
+    CHECK_FALSE(controller.at(1));
+  }
 }
 
 // NOLINTEND(misc-use-anonymous-namespace, cppcoreguidelines-avoid-do-while, cert-err33-c,

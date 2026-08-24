@@ -55,6 +55,7 @@ constexpr std::uint32_t K_OP_START_SCX_SCRIPT_TRACKED{0x3A};
 constexpr std::uint32_t K_OP_START_CHARACTER_SCRIPT{0x3B};
 constexpr std::uint32_t K_OP_START_CHARACTER_SCRIPT_TRACKED{0x3C};
 constexpr std::uint32_t K_OP_START_DIALOG{0x3D};
+constexpr std::uint32_t K_OP_START_CURRENT_CHARACTER_MOVE{0x3F};
 constexpr std::uint32_t K_OP_ACTIVATE_ZONE{0x40};
 constexpr std::uint32_t K_OP_DEACTIVATE_ZONE{0x41};
 constexpr std::uint32_t K_OP_ACTIVATE_CHARACTER{0x4E};
@@ -62,7 +63,8 @@ constexpr std::uint32_t K_OP_DEACTIVATE_CHARACTER{0x4F};
 constexpr std::uint32_t K_OP_GET_CHARACTER_VALUE_TO_VARIABLE{0x56};
 constexpr std::uint32_t K_OP_START_CURRENT_CHARACTER_SCRIPT{0x5A};
 constexpr std::uint32_t K_OP_SET_CHARACTER_VALUE_FROM_VARIABLE{0x5D};
-constexpr std::uint32_t K_OP_ACTIVATE_SUBSYSTEM{0x68};
+constexpr std::uint32_t K_OP_SET_CURRENT_CHARACTER_CONTROLLER_ON{0x68};
+constexpr std::uint32_t K_OP_SET_CURRENT_CHARACTER_CONTROLLER_OFF{0x69};
 constexpr std::uint32_t K_OP_OBJECT_ACTIVATE{0x5C};
 constexpr std::uint32_t K_OP_CAMERA_SELECT{0x5F};
 constexpr std::uint32_t K_OP_CAMERA_MOVE_WAIT{0x60};
@@ -139,7 +141,7 @@ constexpr std::array<AreaOperandWidth, 3> K_OPERANDS_PRESENTATION{
       static_cast<std::uint32_t>(lhs) | static_cast<std::uint32_t>(rhs));
 }
 
-constexpr std::array<AreaOpcodeInfo, 47> K_AREA_OPCODE_TABLE{
+constexpr std::array<AreaOpcodeInfo, 49> K_AREA_OPCODE_TABLE{
     AreaOpcodeInfo{.opcode = K_OP_END_EVENT,
         .name = "EndEvent",
         .support = OpcodeSupport::k_supported,
@@ -321,6 +323,14 @@ constexpr std::array<AreaOpcodeInfo, 47> K_AREA_OPCODE_TABLE{
                  "entering a typed AREA wait",
         .operands = K_OPERANDS_I16.data(),
         .operand_count = K_OPERANDS_I16.size()},
+    AreaOpcodeInfo{.opcode = K_OP_START_CURRENT_CHARACTER_MOVE,
+        .name = "StartCurrentCharacterMove",
+        .support = OpcodeSupport::k_supported,
+        .provisional = true,
+        .notes =
+            "selects a current-actor CTL move/control-bank record; CTL execution remains deferred",
+        .operands = K_OPERANDS_I16.data(),
+        .operand_count = K_OPERANDS_I16.size()},
     AreaOpcodeInfo{.opcode = K_OP_ACTIVATE_ZONE,
         .name = "ActivateZone",
         .support = OpcodeSupport::k_supported,
@@ -401,11 +411,19 @@ constexpr std::array<AreaOpcodeInfo, 47> K_AREA_OPCODE_TABLE{
         .notes = "unresolved subsystem operation",
         .operands = K_OPERANDS_83.data(),
         .operand_count = K_OPERANDS_83.size()},
-    AreaOpcodeInfo{.opcode = K_OP_ACTIVATE_SUBSYSTEM,
-        .name = "ActivateSubsystem",
+    AreaOpcodeInfo{.opcode = K_OP_SET_CURRENT_CHARACTER_CONTROLLER_ON,
+        .name = "SetCurrentCharacterControllerEnabled",
         .support = OpcodeSupport::k_supported,
         .provisional = true,
-        .notes = "activates a subsystem",
+        .notes = "sets the current actor controller boolean true; its gameplay label is unresolved",
+        .operands = K_OPERANDS_NONE.data(),
+        .operand_count = K_OPERANDS_NONE.size()},
+    AreaOpcodeInfo{.opcode = K_OP_SET_CURRENT_CHARACTER_CONTROLLER_OFF,
+        .name = "SetCurrentCharacterControllerDisabled",
+        .support = OpcodeSupport::k_supported,
+        .provisional = true,
+        .notes =
+            "sets the current actor controller boolean false; its gameplay label is unresolved",
         .operands = K_OPERANDS_NONE.data(),
         .operand_count = K_OPERANDS_NONE.size()},
     AreaOpcodeInfo{.opcode = K_OP_PLAY_MUSIC,
@@ -526,7 +544,32 @@ AreaScriptRuntime::AreaScriptRuntime(const std::span<const std::byte> script_byt
       m_script{m_script_storage} {}
 
 void AreaScriptRuntime::queue_event(const std::uint16_t event) {
+  if (event == 2U && (m_active_event == event ||
+                         std::ranges::find(m_queued_events, event) != m_queued_events.end())) {
+    return;
+  }
+  if (m_queued_events.size() >= k_event_queue_capacity) {
+    App::Log::warn(LogCategory::Script,
+        "AREA event {} discarded — pending queue reached recovered capacity {}",
+        event,
+        k_event_queue_capacity);
+    return;
+  }
   m_queued_events.push_back(event);
+}
+
+std::expected<void, std::string> AreaScriptRuntime::set_event_entries(
+    const AreaScriptEventEntries entries) {
+  for (const std::optional<std::size_t> entry : {entries.event1, entries.event2, entries.event3}) {
+    if (entry.has_value() && entry.value() >= m_script.size()) {
+      return std::expected<void, std::string>{std::unexpect,
+          fmt::format("AREA event entry {:#x} is outside {:#x}-byte execution storage",
+              entry.value(),
+              m_script.size())};
+    }
+  }
+  m_event_entries = entries;
+  return {};
 }
 
 void AreaScriptRuntime::activate() {
@@ -615,6 +658,14 @@ void AreaScriptRuntime::set_character_selection_sink(CharacterSelectionSink sink
 
 void AreaScriptRuntime::set_character_deactivation_sink(CharacterDeactivationSink sink) {
   m_character_deactivation_sink = std::move(sink);
+}
+
+void AreaScriptRuntime::set_current_character_move_sink(CurrentCharacterMoveSink sink) {
+  m_current_character_move_sink = std::move(sink);
+}
+
+void AreaScriptRuntime::set_current_character_controller_sink(CurrentCharacterControllerSink sink) {
+  m_current_character_controller_sink = std::move(sink);
 }
 
 void AreaScriptRuntime::set_camera_sink(CameraSink sink) {
@@ -792,14 +843,35 @@ AreaScriptState AreaScriptRuntime::run(const float real_delta_seconds) {
   }
 
   if (m_state == AreaScriptState::k_ready) {
-    if (m_queued_events.empty()) {
+    while (!m_queued_events.empty()) {
+      const std::uint16_t event{m_queued_events.front()};
+      m_queued_events.pop_front();
+      std::optional<std::size_t> entry;
+      switch (event) {
+        case 1U:
+          entry = m_event_entries.event1;
+          break;
+        case 2U:
+          entry = m_event_entries.event2;
+          break;
+        case 3U:
+          entry = m_event_entries.event3;
+          break;
+        default:
+          break;
+      }
+      if (!entry.has_value()) {
+        continue;  // A missing event entry is a harmless no-bytecode event.
+      }
+      m_active_event = event;
+      m_ip = entry.value();
+      m_evaluation_stack.clear();
+      m_state = AreaScriptState::k_running;
+      break;
+    }
+    if (m_state == AreaScriptState::k_ready) {
       return m_state;
     }
-    m_active_event = m_queued_events.front();
-    m_queued_events.pop_front();
-    m_ip = 0;
-    m_evaluation_stack.clear();
-    m_state = AreaScriptState::k_running;
   }
 
   m_yield_requested = false;
@@ -1610,6 +1682,25 @@ void AreaScriptRuntime::execute_instruction() {
       m_yield_requested = true;
       break;
     }
+    case K_OP_START_CURRENT_CHARACTER_MOVE: {
+      auto move_id{resolve_scalar16(operands.at(0), "StartCurrentCharacterMove")};
+      if (!move_id) {
+        fail_instruction(move_id.error());
+        return;
+      }
+      const AreaCurrentCharacterMoveRequest request{.move_id = move_id.value()};
+      m_last_current_character_move_request = request;
+      if (m_current_character_move_sink) {
+        if (auto selected{m_current_character_move_sink(request)}; !selected) {
+          fail_instruction(fmt::format(
+              "failed to select current-character move {}: {}", request.move_id, selected.error()));
+          return;
+        }
+      }
+      entry.effect =
+          fmt::format("select current-character move/control record {}", request.move_id);
+      break;
+    }
     case K_OP_ACTIVATE_ZONE:
     case K_OP_DEACTIVATE_ZONE: {
       const std::string_view operation{
@@ -1717,6 +1808,23 @@ void AreaScriptRuntime::execute_instruction() {
           request.track_id,
           request.loop,
           request.mode_flag);
+      break;
+    }
+    case K_OP_SET_CURRENT_CHARACTER_CONTROLLER_ON:
+    case K_OP_SET_CURRENT_CHARACTER_CONTROLLER_OFF: {
+      const AreaCurrentCharacterControllerRequest request{
+          .enabled = opcode == K_OP_SET_CURRENT_CHARACTER_CONTROLLER_ON};
+      m_last_current_character_controller_request = request;
+      if (m_current_character_controller_sink) {
+        if (auto updated{m_current_character_controller_sink(request)}; !updated) {
+          fail_instruction(fmt::format("failed to set current-character controller {}: {}",
+              request.enabled ? "enabled" : "disabled",
+              updated.error()));
+          return;
+        }
+      }
+      entry.effect = fmt::format(
+          "set current-character controller {}", request.enabled ? "enabled" : "disabled");
       break;
     }
     case K_OP_OPEN_INTERFACE: {

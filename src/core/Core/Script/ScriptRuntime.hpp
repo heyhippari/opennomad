@@ -69,6 +69,7 @@ enum class ScriptPauseReason : std::uint8_t {
   k_invalid_group,
   k_command_budget_exhausted,
   k_unsupported_subsystem,
+  k_unsupported_variant,
   k_invalid_duration,
 };
 
@@ -240,6 +241,39 @@ struct BodyAnimationFailure {
 using RelativeBodyAnimationResult = BodyAnimationResult;
 using RelativeBodyAnimationFailure = BodyAnimationFailure;
 
+/// Typed base-case request for Script_MoveObjectOnPath. The unresolved
+/// transform/rebase arguments are retained so nonzero variants can fail
+/// structurally rather than being silently guessed.
+struct MoveObjectOnPathRequest {
+  std::string_view object_binding;
+  std::uint32_t path_descriptor_index{0};
+  std::uint32_t subpath_index{0};
+  std::uint32_t interpolation_mode{0};
+  std::uint32_t direction{0};
+  std::uint32_t transform_rebase_mode{0};
+  float duration_frames{0.0F};
+  float previous_parameter{0.0F};
+  float current_parameter{0.0F};
+  std::array<float, 6> unresolved_transform_values{};
+};
+
+struct MoveObjectOnPathResult {
+  std::uint32_t max_parameter{0};
+};
+
+enum class MoveObjectOnPathApplyError : std::uint8_t {
+  k_missing_resource,
+  k_out_of_range_index,
+  k_invalid_binding,
+  k_unsupported_variant,
+  k_resource_resolution,
+};
+
+struct MoveObjectOnPathFailure {
+  MoveObjectOnPathApplyError error{MoveObjectOnPathApplyError::k_resource_resolution};
+  std::string reason_text;
+};
+
 /// Abstract world service connecting script handlers to the existing sprite
 /// renderer/runtime. Implemented by ModelViewerScene; faked in tests.
 class ScriptWorld {
@@ -315,6 +349,28 @@ class ScriptWorld {
   /// Clears instance-local body-animation playback state during script reset.
   virtual void reset_body_animation(std::int16_t character_id) {
     (void)character_id;
+  }
+
+  /// Resolves an immutable 3DP and updates the named object in the mutable
+  /// world-decor instance. The default preserves safe unsupported behavior
+  /// for embedding worlds that do not own decor.
+  [[nodiscard]] virtual std::expected<MoveObjectOnPathResult, MoveObjectOnPathFailure>
+  move_object_on_path_max_parameter(
+      std::uint32_t path_descriptor_index, std::uint32_t subpath_index) {
+    (void)path_descriptor_index;
+    (void)subpath_index;
+    return std::expected<MoveObjectOnPathResult, MoveObjectOnPathFailure>{std::unexpect,
+        MoveObjectOnPathFailure{.error = MoveObjectOnPathApplyError::k_missing_resource,
+            .reason_text = "mutable world decor is unavailable in this world"}};
+  }
+
+  /// Samples/applies one mutable decor pose at the requested path parameter.
+  [[nodiscard]] virtual std::expected<MoveObjectOnPathResult, MoveObjectOnPathFailure>
+  move_object_on_path(const MoveObjectOnPathRequest& request) {
+    (void)request;
+    return std::expected<MoveObjectOnPathResult, MoveObjectOnPathFailure>{std::unexpect,
+        MoveObjectOnPathFailure{.error = MoveObjectOnPathApplyError::k_missing_resource,
+            .reason_text = "mutable world decor is unavailable in this world"}};
   }
 
   [[nodiscard]] virtual std::string_view scenario_name() const = 0;
@@ -447,6 +503,8 @@ class ScriptRuntime {
   HandlerResult handle_select_body_animation(
       ScriptInstance& instance, RuntimeScriptCommand& command, float script_delta_frames);
   HandlerResult handle_select_relative_body_animation(
+      ScriptInstance& instance, RuntimeScriptCommand& command, float script_delta_frames);
+  HandlerResult handle_move_object_on_path(
       ScriptInstance& instance, RuntimeScriptCommand& command, float script_delta_frames);
 
   /// Stops the matching (soundId, owner) voice for every started audio

@@ -25,6 +25,7 @@ namespace {
 constexpr std::uint32_t K_SET_SPRITE_TYPE{0x0400000CU};
 constexpr std::uint32_t K_SELECT_BODY_ANIMATION{0x02000004U};
 constexpr std::uint32_t K_SELECT_RELATIVE_BODY_ANIMATION{0x0200002AU};
+constexpr std::uint32_t K_MOVE_OBJECT_ON_PATH{0x03000008U};
 constexpr std::uint32_t K_SCALE_X{0x0400001BU};
 constexpr std::uint32_t K_SCALE_Y{0x0400001CU};
 constexpr std::uint32_t K_ROLL{0x0400001DU};
@@ -68,6 +69,9 @@ class FakeWorld final : public App::Script::ScriptWorld {
   bool fail_body_animation{false};
   App::Script::BodyAnimationApplyError body_animation_failure{
       App::Script::BodyAnimationApplyError::k_missing_animation};
+  std::vector<App::Script::MoveObjectOnPathRequest> move_object_on_path_requests;
+  std::uint32_t move_object_on_path_maximum{10};
+  std::optional<App::Script::MoveObjectOnPathFailure> move_object_on_path_failure;
 
   std::expected<App::Sprite::SpriteHandle, std::string> ensure_sprite(
       const std::uint32_t /*source*/) override {
@@ -175,6 +179,24 @@ class FakeWorld final : public App::Script::ScriptWorld {
   void reset_body_animation(const std::int16_t character_id) override {
     body_animation_resets.push_back(character_id);
   }
+  std::expected<App::Script::MoveObjectOnPathResult, App::Script::MoveObjectOnPathFailure>
+  move_object_on_path_max_parameter(const std::uint32_t /*path_descriptor_index*/,
+      const std::uint32_t /*subpath_index*/) override {
+    if (move_object_on_path_failure.has_value()) {
+      return std::expected<App::Script::MoveObjectOnPathResult,
+          App::Script::MoveObjectOnPathFailure>{std::unexpect, move_object_on_path_failure.value()};
+    }
+    return App::Script::MoveObjectOnPathResult{.max_parameter = move_object_on_path_maximum};
+  }
+  std::expected<App::Script::MoveObjectOnPathResult, App::Script::MoveObjectOnPathFailure>
+  move_object_on_path(const App::Script::MoveObjectOnPathRequest& request) override {
+    move_object_on_path_requests.push_back(request);
+    if (move_object_on_path_failure.has_value()) {
+      return std::expected<App::Script::MoveObjectOnPathResult,
+          App::Script::MoveObjectOnPathFailure>{std::unexpect, move_object_on_path_failure.value()};
+    }
+    return App::Script::MoveObjectOnPathResult{.max_parameter = move_object_on_path_maximum};
+  }
   std::string_view scenario_name() const override {
     return "test";
   }
@@ -233,6 +255,28 @@ App::Omikron::ScxScript body_animation_script(const std::uint32_t execution_limi
       single_root_script(command(K_SELECT_BODY_ANIMATION, 0, 10, std::nullopt, execution_limit))};
   script.binding_table_a.entries.push_back(App::Omikron::ScxBindingEntry{.name = "RootBody"});
   return script;
+}
+
+App::Omikron::ScxScript move_object_on_path_script(const std::uint32_t execution_limit = 1) {
+  App::Omikron::ScxScript script{
+      single_root_script(command(K_MOVE_OBJECT_ON_PATH, 0, 15, std::nullopt, execution_limit))};
+  script.binding_table_a.entries.push_back(App::Omikron::ScxBindingEntry{.name = "Crate"});
+  return script;
+}
+
+std::vector<App::Omikron::ScriptValue> move_object_on_path_values(const std::uint32_t direction) {
+  std::vector<App::Omikron::ScriptValue> values(15);
+  values.at(0).set_unsigned(0);
+  values.at(1).set_unsigned(1);
+  values.at(2).set_unsigned(2);
+  values.at(3).set_unsigned(1);
+  values.at(4).set_unsigned(direction);
+  values.at(5).set_unsigned(0);
+  values.at(6).set_float(20.0F);
+  const float authored_progress{direction == 0U ? 99.0F : 0.0F};
+  values.at(7).set_float(authored_progress);
+  values.at(8).set_float(authored_progress);
+  return values;
 }
 
 std::vector<App::Omikron::ScriptValue> relative_body_animation_values() {
@@ -501,6 +545,59 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
     CHECK_EQ(fixture.runtime->run_state(), App::Script::ScriptRunState::k_paused_on_error);
     CHECK_EQ(
         fixture.runtime->pause_info().reason, App::Script::ScriptPauseReason::k_missing_resource);
+  }
+
+  TEST_CASE("MoveObjectOnPath preserves all 15 arguments and blocks through its endpoint") {
+    RuntimeFixture fixture{{move_object_on_path_script()}, move_object_on_path_values(0)};
+    const std::size_t id{fixture.runtime->create_instance(0).value()};
+    const App::Script::ScriptInstance* initial{fixture.runtime->instance(id)};
+    REQUIRE(initial != nullptr);
+    CHECK_EQ(initial->value_pool.at(7).as_float(), doctest::Approx(0.0F));
+    CHECK_EQ(initial->value_pool.at(8).as_float(), doctest::Approx(0.0F));
+
+    fixture.runtime->step_tick(1.0F);
+    REQUIRE_EQ(fixture.world.move_object_on_path_requests.size(), 1U);
+    const auto& first{fixture.world.move_object_on_path_requests.at(0)};
+    CHECK_EQ(first.object_binding, "Crate");
+    CHECK_EQ(first.path_descriptor_index, 1U);
+    CHECK_EQ(first.subpath_index, 2U);
+    CHECK_EQ(first.interpolation_mode, 1U);
+    CHECK_EQ(first.direction, 0U);
+    CHECK_EQ(first.transform_rebase_mode, 0U);
+    CHECK_EQ(first.duration_frames, doctest::Approx(20.0F));
+    CHECK_EQ(first.current_parameter, doctest::Approx(0.0F));
+    CHECK_EQ(fixture.runtime->instance(id)->value_pool.at(8).as_float(), doctest::Approx(0.0F));
+    CHECK_EQ(fixture.runtime->instance(id)->value_pool.at(7).as_float(), doctest::Approx(0.5F));
+
+    fixture.runtime->step_tick(19.0F);
+    CHECK_EQ(fixture.runtime->instance(id)->value_pool.at(7).as_float(), doctest::Approx(10.0F));
+    CHECK_FALSE(fixture.runtime->instance(id)->completed);
+    fixture.runtime->step_tick(0.0F);
+    CHECK(fixture.runtime->instance(id)->completed);
+    CHECK_EQ(fixture.runtime->instances().at(0).root_commands.at(0).execution_count, 1U);
+  }
+
+  TEST_CASE("MoveObjectOnPath direction one starts at the recovered maximum") {
+    RuntimeFixture fixture{{move_object_on_path_script()}, move_object_on_path_values(1)};
+    REQUIRE(fixture.runtime->create_instance(0).has_value());
+    fixture.runtime->step_tick(1.0F);
+    REQUIRE_EQ(fixture.world.move_object_on_path_requests.size(), 1U);
+    const auto& first{fixture.world.move_object_on_path_requests.at(0)};
+    CHECK_EQ(first.current_parameter, doctest::Approx(10.0F));
+    CHECK_EQ(
+        fixture.runtime->instances().at(0).value_pool.at(8).as_float(), doctest::Approx(10.0F));
+    CHECK_EQ(fixture.runtime->instances().at(0).value_pool.at(7).as_float(), doctest::Approx(9.5F));
+  }
+
+  TEST_CASE("MoveObjectOnPath reports unrecovered variants structurally") {
+    RuntimeFixture fixture{{move_object_on_path_script()}, move_object_on_path_values(0)};
+    fixture.scx.shared_values.at(5).set_unsigned(1);
+    REQUIRE(fixture.runtime->create_instance(0).has_value());
+    fixture.runtime->step_tick(1.0F);
+    CHECK_EQ(fixture.runtime->run_state(), App::Script::ScriptRunState::k_paused_on_error);
+    CHECK_EQ(fixture.runtime->pause_info().reason,
+        App::Script::ScriptPauseReason::k_unsupported_variant);
+    CHECK_EQ(fixture.world.move_object_on_path_requests.size(), 0U);
   }
 
   TEST_CASE("Launch context distinguishes world and explicit-character instances") {

@@ -102,6 +102,11 @@ struct RuntimeCharacter {
   std::int16_t serialized_orientation_units{0};
   App::Runtime::Transform transform{};
   std::int32_t runtime_orientation_degrees{0};
+  /// Selected authored CTL move/control-bank ID. Execution is intentionally
+  /// deferred until the full CTL controller is recovered.
+  std::optional<std::int16_t> current_move_id;
+  /// Neutral controller boolean toggled by compact 0x68/0x69.
+  bool controller_enabled{false};
 
   std::string definition_name;
   std::string model_resource_name;
@@ -153,8 +158,7 @@ class Runtime {
   /// Ensures one SCENE table-0 character exists for current-character
   /// selection, using the SCENE's matching table-4 definition on first
   /// materialization only.
-  [[nodiscard]] std::expected<void, std::string> ensure_scene_character(
-      std::int32_t area_id,
+  [[nodiscard]] std::expected<void, std::string> ensure_scene_character(std::int32_t area_id,
       std::int32_t scene_id,
       const Omikron::IamSceneRecord& scene,
       std::int16_t character_id);

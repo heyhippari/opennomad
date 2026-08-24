@@ -152,13 +152,11 @@ std::expected<void, std::string> Runtime::activate(const std::int32_t area_id,
     return std::expected<void, std::string>{std::unexpect,
         fmt::format("character ID {} not found in active AREA table 0", request.character_id)};
   }
-  const auto definition{
-      area.character_definition_by_character_id(request.character_id)};
+  const auto definition{area.character_definition_by_character_id(request.character_id)};
   if (!definition.has_value()) {
     return std::expected<void, std::string>{std::unexpect,
         fmt::format(
-            "character ID {} has no matching authored AREA table-4 record",
-            request.character_id)};
+            "character ID {} has no matching authored AREA table-4 record", request.character_id)};
   }
   return materialize_character(area_id,
       std::nullopt,
@@ -174,8 +172,8 @@ std::expected<void, std::string> Runtime::ensure_area_character(const std::int32
     const Omikron::IamAreaRecord& area,
     const std::int16_t character_id) {
   if (character_id < 0) {
-    return std::expected<void, std::string>{std::unexpect,
-        fmt::format("invalid negative character ID {}", character_id)};
+    return std::expected<void, std::string>{
+        std::unexpect, fmt::format("invalid negative character ID {}", character_id)};
   }
   const auto placement{area.character_by_id(character_id)};
   if (!placement.has_value()) {
@@ -210,8 +208,8 @@ std::expected<void, std::string> Runtime::ensure_scene_character(const std::int3
     const Omikron::IamSceneRecord& scene,
     const std::int16_t character_id) {
   if (character_id < 0) {
-    return std::expected<void, std::string>{std::unexpect,
-        fmt::format("invalid negative character ID {}", character_id)};
+    return std::expected<void, std::string>{
+        std::unexpect, fmt::format("invalid negative character ID {}", character_id)};
   }
   const auto placement{scene.character_by_id(character_id)};
   if (!placement.has_value()) {
@@ -220,8 +218,8 @@ std::expected<void, std::string> Runtime::ensure_scene_character(const std::int3
   }
   const auto definition{scene.character_definition_by_character_id(character_id)};
   if (!definition.has_value()) {
-    return std::expected<void, std::string>{std::unexpect,
-        fmt::format("SCENE character {} has no matching definition", character_id)};
+    return std::expected<void, std::string>{
+        std::unexpect, fmt::format("SCENE character {} has no matching definition", character_id)};
   }
 
   if (RuntimeCharacter* const existing{find(character_id)}; existing != nullptr) {
@@ -241,9 +239,8 @@ std::expected<void, std::string> Runtime::ensure_scene_character(const std::int3
       true);
 }
 
-std::expected<void, std::string> Runtime::materialize_scene_characters(const std::int32_t area_id,
-    const std::int32_t scene_id,
-    const Omikron::IamSceneRecord& scene) {
+std::expected<void, std::string> Runtime::materialize_scene_characters(
+    const std::int32_t area_id, const std::int32_t scene_id, const Omikron::IamSceneRecord& scene) {
   const std::vector<Omikron::IamSceneCharacterRecord> placements{scene.character_placements()};
   for (const Omikron::IamSceneCharacterRecord& placement : placements) {
     if (auto result{ensure_scene_character(area_id, scene_id, scene, placement.character_id)};
@@ -286,8 +283,8 @@ std::expected<void, std::string> Runtime::set_presentation_enabled(
 std::expected<void, std::string> Runtime::deactivate_character(const std::int16_t character_id) {
   RuntimeCharacter* const character{find(character_id)};
   if (character == nullptr) {
-    return std::expected<void, std::string>{std::unexpect,
-        fmt::format("character {} is not materialized", character_id)};
+    return std::expected<void, std::string>{
+        std::unexpect, fmt::format("character {} is not materialized", character_id)};
   }
   character->active = false;
   character->area_present = false;
@@ -297,11 +294,10 @@ std::expected<void, std::string> Runtime::deactivate_character(const std::int16_
 
 std::expected<RuntimeCharacter, std::string> Runtime::extract_character(
     const std::int16_t character_id) {
-  const auto found{
-      std::ranges::find(m_characters, character_id, &RuntimeCharacter::character_id)};
+  const auto found{std::ranges::find(m_characters, character_id, &RuntimeCharacter::character_id)};
   if (found == m_characters.end()) {
-    return std::expected<RuntimeCharacter, std::string>{std::unexpect,
-        fmt::format("character {} is not materialized", character_id)};
+    return std::expected<RuntimeCharacter, std::string>{
+        std::unexpect, fmt::format("character {} is not materialized", character_id)};
   }
   RuntimeCharacter extracted{std::move(*found)};
   m_characters.erase(found);
@@ -327,8 +323,8 @@ std::expected<void, std::string> Runtime::adopt_character(RuntimeCharacter chara
 std::expected<void, std::string> Runtime::transfer_character_to(
     Runtime& target, const std::int16_t character_id) {
   if (target.find(character_id) != nullptr) {
-    return std::expected<void, std::string>{std::unexpect,
-        fmt::format("character {} already belongs to target world", character_id)};
+    return std::expected<void, std::string>{
+        std::unexpect, fmt::format("character {} already belongs to target world", character_id)};
   }
   auto extracted{extract_character(character_id)};
   if (!extracted) {
@@ -349,7 +345,8 @@ std::expected<void, std::string> Runtime::place_character_at_address(
   character->serialized_orientation_units = address.orientation_units;
   character->runtime_orientation_degrees =
       App::Runtime::area_angle_to_degrees(address.orientation_units);
-  character->transform.translation = App::Runtime::area_position_to_inches(address.serialized_position);
+  character->transform.translation =
+      App::Runtime::area_position_to_inches(address.serialized_position);
   character->transform.matrix = App::Runtime::rotation_y(
       static_cast<float>(character->runtime_orientation_degrees) * k_degrees_to_radians);
   character->transform.scale = App::Runtime::Vec3{.x = 1.0F, .y = 1.0F, .z = 1.0F};
@@ -366,8 +363,8 @@ std::expected<void, std::string> Runtime::materialize_character(const std::int32
     const std::string_view model_resource,
     const bool apply_transform) {
   if (model_resource.empty()) {
-    return std::expected<void, std::string>{std::unexpect,
-        fmt::format("character definition {} has no model resource", character_id)};
+    return std::expected<void, std::string>{
+        std::unexpect, fmt::format("character definition {} has no model resource", character_id)};
   }
 
   std::shared_ptr<const ModelResource> resource;
@@ -395,6 +392,8 @@ std::expected<void, std::string> Runtime::materialize_character(const std::int32
         .serialized_orientation_units = orientation_units,
         .transform = {},
         .runtime_orientation_degrees = 0,
+        .current_move_id = std::nullopt,
+        .controller_enabled = false,
         .definition_name = std::string{definition_name},
         .model_resource_name = std::string{model_resource},
         .model_resource = std::move(resource),
@@ -419,10 +418,8 @@ std::expected<void, std::string> Runtime::materialize_character(const std::int32
 
   if (apply_transform) {
     constexpr float k_degrees_to_radians{std::numbers::pi_v<float> / 180.0F};
-    character->runtime_orientation_degrees =
-        App::Runtime::area_angle_to_degrees(orientation_units);
-    character->transform.translation =
-        App::Runtime::area_position_to_inches(serialized_position);
+    character->runtime_orientation_degrees = App::Runtime::area_angle_to_degrees(orientation_units);
+    character->transform.translation = App::Runtime::area_position_to_inches(serialized_position);
     character->transform.matrix = App::Runtime::rotation_y(
         static_cast<float>(character->runtime_orientation_degrees) * k_degrees_to_radians);
     character->transform.scale = App::Runtime::Vec3{.x = 1.0F, .y = 1.0F, .z = 1.0F};

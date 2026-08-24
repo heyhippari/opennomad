@@ -333,18 +333,28 @@ TEST_SUITE("Core::Omikron::IamAreaRecord") {
     write_u32(data, IamAreaRecord::k_offset_table_offsets + (2U * 4U), k_zone_offset);
     write_u16(data, IamAreaRecord::k_offset_table_counts + (2U * 2U), 2);
 
-    write_u32(data, k_zone_offset + 0x00U, 0x10203040U);
-    write_u32(data, k_zone_offset + 0x04U, 0x50607080U);
-    write_u32(data, k_zone_offset + 0x08U, 0x90A0B0C0U);
-    data.at(k_zone_offset + 0x0CU) = std::byte{0x12};
-    data.at(k_zone_offset + 0x3DU) = std::byte{0x34};
+    write_u32(data, k_zone_offset + 0x00U, static_cast<std::uint32_t>(k_zone_offset));
+    write_u32(data, k_zone_offset + 0x04U, static_cast<std::uint32_t>(k_zone_offset + 4U));
+    write_u32(data, k_zone_offset + 0x08U, static_cast<std::uint32_t>(k_zone_offset + 8U));
+    write_i32(data, k_zone_offset + 0x0CU, 10);
+    write_i32(data, k_zone_offset + 0x10U, 20);
+    write_i32(data, k_zone_offset + 0x14U, 30);
+    write_i32(data, k_zone_offset + 0x18U, 40);
+    write_i32(data, k_zone_offset + 0x1CU, 50);
+    write_i32(data, k_zone_offset + 0x20U, 60);
+    write_i32(data, k_zone_offset + 0x24U, 70);
+    write_i32(data, k_zone_offset + 0x28U, 80);
+    write_i32(data, k_zone_offset + 0x2CU, 90);
+    write_i32(data, k_zone_offset + 0x30U, 100);
+    write_i32(data, k_zone_offset + 0x34U, 110);
+    write_i32(data, k_zone_offset + 0x38U, 120);
+    write_i16(data, k_zone_offset + 0x3CU, 123);
     write_i16(data, k_zone_offset + 0x3EU, -12);
     write_i16(data, k_zone_offset + 0x40U, 9);
-    data.at(k_zone_offset + 0x42U) = std::byte{0x56};
-    data.at(k_zone_offset + 0x43U) = std::byte{0x78};
+    write_i16(data, k_zone_offset + 0x42U, static_cast<std::int16_t>(0x7856U));
 
     const std::size_t second{k_zone_offset + k_zone_stride};
-    write_u32(data, second + 0x00U, 0xD0E0F001U);
+    write_u32(data, second + 0x00U, static_cast<std::uint32_t>(k_zone_offset));
     write_i16(data, second + 0x3EU, 33);
     write_i16(data, second + 0x40U, static_cast<std::int16_t>(0x8005U));
 
@@ -352,18 +362,35 @@ TEST_SUITE("Core::Omikron::IamAreaRecord") {
     REQUIRE(record.has_value());
     const std::vector<App::Omikron::IamAreaZoneRecord> zones{record->zones()};
     REQUIRE_EQ(zones.size(), 2U);
-    CHECK_EQ(zones.at(0).event_offsets.at(0), 0x10203040U);
-    CHECK_EQ(zones.at(0).event_offsets.at(1), 0x50607080U);
-    CHECK_EQ(zones.at(0).event_offsets.at(2), 0x90A0B0C0U);
-    CHECK_EQ(zones.at(0).raw_geometry_and_fields.at(0), std::byte{0x12});
-    CHECK_EQ(zones.at(0).raw_geometry_and_fields.at(0x31U), std::byte{0x34});
-    CHECK_EQ(zones.at(0).field_3e, -12);
+    CHECK_EQ(zones.at(0).event_offsets.at(0), k_zone_offset);
+    CHECK_EQ(zones.at(0).event_offsets.at(1), k_zone_offset + 4U);
+    CHECK_EQ(zones.at(0).event_offsets.at(2), k_zone_offset + 8U);
+    CHECK_EQ(zones.at(0).serialized_vertices.at(0), std::array<std::int32_t, 3>{10, 20, 30});
+    CHECK_EQ(zones.at(0).serialized_vertices.at(3), std::array<std::int32_t, 3>{100, 110, 120});
+    CHECK_EQ(zones.at(0).orientation_center_units, 123);
+    CHECK_EQ(zones.at(0).orientation_span_units, -12);
     CHECK_EQ(zones.at(0).zone_id, 9);
-    CHECK_EQ(zones.at(0).raw_tail.at(0), std::byte{0x56});
-    CHECK_EQ(zones.at(0).raw_tail.at(1), std::byte{0x78});
-    CHECK_EQ(zones.at(1).event_offsets.at(0), 0xD0E0F001U);
-    CHECK_EQ(zones.at(1).field_3e, 33);
+    CHECK_EQ(static_cast<std::uint16_t>(zones.at(0).unknown_42), 0x7856U);
+    CHECK_EQ(zones.at(1).event_offsets.at(0), k_zone_offset);
+    CHECK_EQ(zones.at(1).orientation_span_units, 33);
     CHECK_EQ(static_cast<std::uint16_t>(zones.at(1).zone_id), 0x8005U);
+  }
+
+  TEST_CASE("IAM zones use X/Z containment and wrapped orientation intervals") {
+    App::Omikron::IamAreaZoneRecord zone{.event_offsets = {},
+        .serialized_vertices = {{{0, 100, 0}, {10, 200, 0}, {10, -500, 10}, {0, 0, 10}}},
+        .orientation_center_units = 0,
+        .orientation_span_units = 0,
+        .zone_id = 1,
+        .unknown_42 = -1};
+    CHECK(zone.contains_xz(5, 5));
+    CHECK_FALSE(zone.contains_xz(11, 5));
+    CHECK(zone.accepts_orientation(2048));
+
+    zone.orientation_center_units = 4090;
+    zone.orientation_span_units = 20;
+    CHECK(zone.accepts_orientation(2));
+    CHECK_FALSE(zone.accepts_orientation(40));
   }
 }
 

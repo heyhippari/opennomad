@@ -1,12 +1,11 @@
-#include "Core/Omikron/Animation3DA.hpp"
-#include "Core/Omikron/Path3DP.hpp"
-#include "Core/RuntimeMath.hpp"
-
 #include <doctest/doctest.h>
 
 #include <cstddef>
 #include <cstdint>
 
+#include "Core/Omikron/Animation3DA.hpp"
+#include "Core/Omikron/Path3DP.hpp"
+#include "Core/RuntimeMath.hpp"
 #include "OmikronTestBuffer.hpp"
 
 // NOLINTBEGIN(misc-use-anonymous-namespace, cppcoreguidelines-avoid-do-while, cert-err33-c)
@@ -18,18 +17,8 @@ TEST_SUITE("Core::Omikron::BodyAnimationResources") {
     constexpr std::uint32_t child_rotation_offset{root_rotation_offset + 32U};
     Buffer payload;
     payload.u32(3).u32(2);
-    payload.u32(7)
-        .chars("Root", 20)
-        .u32(2)
-        .u32(descriptors_end)
-        .u32(2)
-        .u32(root_rotation_offset);
-    payload.u32(9)
-        .chars("Child", 20)
-        .u32(4)
-        .u32(0)
-        .u32(1)
-        .u32(child_rotation_offset);
+    payload.u32(7).chars("Root", 20).u32(2).u32(descriptors_end).u32(2).u32(root_rotation_offset);
+    payload.u32(9).chars("Child", 20).u32(4).u32(0).u32(1).u32(child_rotation_offset);
     payload.f32(0.0F).f32(2.0F).f32(4.0F);
     payload.f32(10.0F).f32(12.0F).f32(14.0F);
     payload.f32(1.0F).f32(0.0F).f32(0.0F).f32(0.0F);
@@ -51,8 +40,7 @@ TEST_SUITE("Core::Omikron::BodyAnimationResources") {
     CHECK_EQ(translation_value.z, doctest::Approx(9.0F));
     const auto rotation{root.sample_rotation(0.0F)};
     REQUIRE(rotation.has_value());
-    const App::Runtime::Quaternion rotation_value{
-        rotation.value_or(App::Runtime::Quaternion{})};
+    const App::Runtime::Quaternion rotation_value{rotation.value_or(App::Runtime::Quaternion{})};
     CHECK_EQ(rotation_value.w, doctest::Approx(0.0F));
     CHECK_EQ(rotation_value.z, doctest::Approx(1.0F));
 
@@ -144,16 +132,43 @@ TEST_SUITE("Core::Omikron::BodyAnimationResources") {
     REQUIRE(path.has_value());
     REQUIRE_EQ(path->subpaths.size(), std::size_t{2});
     CHECK_EQ(path->subpaths.at(0).name, "First");
-    CHECK_EQ(path->subpaths.at(1).field_14, 77U);
+    CHECK_EQ(path->subpaths.at(1).max_parameter, 77U);
     CHECK_EQ(path->subpaths.at(0).points.at(1).key, 2U);
     const auto sample{path->subpaths.at(0).sample_mode_1(1.0F)};
     REQUIRE(sample.has_value());
-    const App::Omikron::Path3DPSample sample_value{
-        sample.value_or(App::Omikron::Path3DPSample{})};
+    const App::Omikron::Path3DPSample sample_value{sample.value_or(App::Omikron::Path3DPSample{})};
     CHECK_EQ(sample_value.position.x, doctest::Approx(5.0F));
     CHECK_EQ(sample_value.position.y, doctest::Approx(7.0F));
     CHECK_EQ(sample_value.position.z, doctest::Approx(9.0F));
     CHECK_EQ(sample_value.quaternion.w, doctest::Approx(1.0F));
+  }
+
+  TEST_CASE("3DP mode 1 preserves Runtime quaternion interpolation details") {
+    App::Omikron::Path3DPSubpath path{.name = "Quaternion",
+        .max_parameter = 10,
+        .points = {
+            {.key = 0, .position = {}, .quaternion = {.w = 1.0F, .x = 0.0F, .y = 0.0F, .z = 0.0F}},
+            {.key = 10,
+                .position = {.x = 10.0F, .y = 20.0F, .z = 30.0F},
+                .quaternion = {.w = 0.9996875F, .x = 0.0F, .y = 0.0249974F, .z = 0.0F}}}};
+
+    const auto endpoint{path.sample_mode_1(10.0F)};
+    REQUIRE(endpoint.has_value());
+    CHECK_EQ(endpoint->quaternion.w, doctest::Approx(0.9996875F));
+    CHECK_EQ(endpoint->quaternion.y, doctest::Approx(0.0249974F));
+
+    const auto small_angle{path.sample_mode_1(5.0F)};
+    REQUIRE(small_angle.has_value());
+    CHECK_EQ(small_angle->quaternion.w, doctest::Approx((1.0F + 0.9996875F) * 0.5F));
+    CHECK_EQ(small_angle->quaternion.y, doctest::Approx(0.0249974F * 0.5F));
+
+    // A negative dot remains on the authored long arc. A shortest-path sign
+    // flip would produce a negative y component here instead.
+    path.points.at(1).quaternion = {.w = -0.70710677F, .x = 0.0F, .y = 0.70710677F, .z = 0.0F};
+    const auto long_arc{path.sample_mode_1(5.0F)};
+    REQUIRE(long_arc.has_value());
+    CHECK_EQ(long_arc->quaternion.w, doctest::Approx(0.38268343F));
+    CHECK_EQ(long_arc->quaternion.y, doctest::Approx(0.92387953F));
   }
 
   TEST_CASE("3DP rejects malformed counts and truncated points") {

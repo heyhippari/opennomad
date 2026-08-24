@@ -50,10 +50,12 @@ neutral final persistent-state field. Table 3 preserves object ID plus an
 opaque tail. This is a data seam, not a guessed generic object runtime.
 
 Table 2 uses the shared immutable `IamZoneRecord` representation with AREA:
-three neutral `event_offsets[0..2]` program offsets at `+0x00/+0x04/+0x08`,
-opaque bytes `+0x0C..+0x3D`, signed `field_3e` at `+0x3E`, signed authored
-zone ID at `+0x40`, and two opaque tail bytes. The trigger meanings of the
-three offsets are not named or fired by parsing/residency synchronization.
+neutral `event1/event2/event3` program offsets at `+0x00/+0x04/+0x08`; four
+XYZ vertices at `+0x0C..+0x38`; signed orientation center/span at
+`+0x3C/+0x3E`; signed authored zone ID at `+0x40`; and unknown signed
+`+0x42`. Contact uses the four-point X/Z polygon and a separately wrapped
+orientation filter. Event 1 is the confirmed first qualifying-contact entry;
+event 2 remains neutral.
 Table 7 is `{ uint32 program_offset, int32 field_04 }` with intentionally
 unresolved higher-level semantics. Table 6 reuses the checked AREA camera
 parser.
@@ -93,8 +95,11 @@ without invalidating session selection.
 Attached-SCENE table-2 records participate in the coordinator's transient
 active-zone registry. It is rebuilt, not incrementally deduplicated, whenever
 resident AREA/SCENE data or persistent ZONE enablement changes; it contains
-only records whose START-backed ZONE bit is enabled. This is not yet collision
-or zone-event execution.
+only records whose START-backed ZONE bit is enabled. A first qualifying contact
+of the session current controlled character creates one compact zone context
+over the complete owning record and queues event 1 once. Event 2 is not
+synthesized per frame. A persistent disable stops future contacts but does not
+destroy a currently executing context; physical record residency removal does.
 
 Related: [`iam-area.md`](iam-area.md), [`iam-scenario-vm.md`](iam-scenario-vm.md),
 and [`startup-sequence.md`](startup-sequence.md).

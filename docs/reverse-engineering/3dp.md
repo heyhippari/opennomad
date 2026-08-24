@@ -1,7 +1,7 @@
 # Omikron `.3DP` path format
 
 > **Status:** work-in-progress reverse-engineering documentation for OpenNomad  
-> **Last updated:** 2026-08-22
+> **Last updated:** 2026-08-25
 >
 > This document describes the `.3DP` path resource format used by the Windows
 > retail release of *Omikron: The Nomad Soul*.
@@ -1028,7 +1028,7 @@ then converts the result to a row-vector 3×3 matrix using:
 0x00442A00
 ```
 
-This is a major correction to current OpenNomad.
+OpenNomad's mode-1 sampler follows this recovered orientation path.
 
 ---
 
@@ -1615,7 +1615,7 @@ That naming should now be revisited.
 
 ---
 
-# 41. Current OpenNomad mode-1 sampler
+# 41. OpenNomad mode-1 sampler
 
 Current:
 
@@ -1626,24 +1626,17 @@ Path3DPSubpath::sample_mode_1()
 implements:
 
 - linear XYZ interpolation;
-- normalized linear quaternion interpolation;
-- endpoint clamping.
-
-Only the first item matches Runtime exactly.
-
-Several fidelity corrections are needed.
+- exact authored endpoint quaternions;
+- ordinary unnormalized linear quaternion weighting through `0.1` radians;
+- sine-weighted interpolation above that threshold;
+- no shortest-path sign flip or dot clamp;
+- structured failure for a parameter outside the keyed range.
 
 ---
 
-# 42. OpenNomad discrepancy: quaternion interpolation
+# 42. Quaternion interpolation status
 
-Current OpenNomad uses:
-
-```text
-normalized LERP for all interior rotations
-```
-
-Runtime uses:
+Runtime and OpenNomad use:
 
 ```text
 angle <= 0.1 rad:
@@ -1662,17 +1655,11 @@ For other path resources it can be visually significant.
 
 ---
 
-# 43. OpenNomad discrepancy: out-of-range clamping
+# 43. Out-of-range sampling
 
-Current OpenNomad returns:
-
-```text
-parameter <= first key:
-    first point
-
-parameter >= last key:
-    last point
-```
+The sampler returns exact authored endpoints only for exact endpoint
+parameters. A parameter outside the keyed range is a structured error; callers
+must not clamp it to hide an invalid traversal state.
 
 Runtime instead searches for a valid adjacent bracket.
 

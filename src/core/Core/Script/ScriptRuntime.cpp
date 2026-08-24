@@ -2,6 +2,7 @@
 
 #include <fmt/format.h>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -36,6 +37,7 @@ constexpr std::uint32_t K_DISPLAY_3D_SPRITE{0x04000028U};
 constexpr std::uint32_t K_SET_SPRITE_FRAME{0x04000029U};
 constexpr std::uint32_t K_SELECT_BODY_ANIMATION{0x02000004U};
 constexpr std::uint32_t K_SELECT_RELATIVE_BODY_ANIMATION{0x0200002AU};
+constexpr std::uint32_t K_MOVE_OBJECT_ON_PATH{0x03000008U};
 
 // Audio opcodes (recovered from Runtime.exe).
 constexpr std::uint32_t K_PLAY_SOUND{0x05000014U};
@@ -104,7 +106,7 @@ constexpr std::array<OpcodeSemanticParam, 2> K_WAIT_PARAMS{
     OpcodeSemanticParam{.semantic_type = k_semantic_progress_elapsed, .argument_index = 1},
 };
 
-constexpr std::array<OpcodeInfo, 14> K_OPCODE_TABLE{
+constexpr std::array<OpcodeInfo, 15> K_OPCODE_TABLE{
     OpcodeInfo{.opcode = K_SELECT_BODY_ANIMATION,
         .name = "Script_SelectBodyAnimation",
         .expected_argument_count = 10,
@@ -121,6 +123,15 @@ constexpr std::array<OpcodeInfo, 14> K_OPCODE_TABLE{
         .owns_sprite = false,
         .support = OpcodeSupport::k_supported,
         .notes = "Anchors a hierarchical 3DA body animation to an SCX 3DP subpath."},
+    OpcodeInfo{.opcode = K_MOVE_OBJECT_ON_PATH,
+        .name = "Script_MoveObjectOnPath",
+        .expected_argument_count = 15,
+        .semantic_params = nullptr,
+        .semantic_param_count = 0,
+        .owns_sprite = false,
+        .support = OpcodeSupport::k_supported,
+        .notes = "Moves a bound mutable decor object along a 3DP path; only the recovered base "
+                 "variant is supported."},
     OpcodeInfo{.opcode = K_SET_SPRITE_TYPE,
         .name = "SetSpriteType",
         .expected_argument_count = 2,
@@ -262,6 +273,14 @@ void reinitialize_command(ScriptInstance& instance, RuntimeScriptCommand& comman
         instance.value_pool.at(base + 3U).set_float(1.0F);
       }
       break;
+    case K_MOVE_OBJECT_ON_PATH:
+      if ((base + 8U) < pool_size && command.value_count >= 15U) {
+        const std::uint32_t direction{instance.value_pool.at(base + 4U).as_unsigned()};
+        const float initial{direction == 0U ? 0.0F : instance.value_pool.at(base + 7U).as_float()};
+        instance.value_pool.at(base + 7U).set_float(initial);
+        instance.value_pool.at(base + 8U).set_float(initial);
+      }
+      break;
     case K_SCALE_SPRITE_ON_X:
     case K_SCALE_SPRITE_ON_Y:
     case K_SET_SPRITE_ROLLING:
@@ -348,6 +367,8 @@ const char* pause_reason_name(const ScriptPauseReason reason) {
       return "command budget exhausted";
     case ScriptPauseReason::k_unsupported_subsystem:
       return "unsupported subsystem";
+    case ScriptPauseReason::k_unsupported_variant:
+      return "unsupported variant";
     case ScriptPauseReason::k_invalid_duration:
       return "invalid duration";
     default:
@@ -672,6 +693,9 @@ ScriptCommandStatus ScriptRuntime::dispatch_command(ScriptInstance& instance,
       case K_SELECT_RELATIVE_BODY_ANIMATION:
         result = handle_select_relative_body_animation(instance, command, script_delta_frames);
         break;
+      case K_MOVE_OBJECT_ON_PATH:
+        result = handle_move_object_on_path(instance, command, script_delta_frames);
+        break;
       case K_SET_SPRITE_TYPE:
         result = handle_set_sprite_type(instance, command);
         break;
@@ -860,6 +884,118 @@ HandlerResult ScriptRuntime::handle_select_relative_body_animation(
 
   return advance_body_animation_window(
       instance, command, current, applied->max_frame_index, script_delta_frames);
+}
+
+HandlerResult ScriptRuntime::handle_move_object_on_path(
+    ScriptInstance& instance, RuntimeScriptCommand& command, const float script_delta_frames) {
+  const Omikron::ScxScript& source{m_scx->scripts.at(instance.source_script_index)};
+  const std::uint32_t base{command.first_value_index};
+  const std::uint32_t binding_index{instance.value_pool.at(base).as_unsigned()};
+  if (binding_index >= source.binding_table_a.entries.size()) {
+    return HandlerResult{.status = ScriptCommandStatus::k_error,
+        .pause_reason = ScriptPauseReason::k_out_of_range_index,
+        .reason_text = fmt::format("binding table A index {} out of range ({} entries)",
+            binding_index,
+            source.binding_table_a.entries.size())};
+  }
+  const std::uint32_t interpolation_mode{instance.value_pool.at(base + 3U).as_unsigned()};
+  const std::uint32_t direction{instance.value_pool.at(base + 4U).as_unsigned()};
+  const std::uint32_t transform_rebase_mode{instance.value_pool.at(base + 5U).as_unsigned()};
+  std::array<float, 6> unresolved{};
+  for (std::size_t index{0}; index < unresolved.size(); ++index) {
+    unresolved.at(index) = instance.value_pool.at(base + 9U + index).as_float();
+  }
+  if (interpolation_mode != 1U || (direction != 0U && direction != 1U) ||
+      transform_rebase_mode != 0U || std::ranges::any_of(unresolved, [](const float value) {
+        return value != 0.0F;
+      })) {
+    return HandlerResult{.status = ScriptCommandStatus::k_error,
+        .pause_reason = ScriptPauseReason::k_unsupported_variant,
+        .reason_text =
+            "Script_MoveObjectOnPath uses an unrecovered interpolation/direction/transform "
+            "variant"};
+  }
+
+  float current{instance.value_pool.at(base + 7U).as_float()};
+  const auto make_request = [&]() {
+    return MoveObjectOnPathRequest{
+        .object_binding = source.binding_table_a.entries.at(binding_index).name,
+        .path_descriptor_index = instance.value_pool.at(base + 1U).as_unsigned(),
+        .subpath_index = instance.value_pool.at(base + 2U).as_unsigned(),
+        .interpolation_mode = interpolation_mode,
+        .direction = direction,
+        .transform_rebase_mode = transform_rebase_mode,
+        .duration_frames = instance.value_pool.at(base + 6U).as_float(),
+        .previous_parameter = instance.value_pool.at(base + 8U).as_float(),
+        .current_parameter = current,
+        .unresolved_transform_values = unresolved};
+  };
+  const auto failure_result = [](const MoveObjectOnPathFailure& failure) {
+    ScriptPauseReason reason{ScriptPauseReason::k_missing_resource};
+    if (failure.error == MoveObjectOnPathApplyError::k_out_of_range_index ||
+        failure.error == MoveObjectOnPathApplyError::k_invalid_binding) {
+      reason = ScriptPauseReason::k_out_of_range_index;
+    } else if (failure.error == MoveObjectOnPathApplyError::k_unsupported_variant) {
+      reason = ScriptPauseReason::k_unsupported_variant;
+    }
+    return HandlerResult{.status = ScriptCommandStatus::k_error,
+        .pause_reason = reason,
+        .reason_text = fmt::format("Script_MoveObjectOnPath: {}", failure.reason_text)};
+  };
+  if (direction == 1U && current == 0.0F && instance.value_pool.at(base + 8U).as_float() == 0.0F &&
+      command.execution_count == command.initial_execution_count) {
+    auto maximum{
+        m_world->move_object_on_path_max_parameter(instance.value_pool.at(base + 1U).as_unsigned(),
+            instance.value_pool.at(base + 2U).as_unsigned())};
+    if (!maximum) {
+      return failure_result(maximum.error());
+    }
+    current = static_cast<float>(maximum->max_parameter);
+    instance.value_pool.at(base + 7U).set_float(current);
+    instance.value_pool.at(base + 8U).set_float(current);
+  }
+  auto applied{m_world->move_object_on_path(make_request())};
+  if (!applied) {
+    return failure_result(applied.error());
+  }
+  const float maximum{static_cast<float>(applied->max_parameter)};
+  if (current < 0.0F || current > maximum) {
+    return HandlerResult{.status = ScriptCommandStatus::k_error,
+        .pause_reason = ScriptPauseReason::k_out_of_range_index,
+        .reason_text = fmt::format(
+            "Script_MoveObjectOnPath parameter {} is outside [0, {}]", current, maximum)};
+  }
+  instance.value_pool.at(base + 8U).set_float(current);
+  const bool reached_end{direction == 0U ? current >= maximum : current <= 0.0F};
+  if (reached_end) {
+    command.execution_count += 1U;
+    if (command.execution_limit != K_INFINITE_EXECUTION_LIMIT &&
+        command.execution_count >= command.execution_limit) {
+      return HandlerResult{.status = ScriptCommandStatus::k_completed,
+          .pause_reason = ScriptPauseReason::k_none,
+          .reason_text = {}};
+    }
+    if (direction == 0U) {
+      instance.value_pool.at(base + 8U).set_float(0.0F);
+      instance.value_pool.at(base + 7U).set_float(1.0F);
+    } else {
+      instance.value_pool.at(base + 8U).set_float(maximum);
+      instance.value_pool.at(base + 7U).set_float(maximum);
+    }
+    return HandlerResult{.status = ScriptCommandStatus::k_running,
+        .pause_reason = ScriptPauseReason::k_none,
+        .reason_text = {}};
+  }
+  float step{maximum * script_delta_frames};
+  if (instance.value_pool.at(base + 6U).as_float() != 0.0F) {
+    step /= instance.value_pool.at(base + 6U).as_float();
+  }
+  const float next{
+      direction == 0U ? std::min(maximum, current + step) : std::max(0.0F, current - step)};
+  instance.value_pool.at(base + 7U).set_float(next);
+  return HandlerResult{.status = ScriptCommandStatus::k_running,
+      .pause_reason = ScriptPauseReason::k_none,
+      .reason_text = {}};
 }
 
 void ScriptRuntime::pause(ScriptInstance& instance,
@@ -1376,8 +1512,10 @@ HandlerResult ScriptRuntime::handle_play_sync_sound(
         .reason_text = {}};
   }
 
-  // Wait until the scheduled script/scenario time is due.
-  if (instance.elapsed_script_frames < scheduled) {
+  // The per-instance clock is stored in 30 Hz frames, while this authored
+  // schedule value is seconds. Compare in its serialized time domain.
+  const float elapsed_seconds{instance.elapsed_script_frames / k_script_frames_per_second};
+  if (elapsed_seconds < scheduled) {
     return HandlerResult{.status = ScriptCommandStatus::k_running,
         .pause_reason = ScriptPauseReason::k_none,
         .reason_text = {}};

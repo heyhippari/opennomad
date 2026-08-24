@@ -46,10 +46,16 @@ namespace App {
 namespace {
 
 using BodyAnimationFailure = Script::BodyAnimationFailure;
+using MoveObjectOnPathFailure = Script::MoveObjectOnPathFailure;
 
 [[nodiscard]] BodyAnimationFailure body_animation_failure(
     const Script::BodyAnimationApplyError error, std::string reason_text) {
   return BodyAnimationFailure{.error = error, .reason_text = std::move(reason_text)};
+}
+
+[[nodiscard]] MoveObjectOnPathFailure move_object_on_path_failure(
+    const Script::MoveObjectOnPathApplyError error, std::string reason_text) {
+  return MoveObjectOnPathFailure{.error = error, .reason_text = std::move(reason_text)};
 }
 
 /// The resolved selected object and whether this command established a fresh,
@@ -1003,6 +1009,116 @@ ScenarioRuntime::select_relative_body_animation(
 
 void ScenarioRuntime::reset_body_animation(const std::int16_t character_id) {
   m_character_runtime.reset_pose(character_id);
+}
+
+void ScenarioRuntime::bind_decor_model(const Omikron::Model3DOData* const decor_model) {
+  m_decor_model = decor_model;
+  m_decor_runtime_objects = decor_model == nullptr
+                                ? std::vector<Omikron::Model3DOData::RuntimeObjectState>{}
+                                : decor_model->runtime_objects;
+  m_decor_pose_revision = 0;
+}
+
+const Omikron::Model3DOData* ScenarioRuntime::decor_model() const {
+  return m_decor_model;
+}
+
+std::span<const Omikron::Model3DOData::RuntimeObjectState> ScenarioRuntime::decor_runtime_objects()
+    const {
+  return m_decor_runtime_objects;
+}
+
+std::uint64_t ScenarioRuntime::decor_pose_revision() const {
+  return m_decor_pose_revision;
+}
+
+std::expected<Script::MoveObjectOnPathResult, Script::MoveObjectOnPathFailure>
+ScenarioRuntime::move_object_on_path_max_parameter(
+    const std::uint32_t path_descriptor_index, const std::uint32_t subpath_index) {
+  auto path{path_resource(path_descriptor_index)};
+  if (!path) {
+    return std::expected<Script::MoveObjectOnPathResult, Script::MoveObjectOnPathFailure>{
+        std::unexpect,
+        move_object_on_path_failure(
+            Script::MoveObjectOnPathApplyError::k_missing_resource, std::move(path).error())};
+  }
+  if (subpath_index >= (*path)->subpaths.size()) {
+    return std::expected<Script::MoveObjectOnPathResult, Script::MoveObjectOnPathFailure>{
+        std::unexpect,
+        move_object_on_path_failure(Script::MoveObjectOnPathApplyError::k_out_of_range_index,
+            fmt::format("3DP subpath index {} out of range ({} subpaths)",
+                subpath_index,
+                (*path)->subpaths.size()))};
+  }
+  return Script::MoveObjectOnPathResult{
+      .max_parameter = (*path)->subpaths.at(subpath_index).max_parameter};
+}
+
+std::expected<Script::MoveObjectOnPathResult, Script::MoveObjectOnPathFailure>
+ScenarioRuntime::move_object_on_path(const Script::MoveObjectOnPathRequest& request) {
+  if (request.interpolation_mode != 1U || request.transform_rebase_mode != 0U ||
+      (request.direction != 0U && request.direction != 1U) ||
+      std::ranges::any_of(request.unresolved_transform_values, [](const float value) {
+        return value != 0.0F;
+      })) {
+    return std::expected<Script::MoveObjectOnPathResult, Script::MoveObjectOnPathFailure>{
+        std::unexpect,
+        move_object_on_path_failure(Script::MoveObjectOnPathApplyError::k_unsupported_variant,
+            "unrecovered MoveObjectOnPath transform/rebase variant")};
+  }
+  if (m_decor_model == nullptr || m_decor_runtime_objects.size() != m_decor_model->meshes.size()) {
+    return std::expected<Script::MoveObjectOnPathResult, Script::MoveObjectOnPathFailure>{
+        std::unexpect,
+        move_object_on_path_failure(Script::MoveObjectOnPathApplyError::k_missing_resource,
+            "mutable world decor has not been bound")};
+  }
+  auto path{path_resource(request.path_descriptor_index)};
+  if (!path) {
+    return std::expected<Script::MoveObjectOnPathResult, Script::MoveObjectOnPathFailure>{
+        std::unexpect,
+        move_object_on_path_failure(
+            Script::MoveObjectOnPathApplyError::k_missing_resource, std::move(path).error())};
+  }
+  if (request.subpath_index >= (*path)->subpaths.size()) {
+    return std::expected<Script::MoveObjectOnPathResult, Script::MoveObjectOnPathFailure>{
+        std::unexpect,
+        move_object_on_path_failure(Script::MoveObjectOnPathApplyError::k_out_of_range_index,
+            fmt::format("3DP subpath index {} out of range ({} subpaths)",
+                request.subpath_index,
+                (*path)->subpaths.size()))};
+  }
+  const Omikron::Path3DPSubpath& subpath{(*path)->subpaths.at(request.subpath_index)};
+  const auto selected{std::ranges::find(
+      m_decor_model->meshes, request.object_binding, &Omikron::MeshDescriptor::name)};
+  if (selected == m_decor_model->meshes.end()) {
+    return std::expected<Script::MoveObjectOnPathResult, Script::MoveObjectOnPathFailure>{
+        std::unexpect,
+        move_object_on_path_failure(Script::MoveObjectOnPathApplyError::k_invalid_binding,
+            fmt::format("decor binding A object '{}' does not exist", request.object_binding))};
+  }
+  auto sampled{subpath.sample_mode_1(request.current_parameter)};
+  if (!sampled) {
+    return std::expected<Script::MoveObjectOnPathResult, Script::MoveObjectOnPathFailure>{
+        std::unexpect,
+        move_object_on_path_failure(
+            Script::MoveObjectOnPathApplyError::k_out_of_range_index, std::move(sampled).error())};
+  }
+  const std::size_t object_index{
+      static_cast<std::size_t>(std::distance(m_decor_model->meshes.begin(), selected))};
+  Omikron::Model3DOData::RuntimeObjectState& object{m_decor_runtime_objects.at(object_index)};
+  object.local_offset = sampled->position;
+  object.local_matrix = Runtime::quaternion_matrix(sampled->quaternion);
+  object.animation_matrix.reset();
+  if (auto resolved{Omikron::Model3DO::resolve_runtime_transforms(
+          *m_decor_model, std::span{m_decor_runtime_objects})};
+      !resolved) {
+    return std::expected<Script::MoveObjectOnPathResult, Script::MoveObjectOnPathFailure>{
+        std::unexpect,
+        move_object_on_path_failure(Script::MoveObjectOnPathApplyError::k_resource_resolution,
+            std::move(resolved).error())};
+  }
+  ++m_decor_pose_revision;
+  return Script::MoveObjectOnPathResult{.max_parameter = subpath.max_parameter};
 }
 
 void ScenarioRuntime::set_audio_system(Audio::AudioSystem* const audio) {

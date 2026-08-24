@@ -1249,10 +1249,15 @@ complete immutable `IamZoneRecord` values, tagged with resident slot and AREA
 or SCENE source. Persistent ZONE enablement remains exclusively in
 `GameState`. The registry refreshes after `0x40`, `0x41`, SCENE attachment,
 AREA release, initial residency, and successful alternate-slot preparation.
-It intentionally does not interpret geometry, name the three event offsets,
-perform collision, fire zone events, or create zone compact contexts. Runtime's
-later cleanup of zone-bound contexts whose backing records disappear remains
-deferred for the same reason.
+
+On first qualifying X/Z-and-orientation contact of the session current
+controlled character, it creates one zone-owned compact context over the
+complete owner record, installs the three record-relative entries, and queues
+event 1 once when present. Contexts are capped at 16 and receive the ordinary
+SCENE/AREA compact services, including state-7 camera waits. Event 2 is
+deduplicated by the VM but has no recovered generic spatial trigger. A zone
+that disables itself remains alive until its active event becomes idle; only
+physical loss of the backing AREA/SCENE record tears it down immediately.
 
 ## `0x0C` — `SetGlobalVariableZero`
 
@@ -3375,6 +3380,7 @@ High-confidence or useful current names:
 | `0x3A` | `StartScxScriptTracked` | strongly recovered |
 | `0x3B` | `StartCharacterScript` | strongly recovered |
 | `0x3C` | `StartCharacterScriptTracked` | strongly recovered |
+| `0x3F` | `StartCurrentCharacterMove` | implemented; Scalar16 current-actor CTL move/control-record selection, nonblocking; CTL execution remains deferred |
 | `0x46` | `OpenInterface` | strongly recovered |
 | `0x47` | `AttachAreaScene` | implemented; two Scalar16 values, nonblocking |
 | `0x49` | `PlaceCurrentCharacterAtAddress` | implemented; one Scalar16, nonblocking |
@@ -3387,7 +3393,8 @@ High-confidence or useful current names:
 | `0x5F` | camera select | provisional |
 | `0x60` | camera move/wait | provisional |
 | `0x67` | music operation | track ID firm |
-| `0x68` | subsystem activation | provisional |
+| `0x68` | `SetCurrentCharacterControllerEnabled` | implemented; zero-operand current-actor controller boolean `true`, nonblocking |
+| `0x69` | `SetCurrentCharacterControllerDisabled` | implemented; zero-operand current-actor controller boolean `false`, nonblocking |
 | `0x76` | presentation effect | provisional |
 | `0x77` | alternate presentation effect | provisional |
 | `0x83` | subsystem operation | provisional |

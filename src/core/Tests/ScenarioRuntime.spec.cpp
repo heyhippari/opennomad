@@ -149,8 +149,12 @@ BodyResourcesFixture make_body_resources() {
       .u32(root_rotation_offset);
   // mesh_id is 200, but the animation must bind this channel by script_id 3.
   animation.u32(3).chars("Child", 20).u32(4).u32(0).u32(4).u32(child_rotation_offset);
-  for (std::uint32_t frame{0}; frame < 4U; ++frame) {
-    animation.f32(static_cast<float>(frame) * 10.0F).f32(0.0F).f32(0.0F);
+  // Translation sample zero is the reference position; each later sample is
+  // an interval-local root-motion vector. Keep the vectors uniform so a
+  // half interval is unambiguously half of the ten-inch movement.
+  animation.f32(0.0F).f32(0.0F).f32(0.0F);
+  for (std::uint32_t frame{1}; frame < 4U; ++frame) {
+    animation.f32(10.0F).f32(0.0F).f32(0.0F);
   }
   animation.f32(1.0F).f32(0.0F).f32(0.0F).f32(0.0F);
   animation.f32(0.0F).f32(0.0F).f32(0.0F).f32(1.0F);
@@ -171,6 +175,41 @@ BodyResourcesFixture make_body_resources() {
   fixture.scx.animation_resources.push_back(App::Omikron::ScxEmbeddedResource{
       .payload_offset = path.data().size(), .payload_size = animation.data().size()});
   return fixture;
+}
+
+App::Omikron::Model3DOData make_movable_decor() {
+  App::Omikron::Model3DOData decor;
+  decor.materials.push_back(App::Omikron::Material{.width = 1U, .height = 1U});
+  decor.meshes.push_back(App::Omikron::MeshDescriptor{.mesh_id = 1U,
+      .name = "Movable",
+      .parent_id = -1,
+      .first_child_id = -1,
+      .next_sibling_id = -1,
+      .vertex_count = 3U,
+      .triangle_count = 1U});
+  decor.polygons.push_back(
+      App::Omikron::MeshPolygons{.triangles = {App::Omikron::Triangle{
+                                     .vertices = {App::Omikron::TriangleVertexRef{.index = 0U},
+                                         App::Omikron::TriangleVertexRef{.index = 1U},
+                                         App::Omikron::TriangleVertexRef{.index = 2U}},
+                                     .material_id = 0}}});
+  decor.vertices = {App::Omikron::RawVertex{.position = {.x = 0.0F, .y = 0.0F, .z = 0.0F},
+                        .normal = {.z = 1.0F},
+                        .color_bgra = {255U, 255U, 255U, 255U}},
+      App::Omikron::RawVertex{.position = {.x = 1.0F, .y = 0.0F, .z = 0.0F},
+          .normal = {.z = 1.0F},
+          .color_bgra = {255U, 255U, 255U, 255U}},
+      App::Omikron::RawVertex{.position = {.x = 0.0F, .y = 1.0F, .z = 0.0F},
+          .normal = {.z = 1.0F},
+          .color_bgra = {255U, 255U, 255U, 255U}}};
+  decor.root_mesh_index = 0;
+  decor.hierarchy_parent_index = {-1};
+  decor.hierarchy_first_child_index = {-1};
+  decor.hierarchy_next_sibling_index = {-1};
+  decor.hierarchy_reachable = {1U};
+  decor.skin_parent_index = {-1};
+  decor.runtime_objects.push_back(App::Omikron::Model3DOData::RuntimeObjectState{});
+  return decor;
 }
 
 App::Omikron::SfxData make_script_trigger_sfx() {
@@ -574,6 +613,43 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
     CHECK_EQ(child->runtime_objects.at(1).world_translation.x, doctest::Approx(5.93700778F));
     CHECK_EQ(child->transform.translation.x, doctest::Approx(character_x_before_child));
     CHECK_EQ(child->body_animation.root_motion_delta.x, doctest::Approx(0.0F));
+  }
+
+  TEST_CASE("MoveObjectOnPath changes instance-local decor pose only") {
+    BodyResourcesFixture resources{make_body_resources()};
+    App::ScenarioRuntime runtime;
+    REQUIRE(runtime.initialize(resources.scx, resources.bytes, "decor-path", nullptr, false)
+            .has_value());
+
+    App::Omikron::Model3DOData decor{make_movable_decor()};
+    const auto before{App::Omikron::Model3DO::build_posed_geometry(decor, decor.runtime_objects)};
+    REQUIRE(before.has_value());
+    REQUIRE_EQ(before->size(), 1U);
+    REQUIRE_EQ(before->front().vertices.size(), 3U);
+    CHECK_EQ(before->front().vertices.front().position.at(0), doctest::Approx(0.0F));
+
+    runtime.bind_decor_model(&decor);
+    CHECK_EQ(runtime.decor_pose_revision(), 0U);
+    const App::Script::MoveObjectOnPathRequest request{.object_binding = "Movable",
+        .path_descriptor_index = 0U,
+        .subpath_index = 0U,
+        .interpolation_mode = 1U,
+        .direction = 0U,
+        .transform_rebase_mode = 0U,
+        .duration_frames = 2.0F,
+        .previous_parameter = 0.0F,
+        .current_parameter = 1.0F};
+    const auto applied{runtime.move_object_on_path(request)};
+    REQUIRE(applied.has_value());
+    CHECK_EQ(applied->max_parameter, 2U);
+    CHECK_EQ(runtime.decor_pose_revision(), 1U);
+    CHECK_EQ(decor.runtime_objects.front().local_offset.x, doctest::Approx(0.0F));
+
+    const auto after{
+        App::Omikron::Model3DO::build_posed_geometry(decor, runtime.decor_runtime_objects())};
+    REQUIRE(after.has_value());
+    REQUIRE_EQ(after->size(), 1U);
+    CHECK_EQ(after->front().vertices.front().position.at(0), doctest::Approx(-478.393341F));
   }
 }
 

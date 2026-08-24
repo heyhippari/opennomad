@@ -40,8 +40,8 @@ std::expected<IamCameraRecord, std::string> parse_iam_camera(
   camera.camera_type = read_at<std::uint16_t>(data, 0x1AU);
   camera.roll_units = read_at<std::int16_t>(data, 0x1CU);
   camera.horizontal_fov_units = read_at<std::int16_t>(data, 0x1EU);
-  camera.field_20 = read_at<std::int16_t>(data, 0x20U);
-  camera.field_22 = read_at<std::int16_t>(data, 0x22U);
+  camera.target_attachment_selector = read_at<std::int16_t>(data, 0x20U);
+  camera.eye_attachment_selector = read_at<std::int16_t>(data, 0x22U);
   for (std::size_t index{0}; index < camera.tail_fields.size(); ++index) {
     camera.tail_fields.at(index) = read_at<std::uint16_t>(data, 0x24U + (index * 2U));
   }

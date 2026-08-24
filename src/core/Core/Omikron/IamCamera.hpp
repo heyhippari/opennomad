@@ -19,8 +19,10 @@ struct IamCameraRecord {
   std::uint16_t camera_type{0};
   std::int16_t roll_units{0};
   std::int16_t horizontal_fov_units{0};
-  std::int16_t field_20{0};
-  std::int16_t field_22{0};
+  /// +0x20. -1 means absolute target; 0 attaches to the current actor.
+  std::int16_t target_attachment_selector{0};
+  /// +0x22. -1 means absolute eye; 0 attaches to the current actor.
+  std::int16_t eye_attachment_selector{0};
   std::array<std::uint16_t, 4> tail_fields{};
 };
 

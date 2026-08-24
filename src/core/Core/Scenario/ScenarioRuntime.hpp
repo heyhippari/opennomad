@@ -168,7 +168,20 @@ class ScenarioRuntime final : public Script::ScriptWorld, private Sfx::Host {
       Script::RelativeBodyAnimationFailure>
   select_relative_body_animation(const Script::RelativeBodyAnimationRequest& request) override;
   void reset_body_animation(std::int16_t character_id) override;
+  [[nodiscard]] std::expected<Script::MoveObjectOnPathResult, Script::MoveObjectOnPathFailure>
+  move_object_on_path_max_parameter(
+      std::uint32_t path_descriptor_index, std::uint32_t subpath_index) override;
+  [[nodiscard]] std::expected<Script::MoveObjectOnPathResult, Script::MoveObjectOnPathFailure>
+  move_object_on_path(const Script::MoveObjectOnPathRequest& request) override;
   [[nodiscard]] std::string_view scenario_name() const override;
+
+  /// Binds the context-owned immutable decor descriptor to this scenario's
+  /// mutable instance state after transactional world load.
+  void bind_decor_model(const Omikron::Model3DOData* decor_model);
+  [[nodiscard]] const Omikron::Model3DOData* decor_model() const;
+  [[nodiscard]] std::span<const Omikron::Model3DOData::RuntimeObjectState> decor_runtime_objects()
+      const;
+  [[nodiscard]] std::uint64_t decor_pose_revision() const;
 
   // --- Audio subsystem ------------------------------------------------------
 
@@ -223,6 +236,9 @@ class ScenarioRuntime final : public Script::ScriptWorld, private Sfx::Host {
   Audio::AudioSystem* m_audio{nullptr};
   /// One-shot guard for the XYZ-pool fallback diagnostic (POC).
   bool m_xyz_fallback_logged{false};
+  const Omikron::Model3DOData* m_decor_model{nullptr};
+  std::vector<Omikron::Model3DOData::RuntimeObjectState> m_decor_runtime_objects;
+  std::uint64_t m_decor_pose_revision{0};
   bool m_initialized{false};
 };
 

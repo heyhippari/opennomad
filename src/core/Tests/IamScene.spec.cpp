@@ -144,12 +144,10 @@ TEST_SUITE("Core::Omikron::IamSceneRecord") {
     CHECK_EQ(zones.front().event_offsets.at(0), scene->script_offset());
     CHECK_EQ(zones.front().event_offsets.at(1), scene->script_offset() + 1U);
     CHECK_EQ(zones.front().event_offsets.at(2), scene->script_offset());
-    CHECK_EQ(zones.front().raw_geometry_and_fields.at(0), std::byte{0x12});
-    CHECK_EQ(zones.front().raw_geometry_and_fields.at(0x31U), std::byte{0x34});
-    CHECK_EQ(zones.front().field_3e, -12);
+    CHECK_EQ(zones.front().serialized_vertices.at(0).at(0), 0x12);
+    CHECK_EQ(zones.front().orientation_span_units, -12);
     CHECK_EQ(zones.front().zone_id, 9);
-    CHECK_EQ(zones.front().raw_tail.at(0), std::byte{0x56});
-    CHECK_EQ(zones.front().raw_tail.at(1), std::byte{0x78});
+    CHECK_EQ(static_cast<std::uint16_t>(zones.front().unknown_42), 0x7856U);
     const std::vector<App::Omikron::IamSceneScriptLinkRecord> links{scene->script_links()};
     REQUIRE_EQ(links.size(), 1U);
     CHECK_EQ(links.front().program_offset, scene->script_offset());
