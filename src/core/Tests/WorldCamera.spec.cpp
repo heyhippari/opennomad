@@ -1,3 +1,6 @@
+#include <array>
+#include <cstdint>
+
 #include <doctest/doctest.h>
 
 // NOLINTBEGIN(misc-use-anonymous-namespace, cppcoreguidelines-avoid-do-while)
@@ -56,6 +59,57 @@ WorldCameraCommand camera_2148() {
 }  // namespace
 
 TEST_SUITE("Core::WorldCameraSystem") {
+  TEST_CASE("Runtime dialogue camera pair snaps to A then travels to B") {
+    WorldCameraSystem camera;
+
+    WorldCameraCommand first{.camera_id = 2159,
+        .runtime_eye =
+            App::Runtime::area_position_to_inches(std::array<std::int32_t, 3>{-3206, -345, -1006}),
+        .runtime_target =
+            App::Runtime::area_position_to_inches(std::array<std::int32_t, 3>{-3165, -327, -239}),
+        .duration_units = 0,
+        .camera_type = 12,
+        .roll_units = 3928,
+        .horizontal_fov_units = 853,
+        .roll_degrees = App::Runtime::area_angle_to_degrees(3928),
+        .horizontal_fov_degrees = App::Runtime::area_angle_to_degrees(853)};
+
+    WorldCameraCommand second{.camera_id = 2165,
+        .runtime_eye =
+            App::Runtime::area_position_to_inches(std::array<std::int32_t, 3>{-3159, -394, -846}),
+        .runtime_target =
+            App::Runtime::area_position_to_inches(std::array<std::int32_t, 3>{-3196, -301, -84}),
+        .duration_units = 160,
+        .camera_type = 12,
+        .roll_units = 0,
+        .horizontal_fov_units = 853,
+        .roll_degrees = 0,
+        .horizontal_fov_degrees = App::Runtime::area_angle_to_degrees(853)};
+
+    camera.apply_command(first);
+
+    CHECK_EQ(camera.active_camera_id().value_or(0U), 2159U);
+    CHECK_FALSE(camera.transitioning());
+    CHECK(camera.pose().roll_degrees == doctest::Approx(345.0F));
+
+    const App::WorldCameraPose first_pose{camera.pose()};
+
+    camera.apply_command(second);
+
+    CHECK_EQ(camera.active_camera_id().value_or(0U), 2165U);
+    REQUIRE(camera.transitioning());
+
+    // The second command must begin at exactly camera A, not whatever
+    // pre-dialog AREA camera happened to be active.
+    CHECK(camera.pose().eye.x == doctest::Approx(first_pose.eye.x));
+    CHECK(camera.pose().roll_degrees == doctest::Approx(first_pose.roll_degrees));
+    camera.update(160.0F / 30.0F);
+
+    CHECK_FALSE(camera.transitioning());
+    CHECK(camera.pose().roll_degrees == doctest::Approx(0.0F));
+    CHECK(camera.pose().eye.x == doctest::Approx(second.runtime_eye.x));
+  }
+
   TEST_CASE("Zero-duration cameras snap") {
     WorldCameraSystem camera;
     camera.apply_command(camera_2172());

@@ -3003,6 +3003,31 @@ interpreter and service bridges as AREA, but its compact context is independent:
 an unsupported SCENE opcode pauses that SCENE context without stopping its
 parent AREA context.
 
+## Persistent ADDRESS and object-collection operations
+
+Three additional compact handlers mutate session state without depending on a
+resident AREA/SCENE context:
+
+| Opcode | Operands | Operation |
+| --- | --- | --- |
+| `0x32` | Scalar16 collection kind, Scalar16 OBJECTS ID | `AddObjectToPersistentCollection`: insert at the front of START-backed collection kind 0, 1, or 2. A full collection is unchanged; kind 2 suppresses an existing ID, while kinds 0 and 1 retain duplicates. Kind 3 reaches native code but remains an explicit compatibility gap. |
+| `0x57` | Scalar16 ADDRESS ID | `SetAddressFlag`: set the requested persistent ADDRESS bit. |
+| `0x58` | Scalar16 ADDRESS ID | `ClearAddressFlag`: clear the requested persistent ADDRESS bit. |
+
+All three decode ordinary Scalar16 operands and are nonblocking: they do not
+wait, yield, touch the evaluation stack, or perform AREA/SCENE/character
+lookup. ADDRESS operations use the `ADDRESSES` diagnostic namespace; object
+insertion uses `OBJECTS`. OpenNomad routes them through the session-owned
+`GameState`, initialized from immutable `IAM/START`, so a value survives AREA
+release, SCENE attachment, and world-residency changes.
+
+The native structured-script command contract also matters at this boundary.
+`Script_SelectRelativeBodyAnimation` can return false when an otherwise valid
+character-bound body has deliberately been deactivated or removed. That false
+result leaves the command unresolved/running; it is not intrinsically a
+`ScriptRuntime` missing-resource pause. Malformed bindings and unavailable
+animation/path resources still produce structured diagnostics and pauses.
+
 ---
 
 # 110. Native opcode descriptor table
@@ -3230,6 +3255,7 @@ High-confidence or useful current names:
 | `0x2E` | tracked native operation | provisional |
 | `0x2F` | `BeginAreaTransition` | implemented; state-10 two-slot native wait |
 | `0x30` | `ReleaseArea` | implemented; one Scalar16, nonblocking |
+| `0x32` | `AddObjectToPersistentCollection` | implemented for START-backed kinds 0/1/2; newest-first, kind-2 duplicate suppression; kind 3 unresolved |
 | `0x38` | `SelectCurrentCharacter` | implemented; one Scalar16, nonblocking |
 | `0x39` | `StartScxScript` | strongly recovered |
 | `0x3A` | `StartScxScriptTracked` | strongly recovered |
@@ -3240,6 +3266,8 @@ High-confidence or useful current names:
 | `0x49` | `PlaceCurrentCharacterAtAddress` | implemented; one Scalar16, nonblocking |
 | `0x4E` | `ActivateCharacter` | implemented current-body presentation enable for `-1`; other behavior traced |
 | `0x4F` | `DeactivateCharacter` | implemented; current-body presentation disable for `-1` |
+| `0x57` | `SetAddressFlag` | implemented; one Scalar16, nonblocking |
+| `0x58` | `ClearAddressFlag` | implemented; one Scalar16, nonblocking |
 | `0x5C` | object activation | provisional |
 | `0x5F` | camera select | provisional |
 | `0x60` | camera move/wait | provisional |
@@ -4135,6 +4163,9 @@ Core context/runtime:
 | `0x3C` | `0x00403430` | StartCharacterScriptTracked |
 | `0x46` | `0x00403860` | OpenInterface |
 | `0x4E` | `0x00403CB0` | character activation path |
+| `0x32` | `0x0040A4D0` | AddObjectToPersistentCollection |
+| `0x57` | `0x00404330` | SetAddressFlag |
+| `0x58` | `0x00404390` | ClearAddressFlag |
 | `0x5F` | `0x00404940` | camera operation |
 | `0x60` | `0x00404AF0` | camera wait operation |
 | `0x67` | `0x00404FB0` | music |

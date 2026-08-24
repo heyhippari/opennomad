@@ -19,20 +19,29 @@
 #include "Core/Character/CharacterRuntime.hpp"
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Dialog/DialogRuntime.hpp"
+#include "Core/GameState.hpp"
 #include "Core/GameDataLoader.hpp"
 #include "Core/Log.hpp"
 #include "Core/LogCategory.hpp"
+#include "Core/Omikron/IamCamera.hpp"
 #include "Core/Omikron/IamDialog.hpp"
+#include "Core/Omikron/IamStart.hpp"
 #include "Core/Omikron/Model3DO.hpp"
 #include "Core/Omikron/SCX.hpp"
 #include "Core/Omikron/SFX.hpp"
 #include "Core/Resources.hpp"
+#include "Core/RuntimeMath.hpp"
 #include "Core/Scenario/ScenarioRuntime.hpp"
 #include "Core/Sfx/SfxRuntime.hpp"
+#include "Core/WorldPresentation.hpp"
 
 namespace App {
 
 namespace {
+
+/// Runtime's dialog-camera pair controller submits the second camera with
+// an authored transition duration of exactly 160 camera/scenario units.
+constexpr std::int16_t K_DIALOG_CAMERA_TRANSITION_UNITS{160};
 
 /// "SCPTDATA/Hall27.SCX" -> "Hall27": the canonical game path without
 /// the archive directory and extension, for readable lifecycle messages.
@@ -50,6 +59,8 @@ std::expected<void, std::string> ScenarioManager::reset_for_new_session() {
   APP_PROFILE_FUNCTION();
 
   m_controlled_character.reset();
+  m_dialog_camera_generation.reset();
+  m_game_state.reset();
   // Tear down both world contexts directly rather than through the
   // scene-id-based public helpers: a Free context's default scene_id (0)
   // collides with a resident context, so lookups are ambiguous here.
@@ -64,6 +75,24 @@ std::expected<void, std::string> ScenarioManager::reset_for_new_session() {
   m_dialog_performance.reset();
   m_dialog_runtime.reset();
   return {};
+}
+
+std::expected<void, std::string> ScenarioManager::initialize_game_state(
+    const Omikron::IamStart& start) {
+  auto state{GameState::from_start(start)};
+  if (!state) {
+    return std::expected<void, std::string>{std::unexpect, state.error()};
+  }
+  m_game_state.emplace(std::move(state).value());
+  return {};
+}
+
+GameState* ScenarioManager::game_state() {
+  return m_game_state.has_value() ? &m_game_state.value() : nullptr;
+}
+
+const GameState* ScenarioManager::game_state() const {
+  return m_game_state.has_value() ? &m_game_state.value() : nullptr;
 }
 
 std::expected<void, std::string> ScenarioManager::start_dialog(const std::uint16_t dialog_id) {
@@ -88,6 +117,9 @@ std::expected<void, std::string> ScenarioManager::start_dialog(const std::uint16
   if (!started) {
     return started;
   }
+
+  m_dialog_camera_generation.reset();
+
   App::Log::info(LogCategory::Scenario, "Dialog {} started", dialog_id);
   return {};
 }
@@ -645,7 +677,143 @@ void ScenarioManager::set_audio_system(Audio::AudioSystem* audio_system) {
   }
 }
 
+void ScenarioManager::service_dialog_camera() {
+  const std::uint64_t generation{m_dialog_runtime.generation()};
+
+  // A camera pair is a presentation-generation operation, not something that
+  // should be continuously resubmitted while a subtitle remains visible.
+  if (m_dialog_camera_generation.has_value() &&
+      m_dialog_camera_generation.value() == generation) {
+    return;
+  }
+
+  const std::optional<Dialog::DialogPresentation> presentation{
+      m_dialog_runtime.presentation()};
+
+  if (!presentation.has_value()) {
+    // Remember inactive/completed generations too. A later dialog/node/state
+    // change increments DialogRuntime's generation and will be seen normally.
+    m_dialog_camera_generation = generation;
+    return;
+  }
+
+  const Dialog::DialogCameraPair* pair{nullptr};
+
+  switch (presentation->state) {
+    case Dialog::DialogState::k_presenting_line:
+      // Runtime's main/NPC line path requests node +0x3C/+0x3E.
+      pair = &presentation->line_cameras;
+      break;
+
+    case Dialog::DialogState::k_presenting_automatic_player_line:
+    case Dialog::DialogState::k_waiting_for_choice:
+      // Runtime's response-side presentation path requests node +0x38/+0x3A.
+      pair = &presentation->response_cameras;
+      break;
+
+    default:
+      m_dialog_camera_generation = generation;
+      return;
+  }
+
+  // Runtime's dialog camera-pair routine returns immediately when camera A is
+  // -1. Camera B is not independently applied in that case.
+  if (pair->authored_ids.at(0) < 0) {
+    m_dialog_camera_generation = generation;
+    return;
+  }
+
+  const std::optional<Omikron::IamCameraRecord> immediate_camera{
+      pair->cameras.at(0)};
+  if (!immediate_camera.has_value()) {
+    App::Log::warn(LogCategory::Scenario,
+        "Dialog camera {} is authored but unresolved",
+        pair->authored_ids.at(0));
+    m_dialog_camera_generation = generation;
+    return;
+  }
+
+  const WorldSceneContext* context{active_world_context()};
+  if (context == nullptr) {
+    // Do not consume the generation: if presentation temporarily has no
+    // active world owner, retry once a world exists.
+    return;
+  }
+
+  const auto enqueue =
+      [this, context](const Omikron::IamCameraRecord& camera,
+          const std::int16_t duration_units) {
+        m_world_presentation.enqueue_camera(
+            WorldCameraCommand{
+                .scene_id = context->scene_id,
+                .scene_generation = context->generation,
+                .camera_id = static_cast<std::uint16_t>(camera.camera_id),
+
+                .serialized_eye = camera.serialized_eye,
+                .serialized_target = camera.serialized_target,
+                .runtime_eye =
+                    Runtime::area_position_to_inches(camera.serialized_eye),
+                .runtime_target =
+                    Runtime::area_position_to_inches(camera.serialized_target),
+
+                .duration_units = duration_units,
+                .flags = 0,
+                .wait_for_completion = false,
+
+                .camera_type = camera.camera_type,
+                .roll_units = camera.roll_units,
+                .horizontal_fov_units = camera.horizontal_fov_units,
+                .roll_degrees =
+                    Runtime::area_angle_to_degrees(camera.roll_units),
+                .horizontal_fov_degrees =
+                    Runtime::area_angle_to_degrees(
+                        camera.horizontal_fov_units),
+
+                .field_20 = camera.field_20,
+                .field_22 = camera.field_22,
+                .tail_fields = camera.tail_fields});
+      };
+
+  // Native dialog pair:
+  //
+  //   camera A -> immediate placement
+  //
+  // Runtime uses -1.0 in its native camera command for this first operation.
+  // OpenNomad's presentation abstraction represents the same snap with zero
+  // duration.
+  enqueue(immediate_camera.value(), 0);
+
+  // Then travel to camera B over Runtime's fixed 160-unit interval.
+  if (pair->authored_ids.at(1) >= 0) {
+    const std::optional<Omikron::IamCameraRecord> transition_camera{
+        pair->cameras.at(1)};
+    if (!transition_camera.has_value()) {
+      App::Log::warn(LogCategory::Scenario,
+          "Dialog camera {} is authored but unresolved",
+          pair->authored_ids.at(1));
+    } else {
+      enqueue(transition_camera.value(),
+          K_DIALOG_CAMERA_TRANSITION_UNITS);
+    }
+  }
+
+  App::Log::debug(LogCategory::Scenario,
+      "Dialog camera pair — generation={} state={} {} -> {}",
+      generation,
+      static_cast<int>(presentation->state),
+      pair->authored_ids.at(0),
+      pair->authored_ids.at(1));
+
+  m_dialog_camera_generation = generation;
+}
+
 void ScenarioManager::service_dialog_performance(const float real_delta_seconds) {
+  // Runtime dialogue presentation owns authored camera changes independently
+  // of the synchronized MORPH/3DM media stream. Submit them before servicing
+  // the visual performance so both become visible on the same presentation
+  // frame.
+  service_dialog_camera();
+
   const WorldSceneContext* context{active_world_context()};
   ScenarioRuntime* runtime{context == nullptr ? nullptr : context->runtime.get()};
   Character::Runtime* characters{runtime == nullptr ? nullptr : &runtime->character_runtime()};

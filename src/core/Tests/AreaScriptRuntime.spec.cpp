@@ -25,6 +25,7 @@ using App::InterfaceOpenRequest;
 using App::Audio::MusicTrackRequest;
 using App::Script::AreaCameraRequest;
 using App::Script::AreaAddressPlacementRequest;
+using App::Script::AreaAddressFlagRequest;
 using App::Script::AreaCharacterActivationRequest;
 using App::Script::AreaCharacterDeactivationRequest;
 using App::Script::AreaCharacterSelectionRequest;
@@ -33,6 +34,7 @@ using App::Script::AreaCharacterScriptLaunchMode;
 using App::Script::AreaCharacterScriptRequest;
 using App::Script::AreaDialogRequest;
 using App::Script::AreaPresentationRequest;
+using App::Script::AreaPersistentObjectCollectionRequest;
 using App::Script::AreaScriptRuntime;
 using App::Script::AreaScriptState;
 using App::Script::AreaScxScriptRequest;
@@ -118,6 +120,70 @@ void wire_startup_character_sinks(AreaScriptRuntime& runtime) {
 }  // namespace
 
 TEST_SUITE("Core::Script::AreaScriptRuntime") {
+  TEST_CASE("0x57 and 0x58 mutate ADDRESS state without waiting") {
+    Buffer bytes;
+    bytes.u8(0x57).u16(5).u8(0x58).u16(6).u8(0x03);
+    AreaScriptRuntime runtime{bytes.data()};
+    std::vector<AreaAddressFlagRequest> requests;
+    runtime.set_address_flag_sink(
+        [&requests](const AreaAddressFlagRequest& request) -> std::expected<void, std::string> {
+          requests.push_back(request);
+          return {};
+        });
+    runtime.queue_event(1);
+    runtime.activate();
+
+    CHECK(runtime.run() == AreaScriptState::k_ready);
+    REQUIRE_EQ(requests.size(), 2U);
+    CHECK_EQ(requests.at(0).address_id, 5);
+    CHECK(requests.at(0).enabled);
+    CHECK_EQ(requests.at(1).address_id, 6);
+    CHECK_FALSE(requests.at(1).enabled);
+    CHECK(runtime.wait_info().kind == AreaWaitKind::k_none);
+    CHECK_EQ(runtime.instruction_pointer(), bytes.data().size());
+  }
+
+  TEST_CASE("0x57 rejects parameter-indirected ADDRESS Scalar16 values") {
+    Buffer bytes;
+    bytes.u8(0x57).u16(0x4002);
+    AreaScriptRuntime runtime{bytes.data()};
+    std::size_t calls{0};
+    runtime.set_address_flag_sink(
+        [&calls](const AreaAddressFlagRequest&) -> std::expected<void, std::string> {
+          ++calls;
+          return {};
+        });
+    runtime.queue_event(1);
+    runtime.activate();
+
+    CHECK(runtime.run() == AreaScriptState::k_failed);
+    CHECK_EQ(calls, 0U);
+    CHECK(runtime.pause_info().reason_text.find("parameter-indirected Scalar16") !=
+          std::string::npos);
+  }
+
+  TEST_CASE("0x32 requests a persistent object insertion without waiting") {
+    Buffer bytes;
+    bytes.u8(0x32).u16(2).u16(314).u8(0x03);
+    AreaScriptRuntime runtime{bytes.data()};
+    std::optional<AreaPersistentObjectCollectionRequest> request;
+    runtime.set_persistent_object_collection_sink(
+        [&request](const AreaPersistentObjectCollectionRequest& value)
+            -> std::expected<void, std::string> {
+          request = value;
+          return {};
+        });
+    runtime.queue_event(1);
+    runtime.activate();
+
+    CHECK(runtime.run() == AreaScriptState::k_ready);
+    REQUIRE(request.has_value());
+    CHECK_EQ(request->collection_kind, 2);
+    CHECK_EQ(request->object_id, 314);
+    CHECK(runtime.wait_info().kind == AreaWaitKind::k_none);
+    CHECK_EQ(runtime.instruction_pointer(), bytes.data().size());
+  }
+
   TEST_CASE("0x47 attaches a SCENE without waiting and continues to EndEvent") {
     Buffer bytes;
     bytes.u8(0x47).u16(222).u16(55).u8(0x03);
@@ -1111,6 +1177,8 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     CHECK(App::Script::area_opcode_name(0x0D) != nullptr);
     CHECK(App::Script::area_opcode_name(0x19) != nullptr);
     CHECK(App::Script::area_opcode_name(0x2F) != nullptr);
+    CHECK_EQ(std::string{App::Script::area_opcode_name(0x32)},
+        "AddObjectToPersistentCollection");
     CHECK(App::Script::area_opcode_name(0x39) != nullptr);
     CHECK(App::Script::area_opcode_name(0x3A) != nullptr);
     CHECK(App::Script::area_opcode_name(0x3B) != nullptr);
@@ -1120,6 +1188,8 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     CHECK(App::Script::area_opcode_name(0x46) != nullptr);
     CHECK(App::Script::area_opcode_name(0x5F) != nullptr);
     CHECK(App::Script::area_opcode_name(0x60) != nullptr);
+    CHECK_EQ(std::string{App::Script::area_opcode_name(0x57)}, "SetAddressFlag");
+    CHECK_EQ(std::string{App::Script::area_opcode_name(0x58)}, "ClearAddressFlag");
     CHECK(App::Script::area_opcode_name(0x67) != nullptr);
     CHECK(App::Script::area_opcode_name(0x77) != nullptr);
     CHECK(App::Script::area_opcode_name(0x84) != nullptr);

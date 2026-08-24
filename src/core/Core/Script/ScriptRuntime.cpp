@@ -746,9 +746,18 @@ HandlerResult ScriptRuntime::handle_select_relative_body_animation(
       .execution_limit = command.execution_limit};
   auto applied{m_world->select_relative_body_animation(request)};
   if (!applied) {
+    if (applied.error().error == BodyAnimationApplyError::k_character_unavailable) {
+      // Runtime's native command returns false when a previously valid
+      // character-bound body has deliberately left the world. Keep the
+      // command unresolved; the owning world will dispose of the instance.
+      return HandlerResult{.status = ScriptCommandStatus::k_running,
+          .pause_reason = ScriptPauseReason::k_none,
+          .reason_text = {}};
+    }
     return HandlerResult{.status = ScriptCommandStatus::k_error,
         .pause_reason = ScriptPauseReason::k_missing_resource,
-        .reason_text = fmt::format("Script_SelectRelativeBodyAnimation: {}", applied.error())};
+        .reason_text = fmt::format(
+            "Script_SelectRelativeBodyAnimation: {}", applied.error().reason_text)};
   }
 
   if (current >= static_cast<float>(applied->max_frame_index)) {

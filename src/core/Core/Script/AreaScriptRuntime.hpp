@@ -73,6 +73,20 @@ struct AreaAddressPlacementRequest {
   std::int16_t address_id{0};
 };
 
+/// Persistent ADDRESS bit mutation requested by compact IAM opcodes 0x57/0x58.
+/// The session state, rather than a transient compact context, owns the bits.
+struct AreaAddressFlagRequest {
+  std::int16_t address_id{0};
+  bool enabled{false};
+};
+
+/// Persistent object-collection insertion requested by compact IAM opcode
+/// 0x32. Both operands retain their authored numeric meaning.
+struct AreaPersistentObjectCollectionRequest {
+  std::int16_t collection_kind{0};
+  std::int16_t object_id{0};
+};
+
 /// Current-character selection requested by compact IAM opcode 0x38. The
 /// scalar operand is an authored character ID; durable current-body ownership
 /// is established by the session sink, not by this compact VM context.
@@ -237,6 +251,10 @@ class AreaScriptRuntime {
       std::function<std::expected<void, std::string>(const AreaSceneAttachRequest&)>;
   using AreaAddressPlacementSink =
       std::function<std::expected<void, std::string>(const AreaAddressPlacementRequest&)>;
+  using AddressFlagSink =
+      std::function<std::expected<void, std::string>(const AreaAddressFlagRequest&)>;
+  using PersistentObjectCollectionSink = std::function<std::expected<void, std::string>(
+      const AreaPersistentObjectCollectionRequest&)>;
 
   /// Bridge from opcode 0x4E to the active world's character runtime.
   using CharacterActivationSink =
@@ -306,6 +324,10 @@ class AreaScriptRuntime {
   void set_area_release_sink(AreaReleaseSink sink);
   void set_area_scene_attach_sink(AreaSceneAttachSink sink);
   void set_area_address_placement_sink(AreaAddressPlacementSink sink);
+  /// Wires persistent ADDRESS mutations from opcodes 0x57/0x58.
+  void set_address_flag_sink(AddressFlagSink sink);
+  /// Wires persistent object-collection insertion from opcode 0x32.
+  void set_persistent_object_collection_sink(PersistentObjectCollectionSink sink);
 
   /// Wires AREA opcode 0x4E to runtime-character activation.
   void set_character_activation_sink(CharacterActivationSink sink);
@@ -463,6 +485,13 @@ class AreaScriptRuntime {
   last_area_address_placement_request() const {
     return m_last_area_address_placement_request;
   }
+  [[nodiscard]] const std::optional<AreaAddressFlagRequest>& last_address_flag_request() const {
+    return m_last_address_flag_request;
+  }
+  [[nodiscard]] const std::optional<AreaPersistentObjectCollectionRequest>&
+  last_persistent_object_collection_request() const {
+    return m_last_persistent_object_collection_request;
+  }
   [[nodiscard]] const std::optional<AreaCameraRequest>& last_camera_request() const {
     return m_last_camera_request;
   }
@@ -530,6 +559,8 @@ class AreaScriptRuntime {
   AreaReleaseSink m_area_release_sink;
   AreaSceneAttachSink m_area_scene_attach_sink;
   AreaAddressPlacementSink m_area_address_placement_sink;
+  AddressFlagSink m_address_flag_sink;
+  PersistentObjectCollectionSink m_persistent_object_collection_sink;
   CharacterActivationSink m_character_activation_sink;
   CharacterSelectionSink m_character_selection_sink;
   CharacterDeactivationSink m_character_deactivation_sink;
@@ -546,6 +577,8 @@ class AreaScriptRuntime {
   std::optional<AreaReleaseRequest> m_last_area_release_request;
   std::optional<AreaSceneAttachRequest> m_last_area_scene_attach_request;
   std::optional<AreaAddressPlacementRequest> m_last_area_address_placement_request;
+  std::optional<AreaAddressFlagRequest> m_last_address_flag_request;
+  std::optional<AreaPersistentObjectCollectionRequest> m_last_persistent_object_collection_request;
   std::optional<AreaCameraRequest> m_last_camera_request;
   std::optional<AreaPresentationRequest> m_last_presentation_request;
   bool m_cinematic_letterbox_requested{false};

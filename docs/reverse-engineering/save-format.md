@@ -675,6 +675,13 @@ struct SerializedStartState {
 
 Serialized retail `IAM/START` ends at `0x1636`. The save snapshot always reserves/stores a full `0x2000` bytes.
 
+The relocated ADDRESS region is selected by the header pair `START +0x18`
+through `START +0x1C`, not by a hard-coded retail offset in consumers. Retail
+uses `[0x1398, 0x13FC)`: 100 bytes, or 800 least-significant-bit-first flags.
+For nonnegative ADDRESS ID `n`, Runtime uses byte `n / 8` and bit `n % 8`.
+OpenNomad's semantic `GameState` copies these bytes during New Game/session
+initialization and rejects IDs outside the copied capacity.
+
 ---
 
 # 12. Global variables at `START +0x58C`
@@ -868,6 +875,14 @@ Pristine `START` contains examples including:
 Across real saves, the lists contain items such as weapons, ammunition, keys, documents, books, consumables, jewels, mission memos, etc. Duplicates are preserved, so these are not merely discovered-object bitsets.
 
 Their exact gameplay roles remain to be named. The 18-entry list appears more constrained/active than the broad 256-entry collection, while the 9-entry list often contains mission-memo-like objects, but these interpretations should remain provisional until list-manipulation routines are fully traced.
+
+The recovered insertion helper is newest-first: if a collection has an empty
+slot, it shifts existing IDs toward the end and writes the new OBJECTS ID at
+index zero. A full collection is unchanged. Compact opcode `0x32` suppresses
+duplicate insertion only for kind 2 (and native kind 3, whose persistence is
+not established); kinds 0 and 1 preserve duplicates. OpenNomad retains every
+fixed-capacity slot, including `-1`, in semantic session state rather than
+collapsing this layout into an unordered inventory abstraction.
 
 ## 16.1 `IAM/OBJECT` reconstruction
 
@@ -1415,6 +1430,10 @@ Recommended principles:
 5. **Preserve unknown fields where needed for compatibility/round-trip work**, but do not expose unknown raw memory as the primary gameplay API.
 6. **Build New Game from `IAM/START`.** This is the retail canonical initial playthrough state.
 7. **Use one semantic GameState after load.** A retail-imported game should not remain in a special legacy runtime mode.
+
+Current OpenNomad New Game implementation copies the recovered ADDRESS bytes
+and the three fixed-capacity persistent object-ID collections into that
+session-owned state. Native save serialization remains a later step.
 
 Potential architecture:
 

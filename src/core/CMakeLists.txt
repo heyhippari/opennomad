@@ -31,6 +31,7 @@ add_library(${NAME} STATIC
   Core/Camera.cpp Core/Camera.hpp
   Core/RuntimeMath.hpp Core/RuntimeMath.cpp
   Core/RuntimePresentation.hpp Core/RuntimePresentation.cpp
+  Core/GameState.hpp Core/GameState.cpp
   Core/Dialog/DialogRuntime.hpp Core/Dialog/DialogRuntime.cpp
   Core/Dialog/DialogPerformanceRuntime.hpp Core/Dialog/DialogPerformanceRuntime.cpp
   Core/Character/CharacterRuntime.hpp Core/Character/CharacterRuntime.cpp

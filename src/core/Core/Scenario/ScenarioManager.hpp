@@ -11,6 +11,7 @@
 #include <string_view>
 #include <vector>
 
+#include "Core/GameState.hpp"
 #include "Core/Dialog/DialogRuntime.hpp"
 #include "Core/Dialog/DialogPerformanceRuntime.hpp"
 #include "Core/Omikron/Model3DO.hpp"
@@ -284,6 +285,14 @@ class ScenarioManager {
   /// cleared.
   [[nodiscard]] std::expected<void, std::string> reset_for_new_session();
 
+  /// Installs a fresh mutable session state copied from immutable IAM/START.
+  [[nodiscard]] std::expected<void, std::string> initialize_game_state(
+      const Omikron::IamStart& start);
+
+  /// Session-owned persistent state, if IAM/START has initialized it.
+  [[nodiscard]] GameState* game_state();
+  [[nodiscard]] const GameState* game_state() const;
+
   /// Finds a world context by scene ID.
   [[nodiscard]] WorldSceneContext* find_world_context(std::uint32_t scene_id);
   [[nodiscard]] const WorldSceneContext* find_world_context(std::uint32_t scene_id) const;
@@ -369,6 +378,17 @@ class ScenarioManager {
   }
 
  private:
+  /// Applies the authored IAM/DIALOG camera pair exactly once for each
+  /// DialogRuntime presentation generation.
+  ///
+  /// Runtime treats a pair as:
+  ///   camera[0] = immediate camera
+  ///   camera[1] = 160-unit camera transition
+  ///
+  /// Main/NPC presentation uses line_cameras; player-response presentation
+  /// uses response_cameras.
+  void service_dialog_camera();
+
   /// A fully loaded scenario package: the parsed data plus the backing byte
   /// buffer whose offsets the parsed data indexes into.
   struct LoadedScenario {
@@ -400,6 +420,9 @@ class ScenarioManager {
   GameplayModeSlot m_gameplay_mode_slot;
   std::array<WorldSceneContext, WorldSceneContext::k_capacity> m_world_contexts;
   std::optional<ControlledCharacterRef> m_controlled_character;
+  /// Durable IAM/START-derived flags and object collections. This outlives
+  /// AREA/SCENE slot swaps and world-runtime residency changes.
+  std::optional<GameState> m_game_state;
 
   /// CPU-only command mailbox between AREA/scenario execution and the stable
   /// WorldScene presentation layer.
@@ -409,6 +432,11 @@ class ScenarioManager {
   std::vector<std::byte> m_dialog_archive;
   Dialog::DialogRuntime m_dialog_runtime;
   Dialog::DialogPerformanceRuntime m_dialog_performance;
+
+  /// Last DialogRuntime generation whose authored camera pair was consumed.
+  /// DialogRuntime increments generation on every presentation-state change,
+  /// so this prevents a 160-unit camera transition from restarting each frame.
+  std::optional<std::uint64_t> m_dialog_camera_generation;
 
   Audio::AudioSystem* m_audio_system{nullptr};  ///< Non-owning.
 

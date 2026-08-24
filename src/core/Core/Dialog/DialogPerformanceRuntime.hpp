@@ -75,7 +75,7 @@ class DialogPerformanceRuntime {
   void reset();
   void stop_for_world_change();
   [[nodiscard]] bool active() const {
-    return m_clock.active();
+    return m_clock.active() || m_holding_final_pose;
   }
   [[nodiscard]] std::optional<std::size_t> current_frame() const {
     return m_current_frame;
@@ -112,7 +112,8 @@ class DialogPerformanceRuntime {
       const DialogRuntime& dialog, std::string_view current_basename);
   void pump_prefetch();
 
-  /// Natural EOF: remove visual overlay but retain generation/world identity.
+  /// Natural EOF: restore the facial source vertices but retain the final
+  /// authored object/root sample until dialog progression replaces or clears it.
   void finish_generation();
   /// Explicit state/world/dialog transition.
   void stop();
@@ -121,7 +122,11 @@ class DialogPerformanceRuntime {
       Character::Runtime* characters,
       std::uint64_t world_identity,
       Audio::AudioSystem* audio);
-  void apply_frame(std::size_t frame_index);
+
+  /// Applies one authored 3DM sample over the current SCX body pose. When
+  /// include_face is false only object rotations/root motion are composed;
+  /// this is Runtime's post-EOF held-body state.
+  void apply_frame(std::size_t frame_index, bool include_face = true);
 
   ClipLoader m_loader;
   std::unordered_map<std::string, PreparedClip> m_cache;
@@ -142,6 +147,10 @@ class DialogPerformanceRuntime {
   Runtime::Vec3 m_root_origin{};
   DialogPerformanceClock m_clock;
   std::optional<std::size_t> m_current_frame;
+
+  /// Runtime leaves the final 3DM object pose resident after stream EOF while
+  /// restoring only the backed-up facial vertices.
+  bool m_holding_final_pose{false};
 };
 
 }  // namespace App::Dialog

@@ -218,6 +218,18 @@ void DialogPerformanceRuntime::tick(const float real_delta_seconds,
   pump_prefetch();
 
   if (!m_clock.active()) {
+    // Runtime's 3DM teardown restores facial vertices but does not restore
+    // object matrices. OpenNomad's SCX body animation rebuilds posed_groups
+    // every tick, so re-compose the final body-only sample after that base
+    // update to reproduce the native held pose.
+    const std::optional<std::size_t> held_frame{m_current_frame};
+    if (m_holding_final_pose && held_frame.has_value()) {
+      apply_frame(held_frame.value(), false);
+      if (!m_binding.has_value()) {
+        m_holding_final_pose = false;
+      }
+    }
+
     return;
   }
 
@@ -229,7 +241,8 @@ void DialogPerformanceRuntime::tick(const float real_delta_seconds,
     finish_generation();
     return;
   }
-  apply_frame(frame.value_or(0U));
+
+  apply_frame(frame.value_or(0U), true);
 }
 
 void DialogPerformanceRuntime::reset() {
@@ -243,18 +256,45 @@ void DialogPerformanceRuntime::stop_for_world_change() {
 }
 
 void DialogPerformanceRuntime::finish_generation() {
+  m_clock.reset();
+
+  // Runtime 0x42CA50 restores the saved facial vertex buffer at 3DM stop,
+  // but does NOT restore the object's animation matrices. The final body pose
+  // therefore remains resident until another animation/performance writes it.
+  //
+  // Our 3DM implementation is deliberately an overlay instead of mutating the
+  // base RuntimeObjectState, so reproduce that observable behavior by retaining
+  // the final sample as a body-only held overlay.
+  if (m_characters != nullptr && m_clip != nullptr && m_binding.has_value() &&
+      m_current_frame.has_value()) {
+    m_holding_final_pose = true;
+
+    // Capture the final frame up front: apply_frame may reset m_current_frame,
+    // so the value must be read once while the optional is known to be set.
+    const std::size_t final_frame{m_current_frame.value()};
+
+    // Reapply the same final visual sample without its morph vertices. This
+    // immediately restores the ordinary face while preserving body/root pose.
+    apply_frame(final_frame, false);
+
+    if (m_binding.has_value()) {
+      App::Log::debug(LogCategory::Scenario,
+          "3DM generation {} exhausted — holding final body pose at frame {}",
+          m_generation,
+          final_frame);
+      return;
+    }
+  }
+
+  // No valid visual binding survived to EOF. There is nothing useful to hold.
+  m_holding_final_pose = false;
   if (m_characters != nullptr) {
     m_characters->clear_dialog_performance(m_character_id);
   }
-
-  // DO NOT stop the audio lane here. For clips with a final motion-only
-  // record, visual playback legitimately outlives the PCM by 1/30 second;
-  // otherwise the mixer reaches EOF naturally.
-
   m_clip.reset();
   m_binding.reset();
-  m_clock.reset();
   m_current_frame.reset();
+
   // Crucially retain:
   //
   //   m_generation
@@ -268,6 +308,8 @@ void DialogPerformanceRuntime::finish_generation() {
 }
 
 void DialogPerformanceRuntime::stop() {
+  m_holding_final_pose = false;
+
   if (m_characters != nullptr) {
     m_characters->clear_dialog_performance(m_character_id);
   }
@@ -293,6 +335,7 @@ void DialogPerformanceRuntime::start_generation(const DialogRuntime& dialog,
     Character::Runtime* characters,
     const std::uint64_t world_identity,
     Audio::AudioSystem* audio) {
+  m_holding_final_pose = false;
   m_generation = dialog.generation();
   m_world_identity = world_identity;
   const auto presentation{dialog.presentation()};
@@ -406,8 +449,7 @@ void DialogPerformanceRuntime::pump_prefetch() {
   // bounded operation, but the expensive ADPCM walk is spread across frames.
   if (!m_pending_prefetch.has_value()) {
     while (m_prefetch_cursor < m_prefetch_candidates.size()) {
-      const std::string basename{
-          m_prefetch_candidates.at(m_prefetch_cursor++)};
+      const std::string basename{m_prefetch_candidates.at(m_prefetch_cursor++)};
 
       if (m_cache.contains(basename)) {
         continue;
@@ -427,16 +469,13 @@ void DialogPerformanceRuntime::pump_prefetch() {
       // Four interleaved int16 values are emitted per compressed byte:
       // two predictor samples, each duplicated L/R.
       const std::size_t audio_chunks{loaded.value()->audio_chunk_count()};
-      const std::size_t bytes_per_chunk{
-          loaded.value()->header().audio_bytes_per_frame};
+      const std::size_t bytes_per_chunk{loaded.value()->header().audio_bytes_per_frame};
 
-      if (bytes_per_chunk != 0U &&
-          audio_chunks <= samples->max_size() / bytes_per_chunk / 4U) {
+      if (bytes_per_chunk != 0U && audio_chunks <= samples->max_size() / bytes_per_chunk / 4U) {
         samples->reserve(audio_chunks * bytes_per_chunk * 4U);
       }
 
-      m_pending_prefetch = PendingPrefetch{
-          .basename = basename,
+      m_pending_prefetch = PendingPrefetch{.basename = basename,
           .clip = loaded.value(),
           .stereo_samples = std::move(samples),
           .decoder_state = {},
@@ -453,23 +492,19 @@ void DialogPerformanceRuntime::pump_prefetch() {
   PendingPrefetch& pending{m_pending_prefetch.value()};
   const std::size_t frame_count{pending.clip->frames().size()};
   const std::size_t end{
-      std::min(frame_count,
-          pending.next_frame + K_PREFETCH_AUDIO_FRAMES_PER_TICK)};
+      std::min(frame_count, pending.next_frame + K_PREFETCH_AUDIO_FRAMES_PER_TICK)};
 
   for (; pending.next_frame < end; ++pending.next_frame) {
     const auto chunk{pending.clip->audio_chunk(pending.next_frame)};
 
-    if (auto decoded{Audio::decode_dialog_adpcm(
-            chunk,
-            pending.decoder_state,
-            *pending.stereo_samples)};
+    if (auto decoded{
+            Audio::decode_dialog_adpcm(chunk, pending.decoder_state, *pending.stereo_samples)};
         !decoded) {
       std::shared_ptr<const std::vector<std::int16_t>> empty_samples{
           std::make_shared<const std::vector<std::int16_t>>()};
 
       m_cache.emplace(pending.basename,
-          PreparedClip{
-              .clip = pending.clip,
+          PreparedClip{.clip = pending.clip,
               .stereo_samples = std::move(empty_samples),
               .audio_error = decoded.error()});
 
@@ -491,14 +526,11 @@ void DialogPerformanceRuntime::pump_prefetch() {
   const std::size_t visual_frames{pending.clip->frames().size()};
   const std::size_t sample_count{pending.stereo_samples->size()};
 
-  std::shared_ptr<const std::vector<std::int16_t>> immutable_samples{
-      pending.stereo_samples};
+  std::shared_ptr<const std::vector<std::int16_t>> immutable_samples{pending.stereo_samples};
 
   m_cache.emplace(basename,
       PreparedClip{
-          .clip = pending.clip,
-          .stereo_samples = std::move(immutable_samples),
-          .audio_error = {}});
+          .clip = pending.clip, .stereo_samples = std::move(immutable_samples), .audio_error = {}});
 
   m_pending_prefetch.reset();
 
@@ -509,7 +541,7 @@ void DialogPerformanceRuntime::pump_prefetch() {
       sample_count);
 }
 
-void DialogPerformanceRuntime::apply_frame(const std::size_t frame_index) {
+void DialogPerformanceRuntime::apply_frame(const std::size_t frame_index, const bool include_face) {
   m_current_frame = frame_index;
   if (!m_binding.has_value() || m_characters == nullptr || m_clip == nullptr) {
     return;
@@ -534,14 +566,21 @@ void DialogPerformanceRuntime::apply_frame(const std::size_t frame_index) {
   overlay.root_translation_delta = Runtime::Vec3{.x = decoded->root_translation.x - m_root_origin.x,
       .y = decoded->root_translation.y - m_root_origin.y,
       .z = decoded->root_translation.z - m_root_origin.z};
-  overlay.face_mesh_index = m_binding->face_mesh_index;
-  if (overlay.face_mesh_index.has_value()) {
-    overlay.face_vertices.reserve(decoded->morph_vertices.size());
-    for (const Omikron::ThreeDmMorphVertex& vertex : decoded->morph_vertices) {
-      overlay.face_vertices.push_back(Character::DialogFaceVertexOverride{
-          .position = vertex.position, .normal = vertex.normal});
+
+  // Runtime backs up/restores the face independently of object motion.
+  // Natural 3DM EOF therefore retains the final body pose while the face
+  // returns to its pre-performance geometry.
+  if (include_face) {
+    overlay.face_mesh_index = m_binding->face_mesh_index;
+    if (overlay.face_mesh_index.has_value()) {
+      overlay.face_vertices.reserve(decoded->morph_vertices.size());
+      for (const Omikron::ThreeDmMorphVertex& vertex : decoded->morph_vertices) {
+        overlay.face_vertices.push_back(Character::DialogFaceVertexOverride{
+            .position = vertex.position, .normal = vertex.normal});
+      }
     }
   }
+
   if (auto applied{m_characters->apply_dialog_performance(m_character_id, std::move(overlay))};
       !applied) {
     App::Log::warn(LogCategory::Scenario, "3DM pose application failed: {}", applied.error());

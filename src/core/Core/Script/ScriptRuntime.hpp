@@ -206,6 +206,22 @@ struct RelativeBodyAnimationResult {
   std::uint32_t max_frame_index{0};
 };
 
+/// Typed failure returned by a world while applying a character-bound body
+/// animation command. A deliberately removed body is a native false result,
+/// not a malformed SCX resource failure.
+enum class BodyAnimationApplyError : std::uint8_t {
+  k_character_unavailable,
+  k_missing_animation,
+  k_missing_path,
+  k_invalid_binding,
+  k_resource_resolution,
+};
+
+struct RelativeBodyAnimationFailure {
+  BodyAnimationApplyError error{BodyAnimationApplyError::k_resource_resolution};
+  std::string reason_text;
+};
+
 /// Abstract world service connecting script handlers to the existing sprite
 /// renderer/runtime. Implemented by ModelViewerScene; faked in tests.
 class ScriptWorld {
@@ -260,11 +276,12 @@ class ScriptWorld {
 
   /// Resolves cached SCX resources and applies one relative body-animation
   /// interval to the explicitly character-bound model instance.
-  [[nodiscard]] virtual std::expected<RelativeBodyAnimationResult, std::string>
+  [[nodiscard]] virtual std::expected<RelativeBodyAnimationResult, RelativeBodyAnimationFailure>
   select_relative_body_animation(const RelativeBodyAnimationRequest& request) {
     (void)request;
-    return std::expected<RelativeBodyAnimationResult, std::string>{
-        std::unexpect, "relative body animation is unavailable in this world"};
+    return std::expected<RelativeBodyAnimationResult, RelativeBodyAnimationFailure>{std::unexpect,
+        RelativeBodyAnimationFailure{.error = BodyAnimationApplyError::k_resource_resolution,
+            .reason_text = "relative body animation is unavailable in this world"}};
   }
 
   /// Clears instance-local body-animation playback state during script reset.

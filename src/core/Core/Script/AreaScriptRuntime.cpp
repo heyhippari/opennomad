@@ -38,6 +38,7 @@ constexpr std::uint32_t K_OP_SET_GLOBAL_VARIABLE{0x0E};
 constexpr std::uint32_t K_OP_EQUAL{0x19};
 constexpr std::uint32_t K_OP_BEGIN_AREA_TRANSITION{0x2F};
 constexpr std::uint32_t K_OP_RELEASE_AREA{0x30};
+constexpr std::uint32_t K_OP_ADD_OBJECT_TO_PERSISTENT_COLLECTION{0x32};
 constexpr std::uint32_t K_OP_SELECT_CURRENT_CHARACTER{0x38};
 constexpr std::uint32_t K_OP_START_SCX_SCRIPT{0x39};
 constexpr std::uint32_t K_OP_START_SCX_SCRIPT_TRACKED{0x3A};
@@ -57,6 +58,8 @@ constexpr std::uint32_t K_OP_PRESENTATION_EFFECT_ALT{0x77};
 constexpr std::uint32_t K_OP_OPEN_INTERFACE{0x46};
 constexpr std::uint32_t K_OP_ATTACH_AREA_SCENE{0x47};
 constexpr std::uint32_t K_OP_PLACE_CURRENT_CHARACTER_AT_ADDRESS{0x49};
+constexpr std::uint32_t K_OP_SET_ADDRESS_FLAG{0x57};
+constexpr std::uint32_t K_OP_CLEAR_ADDRESS_FLAG{0x58};
 constexpr std::uint32_t K_OP_BEGIN_CINEMATIC_LETTERBOX{0x84};
 constexpr std::uint32_t K_OP_END_CINEMATIC_LETTERBOX{0x85};
 
@@ -94,7 +97,7 @@ constexpr std::array<AreaOperandWidth, 3> K_OPERANDS_67{
 constexpr std::array<AreaOperandWidth, 3> K_OPERANDS_PRESENTATION{
     AreaOperandWidth::k_int32, AreaOperandWidth::k_int16, AreaOperandWidth::k_int16};
 
-constexpr std::array<AreaOpcodeInfo, 31> K_AREA_OPCODE_TABLE{
+constexpr std::array<AreaOpcodeInfo, 34> K_AREA_OPCODE_TABLE{
     AreaOpcodeInfo{.opcode = K_OP_END_EVENT,
         .name = "EndEvent",
         .support = OpcodeSupport::k_supported,
@@ -160,6 +163,13 @@ constexpr std::array<AreaOpcodeInfo, 31> K_AREA_OPCODE_TABLE{
         .notes = "releases the requested resident AREA without waiting",
         .operands = K_OPERANDS_I16.data(),
         .operand_count = K_OPERANDS_I16.size()},
+    AreaOpcodeInfo{.opcode = K_OP_ADD_OBJECT_TO_PERSISTENT_COLLECTION,
+        .name = "AddObjectToPersistentCollection",
+        .support = OpcodeSupport::k_supported,
+        .provisional = false,
+        .notes = "inserts an OBJECTS ID into persistent collection kind 0, 1, or 2 without waiting",
+        .operands = K_OPERANDS_4E.data(),
+        .operand_count = K_OPERANDS_4E.size()},
     AreaOpcodeInfo{.opcode = K_OP_SET_GLOBAL_VARIABLE,
         .name = "SetGlobalVariable",
         .support = OpcodeSupport::k_supported,
@@ -306,6 +316,20 @@ constexpr std::array<AreaOpcodeInfo, 31> K_AREA_OPCODE_TABLE{
         .notes = "places the established controlled character at a resident AREA address",
         .operands = K_OPERANDS_I16.data(),
         .operand_count = K_OPERANDS_I16.size()},
+    AreaOpcodeInfo{.opcode = K_OP_SET_ADDRESS_FLAG,
+        .name = "SetAddressFlag",
+        .support = OpcodeSupport::k_supported,
+        .provisional = false,
+        .notes = "sets one persistent ADDRESSES bit without waiting",
+        .operands = K_OPERANDS_I16.data(),
+        .operand_count = K_OPERANDS_I16.size()},
+    AreaOpcodeInfo{.opcode = K_OP_CLEAR_ADDRESS_FLAG,
+        .name = "ClearAddressFlag",
+        .support = OpcodeSupport::k_supported,
+        .provisional = false,
+        .notes = "clears one persistent ADDRESSES bit without waiting",
+        .operands = K_OPERANDS_I16.data(),
+        .operand_count = K_OPERANDS_I16.size()},
     AreaOpcodeInfo{.opcode = K_OP_BEGIN_CINEMATIC_LETTERBOX,
         .name = "BeginCinematicLetterbox",
         .support = OpcodeSupport::k_supported,
@@ -421,6 +445,14 @@ void AreaScriptRuntime::set_area_scene_attach_sink(AreaSceneAttachSink sink) {
 
 void AreaScriptRuntime::set_area_address_placement_sink(AreaAddressPlacementSink sink) {
   m_area_address_placement_sink = std::move(sink);
+}
+
+void AreaScriptRuntime::set_address_flag_sink(AddressFlagSink sink) {
+  m_address_flag_sink = std::move(sink);
+}
+
+void AreaScriptRuntime::set_persistent_object_collection_sink(PersistentObjectCollectionSink sink) {
+  m_persistent_object_collection_sink = std::move(sink);
 }
 
 void AreaScriptRuntime::set_character_activation_sink(CharacterActivationSink sink) {
@@ -926,6 +958,48 @@ void AreaScriptRuntime::execute_instruction() {
       entry.effect = fmt::format("release AREA {}", request.area_id);
       break;
     }
+    case K_OP_ADD_OBJECT_TO_PERSISTENT_COLLECTION: {
+      auto collection_kind{
+          resolve_scalar16(operands.at(0), "OBJECTS AddObjectToPersistentCollection kind")};
+      auto object_id{
+          resolve_scalar16(operands.at(1), "OBJECTS AddObjectToPersistentCollection object")};
+      if (!collection_kind || !object_id) {
+        m_pause_info = AreaPauseInfo{.offset = instruction_offset,
+            .opcode = opcode,
+            .opcode_name = std::string{info->name},
+            .reason_text = !collection_kind ? collection_kind.error() : object_id.error(),
+            .nearby_bytes = nearby_bytes_hex(instruction_offset)};
+        m_state = AreaScriptState::k_failed;
+        return;
+      }
+      if (!m_persistent_object_collection_sink) {
+        m_pause_info = AreaPauseInfo{.offset = instruction_offset,
+            .opcode = opcode,
+            .opcode_name = std::string{info->name},
+            .reason_text = "persistent object-collection bridge is not wired",
+            .nearby_bytes = nearby_bytes_hex(instruction_offset)};
+        m_state = AreaScriptState::k_failed;
+        return;
+      }
+      const AreaPersistentObjectCollectionRequest request{
+          .collection_kind = collection_kind.value(), .object_id = object_id.value()};
+      m_last_persistent_object_collection_request = request;
+      if (auto added{m_persistent_object_collection_sink(request)}; !added) {
+        m_pause_info = AreaPauseInfo{.offset = instruction_offset,
+            .opcode = opcode,
+            .opcode_name = std::string{info->name},
+            .reason_text = fmt::format("failed to add OBJECTS ID {} to collection {}: {}",
+                request.object_id,
+                request.collection_kind,
+                added.error()),
+            .nearby_bytes = nearby_bytes_hex(instruction_offset)};
+        m_state = AreaScriptState::k_failed;
+        return;
+      }
+      entry.effect = fmt::format(
+          "add OBJECTS ID {} to persistent collection {}", request.object_id, request.collection_kind);
+      break;
+    }
     case K_OP_SELECT_CURRENT_CHARACTER: {
       auto character_id{resolve_scalar16(operands.at(0), "SelectCurrentCharacter")};
       if (!character_id) {
@@ -1312,6 +1386,46 @@ void AreaScriptRuntime::execute_instruction() {
         return;
       }
       entry.effect = fmt::format("place current character at address {}", request.address_id);
+      break;
+    }
+    case K_OP_SET_ADDRESS_FLAG:
+    case K_OP_CLEAR_ADDRESS_FLAG: {
+      auto address_id{resolve_scalar16(operands.at(0), "ADDRESSES address")};
+      if (!address_id) {
+        m_pause_info = AreaPauseInfo{.offset = instruction_offset,
+            .opcode = opcode,
+            .opcode_name = std::string{info->name},
+            .reason_text = address_id.error(),
+            .nearby_bytes = nearby_bytes_hex(instruction_offset)};
+        m_state = AreaScriptState::k_failed;
+        return;
+      }
+      if (!m_address_flag_sink) {
+        m_pause_info = AreaPauseInfo{.offset = instruction_offset,
+            .opcode = opcode,
+            .opcode_name = std::string{info->name},
+            .reason_text = "persistent ADDRESSES bridge is not wired",
+            .nearby_bytes = nearby_bytes_hex(instruction_offset)};
+        m_state = AreaScriptState::k_failed;
+        return;
+      }
+      const AreaAddressFlagRequest request{
+          .address_id = address_id.value(), .enabled = opcode == K_OP_SET_ADDRESS_FLAG};
+      m_last_address_flag_request = request;
+      if (auto updated{m_address_flag_sink(request)}; !updated) {
+        m_pause_info = AreaPauseInfo{.offset = instruction_offset,
+            .opcode = opcode,
+            .opcode_name = std::string{info->name},
+            .reason_text = fmt::format("failed to {} ADDRESSES ID {}: {}",
+                request.enabled ? "set" : "clear",
+                request.address_id,
+                updated.error()),
+            .nearby_bytes = nearby_bytes_hex(instruction_offset)};
+        m_state = AreaScriptState::k_failed;
+        return;
+      }
+      entry.effect = fmt::format(
+          "{} ADDRESSES ID {}", request.enabled ? "set" : "clear", request.address_id);
       break;
     }
     case K_OP_CAMERA_SELECT:

@@ -1656,6 +1656,17 @@ at currently identified offsets:
 
 These are data-driven retail values, not OpenNomad defaults invented for the main menu.
 
+The same START header identifies persistent regions used by later compact
+SCENE events. In retail, `+0x18..+0x1C` selects the 100-byte ADDRESS bitset
+`[0x1398, 0x13FC)`, and the fixed top-level object-ID lists are at `+0x350`
+(18 entries), `+0x374` (256 entries), and `+0x574` (9 entries). New-session
+initialization must copy these authored values into mutable session state;
+starting with all-clear flags or empty collections loses retail progression.
+
+For example, SCENE 55 event 1 begins with `57 00 00` (set ADDRESS 0) followed
+by `32 02 00 3A 01` (insert OBJECTS ID 314 into collection kind 2). These are
+generic compact-VM operations, not scene-specific startup exceptions.
+
 ## Consequence
 
 Mode-2 startup processing uses the selected area ID to obtain the corresponding entry from:

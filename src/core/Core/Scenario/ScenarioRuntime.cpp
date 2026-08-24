@@ -607,44 +607,57 @@ std::expected<const Omikron::Path3DP*, std::string> ScenarioRuntime::path_resour
   return m_path_resources.at(resource_index).get();
 }
 
-std::expected<Script::RelativeBodyAnimationResult, std::string>
+std::expected<Script::RelativeBodyAnimationResult, Script::RelativeBodyAnimationFailure>
 ScenarioRuntime::select_relative_body_animation(
     const Script::RelativeBodyAnimationRequest& request) {
   Character::RuntimeCharacter* character{m_character_runtime.find(request.character_id)};
   if (character == nullptr || !character->active || !character->area_present ||
       character->model_resource == nullptr) {
-    return std::expected<Script::RelativeBodyAnimationResult, std::string>{std::unexpect,
-        fmt::format("runtime character {} is not active and loaded", request.character_id)};
+    return std::expected<Script::RelativeBodyAnimationResult,
+        Script::RelativeBodyAnimationFailure>{std::unexpect,
+        Script::RelativeBodyAnimationFailure{
+            .error = Script::BodyAnimationApplyError::k_character_unavailable,
+            .reason_text = fmt::format(
+                "runtime character {} is not active and loaded", request.character_id)}};
   }
 
   auto animation_result{animation_resource(request.animation_index)};
   if (!animation_result) {
-    return std::expected<Script::RelativeBodyAnimationResult, std::string>{
-        std::unexpect, std::move(animation_result).error()};
+    return std::expected<Script::RelativeBodyAnimationResult,
+        Script::RelativeBodyAnimationFailure>{std::unexpect,
+        Script::RelativeBodyAnimationFailure{
+            .error = Script::BodyAnimationApplyError::k_missing_animation,
+            .reason_text = std::move(animation_result).error()}};
   }
   auto path_result{path_resource(request.path_index)};
   if (!path_result) {
-    return std::expected<Script::RelativeBodyAnimationResult, std::string>{
-        std::unexpect, std::move(path_result).error()};
+    return std::expected<Script::RelativeBodyAnimationResult,
+        Script::RelativeBodyAnimationFailure>{std::unexpect,
+        Script::RelativeBodyAnimationFailure{.error = Script::BodyAnimationApplyError::k_missing_path,
+            .reason_text = std::move(path_result).error()}};
   }
   const Omikron::Animation3DA& animation{**animation_result};
   const Omikron::Path3DP& path{**path_result};
   if (request.subpath_index >= path.subpaths.size()) {
-    return std::expected<Script::RelativeBodyAnimationResult, std::string>{std::unexpect,
-        fmt::format("subpath index {} out of range ({} subpaths)",
-            request.subpath_index,
-            path.subpaths.size())};
+    return std::expected<Script::RelativeBodyAnimationResult,
+        Script::RelativeBodyAnimationFailure>{std::unexpect,
+        Script::RelativeBodyAnimationFailure{.error = Script::BodyAnimationApplyError::k_invalid_binding,
+            .reason_text = fmt::format("subpath index {} out of range ({} subpaths)",
+                request.subpath_index,
+                path.subpaths.size())}};
   }
 
   const Omikron::Model3DOData& model{character->model_resource->model};
   const auto selected{
       std::ranges::find(model.meshes, request.object_binding, &Omikron::MeshDescriptor::name)};
   if (selected == model.meshes.end()) {
-    return std::expected<Script::RelativeBodyAnimationResult, std::string>{std::unexpect,
-        fmt::format("binding A object '{}' does not exist in character {} model '{}'",
-            request.object_binding,
-            request.character_id,
-            character->model_resource_name)};
+    return std::expected<Script::RelativeBodyAnimationResult,
+        Script::RelativeBodyAnimationFailure>{std::unexpect,
+        Script::RelativeBodyAnimationFailure{.error = Script::BodyAnimationApplyError::k_invalid_binding,
+            .reason_text = fmt::format("binding A object '{}' does not exist in character {} model '{}'",
+                request.object_binding,
+                request.character_id,
+                character->model_resource_name)}};
   }
   const std::size_t selected_index{
       static_cast<std::size_t>(std::distance(model.meshes.begin(), selected))};
@@ -684,8 +697,11 @@ ScenarioRuntime::select_relative_body_animation(
     const Omikron::Path3DPSubpath& subpath{path.subpaths.at(request.subpath_index)};
     auto sampled{subpath.sample_mode_1(1.0F)};
     if (!sampled) {
-      return std::expected<Script::RelativeBodyAnimationResult, std::string>{
-          std::unexpect, std::move(sampled).error()};
+      return std::expected<Script::RelativeBodyAnimationResult,
+          Script::RelativeBodyAnimationFailure>{std::unexpect,
+          Script::RelativeBodyAnimationFailure{
+              .error = Script::BodyAnimationApplyError::k_resource_resolution,
+              .reason_text = std::move(sampled).error()}};
     }
     const Runtime::Vec3 authored{.x = request.authored_offset.at(0),
         .y = request.authored_offset.at(1),
@@ -755,14 +771,20 @@ ScenarioRuntime::select_relative_body_animation(
   if (auto resolved{Omikron::Model3DO::resolve_runtime_transforms(
           model, std::span{character->runtime_objects})};
       !resolved) {
-    return std::expected<Script::RelativeBodyAnimationResult, std::string>{
-        std::unexpect, std::move(resolved).error()};
+    return std::expected<Script::RelativeBodyAnimationResult,
+        Script::RelativeBodyAnimationFailure>{std::unexpect,
+        Script::RelativeBodyAnimationFailure{
+            .error = Script::BodyAnimationApplyError::k_resource_resolution,
+            .reason_text = std::move(resolved).error()}};
   }
   auto groups{Omikron::Model3DO::build_posed_geometry(model,
       std::span<const Omikron::Model3DOData::RuntimeObjectState>{character->runtime_objects})};
   if (!groups) {
-    return std::expected<Script::RelativeBodyAnimationResult, std::string>{
-        std::unexpect, std::move(groups).error()};
+    return std::expected<Script::RelativeBodyAnimationResult,
+        Script::RelativeBodyAnimationFailure>{std::unexpect,
+        Script::RelativeBodyAnimationFailure{
+            .error = Script::BodyAnimationApplyError::k_resource_resolution,
+            .reason_text = std::move(groups).error()}};
   }
   character->posed_groups = std::move(groups).value();
   character->pose_revision += 1U;

@@ -162,7 +162,8 @@ class ScenarioRuntime final : public Script::ScriptWorld, private Sfx::Host {
       const Audio::SoundPlayRequest& request) override;
   void stop_sound(Audio::SoundResourceId sound, const Audio::AudioOwnerToken& owner) override;
   [[nodiscard]] Audio::AudioContextInfo audio_context() const override;
-  [[nodiscard]] std::expected<Script::RelativeBodyAnimationResult, std::string>
+  [[nodiscard]] std::expected<Script::RelativeBodyAnimationResult,
+      Script::RelativeBodyAnimationFailure>
   select_relative_body_animation(const Script::RelativeBodyAnimationRequest& request) override;
   void reset_body_animation(std::int16_t character_id) override;
   [[nodiscard]] std::string_view scenario_name() const override;

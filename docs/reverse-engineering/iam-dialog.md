@@ -86,12 +86,23 @@ automatic line, if present) has been acknowledged.
 
 ## Embedded cameras
 
-The `0x2c` camera ABI is shared with IAM/AREA table 6: two raw signed position
-vectors, camera ID/type, roll and horizontal-FOV Runtime units, two unresolved
-signed fields, and four unresolved tail words. D3 preserves both camera IDs in
-each node pair and resolves their raw records. It does not invent an
-interpolation duration. Coordinate and angle conversions remain the existing
-`RuntimeMath` presentation responsibility.
+The `0x2c` camera ABI is shared with IAM/AREA table 6: two raw signed position vectors, camera ID/type, roll and horizontal-FOV Runtime units, two signed attachment-related fields, and four unresolved tail words.
+
+Runtime applies a dialog camera pair as a progression, not as two alternatives:
+
+```text
+camera A
+    snap immediately
+
+camera B
+    transition from A over 160 Runtime camera units
+```
+
+The complete camera record is submitted in both operations, so eye, target,
+roll and horizontal FOV all participate. Under OpenNomad's recovered 30 Hz camera timing, the second leg lasts approximately 5.333 seconds while being sampled smoothly at display refresh rate.
+
+Main/NPC presentation uses the node's `+0x3c/+0x3e` line-camera pair.
+Response-side presentation uses `+0x38/+0x3a`.
 
 ## Worked example: dialog 272
 
@@ -104,16 +115,21 @@ node 1: "OK. I understand." -> node 2
 node 2: no visible response -> complete after acknowledgement
 ```
 
-Face basenames are `125338`, `125339`, and `12533A`. Line camera pairs are
-`2159 -> 2165`, `2165 -> 2160`, and `2167 -> 2166`; node 1's response pair is
-`2160 -> 2167`. Node 2 slot 0 contains action bytes `8a 36 01 03`, but its
-response text is empty, so normal terminal progression does not execute it.
+Face basenames are `125338`, `125339`, and `12533A`. Line camera pairs are `2159 -> 2165`, `2165 -> 2160`, and `2167 -> 2166`; node 1's response pair is `2160 -> 2167`. Node 2 slot 0 contains action bytes `8a 36 01 03`, but its response text is empty, so normal terminal progression does not execute it.
 
-The face basename selects a synchronized `MORPH/<basename>.3dm` package, not an
-external voice ADP. Its object, facial, and embedded-speech streams share one
-30 Hz timeline; the format and binding rules are documented in
-[`3dm.md`](3dm.md). The media layer observes dialog generations but never owns
-or auto-advances graph progression.
+The face basename selects a synchronized `MORPH/<basename>.3dm` package, not an external voice ADP. Its object, facial, and embedded-speech streams share one 30 Hz timeline; the format and binding rules are documented in
+[`3dm.md`](3dm.md). The media layer observes dialog generations but never owns or auto-advances graph progression.
+
+The opening node's first camera, 2159 (`cam DIA INTRO trav1`), is the
+post-whiteout tilted close shot:
+
+    eye       (-3206,-345,-1006)
+    target    (-3165,-327,-239)
+    roll      3928 units = 345.234375° = -14.765625° modulo 360
+    HFOV      853 units  = 74.970703°
+    type      12
+
+Runtime snaps to 2159 and then travels to camera 2165 over 160 units.
 
 ## AREA opcode distinction and implementation status
 

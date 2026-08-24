@@ -64,6 +64,8 @@ class FakeWorld final : public App::Script::ScriptWorld {
   std::vector<std::int16_t> body_animation_resets;
   std::uint32_t body_animation_max_frame{3};
   bool fail_body_animation{false};
+  App::Script::BodyAnimationApplyError body_animation_failure{
+      App::Script::BodyAnimationApplyError::k_missing_animation};
 
   std::expected<App::Sprite::SpriteHandle, std::string> ensure_sprite(
       const std::uint32_t /*source*/) override {
@@ -145,13 +147,16 @@ class FakeWorld final : public App::Script::ScriptWorld {
   App::Audio::AudioContextInfo audio_context() const override {
     return {};
   }
-  std::expected<App::Script::RelativeBodyAnimationResult, std::string>
+  std::expected<App::Script::RelativeBodyAnimationResult,
+      App::Script::RelativeBodyAnimationFailure>
   select_relative_body_animation(
       const App::Script::RelativeBodyAnimationRequest& request) override {
     body_animation_requests.push_back(request);
     if (fail_body_animation) {
-      return std::expected<App::Script::RelativeBodyAnimationResult, std::string>{
-          std::unexpect, "body animation failed"};
+      return std::expected<App::Script::RelativeBodyAnimationResult,
+          App::Script::RelativeBodyAnimationFailure>{std::unexpect,
+          App::Script::RelativeBodyAnimationFailure{
+              .error = body_animation_failure, .reason_text = "body animation failed"}};
     }
     return App::Script::RelativeBodyAnimationResult{.max_frame_index = body_animation_max_frame};
   }
@@ -320,6 +325,45 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
     CHECK_EQ(final.current_progress, doctest::Approx(3.0F));
     CHECK_EQ(fixture.runtime->instances().at(0).root_commands.at(0).execution_count, 1U);
     CHECK(fixture.runtime->instances().at(0).completed);
+  }
+
+  TEST_CASE("SelectRelativeBodyAnimation remains running when its body is deliberately unavailable") {
+    RuntimeFixture fixture{
+        {relative_body_animation_script(0xFFFFFFFFU)}, relative_body_animation_values()};
+    REQUIRE(fixture.runtime
+            ->create_instance(
+                0, App::Script::ScriptLaunchContext{.character_id = 310, .parameter = 0})
+            .has_value());
+
+    fixture.runtime->step_tick(1.0F);
+    REQUIRE_EQ(fixture.world.body_animation_requests.size(), 1U);
+
+    fixture.world.fail_body_animation = true;
+    fixture.world.body_animation_failure =
+        App::Script::BodyAnimationApplyError::k_character_unavailable;
+    fixture.runtime->step_tick(1.0F);
+    fixture.runtime->step_tick(1.0F);
+
+    const App::Script::ScriptInstance& instance{fixture.runtime->instances().at(0)};
+    CHECK_EQ(fixture.runtime->run_state(), App::Script::ScriptRunState::k_running);
+    CHECK_FALSE(instance.paused);
+    CHECK_FALSE(instance.completed);
+    CHECK_EQ(fixture.world.body_animation_requests.size(), 3U);
+  }
+
+  TEST_CASE("SelectRelativeBodyAnimation still pauses on a malformed resource failure") {
+    RuntimeFixture fixture{{relative_body_animation_script()}, relative_body_animation_values()};
+    fixture.world.fail_body_animation = true;
+    REQUIRE(fixture.runtime
+            ->create_instance(
+                0, App::Script::ScriptLaunchContext{.character_id = 310, .parameter = 0})
+            .has_value());
+
+    fixture.runtime->step_tick(1.0F);
+
+    CHECK_EQ(fixture.runtime->run_state(), App::Script::ScriptRunState::k_paused_on_error);
+    CHECK_EQ(
+        fixture.runtime->pause_info().reason, App::Script::ScriptPauseReason::k_missing_resource);
   }
 
   TEST_CASE("Launch context distinguishes world and explicit-character instances") {

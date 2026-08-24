@@ -205,6 +205,10 @@ class ScenarioStartupController {
       const Script::AreaReleaseRequest& request);
   [[nodiscard]] std::expected<void, std::string> place_current_character_at_address(
       const Script::AreaAddressPlacementRequest& request);
+  [[nodiscard]] std::expected<void, std::string> set_address_flag(
+      const Script::AreaAddressFlagRequest& request);
+  [[nodiscard]] std::expected<void, std::string> add_object_to_persistent_collection(
+      const Script::AreaPersistentObjectCollectionRequest& request);
   [[nodiscard]] std::expected<void, std::string> select_current_character(
       std::size_t owner_slot, const Script::AreaCharacterSelectionRequest& request);
   [[nodiscard]] std::expected<void, std::string> set_current_character_presentation(bool enabled);

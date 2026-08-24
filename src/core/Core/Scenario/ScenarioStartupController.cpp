@@ -20,6 +20,7 @@
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Dialog/DialogRuntime.hpp"
 #include "Core/GameDataLoader.hpp"
+#include "Core/GameState.hpp"
 #include "Core/Interface/InterfaceDispatcher.hpp"
 #include "Core/Log.hpp"
 #include "Core/LogCategory.hpp"
@@ -213,6 +214,12 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
   }
   m_start.emplace(std::move(start).value());
   const Omikron::IamStart& start_view{*m_start};
+  if (auto initialized_game_state{manager.initialize_game_state(start_view)};
+      !initialized_game_state) {
+    m_last_error = fmt::format("IAM/START persistent state: {}", initialized_game_state.error());
+    App::Log::error(LogCategory::Startup, "Startup failed: {}", m_last_error);
+    return std::expected<void, std::string>{std::unexpect, m_last_error};
+  }
   m_initial_area_id = start_view.initial_area_id();
   m_linked_area_id = start_view.linked_area_id();
   record("IAM_START.Loaded");
@@ -366,6 +373,12 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
   area_script.set_area_address_placement_sink(
       [this](const Script::AreaAddressPlacementRequest& request) {
         return place_current_character_at_address(request);
+      });
+  area_script.set_address_flag_sink(
+      [this](const Script::AreaAddressFlagRequest& request) { return set_address_flag(request); });
+  area_script.set_persistent_object_collection_sink(
+      [this](const Script::AreaPersistentObjectCollectionRequest& request) {
+        return add_object_to_persistent_collection(request);
       });
   area_script.set_character_selection_sink(
       [this, area_script_owner_slot](const Script::AreaCharacterSelectionRequest& request) {
@@ -879,6 +892,12 @@ void ScenarioStartupController::bind_scene_compact_services(
   runtime.set_area_address_placement_sink(
       [this](const Script::AreaAddressPlacementRequest& request) {
         return place_current_character_at_address(request);
+      });
+  runtime.set_address_flag_sink(
+      [this](const Script::AreaAddressFlagRequest& request) { return set_address_flag(request); });
+  runtime.set_persistent_object_collection_sink(
+      [this](const Script::AreaPersistentObjectCollectionRequest& request) {
+        return add_object_to_persistent_collection(request);
       });
   runtime.set_character_selection_sink(
       [this, owner_slot](const Script::AreaCharacterSelectionRequest& request) {
@@ -1398,6 +1417,63 @@ std::expected<void, std::string> ScenarioStartupController::place_current_charac
         "current character placed at address {}", request.address_id);
   }
   return placed;
+}
+
+std::expected<void, std::string> ScenarioStartupController::set_address_flag(
+    const Script::AreaAddressFlagRequest& request) {
+  if (m_manager == nullptr) {
+    return std::expected<void, std::string>{std::unexpect, "scenario manager is not available"};
+  }
+  if (request.address_id < 0) {
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format("ADDRESSES ID {} is negative", request.address_id)};
+  }
+  GameState* const game_state{m_manager->game_state()};
+  if (game_state == nullptr) {
+    return std::expected<void, std::string>{std::unexpect,
+        "persistent IAM game state is not initialized"};
+  }
+  auto updated{game_state->set_address_flag(static_cast<std::uint16_t>(request.address_id),
+      request.enabled)};
+  if (updated) {
+    App::Log::debug(LogCategory::Script,
+        "persistent ADDRESS {} {}",
+        request.address_id,
+        request.enabled ? "set" : "cleared");
+  }
+  return updated;
+}
+
+std::expected<void, std::string> ScenarioStartupController::add_object_to_persistent_collection(
+    const Script::AreaPersistentObjectCollectionRequest& request) {
+  if (m_manager == nullptr) {
+    return std::expected<void, std::string>{std::unexpect, "scenario manager is not available"};
+  }
+  if (request.collection_kind < 0) {
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format("persistent object collection kind {} is negative", request.collection_kind)};
+  }
+  if (request.object_id < 0) {
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format("OBJECTS ID {} is negative", request.object_id)};
+  }
+  GameState* const game_state{m_manager->game_state()};
+  if (game_state == nullptr) {
+    return std::expected<void, std::string>{std::unexpect,
+        "persistent IAM game state is not initialized"};
+  }
+  auto added{game_state->add_object_to_collection(
+      static_cast<std::uint16_t>(request.collection_kind), request.object_id)};
+  if (!added) {
+    return std::expected<void, std::string>{std::unexpect, added.error()};
+  }
+  if (added.value()) {
+    App::Log::debug(LogCategory::Script,
+        "persistent object collection {} inserted OBJECTS ID {}",
+        request.collection_kind,
+        request.object_id);
+  }
+  return {};
 }
 
 void ScenarioStartupController::service_scene_scripts(const float delta_seconds) {
