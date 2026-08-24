@@ -1153,21 +1153,13 @@ Thus:
 
 ---
 
-# 38. OpenNomad global-variable mismatch
+# 38. OpenNomad shared global-variable implementation
 
-Current `AreaScriptRuntime` owns:
+As of 2026-08-24, OpenNomad copies the signed dwords authored in IAM/START
+into one session-owned `GameState` vector. Every AREA and attached-SCENE
+compact context receives checked read/write bridges to that same vector.
 
-```cpp
-std::unordered_map<std::uint16_t, std::int32_t> m_variables;
-```
-
-inside each VM instance.
-
-That makes globals context-local.
-
-Runtime instead uses shared scenario/game state.
-
-This matters for:
+The bridge covers:
 
 - communication between simultaneous AREA contexts;
 - interface completion variables;
@@ -1175,8 +1167,8 @@ This matters for:
 - area transitions;
 - persistent scenario logic.
 
-A faithful implementation should move the variable store above individual
-contexts.
+`AreaScriptRuntime` no longer owns an authoritative per-instance variable map.
+Its debugger snapshot is a read-only view supplied by `GameState`.
 
 ---
 
@@ -1204,6 +1196,65 @@ current OpenNomad subset.
 
 These give the compact VM a conventional small expression/state-manipulation
 core.
+
+## `0x0C` — `SetGlobalVariableZero`
+
+Handler `0x00401EB0` consumes one `Scalar16` (three bytes including the
+opcode). It resolves a direct literal or `0x4000` parameter-block reference,
+then writes zero to the selected session global. Literal `-1` remains `-1`
+through scalar decoding and is rejected by the checked global store. The
+operation neither waits nor yields.
+
+## `0x56` / `0x5D` — numeric character-profile values
+
+| Opcode | Runtime handler | Operands | Operation |
+|---:|---:|---|---|
+| `0x56` | `0x00404230` | `Scalar16 character`, `Scalar16 kind`, `Scalar16 destination global` | read a character numeric value into the shared global store |
+| `0x5D` | `0x00404790` | `Scalar16 character`, `Scalar16 kind`, `Scalar16 source global` | write the shared global value into the character numeric field |
+
+Character `-1` selects the session controlled character. Explicit IDs resolve
+through the compact context's resident owner AREA and attached SCENE records,
+not whichever world happens to be presented. Both operations are immediate
+and non-rendering.
+
+OpenNomad keeps IAM definitions immutable. `GameState` lazily creates a
+session profile keyed by authored character ID from these recovered 0x114-byte
+definition fields:
+
+| Kind | Offset | Storage/write rule |
+|---:|---:|---|
+| `1` | `+0xAA` | signed 16-bit, clamp maximum to 200 |
+| `2` | `+0x9C` | signed 16-bit, clamp maximum to 200 |
+| `3` | `+0x9E` | signed 16-bit, clamp maximum to 200 |
+| `4` | `+0xAC` | unsigned 16-bit, clamp maximum to 65535 |
+| `5` | `+0xAE` | low signed 16 bits |
+| `16..20` | `+0xA0,+0xA2,+0xA4,+0xA6,+0xA8` | signed 16-bit, clamp maximum to 200 |
+
+Kind 35 and unknown pointer/text/compound kinds return a structured
+unsupported-kind error; no array bound or integer conversion is guessed.
+
+### Retail SCENE 55 progression
+
+The retail SCENE 55 script contains this exact state sequence at record-script
+offset `+0x46`:
+
+```text
++0x46  0C 3C 00                 global[60] = 0
++0x49  5D FF FF 05 00 3C 00     current character kind 5 = global[60]
++0x50  0C 25 00                 global[37] = 0
++0x53  5D FF FF 04 00 25 00     current character kind 4 = global[37]
++0x5A  0C 75 02                 global[629] = 0
++0x5D  07 00                    push 0
++0x5F  0A 75 02                 push global[629]
++0x62  19                       equal
++0x63  06 6C 00                 branch if false
++0x66  40 D3 0E ...             next unsupported compact opcode
+```
+
+Because the script zeroes variable 629 immediately before comparing it with
+zero, the recovered path falls through to `0x40`. OpenNomad's next compact-VM
+compatibility stop after this implementation is therefore SCENE-relative
+`+0x66`, opcode `0x40`; its ABI/semantics remain to be recovered.
 
 ---
 
@@ -3469,7 +3520,8 @@ std::span<byte> script
 deque<u16> queued events
 size_t IP
 vector<int32> stack
-per-instance unordered_map global variables
+checked bridges to session GameState globals and character profiles
+copied Scalar16 parameter block
 typed wait object
 typed native sinks
 unsupported-opcode pause state
@@ -3609,28 +3661,21 @@ be negligible, but the choice should be explicit.
 
 ---
 
-# 124. OpenNomad mismatch: globals are context-local
+# 124. OpenNomad global ownership (resolved)
 
-Current:
-
-```text
-AreaScriptRuntime::m_variables
-```
-
-is private to one VM.
-
-Runtime global-variable helpers use shared scenario/game state.
-
-Recommended architecture:
+Runtime global-variable helpers use shared scenario/game state. OpenNomad now
+matches that ownership boundary:
 
 ```text
-ScenarioGlobalVariables
-    owned by ScenarioEngine/manager
+GameState
+    owned by ScenarioManager for one playthrough
 
-AreaContext A -> reference
-AreaContext B -> reference
-AreaContext C -> reference
+AREA context A  -> checked service
+AREA context B  -> checked service
+SCENE context C -> checked service
 ```
+
+No compact context silently grows or substitutes a local store.
 
 ---
 
@@ -4039,17 +4084,17 @@ The static handler table makes this a finite catalogue task.
 
 # 141. Recommended regression tests: globals
 
-- [ ] two contexts see the same global store;
-- [ ] SetZero;
-- [ ] SetOne;
-- [ ] SetInt8 sign extension;
+- [x] two contexts see the same global store;
+- [x] SetZero, including Scalar16 parameter remapping;
+- [x] SetOne;
+- [x] SetInt8 sign extension;
 - [ ] SetInt16 Scalar16 resolution;
 - [ ] SetInt32;
 - [ ] CopyVariable;
 - [ ] SetFromStack;
 - [ ] arithmetic-to-global;
 - [ ] bitwise-to-global;
-- [ ] interface result writes to the shared store.
+- [x] interface result writes to the shared store.
 
 ---
 

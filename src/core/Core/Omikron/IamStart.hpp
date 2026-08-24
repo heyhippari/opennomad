@@ -15,6 +15,9 @@ class IamStart {
  public:
   /// Serialized offset of the area-mapping table.
   static constexpr std::size_t k_area_mapping_offset{0x0C};
+  /// Header offsets delimiting the signed 32-bit global-variable region.
+  static constexpr std::size_t k_global_variables_begin_offset{0x08};
+  static constexpr std::size_t k_global_variables_end_offset{0x0C};
   /// Signed little-endian initial area ID.
   static constexpr std::size_t k_initial_area_offset{0x586};
   /// Signed little-endian linked/secondary area ID.
@@ -58,6 +61,10 @@ class IamStart {
   /// The START header selects its boundaries, so this never assumes retail's
   /// 100-byte size for synthetic or future data.
   [[nodiscard]] std::expected<std::span<const std::byte>, std::string> address_flags() const;
+
+  /// Checked immutable bytes of the header-selected signed 32-bit global
+  /// variables. The returned size is always divisible by four.
+  [[nodiscard]] std::expected<std::span<const std::byte>, std::string> global_variables() const;
 
   /// Checked immutable bytes of one fixed-capacity persistent object-ID
   /// collection. Each element is one little-endian signed 16-bit object ID.

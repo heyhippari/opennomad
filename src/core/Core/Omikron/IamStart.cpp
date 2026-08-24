@@ -58,6 +58,28 @@ std::expected<std::span<const std::byte>, std::string> IamStart::address_flags()
   return m_data.subspan(begin, end - begin);
 }
 
+std::expected<std::span<const std::byte>, std::string> IamStart::global_variables() const {
+  const std::uint32_t begin{read_u32_at(m_data, k_global_variables_begin_offset)};
+  const std::uint32_t end{read_u32_at(m_data, k_global_variables_end_offset)};
+  if (begin > end) {
+    return std::expected<std::span<const std::byte>, std::string>{std::unexpect,
+        fmt::format("IAM/START: global-variable bounds are reversed ({:#x} > {:#x})", begin, end)};
+  }
+  if (end > m_data.size()) {
+    return std::expected<std::span<const std::byte>, std::string>{std::unexpect,
+        fmt::format("IAM/START: global-variable end {:#x} exceeds file size {:#x}",
+            end,
+            m_data.size())};
+  }
+  const std::size_t byte_count{end - begin};
+  if ((byte_count % sizeof(std::int32_t)) != 0U) {
+    return std::expected<std::span<const std::byte>, std::string>{std::unexpect,
+        fmt::format("IAM/START: global-variable region has {} bytes, not a multiple of four",
+            byte_count)};
+  }
+  return m_data.subspan(begin, byte_count);
+}
+
 std::expected<std::span<const std::byte>, std::string> IamStart::persistent_object_collection(
     const std::uint16_t kind) const {
   std::size_t offset{0};

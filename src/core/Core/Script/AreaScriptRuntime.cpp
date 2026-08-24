@@ -33,6 +33,7 @@ constexpr std::uint32_t K_OP_JUMP_RELATIVE{0x04};
 constexpr std::uint32_t K_OP_BRANCH_IF_FALSE{0x06};
 constexpr std::uint32_t K_OP_PUSH_INT8{0x07};
 constexpr std::uint32_t K_OP_PUSH_GLOBAL_VARIABLE{0x0A};
+constexpr std::uint32_t K_OP_SET_GLOBAL_VARIABLE_ZERO{0x0C};
 constexpr std::uint32_t K_OP_SET_GLOBAL_VARIABLE_ONE{0x0D};
 constexpr std::uint32_t K_OP_SET_GLOBAL_VARIABLE{0x0E};
 constexpr std::uint32_t K_OP_EQUAL{0x19};
@@ -48,7 +49,9 @@ constexpr std::uint32_t K_OP_START_CHARACTER_SCRIPT_TRACKED{0x3C};
 constexpr std::uint32_t K_OP_START_DIALOG{0x3D};
 constexpr std::uint32_t K_OP_ACTIVATE_CHARACTER{0x4E};
 constexpr std::uint32_t K_OP_DEACTIVATE_CHARACTER{0x4F};
+constexpr std::uint32_t K_OP_GET_CHARACTER_VALUE_TO_VARIABLE{0x56};
 constexpr std::uint32_t K_OP_START_CURRENT_CHARACTER_SCRIPT{0x5A};
+constexpr std::uint32_t K_OP_SET_CHARACTER_VALUE_FROM_VARIABLE{0x5D};
 constexpr std::uint32_t K_OP_ACTIVATE_SUBSYSTEM{0x68};
 constexpr std::uint32_t K_OP_OBJECT_ACTIVATE{0x5C};
 constexpr std::uint32_t K_OP_CAMERA_SELECT{0x5F};
@@ -75,9 +78,9 @@ constexpr std::uint16_t K_CAMERA_WAIT_STATE{7};
 constexpr std::uint16_t K_AREA_TRANSITION_WAIT_STATE{10};
 /// Runtime's script/scenario time base (1.0 unit = 1/30 second).
 constexpr float K_AREA_FRAMES_PER_SECOND{30.0F};
-/// Runtime Scalar16 parameter-reference marker. The parameter block is not
-/// modeled yet, so 0x3D diagnoses these operands instead of treating them as IDs.
+/// Runtime Scalar16 parameter-reference marker.
 constexpr std::uint16_t K_SCALAR16_PARAMETER_REFERENCE{0x4000U};
+constexpr std::uint16_t K_SCALAR16_PARAMETER_INDEX_MASK{0x3FFFU};
 
 constexpr std::array<AreaOperandWidth, 0> K_OPERANDS_NONE{};
 constexpr std::array<AreaOperandWidth, 1> K_OPERANDS_I8{AreaOperandWidth::k_int8};
@@ -101,7 +104,7 @@ constexpr std::array<AreaOperandWidth, 3> K_OPERANDS_67{
 constexpr std::array<AreaOperandWidth, 3> K_OPERANDS_PRESENTATION{
     AreaOperandWidth::k_int32, AreaOperandWidth::k_int16, AreaOperandWidth::k_int16};
 
-constexpr std::array<AreaOpcodeInfo, 36> K_AREA_OPCODE_TABLE{
+constexpr std::array<AreaOpcodeInfo, 39> K_AREA_OPCODE_TABLE{
     AreaOpcodeInfo{.opcode = K_OP_END_EVENT,
         .name = "EndEvent",
         .support = OpcodeSupport::k_supported,
@@ -134,7 +137,14 @@ constexpr std::array<AreaOpcodeInfo, 36> K_AREA_OPCODE_TABLE{
         .name = "PushGlobalVariable",
         .support = OpcodeSupport::k_supported,
         .provisional = false,
-        .notes = "pushes a START/global variable value (zero when unset)",
+        .notes = "pushes a shared session START/global variable value",
+        .operands = K_OPERANDS_I16.data(),
+        .operand_count = K_OPERANDS_I16.size()},
+    AreaOpcodeInfo{.opcode = K_OP_SET_GLOBAL_VARIABLE_ZERO,
+        .name = "SetGlobalVariableZero",
+        .support = OpcodeSupport::k_supported,
+        .provisional = false,
+        .notes = "resolves one Scalar16 and sets that shared START/global variable to zero",
         .operands = K_OPERANDS_I16.data(),
         .operand_count = K_OPERANDS_I16.size()},
     AreaOpcodeInfo{.opcode = K_OP_SET_GLOBAL_VARIABLE_ONE,
@@ -250,6 +260,13 @@ constexpr std::array<AreaOpcodeInfo, 36> K_AREA_OPCODE_TABLE{
                  "non-current body without waiting",
         .operands = K_OPERANDS_4F.data(),
         .operand_count = K_OPERANDS_4F.size()},
+    AreaOpcodeInfo{.opcode = K_OP_GET_CHARACTER_VALUE_TO_VARIABLE,
+        .name = "GetCharacterValueToVariable",
+        .support = OpcodeSupport::k_supported,
+        .provisional = false,
+        .notes = "reads one session character-profile numeric kind into a shared global variable",
+        .operands = K_OPERANDS_3X_I16.data(),
+        .operand_count = K_OPERANDS_3X_I16.size()},
     AreaOpcodeInfo{.opcode = K_OP_START_CURRENT_CHARACTER_SCRIPT,
         .name = "StartCurrentCharacterScript",
         .support = OpcodeSupport::k_supported,
@@ -258,6 +275,13 @@ constexpr std::array<AreaOpcodeInfo, 36> K_AREA_OPCODE_TABLE{
                  "tracking it; operand 1 is Scalar16 camera duration",
         .operands = K_OPERANDS_CURRENT_CHARACTER_SCRIPT.data(),
         .operand_count = K_OPERANDS_CURRENT_CHARACTER_SCRIPT.size()},
+    AreaOpcodeInfo{.opcode = K_OP_SET_CHARACTER_VALUE_FROM_VARIABLE,
+        .name = "SetCharacterValueFromVariable",
+        .support = OpcodeSupport::k_supported,
+        .provisional = false,
+        .notes = "writes one shared global variable into a session character-profile numeric kind",
+        .operands = K_OPERANDS_3X_I16.data(),
+        .operand_count = K_OPERANDS_3X_I16.size()},
     AreaOpcodeInfo{.opcode = K_OP_OBJECT_ACTIVATE,
         .name = "ObjectActivate",
         .support = OpcodeSupport::k_supported,
@@ -390,20 +414,6 @@ std::int32_t read_i32_at(const std::span<const std::byte> data, const std::size_
   return value;
 }
 
-std::expected<std::int16_t, std::string> resolve_scalar16(
-    const std::int32_t operand, const std::string_view semantic) {
-  const std::int16_t serialized{static_cast<std::int16_t>(operand)};
-  const std::uint16_t bits{static_cast<std::uint16_t>(serialized)};
-  if (serialized != -1 && (bits & K_SCALAR16_PARAMETER_REFERENCE) != 0U) {
-    return std::expected<std::int16_t, std::string>{std::unexpect,
-        fmt::format("{} parameter-indirected Scalar16 {:#06x} is unsupported because the AREA "
-                    "parameter block is not modeled",
-            semantic,
-            bits)};
-  }
-  return serialized;
-}
-
 }  // namespace
 
 const AreaOpcodeInfo* area_opcode_info(const std::uint32_t opcode) {
@@ -476,6 +486,31 @@ void AreaScriptRuntime::set_persistent_object_collection_sink(PersistentObjectCo
   m_persistent_object_collection_sink = std::move(sink);
 }
 
+void AreaScriptRuntime::set_global_variable_read_sink(GlobalVariableReadSink sink) {
+  m_global_variable_read_sink = std::move(sink);
+}
+
+void AreaScriptRuntime::set_global_variable_write_sink(GlobalVariableWriteSink sink) {
+  m_global_variable_write_sink = std::move(sink);
+}
+
+void AreaScriptRuntime::set_global_variable_snapshot_sink(GlobalVariableSnapshotSink sink) {
+  m_global_variable_snapshot_sink = std::move(sink);
+}
+
+void AreaScriptRuntime::set_character_value_read_sink(CharacterValueReadSink sink) {
+  m_character_value_read_sink = std::move(sink);
+}
+
+void AreaScriptRuntime::set_character_value_write_sink(CharacterValueWriteSink sink) {
+  m_character_value_write_sink = std::move(sink);
+}
+
+void AreaScriptRuntime::set_scalar16_parameters(
+    const std::span<const std::int16_t> parameters) {
+  m_scalar16_parameters.assign(parameters.begin(), parameters.end());
+}
+
 void AreaScriptRuntime::set_character_activation_sink(CharacterActivationSink sink) {
   m_character_activation_sink = std::move(sink);
 }
@@ -520,8 +555,13 @@ std::expected<void, std::string> AreaScriptRuntime::complete_interface_wait(
 
   m_completion_result = completion.result;
   if (m_wait.interface_result_variable.has_value()) {
-    m_variables[m_wait.interface_result_variable.value()] =
-        static_cast<std::int32_t>(completion.result);
+    auto written{write_global_variable(m_wait.interface_result_variable.value(), completion.result)};
+    if (!written) {
+      return std::expected<void, std::string>{std::unexpect,
+          fmt::format("cannot write interface result to global variable {}: {}",
+              m_wait.interface_result_variable.value(),
+              written.error())};
+    }
   }
   m_wait = AreaWaitState{};
   m_wait_state = 0;
@@ -614,11 +654,18 @@ std::expected<void, std::string> AreaScriptRuntime::complete_area_transition(
 }
 
 std::optional<std::int32_t> AreaScriptRuntime::variable(const std::uint16_t id) const {
-  const auto found{m_variables.find(id)};
-  if (found == m_variables.end()) {
+  auto value{read_global_variable(id)};
+  if (!value) {
     return std::nullopt;
   }
-  return found->second;
+  return value.value();
+}
+
+std::span<const std::int32_t> AreaScriptRuntime::global_variables() const {
+  if (!m_global_variable_snapshot_sink) {
+    return {};
+  }
+  return m_global_variable_snapshot_sink();
 }
 
 AreaScriptState AreaScriptRuntime::run(const float real_delta_seconds) {
@@ -701,6 +748,50 @@ std::expected<std::size_t, std::string> AreaScriptRuntime::relative_target(
   return static_cast<std::size_t>(target);
 }
 
+std::expected<std::int16_t, std::string> AreaScriptRuntime::resolve_scalar16(
+    const std::int32_t operand, const std::string_view semantic) const {
+  const std::int16_t serialized{static_cast<std::int16_t>(operand)};
+  const std::uint16_t bits{static_cast<std::uint16_t>(serialized)};
+  if (serialized == -1 || (bits & K_SCALAR16_PARAMETER_REFERENCE) == 0U) {
+    return serialized;
+  }
+  const std::size_t parameter_index{
+      static_cast<std::size_t>(bits & K_SCALAR16_PARAMETER_INDEX_MASK)};
+  if (m_scalar16_parameters.empty()) {
+    return std::expected<std::int16_t, std::string>{std::unexpect,
+        fmt::format("{} parameter-indirected Scalar16 {:#06x} is unsupported because the AREA "
+                    "parameter block is not modeled",
+            semantic,
+            bits)};
+  }
+  if (parameter_index >= m_scalar16_parameters.size()) {
+    return std::expected<std::int16_t, std::string>{std::unexpect,
+        fmt::format("{} Scalar16 parameter index {} is outside the {}-value parameter block",
+            semantic,
+            parameter_index,
+            m_scalar16_parameters.size())};
+  }
+  return m_scalar16_parameters.at(parameter_index);
+}
+
+std::expected<std::int32_t, std::string> AreaScriptRuntime::read_global_variable(
+    const std::uint16_t id) const {
+  if (!m_global_variable_read_sink) {
+    return std::expected<std::int32_t, std::string>{std::unexpect,
+        "shared global-variable read bridge is not wired"};
+  }
+  return m_global_variable_read_sink(id);
+}
+
+std::expected<void, std::string> AreaScriptRuntime::write_global_variable(
+    const std::uint16_t id, const std::int32_t value) {
+  if (!m_global_variable_write_sink) {
+    return std::expected<void, std::string>{std::unexpect,
+        "shared global-variable write bridge is not wired"};
+  }
+  return m_global_variable_write_sink(id, value);
+}
+
 void AreaScriptRuntime::execute_instruction() {
   const std::size_t instruction_offset{m_ip};
   const std::uint32_t opcode{read_u8_at(m_script, m_ip)};
@@ -781,6 +872,14 @@ void AreaScriptRuntime::execute_instruction() {
   entry.opcode_name = info->name;
   std::size_t next_ip{cursor};
   bool wait_after_instruction{false};
+  const auto fail_instruction = [&](std::string reason) {
+    m_pause_info = AreaPauseInfo{.offset = instruction_offset,
+        .opcode = opcode,
+        .opcode_name = std::string{info->name},
+        .reason_text = std::move(reason),
+        .nearby_bytes = nearby_bytes_hex(instruction_offset)};
+    m_state = AreaScriptState::k_failed;
+  };
 
   switch (opcode) {
     case K_OP_END_EVENT:
@@ -837,22 +936,127 @@ void AreaScriptRuntime::execute_instruction() {
       break;
     case K_OP_PUSH_GLOBAL_VARIABLE: {
       const std::uint16_t id{static_cast<std::uint16_t>(operands.at(0))};
-      const std::int32_t value{variable(id).value_or(0)};
-      m_evaluation_stack.push_back(value);
-      entry.effect = fmt::format("push global variable {} ({})", id, value);
+      auto value{read_global_variable(id)};
+      if (!value) {
+        fail_instruction(fmt::format("cannot read global variable {}: {}", id, value.error()));
+        return;
+      }
+      m_evaluation_stack.push_back(value.value());
+      entry.effect = fmt::format("push global variable {} ({})", id, value.value());
       break;
     }
-    case K_OP_SET_GLOBAL_VARIABLE_ONE:
-      m_variables[static_cast<std::uint16_t>(operands.at(0))] = 1;
-      entry.effect =
-          fmt::format("set global variable {} to 1", static_cast<std::uint16_t>(operands.at(0)));
+    case K_OP_SET_GLOBAL_VARIABLE_ZERO: {
+      auto variable_id{resolve_scalar16(operands.at(0), "SetGlobalVariableZero variable")};
+      if (!variable_id) {
+        fail_instruction(variable_id.error());
+        return;
+      }
+      const std::uint16_t id{static_cast<std::uint16_t>(variable_id.value())};
+      const std::optional<std::int32_t> old_value{variable(id)};
+      if (auto written{write_global_variable(id, 0)}; !written) {
+        fail_instruction(fmt::format("cannot zero global variable {}: {}", id, written.error()));
+        return;
+      }
+      entry.effect = old_value.has_value()
+                         ? fmt::format("set global variable {} from {} to 0", id, old_value.value())
+                         : fmt::format("set global variable {} to 0", id);
       break;
-    case K_OP_SET_GLOBAL_VARIABLE:
-      m_variables[static_cast<std::uint16_t>(operands.at(0))] = operands.at(1);
+    }
+    case K_OP_SET_GLOBAL_VARIABLE_ONE: {
+      const std::uint16_t id{static_cast<std::uint16_t>(operands.at(0))};
+      if (auto written{write_global_variable(id, 1)}; !written) {
+        fail_instruction(fmt::format("cannot set global variable {} to one: {}", id, written.error()));
+        return;
+      }
+      entry.effect = fmt::format("set global variable {} to 1", id);
+      break;
+    }
+    case K_OP_SET_GLOBAL_VARIABLE: {
+      const std::uint16_t id{static_cast<std::uint16_t>(operands.at(0))};
+      if (auto written{write_global_variable(id, operands.at(1))}; !written) {
+        fail_instruction(fmt::format("cannot set global variable {}: {}", id, written.error()));
+        return;
+      }
       entry.effect = fmt::format("set global variable {} to {}",
-          static_cast<std::uint16_t>(operands.at(0)),
+          id,
           operands.at(1));
       break;
+    }
+    case K_OP_GET_CHARACTER_VALUE_TO_VARIABLE:
+    case K_OP_SET_CHARACTER_VALUE_FROM_VARIABLE: {
+      std::array<std::int16_t, 3> resolved{};
+      const bool read_character{opcode == K_OP_GET_CHARACTER_VALUE_TO_VARIABLE};
+      const std::array<std::string_view, 3> semantics{read_character
+              ? "GetCharacterValueToVariable character"
+              : "SetCharacterValueFromVariable character",
+          read_character ? "GetCharacterValueToVariable kind"
+                         : "SetCharacterValueFromVariable kind",
+          read_character ? "GetCharacterValueToVariable destination variable"
+                         : "SetCharacterValueFromVariable source variable"};
+      for (std::size_t index{0}; index < resolved.size(); ++index) {
+        auto value{resolve_scalar16(operands.at(index), semantics.at(index))};
+        if (!value) {
+          fail_instruction(value.error());
+          return;
+        }
+        resolved.at(index) = value.value();
+      }
+
+      const AreaCharacterValueRequest request{
+          .character_id = resolved.at(0), .value_kind = resolved.at(1)};
+      const std::uint16_t variable_id{static_cast<std::uint16_t>(resolved.at(2))};
+      if (read_character) {
+        if (!m_character_value_read_sink) {
+          fail_instruction("session character-value read bridge is not wired");
+          return;
+        }
+        auto value{m_character_value_read_sink(request)};
+        if (!value) {
+          fail_instruction(fmt::format("cannot read character {} value kind {}: {}",
+              request.character_id,
+              request.value_kind,
+              value.error()));
+          return;
+        }
+        if (auto written{write_global_variable(variable_id, value.value())}; !written) {
+          fail_instruction(fmt::format("cannot write character value to global variable {}: {}",
+              variable_id,
+              written.error()));
+          return;
+        }
+        entry.effect = fmt::format("character {} kind {} -> global variable {} ({})",
+            request.character_id,
+            request.value_kind,
+            variable_id,
+            value.value());
+        break;
+      }
+
+      auto value{read_global_variable(variable_id)};
+      if (!value) {
+        fail_instruction(fmt::format("cannot read source global variable {}: {}",
+            variable_id,
+            value.error()));
+        return;
+      }
+      if (!m_character_value_write_sink) {
+        fail_instruction("session character-value write bridge is not wired");
+        return;
+      }
+      if (auto written{m_character_value_write_sink(request, value.value())}; !written) {
+        fail_instruction(fmt::format("cannot set character {} value kind {}: {}",
+            request.character_id,
+            request.value_kind,
+            written.error()));
+        return;
+      }
+      entry.effect = fmt::format("global variable {} ({}) -> character {} kind {}",
+          variable_id,
+          value.value(),
+          request.character_id,
+          request.value_kind);
+      break;
+    }
     case K_OP_EQUAL: {
       auto rhs{pop_evaluation_value()};
       auto lhs{pop_evaluation_value()};

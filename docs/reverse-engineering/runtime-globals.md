@@ -905,6 +905,28 @@ START/scenario variables are shared process/scenario state
 
 and are **not** stored independently in each compact VM context.
 
+IAM/START describes the backing array with `+0x08` as its beginning and
+`+0x0C` as its end. In the studied retail data this is
+`0x058C..0x1064`, exactly 694 signed dwords (IDs `0..693`). OpenNomad
+therefore owns one checked `GameState` array per playthrough and injects it
+into every compact context rather than copying Runtime's process-global
+pointer architecture.
+
+The compact handlers now using that shared state include:
+
+| Opcode | Handler | ABI / effect |
+|---:|---:|---|
+| `0x0C` `SetGlobalVariableZero` | `0x00401EB0` | one `Scalar16`; writes zero |
+| `0x56` `GetCharacterValueToVariable` | `0x00404230` | three `Scalar16`; character numeric value to global |
+| `0x5D` `SetCharacterValueFromVariable` | `0x00404790` | three `Scalar16`; global to character numeric value |
+
+For `0x56`/`0x5D`, character ID `-1` uses the separate global/session current
+controlled-character identity. OpenNomad stores the mutable numeric profile by
+authored character ID in `GameState`; it does not modify immutable IAM AREA or
+SCENE definition bytes and does not reload a render body. Runtime's secondary
+HUD/player-status notification after setters has no current OpenNomad
+equivalent and is intentionally not fabricated.
+
 ## `0x004C0140` — compact scenario opcode descriptor table
 
 **Confirmed — Runtime.**

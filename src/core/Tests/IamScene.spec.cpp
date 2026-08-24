@@ -67,6 +67,9 @@ std::vector<std::byte> valid_scene() {
   constexpr char k_model[]{"DE1_FN"};
   std::memcpy(data.data() + k_table4 + 0x08U, k_name, sizeof(k_name));
   std::memcpy(data.data() + k_table4 + 0x90U, k_model, sizeof(k_model));
+  write(data, k_table4 + 0xA0U, static_cast<std::int16_t>(16));
+  write(data, k_table4 + 0xA8U, static_cast<std::int16_t>(20));
+  write(data, k_table4 + 0xACU, static_cast<std::uint16_t>(444));
   write(data, k_table7 + 0x00U, static_cast<std::uint32_t>(k_script));
   write(data, k_table7 + 0x04U, static_cast<std::int32_t>(3));
   data.at(k_script) = std::byte{0x57};
@@ -109,6 +112,9 @@ TEST_SUITE("Core::Omikron::IamSceneRecord") {
     REQUIRE(definition.has_value());
     CHECK_EQ(definition->name, "LOCAL CHARACTER");
     CHECK_EQ(definition->model_resource, "DE1_FN");
+    CHECK_EQ(definition->initial_values.field_a0, 16);
+    CHECK_EQ(definition->initial_values.field_a8, 20);
+    CHECK_EQ(definition->initial_values.field_ac, 444);
     const std::vector<App::Omikron::IamSceneZoneRecord> zones{scene->zones()};
     REQUIRE_EQ(zones.size(), 1U);
     CHECK_EQ(zones.front().event_offsets.at(0), scene->script_offset());

@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "Core/Omikron/IamCamera.hpp"
+#include "Core/Omikron/IamCharacterDefinition.hpp"
 
 namespace App::Omikron {
 
@@ -37,6 +38,7 @@ struct IamAreaCharacterDefinitionRecord {
   std::int32_t character_id{0};    ///< +0x110, referenced by table 0 +0x12.
   std::string name;                ///< +0x008, 32-byte NUL-terminated name.
   std::string model_resource;      ///< +0x090, 10-byte NUL-terminated model name.
+  IamCharacterValueInitialState initial_values;
 };
 
 /// One named 0x10-byte spawn/address entry from AREA table 5.

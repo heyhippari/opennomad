@@ -310,7 +310,17 @@ IamSceneRecord::character_definition_by_character_id(const std::int16_t characte
         .name = fixed_string(record.subspan(0x08U, 32U)),
         .model_resource = fixed_string(record.subspan(0x90U, 10U)),
         .string_00 = optional_record_string(read_at<std::uint32_t>(record, 0U)),
-        .string_04 = optional_record_string(read_at<std::uint32_t>(record, 4U))};
+        .string_04 = optional_record_string(read_at<std::uint32_t>(record, 4U)),
+        .initial_values = {.field_9c = read_at<std::int16_t>(record, 0x09CU),
+            .field_9e = read_at<std::int16_t>(record, 0x09EU),
+            .field_a0 = read_at<std::int16_t>(record, 0x0A0U),
+            .field_a2 = read_at<std::int16_t>(record, 0x0A2U),
+            .field_a4 = read_at<std::int16_t>(record, 0x0A4U),
+            .field_a6 = read_at<std::int16_t>(record, 0x0A6U),
+            .field_a8 = read_at<std::int16_t>(record, 0x0A8U),
+            .field_aa = read_at<std::int16_t>(record, 0x0AAU),
+            .field_ac = read_at<std::uint16_t>(record, 0x0ACU),
+            .field_ae = read_at<std::int16_t>(record, 0x0AEU)}};
   }
   return std::nullopt;
 }

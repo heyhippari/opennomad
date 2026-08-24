@@ -6,6 +6,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <optional>
 #include <span>
 #include <string>
@@ -32,6 +33,7 @@ using App::Script::AreaCharacterScriptLaunchMode;
 using App::Script::AreaCharacterScriptRequest;
 using App::Script::AreaCharacterScriptTarget;
 using App::Script::AreaCharacterSelectionRequest;
+using App::Script::AreaCharacterValueRequest;
 using App::Script::AreaCinematicLetterboxRequest;
 using App::Script::AreaDialogRequest;
 using App::Script::AreaPersistentObjectCollectionRequest;
@@ -44,6 +46,35 @@ using App::Script::AreaScxScriptRequest;
 using App::Script::AreaTransitionHandle;
 using App::Script::AreaTransitionRequest;
 using App::Script::AreaWaitKind;
+
+struct SharedGlobalStore {
+  explicit SharedGlobalStore(const std::size_t size = 1024U) : values(size, 0) {}
+
+  void bind(AreaScriptRuntime& runtime) {
+    runtime.set_global_variable_read_sink(
+        [this](const std::uint16_t id) -> std::expected<std::int32_t, std::string> {
+          if (id >= values.size()) {
+            return std::expected<std::int32_t, std::string>{std::unexpect,
+                "global variable is out of range"};
+          }
+          return values.at(id);
+        });
+    runtime.set_global_variable_write_sink(
+        [this](const std::uint16_t id,
+            const std::int32_t value) -> std::expected<void, std::string> {
+          if (id >= values.size()) {
+            return std::expected<void, std::string>{std::unexpect,
+                "global variable is out of range"};
+          }
+          values.at(id) = value;
+          return {};
+        });
+    runtime.set_global_variable_snapshot_sink(
+        [this]() -> std::span<const std::int32_t> { return values; });
+  }
+
+  std::vector<std::int32_t> values;
+};
 
 /// The confirmed area-118 startup prefix (script-relative offsets 0..0x2C).
 Buffer make_startup_prefix() {
@@ -125,6 +156,189 @@ void wire_startup_character_sinks(AreaScriptRuntime& runtime) {
 }  // namespace
 
 TEST_SUITE("Core::Script::AreaScriptRuntime") {
+  TEST_CASE("AREA and SCENE compact contexts share one global-variable store") {
+    Buffer area_bytes;
+    area_bytes.u8(0x0D).u16(123).u8(0x03);
+    Buffer scene_bytes;
+    scene_bytes.u8(0x0A).u16(123);
+    AreaScriptRuntime area_runtime{area_bytes.data()};
+    AreaScriptRuntime scene_runtime{scene_bytes.data()};
+    SharedGlobalStore globals;
+    globals.bind(area_runtime);
+    globals.bind(scene_runtime);
+    area_runtime.queue_event(1);
+    area_runtime.activate();
+    scene_runtime.queue_event(1);
+    scene_runtime.activate();
+
+    CHECK(area_runtime.run() == AreaScriptState::k_ready);
+    CHECK(scene_runtime.run() == AreaScriptState::k_completed);
+    REQUIRE_EQ(scene_runtime.evaluation_stack().size(), 1U);
+    CHECK_EQ(scene_runtime.evaluation_stack().back(), 1);
+    CHECK_EQ(globals.values.at(123), 1);
+  }
+
+  TEST_CASE("0x0C zeroes a shared global through direct and parameter Scalar16 operands") {
+    SUBCASE("direct") {
+      Buffer bytes;
+      bytes.u8(0x0C).u16(60).u8(0x03);
+      AreaScriptRuntime runtime{bytes.data()};
+      SharedGlobalStore globals;
+      globals.values.at(60) = 1234;
+      globals.bind(runtime);
+      runtime.queue_event(1);
+      runtime.activate();
+
+      CHECK(runtime.run() == AreaScriptState::k_ready);
+      CHECK_EQ(globals.values.at(60), 0);
+      CHECK(runtime.wait_info().kind == AreaWaitKind::k_none);
+      CHECK_EQ(runtime.instruction_pointer(), bytes.data().size());
+    }
+
+    SUBCASE("parameter remapping") {
+      Buffer bytes;
+      bytes.u8(0x0C).u16(0x4001).u8(0x03);
+      AreaScriptRuntime runtime{bytes.data()};
+      SharedGlobalStore globals;
+      globals.values.at(60) = -44;
+      globals.bind(runtime);
+      const std::array<std::int16_t, 2> parameters{7, 60};
+      runtime.set_scalar16_parameters(parameters);
+      runtime.queue_event(1);
+      runtime.activate();
+
+      CHECK(runtime.run() == AreaScriptState::k_ready);
+      CHECK_EQ(globals.values.at(60), 0);
+    }
+  }
+
+  TEST_CASE("0x5D writes the selected current-character value from a shared global") {
+    Buffer bytes;
+    bytes.u8(0x5D).u16(0xFFFF).u16(5).u16(60).u8(0x03);
+    AreaScriptRuntime runtime{bytes.data()};
+    SharedGlobalStore globals;
+    globals.values.at(60) = 80;
+    globals.bind(runtime);
+    constexpr std::int16_t k_current_character{88};
+    std::optional<std::int16_t> resolved_character;
+    std::int32_t kind5{0};
+    runtime.set_character_value_write_sink(
+        [&resolved_character, &kind5, k_current_character](const AreaCharacterValueRequest& request,
+            const std::int32_t value) -> std::expected<void, std::string> {
+          resolved_character = request.character_id == -1 ? k_current_character : request.character_id;
+          if (request.value_kind != 5) {
+            return std::expected<void, std::string>{std::unexpect, "unexpected character kind"};
+          }
+          kind5 = value;
+          return {};
+        });
+    runtime.queue_event(1);
+    runtime.activate();
+
+    CHECK(runtime.run() == AreaScriptState::k_ready);
+    CHECK_EQ(resolved_character, std::optional<std::int16_t>{k_current_character});
+    CHECK_EQ(kind5, 80);
+    CHECK(runtime.wait_info().kind == AreaWaitKind::k_none);
+  }
+
+  TEST_CASE("SCENE 55 zeroes globals 60/37 and current-character kinds 5/4 exactly") {
+    Buffer bytes;
+    bytes.u8(0x0C).u16(60);
+    bytes.u8(0x5D).u16(0xFFFF).u16(5).u16(60);
+    bytes.u8(0x0C).u16(37);
+    bytes.u8(0x5D).u16(0xFFFF).u16(4).u16(37);
+    bytes.u8(0x03);
+    AreaScriptRuntime runtime{bytes.data()};
+    SharedGlobalStore globals;
+    globals.values.at(60) = 91;
+    globals.values.at(37) = 876;
+    globals.bind(runtime);
+    std::array<std::int32_t, 6> character_values{};
+    runtime.set_character_value_write_sink(
+        [&character_values](const AreaCharacterValueRequest& request,
+            const std::int32_t value) -> std::expected<void, std::string> {
+          if (request.character_id != -1 || request.value_kind < 0 ||
+              static_cast<std::size_t>(request.value_kind) >= character_values.size()) {
+            return std::expected<void, std::string>{std::unexpect,
+                "unexpected SCENE 55 character value request"};
+          }
+          character_values.at(static_cast<std::size_t>(request.value_kind)) = value;
+          return {};
+        });
+    runtime.queue_event(1);
+    runtime.activate();
+
+    CHECK(runtime.run() == AreaScriptState::k_ready);
+    CHECK_EQ(globals.values.at(60), 0);
+    CHECK_EQ(globals.values.at(37), 0);
+    CHECK_EQ(character_values.at(5), 0);
+    CHECK_EQ(character_values.at(4), 0);
+    CHECK(runtime.wait_info().kind == AreaWaitKind::k_none);
+    CHECK_EQ(runtime.instruction_pointer(), bytes.data().size());
+  }
+
+  TEST_CASE("SCENE 55 retail slice reaches the next unsupported opcode at original offset 0x66") {
+    Buffer bytes;
+    bytes.u8(0x0C).u16(60);
+    bytes.u8(0x5D).u16(0xFFFF).u16(5).u16(60);
+    bytes.u8(0x0C).u16(37);
+    bytes.u8(0x5D).u16(0xFFFF).u16(4).u16(37);
+    bytes.u8(0x0C).u16(629);
+    bytes.u8(0x07).u8(0);
+    bytes.u8(0x0A).u16(629);
+    bytes.u8(0x19);
+    bytes.u8(0x06).u16(0x006C);
+    bytes.u8(0x40);
+    AreaScriptRuntime runtime{bytes.data()};
+    SharedGlobalStore globals;
+    globals.values.at(37) = 2;
+    globals.values.at(60) = 3;
+    globals.values.at(629) = 4;
+    globals.bind(runtime);
+    runtime.set_character_value_write_sink(
+        [](const AreaCharacterValueRequest& request,
+            const std::int32_t value) -> std::expected<void, std::string> {
+          if (request.character_id != -1 ||
+              (request.value_kind != 4 && request.value_kind != 5) || value != 0) {
+            return std::expected<void, std::string>{std::unexpect,
+                "unexpected SCENE 55 character value request"};
+          }
+          return {};
+        });
+    runtime.queue_event(1);
+    runtime.activate();
+
+    CHECK(runtime.run() == AreaScriptState::k_paused_unsupported);
+    CHECK_EQ(runtime.pause_info().opcode, 0x40U);
+    CHECK_EQ(runtime.pause_info().offset, 0x20U);
+    CHECK_EQ(globals.values.at(37), 0);
+    CHECK_EQ(globals.values.at(60), 0);
+    CHECK_EQ(globals.values.at(629), 0);
+  }
+
+  TEST_CASE("0x56 reads a current-character value into a shared global") {
+    Buffer bytes;
+    bytes.u8(0x56).u16(0xFFFF).u16(4).u16(37).u8(0x03);
+    AreaScriptRuntime runtime{bytes.data()};
+    SharedGlobalStore globals;
+    globals.bind(runtime);
+    runtime.set_character_value_read_sink(
+        [](const AreaCharacterValueRequest& request)
+            -> std::expected<std::int32_t, std::string> {
+          if (request.character_id != -1 || request.value_kind != 4) {
+            return std::expected<std::int32_t, std::string>{std::unexpect,
+                "unexpected character value request"};
+          }
+          return 321;
+        });
+    runtime.queue_event(1);
+    runtime.activate();
+
+    CHECK(runtime.run() == AreaScriptState::k_ready);
+    CHECK_EQ(globals.values.at(37), 321);
+    CHECK(runtime.wait_info().kind == AreaWaitKind::k_none);
+  }
+
   TEST_CASE("0x57 and 0x58 mutate ADDRESS state without waiting") {
     Buffer bytes;
     bytes.u8(0x57).u16(5).u8(0x58).u16(6).u8(0x03);
@@ -337,6 +551,8 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     bytes.u8(0x03);
 
     AreaScriptRuntime runtime{bytes.data()};
+    SharedGlobalStore globals;
+    globals.bind(runtime);
     std::vector<AreaScxScriptRequest> requests;
     std::vector<std::uint32_t> instructions;
     runtime.set_scx_script_sink(
@@ -369,6 +585,8 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     bytes.u8(0x03);
 
     AreaScriptRuntime runtime{bytes.data()};
+    SharedGlobalStore globals;
+    globals.bind(runtime);
     std::optional<AreaScxScriptRequest> request;
     std::vector<std::uint32_t> instructions;
     runtime.set_scx_script_sink(
@@ -548,6 +766,8 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
   TEST_CASE("Queueing event 1 runs the prefix, plays 109 and opens interface 29") {
     const Buffer bytes{make_startup_prefix()};
     AreaScriptRuntime runtime{bytes.data()};
+    SharedGlobalStore globals;
+    globals.bind(runtime);
 
     std::optional<InterfaceOpenRequest> opened;
     std::optional<MusicTrackRequest> music;
@@ -586,6 +806,8 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
   TEST_CASE("The startup prefix advances using the exact instruction boundaries") {
     const Buffer bytes{make_startup_prefix()};
     AreaScriptRuntime runtime{bytes.data()};
+    SharedGlobalStore globals;
+    globals.bind(runtime);
     wire_startup_character_sinks(runtime);
     runtime.queue_event(1);
     runtime.activate();
@@ -650,6 +872,8 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
   TEST_CASE("the menu sequence waits, then resumes and plays 87 after completion") {
     const Buffer bytes{make_menu_music_script()};
     AreaScriptRuntime runtime{bytes.data()};
+    SharedGlobalStore globals;
+    globals.bind(runtime);
 
     std::optional<InterfaceOpenRequest> opened;
     std::vector<MusicTrackRequest> music;
@@ -695,6 +919,8 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
   TEST_CASE("a mismatched or duplicate completion does not resume the script") {
     const Buffer bytes{make_menu_music_script()};
     AreaScriptRuntime runtime{bytes.data()};
+    SharedGlobalStore globals;
+    globals.bind(runtime);
 
     std::optional<InterfaceOpenRequest> opened;
     const InterfaceHandle menu_handle{.interface_id = 29, .generation = 1};
@@ -1144,6 +1370,8 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
   TEST_CASE("The result-zero AREA branch executes through its first event terminator") {
     const Buffer bytes{make_new_game_event_script()};
     AreaScriptRuntime runtime{bytes.data()};
+    SharedGlobalStore globals;
+    globals.bind(runtime);
 
     const InterfaceHandle menu_handle{.interface_id = 29, .generation = 1};
     std::vector<AreaScxScriptRequest> scripts;
@@ -1211,6 +1439,8 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
   TEST_CASE("Retail New Game result 3 reaches tracked character script 310/1 and blocks") {
     const Buffer bytes{make_new_game_event_script()};
     AreaScriptRuntime runtime{bytes.data()};
+    SharedGlobalStore globals;
+    globals.bind(runtime);
 
     const InterfaceHandle menu_handle{.interface_id = 29, .generation = 1};
     runtime.set_interface_sink(
@@ -1300,6 +1530,7 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     CHECK(App::Script::area_opcode_name(0x06) != nullptr);
     CHECK(App::Script::area_opcode_name(0x07) != nullptr);
     CHECK(App::Script::area_opcode_name(0x0A) != nullptr);
+    CHECK_EQ(std::string{App::Script::area_opcode_name(0x0C)}, "SetGlobalVariableZero");
     CHECK(App::Script::area_opcode_name(0x0D) != nullptr);
     CHECK(App::Script::area_opcode_name(0x19) != nullptr);
     CHECK(App::Script::area_opcode_name(0x2F) != nullptr);
@@ -1311,6 +1542,9 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     CHECK(App::Script::area_opcode_name(0x3D) != nullptr);
     CHECK(App::Script::area_opcode_name(0x4E) != nullptr);
     CHECK(App::Script::area_opcode_name(0x46) != nullptr);
+    CHECK_EQ(std::string{App::Script::area_opcode_name(0x56)}, "GetCharacterValueToVariable");
+    CHECK_EQ(
+        std::string{App::Script::area_opcode_name(0x5D)}, "SetCharacterValueFromVariable");
     CHECK(App::Script::area_opcode_name(0x5F) != nullptr);
     CHECK(App::Script::area_opcode_name(0x60) != nullptr);
     CHECK_EQ(std::string{App::Script::area_opcode_name(0x57)}, "SetAddressFlag");

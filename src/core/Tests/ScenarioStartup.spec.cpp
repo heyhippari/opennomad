@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "Core/Character/CharacterRuntime.hpp"
+#include "Core/GameState.hpp"
 #include "Core/Omikron/Model3DO.hpp"
 #include "Core/Scenario/ScenarioManager.hpp"
 #include "Core/Scenario/ScenarioRuntime.hpp"
@@ -115,7 +116,8 @@ std::vector<std::byte> make_new_game_script() {
 /// IAM/START selecting initial area 118 with linked area -1.
 std::vector<std::byte> make_start() {
   std::vector<std::byte> data(0x58A, std::byte{});
-  write_u32(data, 0x0C, 0x10);
+  write_u32(data, 0x08, 0x20);
+  write_u32(data, 0x0C, 0x350);
   write_u16(data, 0x586, 118);
   write_u16(data, 0x588, 0xFFFF);  // -1
   return data;
@@ -435,6 +437,37 @@ void write_current_character_script_fixtures(const TempDirectory& temp) {
   write_bytes(temp.root() / "MESHES" / "DECORS" / "GRID.3DO", make_minimal_3do());
 }
 
+void write_character_value_fixtures(const TempDirectory& temp) {
+  Buffer script;
+  script.u8(0x38).u16(136);
+  script.u8(0x56).u16(0xFFFF).u16(5).u16(61);
+  script.u8(0x56).u16(310).u16(4).u16(63);
+  script.u8(0x0C).u16(60);
+  script.u8(0x5D).u16(0xFFFF).u16(5).u16(60);
+  script.u8(0x5D).u16(310).u16(4).u16(62);
+  script.u8(0x56).u16(0xFFFF).u16(5).u16(64);
+  script.u8(0x56).u16(310).u16(4).u16(65);
+  script.u8(0x03);
+
+  std::vector<std::byte> start{make_start()};
+  write_u32(start, 0x20U + (60U * sizeof(std::int32_t)), 1234U);
+  write_u32(start, 0x20U + (62U * sizeof(std::int32_t)), 321U);
+
+  std::vector<std::byte> area{make_area_archive()};
+  constexpr std::size_t k_record_offset{0x800};
+  constexpr std::size_t k_definition_offset{0x1D4};
+  constexpr std::size_t k_second_definition_offset{k_definition_offset + 0x114U};
+  write_u16(area, k_record_offset + k_definition_offset + 0xACU, 444);
+  write_u16(area, k_record_offset + k_second_definition_offset + 0xAEU, 77);
+  std::memcpy(area.data() + k_record_offset + 0x3FCU, script.data().data(), script.data().size());
+
+  write_bytes(temp.root() / "IAM" / "START", start);
+  write_bytes(temp.root() / "IAM" / "AREA", area);
+  write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
+  write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_minimal_scx());
+  write_bytes(temp.root() / "MESHES" / "DECORS" / "GRID.3DO", make_minimal_3do());
+}
+
 void write_handoff_fixtures(const TempDirectory& temp) {
   write_bytes(temp.root() / "IAM" / "START", make_start());
   write_bytes(temp.root() / "IAM" / "AREA", make_handoff_area_archive());
@@ -447,6 +480,41 @@ void write_handoff_fixtures(const TempDirectory& temp) {
 }  // namespace
 
 TEST_SUITE("Core::Scenario::ScenarioStartupController") {
+  TEST_CASE("compact character values use current and explicit owner profiles without body reload") {
+    const TempDirectory temp;
+    write_character_value_fixtures(temp);
+    const ScopedGameDataRoot root{temp.root()};
+
+    App::ScenarioManager manager;
+    App::ScenarioStartupController controller;
+    REQUIRE(controller.initialize(manager).has_value());
+    App::ScenarioRuntime* runtime{manager.world_runtime(0)};
+    REQUIRE(runtime != nullptr);
+    runtime->character_runtime().set_model_loader(
+        [](const std::string_view name)
+            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
+          auto resource{std::make_shared<App::Character::ModelResource>()};
+          resource->name = name;
+          resource->groups.push_back(App::Omikron::MaterialGroup{});
+          return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
+        });
+
+    REQUIRE(controller.tick().has_value());
+    REQUIRE(controller.area_script() != nullptr);
+    CHECK(controller.area_script()->state() == AreaScriptState::k_ready);
+    CHECK_EQ(controller.current_controlled_character(), std::optional<std::int16_t>{136});
+    REQUIRE(manager.game_state() != nullptr);
+    CHECK_EQ(manager.game_state()->global_variable(60).value(), 0);
+    CHECK_EQ(manager.game_state()->global_variable(61).value(), 77);
+    CHECK_EQ(manager.game_state()->global_variable(63).value(), 444);
+    CHECK_EQ(manager.game_state()->global_variable(64).value(), 0);
+    CHECK_EQ(manager.game_state()->global_variable(65).value(), 321);
+    CHECK_EQ(manager.game_state()->character_value(136, 5).value(), 0);
+    CHECK_EQ(manager.game_state()->character_value(310, 4).value(), 321);
+    CHECK(runtime->character_runtime().find(136) != nullptr);
+    CHECK(runtime->character_runtime().find(310) == nullptr);
+  }
+
   TEST_CASE("current-character script bridge rejects missing or foreign session targets") {
     SUBCASE("no current controlled character") {
       const TempDirectory temp;
@@ -513,6 +581,8 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK(initial_current->area_present);
     CHECK_EQ(initial_current->serialized_area_position.at(0), 100);
     CHECK_FALSE(initial_current->presentation_enabled);
+    REQUIRE(manager.game_state() != nullptr);
+    REQUIRE(manager.game_state()->set_character_value(136, 5, 91).has_value());
     REQUIRE(controller.tick().has_value());  // Target prepares, then camera wait.
     const App::RuntimeAreaSlot* source{controller.runtime_area_slot(0)};
     const App::RuntimeAreaSlot* destination{controller.runtime_area_slot(1)};
@@ -557,6 +627,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK_EQ(current->character_id, 57);
     CHECK_EQ(current->world_scene_id, 1U);
     CHECK_EQ(controller.current_controlled_character(), std::optional<std::int16_t>{57});
+    CHECK_EQ(manager.game_state()->character_value(136, 5).value(), 91);
     const App::Character::RuntimeCharacter* character{
         destination_runtime->character_runtime().find(136)};
     REQUIRE(character != nullptr);

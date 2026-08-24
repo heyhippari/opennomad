@@ -260,7 +260,17 @@ std::optional<IamAreaCharacterDefinitionRecord> IamAreaRecord::character_definit
     return IamAreaCharacterDefinitionRecord{
         .character_id = read_i32_at(record, 0x110U),
         .name = fixed_string(record.subspan(0x008U, 32U)),
-        .model_resource = fixed_string(record.subspan(0x090U, 10U))};
+        .model_resource = fixed_string(record.subspan(0x090U, 10U)),
+        .initial_values = {.field_9c = read_i16_at(record, 0x09CU),
+            .field_9e = read_i16_at(record, 0x09EU),
+            .field_a0 = read_i16_at(record, 0x0A0U),
+            .field_a2 = read_i16_at(record, 0x0A2U),
+            .field_a4 = read_i16_at(record, 0x0A4U),
+            .field_a6 = read_i16_at(record, 0x0A6U),
+            .field_a8 = read_i16_at(record, 0x0A8U),
+            .field_aa = read_i16_at(record, 0x0AAU),
+            .field_ac = read_u16_at(record, 0x0ACU),
+            .field_ae = read_i16_at(record, 0x0AEU)}};
   }
   return std::nullopt;
 }

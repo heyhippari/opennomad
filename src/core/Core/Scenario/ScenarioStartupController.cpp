@@ -2,10 +2,12 @@
 
 #include <fmt/format.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <filesystem>
+#include <iterator>
 #include <optional>
 #include <span>
 #include <string>
@@ -25,6 +27,7 @@
 #include "Core/Log.hpp"
 #include "Core/LogCategory.hpp"
 #include "Core/Omikron/IamArea.hpp"
+#include "Core/Omikron/IamCharacterDefinition.hpp"
 #include "Core/Omikron/IamScene.hpp"
 #include "Core/Omikron/IamStart.hpp"
 #include "Core/Omikron/SCX.hpp"
@@ -326,6 +329,7 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
   // after a later compact handoff changes presentation to the alternate slot.
   const std::size_t area_script_owner_slot{m_active_area_slot};
   m_area_script_owner_slot = area_script_owner_slot;
+  bind_compact_state_services(area_script, area_script_owner_slot, false);
 
   area_script.set_area_transition_sink(
       [this](const Script::AreaTransitionRequest& request)
@@ -832,8 +836,160 @@ std::optional<Omikron::IamCameraRecord> ScenarioStartupController::active_reside
   return slot.scene.has_value() ? slot.scene->camera_by_id(camera_id) : std::nullopt;
 }
 
+void ScenarioStartupController::bind_compact_state_services(Script::AreaScriptRuntime& runtime,
+    const std::size_t owner_slot,
+    const bool prefer_scene_definition) {
+  runtime.set_global_variable_read_sink(
+      [this](const std::uint16_t id) -> std::expected<std::int32_t, std::string> {
+        if (m_manager == nullptr || m_manager->game_state() == nullptr) {
+          return std::expected<std::int32_t, std::string>{std::unexpect,
+              "session game state is not initialized"};
+        }
+        return m_manager->game_state()->global_variable(id);
+      });
+  runtime.set_global_variable_write_sink(
+      [this](const std::uint16_t id,
+          const std::int32_t value) -> std::expected<void, std::string> {
+        if (m_manager == nullptr || m_manager->game_state() == nullptr) {
+          return std::expected<void, std::string>{std::unexpect,
+              "session game state is not initialized"};
+        }
+        return m_manager->game_state()->set_global_variable(id, value);
+      });
+  runtime.set_global_variable_snapshot_sink([this]() -> std::span<const std::int32_t> {
+    if (m_manager == nullptr || m_manager->game_state() == nullptr) {
+      return {};
+    }
+    return m_manager->game_state()->global_variables();
+  });
+  runtime.set_character_value_read_sink(
+      [this, owner_slot, prefer_scene_definition](const Script::AreaCharacterValueRequest& request)
+          -> std::expected<std::int32_t, std::string> {
+        return character_value(owner_slot, prefer_scene_definition, request);
+      });
+  runtime.set_character_value_write_sink(
+      [this, owner_slot, prefer_scene_definition](
+          const Script::AreaCharacterValueRequest& request,
+          const std::int32_t value) -> std::expected<void, std::string> {
+        return set_character_value(owner_slot, prefer_scene_definition, request, value);
+      });
+}
+
+std::expected<std::int16_t, std::string>
+ScenarioStartupController::ensure_character_value_profile(const std::size_t owner_slot,
+    const bool prefer_scene_definition,
+    const std::int16_t requested_character_id) {
+  if (m_manager == nullptr || m_manager->game_state() == nullptr) {
+    return std::expected<std::int16_t, std::string>{std::unexpect,
+        "session game state is not initialized"};
+  }
+
+  std::int16_t character_id{requested_character_id};
+  std::size_t definition_owner_slot{owner_slot};
+  bool scene_first{prefer_scene_definition};
+  if (requested_character_id == -1) {
+    const std::optional<ControlledCharacterRef> current{m_manager->controlled_character()};
+    if (!current.has_value()) {
+      return std::expected<std::int16_t, std::string>{std::unexpect,
+          "current controlled character is not established"};
+    }
+    character_id = current->character_id;
+    scene_first = false;
+    auto* const resident{std::ranges::find(
+        m_area_slots, current->world_scene_id, &RuntimeAreaSlot::world_scene_id)};
+    if (resident == m_area_slots.end()) {
+      return std::expected<std::int16_t, std::string>{std::unexpect,
+          fmt::format("current character {} world {} has no resident AREA owner",
+              character_id,
+              current->world_scene_id)};
+    }
+    definition_owner_slot =
+        static_cast<std::size_t>(std::distance(m_area_slots.begin(), resident));
+  }
+
+  GameState& game_state{*m_manager->game_state()};
+  if (game_state.has_character_profile(character_id)) {
+    return character_id;
+  }
+  if (definition_owner_slot >= m_area_slots.size()) {
+    return std::expected<std::int16_t, std::string>{std::unexpect,
+        "character-value owner AREA slot is out of range"};
+  }
+
+  const RuntimeAreaSlot& slot{m_area_slots.at(definition_owner_slot)};
+  const auto area_values = [&slot, character_id]()
+      -> std::optional<Omikron::IamCharacterValueInitialState> {
+    if (!slot.primary.has_value()) {
+      return std::nullopt;
+    }
+    const auto definition{slot.primary->character_definition_by_character_id(character_id)};
+    return definition.has_value()
+        ? std::optional<Omikron::IamCharacterValueInitialState>{definition->initial_values}
+        : std::nullopt;
+  };
+  const auto scene_values = [&slot, character_id]()
+      -> std::optional<Omikron::IamCharacterValueInitialState> {
+    if (!slot.scene.has_value()) {
+      return std::nullopt;
+    }
+    const auto definition{slot.scene->character_definition_by_character_id(character_id)};
+    return definition.has_value()
+        ? std::optional<Omikron::IamCharacterValueInitialState>{definition->initial_values}
+        : std::nullopt;
+  };
+
+  std::optional<Omikron::IamCharacterValueInitialState> initial_values;
+  if (scene_first) {
+    initial_values = scene_values();
+    if (!initial_values.has_value()) {
+      initial_values = area_values();
+    }
+  } else {
+    initial_values = area_values();
+    if (!initial_values.has_value()) {
+      initial_values = scene_values();
+    }
+  }
+  if (!initial_values.has_value()) {
+    return std::expected<std::int16_t, std::string>{std::unexpect,
+        fmt::format("character {} has no definition in compact owner slot {}",
+            character_id,
+            definition_owner_slot)};
+  }
+
+  game_state.ensure_character_profile(character_id, initial_values.value());
+  return character_id;
+}
+
+std::expected<std::int32_t, std::string> ScenarioStartupController::character_value(
+    const std::size_t owner_slot,
+    const bool prefer_scene_definition,
+    const Script::AreaCharacterValueRequest& request) {
+  auto character_id{
+      ensure_character_value_profile(owner_slot, prefer_scene_definition, request.character_id)};
+  if (!character_id) {
+    return std::expected<std::int32_t, std::string>{std::unexpect, character_id.error()};
+  }
+  return m_manager->game_state()->character_value(character_id.value(), request.value_kind);
+}
+
+std::expected<void, std::string> ScenarioStartupController::set_character_value(
+    const std::size_t owner_slot,
+    const bool prefer_scene_definition,
+    const Script::AreaCharacterValueRequest& request,
+    const std::int32_t value) {
+  auto character_id{
+      ensure_character_value_profile(owner_slot, prefer_scene_definition, request.character_id)};
+  if (!character_id) {
+    return std::expected<void, std::string>{std::unexpect, character_id.error()};
+  }
+  return m_manager->game_state()->set_character_value(
+      character_id.value(), request.value_kind, value);
+}
+
 void ScenarioStartupController::bind_scene_compact_services(
     Script::AreaScriptRuntime& runtime, const std::size_t owner_slot) {
+  bind_compact_state_services(runtime, owner_slot, true);
   runtime.set_area_release_sink(
       [this](const Script::AreaReleaseRequest& request) { return release_area(request); });
   runtime.set_area_scene_attach_sink(
@@ -1225,6 +1381,13 @@ std::expected<void, std::string> ScenarioStartupController::select_current_chara
   if (character == nullptr) {
     return std::expected<void, std::string>{std::unexpect,
         fmt::format("selected character {} was not materialized", request.character_id)};
+  }
+  if (auto profile{ensure_character_value_profile(owner_slot, false, request.character_id)};
+      !profile) {
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format("cannot initialize selected character {} profile: {}",
+            request.character_id,
+            profile.error())};
   }
   m_manager->set_controlled_character(ControlledCharacterRef{
       .character_id = request.character_id, .world_scene_id = slot.world_scene_id});

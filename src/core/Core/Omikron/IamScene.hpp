@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "Core/Omikron/IamCamera.hpp"
+#include "Core/Omikron/IamCharacterDefinition.hpp"
 
 namespace App::Omikron {
 
@@ -32,6 +33,7 @@ struct IamSceneCharacterDefinitionRecord {
   std::string model_resource;
   std::optional<std::string> string_00;
   std::optional<std::string> string_04;
+  IamCharacterValueInitialState initial_values;
 };
 
 /// One 0x18-byte SCENE table-1 object placement. The last authored word is

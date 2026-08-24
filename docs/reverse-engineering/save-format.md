@@ -523,6 +523,36 @@ slot +0x28, 0x2000 bytes
 
 This means OpenNomad should not create a new-game state by manually reproducing a large set of guessed defaults. `IAM/START` is the authoritative retail template for a fresh playthrough.
 
+## 8.1 START global-variable region
+
+The START header selects the authored signed-global array exactly:
+
+```text
+header +0x08  uint32 globalVariablesOffset  -> begin
+header +0x0C  uint32 areaMappingOffset      -> end
+
+region = [begin, end)
+element = little-endian int32_t
+```
+
+The parser validates ordered bounds, an end within the record, and a byte
+count divisible by four. It does not hardcode a retail offset or count.
+
+The studied retail START corroborates the layout independently:
+
+```text
+begin  0x058C
+end    0x1064
+bytes  0x0AD8
+count  694 signed dwords
+IDs    0..693 (matching VARIABLES.TAG's highest authored ID)
+```
+
+OpenNomad's `GameState::from_start()` copies these values verbatim, including
+zero, positive, and negative initial values. All compact AREA/SCENE reads,
+writes, and interface-result destinations access that single playthrough
+store; the array is never initialized by assuming every value is zero.
+
 ---
 
 # 9. `0x0040D950`: serialize live START state
@@ -703,7 +733,9 @@ std::int32_t globalVariables[694];
 
 is confirmed.
 
-Pristine retail `START` initializes all 694 entries to zero.
+The studied pristine retail `START` happens to author zero in all 694 entries.
+That corpus observation is not an initialization rule: loaders must copy every
+signed dword from the header-selected region rather than synthesize zeros.
 
 Known variable IDs include:
 

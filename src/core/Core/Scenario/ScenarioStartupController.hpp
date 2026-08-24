@@ -209,6 +209,25 @@ class ScenarioStartupController {
       const Script::AreaAddressFlagRequest& request);
   [[nodiscard]] std::expected<void, std::string> add_object_to_persistent_collection(
       const Script::AreaPersistentObjectCollectionRequest& request);
+  /// Wires one compact context to playthrough-owned globals and character
+  /// profiles. `prefer_scene_definition` preserves the context's resource
+  /// ownership when an authored ID exists in both definition tables.
+  void bind_compact_state_services(Script::AreaScriptRuntime& runtime,
+      std::size_t owner_slot,
+      bool prefer_scene_definition);
+  [[nodiscard]] std::expected<std::int16_t, std::string> ensure_character_value_profile(
+      std::size_t owner_slot,
+      bool prefer_scene_definition,
+      std::int16_t requested_character_id);
+  [[nodiscard]] std::expected<std::int32_t, std::string> character_value(
+      std::size_t owner_slot,
+      bool prefer_scene_definition,
+      const Script::AreaCharacterValueRequest& request);
+  [[nodiscard]] std::expected<void, std::string> set_character_value(
+      std::size_t owner_slot,
+      bool prefer_scene_definition,
+      const Script::AreaCharacterValueRequest& request,
+      std::int32_t value);
   [[nodiscard]] std::expected<void, std::string> select_current_character(
       std::size_t owner_slot, const Script::AreaCharacterSelectionRequest& request);
   [[nodiscard]] std::expected<void, std::string> set_current_character_presentation(bool enabled);

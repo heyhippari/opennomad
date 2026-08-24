@@ -8,7 +8,7 @@
 #include <optional>
 #include <span>
 #include <string>
-#include <unordered_map>
+#include <string_view>
 #include <vector>
 
 #include "Core/Audio/AudioTypes.hpp"
@@ -96,6 +96,13 @@ struct AreaAddressFlagRequest {
 struct AreaPersistentObjectCollectionRequest {
   std::int16_t collection_kind{0};
   std::int16_t object_id{0};
+};
+
+/// Numeric character-profile access requested by compact opcodes 0x56/0x5D.
+/// `character_id == -1` selects the session controlled character.
+struct AreaCharacterValueRequest {
+  std::int16_t character_id{0};
+  std::int16_t value_kind{0};
 };
 
 /// Current-character selection requested by compact IAM opcode 0x38. The
@@ -267,6 +274,19 @@ class AreaScriptRuntime {
   using PersistentObjectCollectionSink = std::function<std::expected<void, std::string>(
       const AreaPersistentObjectCollectionRequest&)>;
 
+  /// Shared START/global-variable services owned by the playthrough state.
+  using GlobalVariableReadSink =
+      std::function<std::expected<std::int32_t, std::string>(std::uint16_t id)>;
+  using GlobalVariableWriteSink = std::function<std::expected<void, std::string>(
+      std::uint16_t id, std::int32_t value)>;
+  using GlobalVariableSnapshotSink = std::function<std::span<const std::int32_t>()>;
+
+  /// Session character-profile services used by compact opcodes 0x56/0x5D.
+  using CharacterValueReadSink = std::function<std::expected<std::int32_t, std::string>(
+      const AreaCharacterValueRequest&)>;
+  using CharacterValueWriteSink = std::function<std::expected<void, std::string>(
+      const AreaCharacterValueRequest&, std::int32_t value)>;
+
   /// Bridge from opcode 0x4E to the active world's character runtime.
   using CharacterActivationSink =
       std::function<std::expected<void, std::string>(const AreaCharacterActivationRequest&)>;
@@ -339,6 +359,19 @@ class AreaScriptRuntime {
   void set_address_flag_sink(AddressFlagSink sink);
   /// Wires persistent object-collection insertion from opcode 0x32.
   void set_persistent_object_collection_sink(PersistentObjectCollectionSink sink);
+
+  /// Wires every compact global-variable read/write to shared session state.
+  void set_global_variable_read_sink(GlobalVariableReadSink sink);
+  void set_global_variable_write_sink(GlobalVariableWriteSink sink);
+  void set_global_variable_snapshot_sink(GlobalVariableSnapshotSink sink);
+
+  /// Wires numeric character-profile reads/writes to shared session state.
+  void set_character_value_read_sink(CharacterValueReadSink sink);
+  void set_character_value_write_sink(CharacterValueWriteSink sink);
+
+  /// Supplies the compact context's Scalar16 parameter block. Values whose
+  /// serialized high marker is 0x4000 resolve through this copied block.
+  void set_scalar16_parameters(std::span<const std::int16_t> parameters);
 
   /// Wires AREA opcode 0x4E to runtime-character activation.
   void set_character_activation_sink(CharacterActivationSink sink);
@@ -444,12 +477,11 @@ class AreaScriptRuntime {
     return m_queued_events;
   }
 
-  /// Value of a START/global variable set by opcodes 0x0D/0x0E, or nullopt.
+  /// Value of a shared START/global variable, or nullopt on an unwired or
+  /// out-of-range access.
   [[nodiscard]] std::optional<std::int32_t> variable(std::uint16_t id) const;
-  /// All START/global variables set by opcodes 0x0D/0x0E (diagnostics).
-  [[nodiscard]] const std::unordered_map<std::uint16_t, std::int32_t>& variables() const {
-    return m_variables;
-  }
+  /// Shared session global-variable snapshot for diagnostics.
+  [[nodiscard]] std::span<const std::int32_t> global_variables() const;
 
   [[nodiscard]] std::size_t evaluation_stack_depth() const {
     return m_evaluation_stack.size();
@@ -547,6 +579,13 @@ class AreaScriptRuntime {
   [[nodiscard]] std::expected<std::size_t, std::string> relative_target(
       std::size_t base, std::int32_t displacement) const;
 
+  [[nodiscard]] std::expected<std::int16_t, std::string> resolve_scalar16(
+      std::int32_t operand, std::string_view semantic) const;
+  [[nodiscard]] std::expected<std::int32_t, std::string> read_global_variable(
+      std::uint16_t id) const;
+  [[nodiscard]] std::expected<void, std::string> write_global_variable(
+      std::uint16_t id, std::int32_t value);
+
   /// Immutable bytecode ownership keeps a context valid while its owning AREA
   /// or attached SCENE is released by one of its own nonblocking opcodes.
   std::vector<std::byte> m_script_storage;
@@ -559,7 +598,7 @@ class AreaScriptRuntime {
   std::uint16_t m_wait_state{0};
   AreaWaitState m_wait{};
   std::optional<std::int16_t> m_completion_result;
-  std::unordered_map<std::uint16_t, std::int32_t> m_variables;
+  std::vector<std::int16_t> m_scalar16_parameters;
   std::vector<std::int32_t> m_evaluation_stack;
   InterfaceSink m_interface_sink;
   MusicSink m_music_sink;
@@ -572,6 +611,11 @@ class AreaScriptRuntime {
   AreaAddressPlacementSink m_area_address_placement_sink;
   AddressFlagSink m_address_flag_sink;
   PersistentObjectCollectionSink m_persistent_object_collection_sink;
+  GlobalVariableReadSink m_global_variable_read_sink;
+  GlobalVariableWriteSink m_global_variable_write_sink;
+  GlobalVariableSnapshotSink m_global_variable_snapshot_sink;
+  CharacterValueReadSink m_character_value_read_sink;
+  CharacterValueWriteSink m_character_value_write_sink;
   CharacterActivationSink m_character_activation_sink;
   CharacterSelectionSink m_character_selection_sink;
   CharacterDeactivationSink m_character_deactivation_sink;

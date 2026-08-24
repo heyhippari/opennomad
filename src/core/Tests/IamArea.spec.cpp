@@ -152,6 +152,10 @@ TEST_SUITE("Core::Omikron::IamAreaRecord") {
     std::memcpy(data.data() + k_definition_offset + 0x08U, k_name.data(), k_name.size());
     constexpr std::string_view k_model{"HO1_FNM"};
     std::memcpy(data.data() + k_definition_offset + 0x90U, k_model.data(), k_model.size());
+    write_i16(data, k_definition_offset + 0x9CU, 22);
+    write_i16(data, k_definition_offset + 0xAAU, 11);
+    write_u16(data, k_definition_offset + 0xACU, 44);
+    write_i16(data, k_definition_offset + 0xAEU, 55);
     write_u16(data, k_definition_offset + 0x110U, 310);
 
     const auto record{IamAreaRecord::load(data)};
@@ -162,6 +166,10 @@ TEST_SUITE("Core::Omikron::IamAreaRecord") {
     REQUIRE(definition.has_value());
     CHECK_EQ(definition->name, "KAY'L 669");
     CHECK_EQ(definition->model_resource, "HO1_FNM");
+    CHECK_EQ(definition->initial_values.field_aa, 11);
+    CHECK_EQ(definition->initial_values.field_9c, 22);
+    CHECK_EQ(definition->initial_values.field_ac, 44);
+    CHECK_EQ(definition->initial_values.field_ae, 55);
   }
 
   TEST_CASE("AREA table 6 exposes recovered camera records by signed ID") {

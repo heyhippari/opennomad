@@ -4,6 +4,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <span>
 #include <string>
@@ -79,11 +80,17 @@ AreaVmContextDebugState build_area_vm_context_debug_state(
     result.current_instruction = std::move(instruction);
   }
 
-  result.variables.reserve(runtime.variables().size());
-  for (const auto& [id, value] : runtime.variables()) {
-    result.variables.push_back(AreaVmVariableDebugState{.id = id, .value = value});
+  const std::span<const std::int32_t> variables{runtime.global_variables()};
+  const std::size_t inspectable_count{std::min(variables.size(),
+      static_cast<std::size_t>(std::numeric_limits<std::uint16_t>::max()) + 1U)};
+  result.variables.reserve(inspectable_count);
+  for (std::size_t index{0}; index < inspectable_count; ++index) {
+    // std::span has no at(); inspectable_count is clamped to its size above.
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
+    const std::int32_t value{variables[index]};
+    result.variables.push_back(
+        AreaVmVariableDebugState{.id = static_cast<std::uint16_t>(index), .value = value});
   }
-  std::ranges::sort(result.variables, {}, &AreaVmVariableDebugState::id);
   return result;
 }
 

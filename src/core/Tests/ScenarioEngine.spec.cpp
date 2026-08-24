@@ -82,7 +82,8 @@ std::vector<std::byte> make_prefix() {
 
 std::vector<std::byte> make_start() {
   std::vector<std::byte> data(0x58A, std::byte{});
-  write_u32(data, 0x0C, 0x10);
+  write_u32(data, 0x08, 0x20);
+  write_u32(data, 0x0C, 0x350);
   write_u16(data, 0x586, 118);
   write_u16(data, 0x588, 0xFFFF);  // -1
   return data;
@@ -163,7 +164,9 @@ std::vector<std::byte> make_transition_scene_archive() {
   write_u32(data, (k_scene_id * 8U) + 4U, 0x45U);
   write_u32(data, k_record_offset + 0x04U, 0x44U);
   write_u32(data, k_record_offset + 0x08U + (6U * 4U), 0x45U);
-  data.at(k_record_offset + 0x44U) = std::byte{0x57};
+  // Deliberately unsupported sentinel: the attachment test only needs to
+  // prove the independent SCENE compact context was activated.
+  data.at(k_record_offset + 0x44U) = std::byte{0x99};
   return data;
 }
 
@@ -682,7 +685,7 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
     REQUIRE(engine.runtime_area_slot(1)->scene_script.has_value());
     CHECK(engine.runtime_area_slot(1)->scene_script->state() ==
           AreaScriptState::k_paused_unsupported);
-    CHECK_EQ(engine.runtime_area_slot(1)->scene_script->pause_info().opcode, 0x57U);
+    CHECK_EQ(engine.runtime_area_slot(1)->scene_script->pause_info().opcode, 0x99U);
     CHECK_EQ(engine.area_mapping(222), std::optional<std::int32_t>{55});
     CHECK(seq_of(recorder, "AreaTransition.Accepted", "target=222").has_value());
     CHECK(seq_of(recorder, "AreaTransition.TargetPrepared", "model='AIMPASSE'").has_value());
