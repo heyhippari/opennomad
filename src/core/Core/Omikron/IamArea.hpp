@@ -30,16 +30,8 @@ struct IamAreaCharacterRecord {
   std::uint16_t state_bit_index{0};
 };
 
-/// One authored 0x114-byte character/body definition from AREA table 4.
-///
-/// Retail AREA data pairs this record with table-0 characters by character
-/// identity: table-0 +0x02 equals table-4 +0x110.
-struct IamAreaCharacterDefinitionRecord {
-  std::int32_t character_id{0};    ///< +0x110, referenced by table 0 +0x12.
-  std::string name;                ///< +0x008, 32-byte NUL-terminated name.
-  std::string model_resource;      ///< +0x090, 10-byte NUL-terminated model name.
-  IamCharacterValueInitialState initial_values;
-};
+/// AREA table-4 uses the shared complete 0x114-byte authored definition.
+using IamAreaCharacterDefinitionRecord = IamCharacterDefinition;
 
 /// One named 0x10-byte spawn/address entry from AREA table 5.
 struct IamAreaAddressRecord {

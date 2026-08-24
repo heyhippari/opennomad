@@ -5,8 +5,8 @@
 #include <cstdint>
 #include <expected>
 #include <optional>
+#include <span>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 #include "Core/Interface/InterfaceDispatcher.hpp"
@@ -143,10 +143,10 @@ class ScenarioStartupController {
   [[nodiscard]] std::int16_t linked_area_id() const {
     return m_linked_area_id;
   }
-  /// Reproduced `areaMapping[areaId]` value, or nullopt when unset.
+  /// Persistent `areaMap[areaId]` value, or nullopt for an invalid ID/state.
   [[nodiscard]] std::optional<std::int32_t> area_mapping(std::int32_t area_id) const;
-  /// All recovered area-mapping entries (diagnostics).
-  [[nodiscard]] const std::unordered_map<std::int32_t, std::int32_t>& area_mapping_entries() const;
+  /// Canonical recovered area-map table (diagnostics).
+  [[nodiscard]] std::span<const std::int16_t> area_mapping_entries() const;
   [[nodiscard]] const Omikron::IamAreaRecord* area_record() const;
   /// Index of the currently presented resident AREA slot.
   [[nodiscard]] std::size_t active_area_slot() const {
@@ -285,10 +285,6 @@ class ScenarioStartupController {
   std::optional<PendingAreaTransition> m_area_transition;
   std::uint64_t m_next_area_transition_generation{1};
   std::optional<Script::AreaScriptRuntime> m_area_script;
-
-  /// Runtime-style AREA mapping: START initializes its linked-AREA value and
-  /// 0x47 later replaces the entry with the attached SCENE ID.
-  std::unordered_map<std::int32_t, std::int32_t> m_area_mapping;
 
   std::int16_t m_initial_area_id{0};
   std::int16_t m_linked_area_id{0};

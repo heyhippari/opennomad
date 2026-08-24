@@ -40,7 +40,9 @@ std::vector<std::byte> valid_scene() {
   constexpr std::size_t k_table7{k_table4 + 0x114U};
   constexpr std::size_t k_script{k_table7 + 0x08U};
   constexpr std::size_t k_table6{k_script + 0x02U};
-  std::vector<std::byte> data(k_table6 + 0x2CU, std::byte{});
+  constexpr std::size_t k_signs{k_table6 + 0x2CU};
+  constexpr std::size_t k_interests{k_signs + 16U};
+  std::vector<std::byte> data(k_interests + 16U, std::byte{});
 
   table(data, 0, k_table0, 1);
   table(data, 1, k_table1, 1);
@@ -63,6 +65,9 @@ std::vector<std::byte> valid_scene() {
   write(data, k_table2 + 0x40U, static_cast<std::int16_t>(9));
   write(data, k_table4 + 0x10EU, static_cast<std::int16_t>(-1));
   write(data, k_table4 + 0x110U, static_cast<std::int16_t>(57));
+  write(data, k_table4 + 0x112U, static_cast<std::int16_t>(-4));
+  write(data, k_table4 + 0x00U, static_cast<std::uint32_t>(k_signs));
+  write(data, k_table4 + 0x04U, static_cast<std::uint32_t>(k_interests));
   constexpr char k_name[]{"LOCAL CHARACTER"};
   constexpr char k_model[]{"DE1_FN"};
   std::memcpy(data.data() + k_table4 + 0x08U, k_name, sizeof(k_name));
@@ -70,6 +75,10 @@ std::vector<std::byte> valid_scene() {
   write(data, k_table4 + 0xA0U, static_cast<std::int16_t>(16));
   write(data, k_table4 + 0xA8U, static_cast<std::int16_t>(20));
   write(data, k_table4 + 0xACU, static_cast<std::uint16_t>(444));
+  constexpr char k_signs_text[]{"Quiet observer"};
+  constexpr char k_interests_text[]{"Ancient books"};
+  std::memcpy(data.data() + k_signs, k_signs_text, sizeof(k_signs_text));
+  std::memcpy(data.data() + k_interests, k_interests_text, sizeof(k_interests_text));
   write(data, k_table7 + 0x00U, static_cast<std::uint32_t>(k_script));
   write(data, k_table7 + 0x04U, static_cast<std::int32_t>(3));
   data.at(k_script) = std::byte{0x57};
@@ -112,9 +121,14 @@ TEST_SUITE("Core::Omikron::IamSceneRecord") {
     REQUIRE(definition.has_value());
     CHECK_EQ(definition->name, "LOCAL CHARACTER");
     CHECK_EQ(definition->model_resource, "DE1_FN");
-    CHECK_EQ(definition->initial_values.field_a0, 16);
-    CHECK_EQ(definition->initial_values.field_a8, 20);
-    CHECK_EQ(definition->initial_values.field_ac, 444);
+    CHECK_EQ(definition->signs, std::optional<std::string>{"Quiet observer"});
+    CHECK_EQ(definition->interests, std::optional<std::string>{"Ancient books"});
+    CHECK_EQ(definition->values.attack, 16);
+    CHECK_EQ(definition->values.unknown_characteristic_a8, 20);
+    CHECK_EQ(definition->values.seteks, 444);
+    CHECK_EQ(definition->linked_object_id, -1);
+    CHECK_EQ(definition->character_id, 57);
+    CHECK_EQ(definition->unknown_112, -4);
     const std::vector<App::Omikron::IamSceneZoneRecord> zones{scene->zones()};
     REQUIRE_EQ(zones.size(), 1U);
     CHECK_EQ(zones.front().event_offsets.at(0), scene->script_offset());

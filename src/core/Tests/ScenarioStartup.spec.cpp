@@ -30,6 +30,7 @@
 #include "Core/Scenario/ScenarioStartupController.hpp"
 #include "Core/Script/AreaScriptRuntime.hpp"
 #include "Core/Script/ScriptRuntime.hpp"
+#include "IamStartTestData.hpp"
 #include "OmikronTestBuffer.hpp"
 
 namespace {
@@ -115,12 +116,7 @@ std::vector<std::byte> make_new_game_script() {
 
 /// IAM/START selecting initial area 118 with linked area -1.
 std::vector<std::byte> make_start() {
-  std::vector<std::byte> data(0x58A, std::byte{});
-  write_u32(data, 0x08, 0x20);
-  write_u32(data, 0x0C, 0x350);
-  write_u16(data, 0x586, 118);
-  write_u16(data, 0x588, 0xFFFF);  // -1
-  return data;
+  return App::Tests::make_canonical_start();
 }
 
 /// IAM/AREA with record 118 at offset 0x800, size 0x9C0.
@@ -444,14 +440,16 @@ void write_character_value_fixtures(const TempDirectory& temp) {
   script.u8(0x56).u16(310).u16(4).u16(63);
   script.u8(0x0C).u16(60);
   script.u8(0x5D).u16(0xFFFF).u16(5).u16(60);
+  script.u8(0x0C).u16(37);
+  script.u8(0x5D).u16(0xFFFF).u16(4).u16(37);
   script.u8(0x5D).u16(310).u16(4).u16(62);
   script.u8(0x56).u16(0xFFFF).u16(5).u16(64);
   script.u8(0x56).u16(310).u16(4).u16(65);
   script.u8(0x03);
 
   std::vector<std::byte> start{make_start()};
-  write_u32(start, 0x20U + (60U * sizeof(std::int32_t)), 1234U);
-  write_u32(start, 0x20U + (62U * sizeof(std::int32_t)), 321U);
+  write_u32(start, 0x058CU + (60U * sizeof(std::int32_t)), 1234U);
+  write_u32(start, 0x058CU + (62U * sizeof(std::int32_t)), 321U);
 
   std::vector<std::byte> area{make_area_archive()};
   constexpr std::size_t k_record_offset{0x800};
@@ -505,12 +503,17 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK_EQ(controller.current_controlled_character(), std::optional<std::int16_t>{136});
     REQUIRE(manager.game_state() != nullptr);
     CHECK_EQ(manager.game_state()->global_variable(60).value(), 0);
+    CHECK_EQ(manager.game_state()->global_variable(37).value(), 0);
     CHECK_EQ(manager.game_state()->global_variable(61).value(), 77);
     CHECK_EQ(manager.game_state()->global_variable(63).value(), 444);
     CHECK_EQ(manager.game_state()->global_variable(64).value(), 0);
     CHECK_EQ(manager.game_state()->global_variable(65).value(), 321);
     CHECK_EQ(manager.game_state()->character_value(136, 5).value(), 0);
     CHECK_EQ(manager.game_state()->character_value(310, 4).value(), 321);
+    REQUIRE(manager.game_state()->current_character().has_value());
+    CHECK_EQ(manager.game_state()->current_character()->character_id, 136);
+    CHECK_EQ(manager.game_state()->current_character()->values.rings, 0);
+    CHECK_EQ(manager.game_state()->current_character()->values.seteks, 0U);
     CHECK(runtime->character_runtime().find(136) != nullptr);
     CHECK(runtime->character_runtime().find(310) == nullptr);
   }
@@ -621,7 +624,9 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK_EQ(manager.world_contexts()[0].residency, WorldSceneResidencyState::Free);
     CHECK_EQ(manager.world_contexts()[1].residency, WorldSceneResidencyState::LoadedActive);
     CHECK_EQ(controller.area_mapping(222), std::optional<std::int32_t>{0});
-    CHECK_FALSE(controller.area_mapping(118).has_value());
+    CHECK_EQ(controller.area_mapping(118), std::optional<std::int32_t>{-1});
+    REQUIRE(manager.game_state() != nullptr);
+    CHECK_EQ(manager.game_state()->current_area(), 222);
     const std::optional<App::ControlledCharacterRef> current{manager.controlled_character()};
     REQUIRE(current.has_value());
     CHECK_EQ(current->character_id, 57);
@@ -666,6 +671,9 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK_EQ(controller.initial_area_id(), 118);
     CHECK_EQ(controller.linked_area_id(), -1);
     CHECK_EQ(controller.area_mapping(118), std::optional<std::int32_t>{-1});
+    REQUIRE(manager.game_state() != nullptr);
+    CHECK_EQ(manager.game_state()->current_area(), 118);
+    CHECK_EQ(manager.game_state()->linked_area(), -1);
 
     REQUIRE(controller.area_record() != nullptr);
     CHECK_EQ(controller.area_record()->record_size(), 0x9C0U);

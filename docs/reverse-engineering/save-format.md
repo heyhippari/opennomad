@@ -705,12 +705,13 @@ struct SerializedStartState {
 
 Serialized retail `IAM/START` ends at `0x1636`. The save snapshot always reserves/stores a full `0x2000` bytes.
 
-The relocated ADDRESS region is selected by the header pair `START +0x18`
-through `START +0x1C`, not by a hard-coded retail offset in consumers. Retail
-uses `[0x1398, 0x13FC)`: 100 bytes, or 800 least-significant-bit-first flags.
-For nonnegative ADDRESS ID `n`, Runtime uses byte `n / 8` and bit `n % 8`.
-OpenNomad's semantic `GameState` copies these bytes during New Game/session
-initialization and rejects IDs outside the copied capacity.
+`IamStart` validates the six offsets as one monotonic chain through the actual
+logical file end, including the four-byte global and two-byte area-map element
+widths. `GameState::from_start()` then copies every recovered region: globals,
+the area map, packed two-bit state, CHARACTER/ADDRESS/ZONE bitsets, object
+collections, current/linked area, saved transform, current character, metadata,
+and the two neutrally preserved opaque fixed ranges. The serialized offsets
+remain decoder concerns and never become gameplay pointers.
 
 ---
 
@@ -752,7 +753,9 @@ Known variable IDs include:
 
 Real saves show these fields evolving as expected for gameplay script state.
 
-This has an important OpenNomad architectural implication: script global-variable reads/writes should ultimately converge on the persistent `GameState` array. A separate AREA-runtime-only variable map is a temporary approximation and would break save semantics.
+OpenNomad script global-variable reads/writes converge on the persistent
+`GameState` array. AREA and SCENE compact contexts receive checked services for
+that one store; neither context owns a variable copy.
 
 The already-reversed interface opcode `0x46` is a concrete example: its completion destination can be global variable `19` (`Interface`), and the value must persist in this canonical variable store.
 
@@ -782,6 +785,11 @@ std::int16_t areaMap[260];
 ```
 
 The default table is overwhelmingly `-1`.
+
+OpenNomad keeps the complete fixed indexed table in `GameState`. Startup,
+SCENE attachment, release, and diagnostics all use it directly;
+`ScenarioStartupController` has no separate map or cache. Release writes `-1`
+to the existing slot rather than erasing an entry.
 
 ---
 
@@ -822,6 +830,9 @@ slot 50      3     125    239     305
 
 State `2` accumulates strongly as the game progresses, mainly at the expense of states `1` and `3`. This is consistent with a persistent authored-object/entity lifecycle machine but is not enough to assign a final name.
 
+OpenNomad preserves the 168 raw bytes in `GameState` and exposes checked
+two-bit reads/writes for all 672 entries without assigning a gameplay name.
+
 ---
 
 # 15. CHARACTER, ADDRESS, and ZONE flag bitsets
@@ -842,6 +853,8 @@ Runtime provides direct bit get/set operations. `CHARACTERS.TAG` is not present 
 
 The real saves show that this is not a simple monotonic "characters discovered" bitmap; bits both set and clear over a playthrough.
 
+OpenNomad preserves these bytes and provides checked LSB-first bit access.
+
 ## 15.2 ADDRESS flags at `+0x1398`
 
 ```text
@@ -857,6 +870,9 @@ ADDRESSES
 `ADDRESSES.TAG` contains IDs up to roughly 790, matching the 800-bit capacity closely.
 
 Exact meaning of bit 0/1 still needs behavioral tracing.
+
+OpenNomad preserves these bytes and retains compact `0x57/0x58` mutation
+through the canonical `GameState` bitset.
 
 ## 15.3 ZONE flags at `+0x13FC`
 
@@ -880,6 +896,10 @@ ZONES
 ```
 
 This agrees with high-bit modifiers observed in zone IDs.
+
+OpenNomad preserves exactly the 570 bytes ending at serialized START's actual
+`0x1636` end. Its checked semantic access masks `0x8000` before indexing; the
+zero-filled tail of a future `0x2000` save snapshot is not treated as ZONE data.
 
 ---
 
@@ -1029,6 +1049,21 @@ START +0x250  char interests[256]
 ```
 
 Kay'l's retail UI displays the strings directly under labels `Signs` and `Interests`.
+
+For authored AREA/SCENE table-4 definitions, the first two dwords are instead
+record-relative checked string offsets:
+
+```text
+definition +0x00 -> Signs, or 0 for absent
+definition +0x04 -> Interests, or 0 for absent
+```
+
+Both parsers resolve these to owned optional strings and reject offsets that
+leave the owning record or do not reach a NUL terminator. When compact `0x38`
+selects a body, the complete authored definition and these semantic strings
+are promoted into `GameState`'s persistent current-character state. The START
+record's live/stale pointer representations at these offsets are never copied
+as semantic values.
 
 ## 17.3 Character control-set resources
 
@@ -1342,6 +1377,12 @@ This frequently agrees with global variable `22` (`Joueur`) but can differ aroun
 
 The final two bytes at character `+0x112` remain unresolved.
 
+AREA, SCENE, and START now share one full decoder for this `0x114` shape.
+`+0x110` and `+0x112` are decoded as two distinct signed 16-bit fields; the
+former is no longer treated as a final 32-bit ID. A pristine START
+`characterId == -1` record is represented as no current character, so its
+`0xFF`-filled identity fields are not misread as text.
+
 ---
 
 # 24. Working current-character structure
@@ -1463,9 +1504,11 @@ Recommended principles:
 6. **Build New Game from `IAM/START`.** This is the retail canonical initial playthrough state.
 7. **Use one semantic GameState after load.** A retail-imported game should not remain in a special legacy runtime mode.
 
-Current OpenNomad New Game implementation copies the recovered ADDRESS bytes
-and the three fixed-capacity persistent object-ID collections into that
-session-owned state. Native save serialization remains a later step.
+Current OpenNomad New Game decodes the complete recovered IAM/START state into
+one semantic mutable `GameState`. Numeric profiles remain available for
+non-current authored characters, while reads/writes for the selected body use
+the persistent current-character fields and are synchronized across body
+promotion. Native save serialization remains a later step.
 
 Potential architecture:
 

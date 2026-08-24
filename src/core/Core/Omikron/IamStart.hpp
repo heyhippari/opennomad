@@ -1,35 +1,42 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <optional>
 #include <span>
 #include <string>
 
+#include "Core/Omikron/IamCharacterDefinition.hpp"
+
 namespace App::Omikron {
 
-/// Checked view over IAM/START. START is an immutable byte buffer; this view
-/// exposes the startup fields recovered from Runtime.exe without mutating
-/// serialized offsets into pointers.
+/// Checked immutable view over the complete recovered IAM/START layout.
+/// Serialized offsets remain offsets and are never relocated into pointers.
 class IamStart {
  public:
-  /// Serialized offset of the area-mapping table.
-  static constexpr std::size_t k_area_mapping_offset{0x0C};
-  /// Header offsets delimiting the signed 32-bit global-variable region.
+  static constexpr std::size_t k_format_revision_offset{0x00};
+  static constexpr std::size_t k_build_date_offset{0x04};
   static constexpr std::size_t k_global_variables_begin_offset{0x08};
   static constexpr std::size_t k_global_variables_end_offset{0x0C};
-  /// Signed little-endian initial area ID.
-  static constexpr std::size_t k_initial_area_offset{0x586};
-  /// Signed little-endian linked/secondary area ID.
-  static constexpr std::size_t k_linked_area_offset{0x588};
-  /// Minimum size required to read the three fields above (0x588 + 2).
-  static constexpr std::size_t k_min_size{0x58A};
-  /// Header offsets delimiting the relocated persistent ADDRESS bit region.
+  static constexpr std::size_t k_area_mapping_offset{k_global_variables_end_offset};
+  static constexpr std::size_t k_packed_state_offset{0x10};
+  static constexpr std::size_t k_character_flags_offset{0x14};
   static constexpr std::size_t k_address_flags_begin_offset{0x18};
   static constexpr std::size_t k_address_flags_end_offset{0x1C};
-  /// Fixed START locations and capacities of the three persistent object-ID
-  /// collections. Their names deliberately remain numeric until broader
-  /// gameplay semantics are recovered.
+  static constexpr std::size_t k_region_count{6};
+
+  static constexpr std::size_t k_opaque_header_offset{0x20};
+  static constexpr std::size_t k_opaque_header_size{0x0C};
+  static constexpr std::size_t k_saved_position_offset{0x2C};
+  static constexpr std::size_t k_saved_orientation_offset{0x38};
+  static constexpr std::size_t k_current_character_offset{0x3C};
+  static constexpr std::size_t k_current_character_size{0x114};
+  static constexpr std::size_t k_signs_offset{0x150};
+  static constexpr std::size_t k_interests_offset{0x250};
+  static constexpr std::size_t k_character_text_size{0x100};
+
   static constexpr std::size_t k_object_collection_0_offset{0x350};
   static constexpr std::size_t k_object_collection_1_offset{0x374};
   static constexpr std::size_t k_object_collection_2_offset{0x574};
@@ -37,54 +44,57 @@ class IamStart {
   static constexpr std::size_t k_object_collection_1_capacity{256};
   static constexpr std::size_t k_object_collection_2_capacity{9};
 
-  /// Parses a START buffer, validating that it is large enough for the known
-  /// startup fields. The returned view borrows `data`.
+  static constexpr std::size_t k_initial_area_offset{0x586};
+  static constexpr std::size_t k_linked_area_offset{0x588};
+  static constexpr std::size_t k_opaque_area_offset{0x58A};
+  static constexpr std::size_t k_opaque_area_size{2};
+  static constexpr std::size_t k_min_size{0x58C};
+  static constexpr std::size_t k_retail_size{0x1636};
+
   [[nodiscard]] static std::expected<IamStart, std::string> load(std::span<const std::byte> data);
 
-  /// Signed initial area ID (+0x586).
-  [[nodiscard]] std::int16_t initial_area_id() const {
-    return m_initial_area_id;
+  [[nodiscard]] std::uint32_t format_revision() const;
+  [[nodiscard]] std::uint32_t build_date() const;
+  [[nodiscard]] std::array<std::int32_t, 3> saved_position() const;
+  [[nodiscard]] std::int32_t saved_orientation() const;
+  [[nodiscard]] std::int16_t initial_area_id() const;
+  [[nodiscard]] std::int16_t current_area_id() const {
+    return initial_area_id();
   }
-
-  /// Signed linked/secondary area ID (+0x588).
-  [[nodiscard]] std::int16_t linked_area_id() const {
-    return m_linked_area_id;
-  }
-
-  /// Raw serialized offset of the area-mapping table (+0x0C). Resolving the
-  /// table into elements is deferred until its element size/count are known.
+  [[nodiscard]] std::int16_t linked_area_id() const;
   [[nodiscard]] std::uint32_t area_mapping_table_offset() const {
-    return m_area_mapping_table_offset;
+    return m_region_offsets.at(1);
   }
 
-  /// Checked immutable view of the relocated persistent ADDRESS bit region.
-  /// The START header selects its boundaries, so this never assumes retail's
-  /// 100-byte size for synthetic or future data.
-  [[nodiscard]] std::expected<std::span<const std::byte>, std::string> address_flags() const;
+  [[nodiscard]] std::span<const std::byte> opaque_header_state() const;
+  [[nodiscard]] std::span<const std::byte> opaque_area_state() const;
+  [[nodiscard]] std::span<const std::byte> signs_buffer() const;
+  [[nodiscard]] std::span<const std::byte> interests_buffer() const;
 
-  /// Checked immutable bytes of the header-selected signed 32-bit global
-  /// variables. The returned size is always divisible by four.
+  [[nodiscard]] std::expected<std::optional<IamCharacterDefinition>, std::string>
+  current_character() const;
+
   [[nodiscard]] std::expected<std::span<const std::byte>, std::string> global_variables() const;
+  [[nodiscard]] std::expected<std::span<const std::byte>, std::string> area_mappings() const;
+  [[nodiscard]] std::expected<std::span<const std::byte>, std::string> packed_state_bytes() const;
+  [[nodiscard]] std::expected<std::span<const std::byte>, std::string> character_flags() const;
+  [[nodiscard]] std::expected<std::span<const std::byte>, std::string> address_flags() const;
+  [[nodiscard]] std::expected<std::span<const std::byte>, std::string> zone_flags() const;
 
-  /// Checked immutable bytes of one fixed-capacity persistent object-ID
-  /// collection. Each element is one little-endian signed 16-bit object ID.
-  [[nodiscard]] std::expected<std::span<const std::byte>, std::string>
-  persistent_object_collection(std::uint16_t kind) const;
+  [[nodiscard]] std::expected<std::span<const std::byte>, std::string> persistent_object_collection(
+      std::uint16_t kind) const;
 
  private:
-  explicit IamStart(std::span<const std::byte> data,
-      std::int16_t initial_area_id,
-      std::int16_t linked_area_id,
-      std::uint32_t area_mapping_table_offset)
+  explicit IamStart(
+      std::span<const std::byte> data, std::array<std::uint32_t, k_region_count> region_offsets)
       : m_data(data),
-        m_initial_area_id(initial_area_id),
-        m_linked_area_id(linked_area_id),
-        m_area_mapping_table_offset(area_mapping_table_offset) {}
+        m_region_offsets(region_offsets) {}
+
+  [[nodiscard]] std::span<const std::byte> region(
+      std::size_t begin_index, std::size_t end_index) const;
 
   std::span<const std::byte> m_data;
-  std::int16_t m_initial_area_id{0};
-  std::int16_t m_linked_area_id{0};
-  std::uint32_t m_area_mapping_table_offset{0};
+  std::array<std::uint32_t, k_region_count> m_region_offsets{};
 };
 
 }  // namespace App::Omikron

@@ -73,6 +73,7 @@ add_library(${NAME} STATIC
   Core/Omikron/SCX.hpp Core/Omikron/SCX.cpp
   Core/Omikron/SFX.hpp Core/Omikron/SFX.cpp
   Core/Omikron/IamCamera.hpp Core/Omikron/IamCamera.cpp
+  Core/Omikron/IamCharacterDefinition.hpp Core/Omikron/IamCharacterDefinition.cpp
   Core/Omikron/IamArchive.hpp Core/Omikron/IamArchive.cpp
   Core/Omikron/IamStart.hpp Core/Omikron/IamStart.cpp
   Core/Omikron/IamArea.hpp Core/Omikron/IamArea.cpp

@@ -921,11 +921,13 @@ The compact handlers now using that shared state include:
 | `0x5D` `SetCharacterValueFromVariable` | `0x00404790` | three `Scalar16`; global to character numeric value |
 
 For `0x56`/`0x5D`, character ID `-1` uses the separate global/session current
-controlled-character identity. OpenNomad stores the mutable numeric profile by
-authored character ID in `GameState`; it does not modify immutable IAM AREA or
-SCENE definition bytes and does not reload a render body. Runtime's secondary
-HUD/player-status notification after setters has no current OpenNomad
-equivalent and is intentionally not fabricated.
+controlled-character identity. OpenNomad keeps numeric profiles by authored ID
+for non-current bodies, but the selected body's START-style persistent
+current-character fields are canonical. Selection promotes the shared full
+AREA/SCENE definition into `GameState` without modifying immutable IAM bytes or
+making the live render body persistent. Runtime's secondary HUD/player-status
+notification after setters has no current OpenNomad equivalent and is
+intentionally not fabricated.
 
 ## `0x004C0140` — compact scenario opcode descriptor table
 

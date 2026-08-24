@@ -24,17 +24,8 @@ struct IamSceneCharacterRecord {
   std::uint16_t state_bit_index{0};
 };
 
-/// Relevant, recovered fields from one 0x114-byte SCENE table-4 character
-/// definition. The remaining serialized bytes intentionally stay opaque.
-struct IamSceneCharacterDefinitionRecord {
-  std::int16_t runtime_slot_seed{0};
-  std::int16_t character_id{0};
-  std::string name;
-  std::string model_resource;
-  std::optional<std::string> string_00;
-  std::optional<std::string> string_04;
-  IamCharacterValueInitialState initial_values;
-};
+/// SCENE table-4 uses the shared complete 0x114-byte authored definition.
+using IamSceneCharacterDefinitionRecord = IamCharacterDefinition;
 
 /// One 0x18-byte SCENE table-1 object placement. The last authored word is
 /// intentionally neutral until its persistent-state semantics are recovered.

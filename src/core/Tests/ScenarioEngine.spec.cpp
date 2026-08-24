@@ -29,6 +29,7 @@
 #include "Core/Omikron/Model3DO.hpp"
 #include "Core/Script/AreaScriptRuntime.hpp"
 #include "Core/Startup/StartupTraceRecorder.hpp"
+#include "IamStartTestData.hpp"
 #include "OmikronTestBuffer.hpp"
 
 namespace {
@@ -81,12 +82,7 @@ std::vector<std::byte> make_prefix() {
 }
 
 std::vector<std::byte> make_start() {
-  std::vector<std::byte> data(0x58A, std::byte{});
-  write_u32(data, 0x08, 0x20);
-  write_u32(data, 0x0C, 0x350);
-  write_u16(data, 0x586, 118);
-  write_u16(data, 0x588, 0xFFFF);  // -1
-  return data;
+  return App::Tests::make_canonical_start();
 }
 
 std::vector<std::byte> make_area_archive(const std::vector<std::byte>& prefix) {

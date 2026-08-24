@@ -16,6 +16,7 @@
 
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Omikron/IamCamera.hpp"
+#include "Core/Omikron/IamCharacterDefinition.hpp"
 
 namespace App::Omikron {
 
@@ -146,6 +147,7 @@ std::expected<IamSceneRecord, std::string> IamSceneRecord::load(
   const std::size_t definition_count{static_cast<std::size_t>(counts.at(4))};
   for (std::size_t index{0}; index < definition_count; ++index) {
     const std::size_t record_offset{offsets.at(4) + (index * 0x114U)};
+    std::array<std::optional<std::string>, 2> strings{};
     for (const std::size_t string_field : {0U, 4U}) {
       const std::uint32_t string_offset{read_at<std::uint32_t>(data, record_offset + string_field)};
       if (string_offset == 0U) {
@@ -157,6 +159,15 @@ std::expected<IamSceneRecord, std::string> IamSceneRecord::load(
             fmt::format("IAM/SCENE record: table-4 string at {:#x} is not NUL terminated in record",
                 string_offset)};
       }
+      strings.at(string_field / sizeof(std::uint32_t)) =
+          fixed_string(data.subspan(string_offset));
+    }
+    auto parsed{parse_iam_character_definition(data.subspan(record_offset, 0x114U),
+        std::move(strings.at(0)),
+        std::move(strings.at(1)))};
+    if (!parsed) {
+      return std::expected<IamSceneRecord, std::string>{std::unexpect,
+          fmt::format("IAM/SCENE record: table-4 character {}: {}", index, parsed.error())};
     }
   }
 
@@ -305,22 +316,11 @@ IamSceneRecord::character_definition_by_character_id(const std::int16_t characte
     if (read_at<std::int16_t>(record, 0x110U) != character_id) {
       continue;
     }
-    return IamSceneCharacterDefinitionRecord{.runtime_slot_seed = read_at<std::int16_t>(record, 0x10EU),
-        .character_id = character_id,
-        .name = fixed_string(record.subspan(0x08U, 32U)),
-        .model_resource = fixed_string(record.subspan(0x90U, 10U)),
-        .string_00 = optional_record_string(read_at<std::uint32_t>(record, 0U)),
-        .string_04 = optional_record_string(read_at<std::uint32_t>(record, 4U)),
-        .initial_values = {.field_9c = read_at<std::int16_t>(record, 0x09CU),
-            .field_9e = read_at<std::int16_t>(record, 0x09EU),
-            .field_a0 = read_at<std::int16_t>(record, 0x0A0U),
-            .field_a2 = read_at<std::int16_t>(record, 0x0A2U),
-            .field_a4 = read_at<std::int16_t>(record, 0x0A4U),
-            .field_a6 = read_at<std::int16_t>(record, 0x0A6U),
-            .field_a8 = read_at<std::int16_t>(record, 0x0A8U),
-            .field_aa = read_at<std::int16_t>(record, 0x0AAU),
-            .field_ac = read_at<std::uint16_t>(record, 0x0ACU),
-            .field_ae = read_at<std::int16_t>(record, 0x0AEU)}};
+    auto definition{parse_iam_character_definition(record,
+        optional_record_string(read_at<std::uint32_t>(record, 0U)),
+        optional_record_string(read_at<std::uint32_t>(record, 4U)))};
+    return definition ? std::optional<IamSceneCharacterDefinitionRecord>{std::move(*definition)}
+                      : std::nullopt;
   }
   return std::nullopt;
 }

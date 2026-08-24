@@ -2,6 +2,7 @@
 
 #include <fmt/format.h>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -9,10 +10,12 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Omikron/IamCamera.hpp"
+#include "Core/Omikron/IamCharacterDefinition.hpp"
 
 namespace App::Omikron {
 
@@ -114,6 +117,42 @@ std::expected<IamAreaRecord, std::string> IamAreaRecord::load(
               offset,
               span_end,
               data.size())};
+    }
+  }
+
+  constexpr std::size_t k_definition_table_index{4};
+  constexpr std::size_t k_definition_stride{0x114};
+  const std::uint32_t definition_offset{
+      read_u32_at(data, k_offset_table_offsets + (k_definition_table_index * 4U))};
+  const std::uint16_t definition_count{
+      read_u16_at(data, k_offset_table_counts + (k_definition_table_index * 2U))};
+  for (std::size_t index{0}; index < definition_count; ++index) {
+    const std::span<const std::byte> definition{
+        data.subspan(definition_offset + (index * k_definition_stride), k_definition_stride)};
+    std::array<std::optional<std::string>, 2> strings{};
+    for (std::size_t field{0}; field < strings.size(); ++field) {
+      const std::uint32_t string_offset{read_u32_at(definition, field * sizeof(std::uint32_t))};
+      if (string_offset == 0U) {
+        continue;
+      }
+      if (string_offset >= data.size()) {
+        return std::expected<IamAreaRecord, std::string>{std::unexpect,
+            fmt::format("IAM/AREA record: table-4 string at {:#x} is outside record",
+                string_offset)};
+      }
+      const std::span<const std::byte> suffix{data.subspan(string_offset)};
+      if (std::memchr(suffix.data(), '\0', suffix.size()) == nullptr) {
+        return std::expected<IamAreaRecord, std::string>{std::unexpect,
+            fmt::format("IAM/AREA record: table-4 string at {:#x} is not NUL terminated in record",
+                string_offset)};
+      }
+      strings.at(field) = fixed_string(suffix);
+    }
+    auto parsed{parse_iam_character_definition(
+        definition, std::move(strings.at(0)), std::move(strings.at(1)))};
+    if (!parsed) {
+      return std::expected<IamAreaRecord, std::string>{std::unexpect,
+          fmt::format("IAM/AREA record: table-4 character {}: {}", index, parsed.error())};
     }
   }
 
@@ -252,25 +291,20 @@ std::optional<IamAreaCharacterDefinitionRecord> IamAreaRecord::character_definit
   for (std::size_t index{0}; index < table_count(k_definition_table_index); ++index) {
     const std::span<const std::byte> record{
         table->subspan(index * k_definition_stride, k_definition_stride)};
-    // +0x110 occupies the final dword of the 0x114-byte authored record.
-    if (read_i32_at(record, 0x110U) !=
-      static_cast<std::int32_t>(character_id)) {
+    if (read_i16_at(record, 0x110U) != character_id) {
       continue;
     }
-    return IamAreaCharacterDefinitionRecord{
-        .character_id = read_i32_at(record, 0x110U),
-        .name = fixed_string(record.subspan(0x008U, 32U)),
-        .model_resource = fixed_string(record.subspan(0x090U, 10U)),
-        .initial_values = {.field_9c = read_i16_at(record, 0x09CU),
-            .field_9e = read_i16_at(record, 0x09EU),
-            .field_a0 = read_i16_at(record, 0x0A0U),
-            .field_a2 = read_i16_at(record, 0x0A2U),
-            .field_a4 = read_i16_at(record, 0x0A4U),
-            .field_a6 = read_i16_at(record, 0x0A6U),
-            .field_a8 = read_i16_at(record, 0x0A8U),
-            .field_aa = read_i16_at(record, 0x0AAU),
-            .field_ac = read_u16_at(record, 0x0ACU),
-            .field_ae = read_i16_at(record, 0x0AEU)}};
+    std::array<std::optional<std::string>, 2> strings{};
+    for (std::size_t field{0}; field < strings.size(); ++field) {
+      const std::uint32_t string_offset{read_u32_at(record, field * sizeof(std::uint32_t))};
+      if (string_offset != 0U) {
+        strings.at(field) = fixed_string(std::span<const std::byte>{m_bytes}.subspan(string_offset));
+      }
+    }
+    auto definition{parse_iam_character_definition(
+        record, std::move(strings.at(0)), std::move(strings.at(1)))};
+    return definition ? std::optional<IamAreaCharacterDefinitionRecord>{std::move(*definition)}
+                      : std::nullopt;
   }
   return std::nullopt;
 }

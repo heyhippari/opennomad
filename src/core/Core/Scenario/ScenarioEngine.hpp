@@ -4,8 +4,8 @@
 #include <cstdint>
 #include <expected>
 #include <optional>
+#include <span>
 #include <string>
-#include <unordered_map>
 
 #include "Core/Omikron/IamArea.hpp"
 #include "Core/Scenario/ScenarioManager.hpp"
@@ -107,7 +107,7 @@ class ScenarioEngine {
   [[nodiscard]] std::optional<std::int32_t> area_mapping(std::int32_t area_id) const {
     return m_startup.area_mapping(area_id);
   }
-  [[nodiscard]] const std::unordered_map<std::int32_t, std::int32_t>& area_mapping_entries() const {
+  [[nodiscard]] std::span<const std::int16_t> area_mapping_entries() const {
     return m_startup.area_mapping_entries();
   }
   [[nodiscard]] const Omikron::IamAreaRecord* area_record() const {

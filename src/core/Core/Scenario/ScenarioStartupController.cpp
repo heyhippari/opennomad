@@ -12,7 +12,6 @@
 #include <span>
 #include <string>
 #include <string_view>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -178,7 +177,6 @@ void ScenarioStartupController::reset_session() {
   m_start_bytes.clear();
   m_area_archive_bytes.clear();
   m_scene_archive_bytes.clear();
-  m_area_mapping.clear();
   m_initial_area_id = 0;
   m_linked_area_id = 0;
   m_initial_world_scenario_path.clear();
@@ -238,7 +236,15 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
   }
 
   // Reproduce the original mapping assignment before the area is loaded.
-  m_area_mapping[m_initial_area_id] = m_linked_area_id;
+  GameState* const game_state{manager.game_state()};
+  if (game_state == nullptr) {
+    m_last_error = "IAM/START persistent state was not retained";
+    return std::expected<void, std::string>{std::unexpect, m_last_error};
+  }
+  if (auto mapped{game_state->set_area_mapping(m_initial_area_id, m_linked_area_id)}; !mapped) {
+    m_last_error = mapped.error();
+    return std::expected<void, std::string>{std::unexpect, m_last_error};
+  }
 
   // 2. IAM/AREA indexed archive, record <initial area>.
   auto area_file{read_file(std::string{K_IAM_AREA_PATH})};
@@ -924,7 +930,7 @@ ScenarioStartupController::ensure_character_value_profile(const std::size_t owne
     }
     const auto definition{slot.primary->character_definition_by_character_id(character_id)};
     return definition.has_value()
-        ? std::optional<Omikron::IamCharacterValueInitialState>{definition->initial_values}
+        ? std::optional<Omikron::IamCharacterValueInitialState>{definition->values}
         : std::nullopt;
   };
   const auto scene_values = [&slot, character_id]()
@@ -934,7 +940,7 @@ ScenarioStartupController::ensure_character_value_profile(const std::size_t owne
     }
     const auto definition{slot.scene->character_definition_by_character_id(character_id)};
     return definition.has_value()
-        ? std::optional<Omikron::IamCharacterValueInitialState>{definition->initial_values}
+        ? std::optional<Omikron::IamCharacterValueInitialState>{definition->values}
         : std::nullopt;
   };
 
@@ -1268,7 +1274,15 @@ std::expected<void, std::string> ScenarioStartupController::attach_area_scene(
     }
     m_active_area_slot = slot_index.value();
   }
-  m_area_mapping[request.area_id] = request.scene_id;
+  GameState* const game_state{m_manager->game_state()};
+  if (game_state == nullptr) {
+    return std::expected<void, std::string>{std::unexpect,
+        "session game state is not initialized"};
+  }
+  if (auto mapped{game_state->set_area_mapping(request.area_id, request.scene_id)}; !mapped) {
+    return mapped;
+  }
+  game_state->set_current_area(request.area_id);
   const Omikron::IamAreaRecord& area{slot.primary.value()};
   const Omikron::IamSceneRecord& scene{slot.scene.value()};
   App::Log::debug(LogCategory::Scenario,
@@ -1325,7 +1339,14 @@ std::expected<void, std::string> ScenarioStartupController::release_area(
   slot.primary.reset();
   slot.primary_area_id = -1;
   slot.secondary_area_id = -1;
-  m_area_mapping.erase(request.area_id);
+  GameState* const game_state{m_manager->game_state()};
+  if (game_state == nullptr) {
+    return std::expected<void, std::string>{std::unexpect,
+        "session game state is not initialized"};
+  }
+  if (auto unmapped{game_state->set_area_mapping(request.area_id, -1)}; !unmapped) {
+    return unmapped;
+  }
   App::Log::info(LogCategory::Scenario,
       "AREA {} released from resident slot {}",
       request.area_id,
@@ -1339,7 +1360,10 @@ std::expected<void, std::string> ScenarioStartupController::select_current_chara
     return std::expected<void, std::string>{std::unexpect, "scenario manager is not available"};
   }
   const std::optional<ControlledCharacterRef> current{m_manager->controlled_character()};
-  if (current.has_value() && current->character_id == request.character_id) {
+  const GameState* const existing_game_state{m_manager->game_state()};
+  if (current.has_value() && current->character_id == request.character_id &&
+      existing_game_state != nullptr && existing_game_state->current_character().has_value() &&
+      existing_game_state->current_character()->character_id == request.character_id) {
     return {};
   }
   if (owner_slot >= m_area_slots.size()) {
@@ -1357,11 +1381,16 @@ std::expected<void, std::string> ScenarioStartupController::select_current_chara
         std::unexpect, "current-character selection owner has no world runtime"};
   }
 
+  std::optional<Omikron::IamCharacterDefinition> definition;
   if (slot.primary->character_by_id(request.character_id).has_value()) {
     if (auto materialized{runtime->character_runtime().ensure_area_character(
             slot.primary_area_id, *slot.primary, request.character_id)};
         !materialized) {
       return materialized;
+    }
+    definition = slot.primary->character_definition_by_character_id(request.character_id);
+    if (!definition.has_value() && slot.scene.has_value()) {
+      definition = slot.scene->character_definition_by_character_id(request.character_id);
     }
   } else if (slot.scene.has_value() &&
              slot.scene->character_by_id(request.character_id).has_value()) {
@@ -1369,6 +1398,10 @@ std::expected<void, std::string> ScenarioStartupController::select_current_chara
             slot.primary_area_id, slot.scene_id, *slot.scene, request.character_id)};
         !materialized) {
       return materialized;
+    }
+    definition = slot.scene->character_definition_by_character_id(request.character_id);
+    if (!definition.has_value()) {
+      definition = slot.primary->character_definition_by_character_id(request.character_id);
     }
   } else {
     return std::expected<void, std::string>{std::unexpect,
@@ -1382,13 +1415,18 @@ std::expected<void, std::string> ScenarioStartupController::select_current_chara
     return std::expected<void, std::string>{std::unexpect,
         fmt::format("selected character {} was not materialized", request.character_id)};
   }
-  if (auto profile{ensure_character_value_profile(owner_slot, false, request.character_id)};
-      !profile) {
+  if (!definition.has_value()) {
     return std::expected<void, std::string>{std::unexpect,
-        fmt::format("cannot initialize selected character {} profile: {}",
-            request.character_id,
-            profile.error())};
+        fmt::format("selected character {} has no authored table-4 definition",
+            request.character_id)};
   }
+  GameState* const game_state{m_manager->game_state()};
+  if (game_state == nullptr) {
+    return std::expected<void, std::string>{std::unexpect,
+        "session game state is not initialized"};
+  }
+  game_state->ensure_character_profile(request.character_id, definition->values);
+  game_state->establish_current_character(definition.value());
   m_manager->set_controlled_character(ControlledCharacterRef{
       .character_id = request.character_id, .world_scene_id = slot.world_scene_id});
   record("AreaScript.CurrentCharacterSelected",
@@ -1968,16 +2006,17 @@ const RuntimeAreaSlot* ScenarioStartupController::runtime_area_slot(const std::s
 
 std::optional<std::int32_t> ScenarioStartupController::area_mapping(
     const std::int32_t area_id) const {
-  const auto found{m_area_mapping.find(area_id)};
-  if (found == m_area_mapping.end()) {
+  if (m_manager == nullptr || m_manager->game_state() == nullptr) {
     return std::nullopt;
   }
-  return found->second;
+  const auto value{m_manager->game_state()->area_mapping(area_id)};
+  return value.has_value() ? std::optional<std::int32_t>{value.value()} : std::nullopt;
 }
 
-const std::unordered_map<std::int32_t, std::int32_t>&
-ScenarioStartupController::area_mapping_entries() const {
-  return m_area_mapping;
+std::span<const std::int16_t> ScenarioStartupController::area_mapping_entries() const {
+  return m_manager != nullptr && m_manager->game_state() != nullptr
+             ? m_manager->game_state()->area_mappings()
+             : std::span<const std::int16_t>{};
 }
 
 const Script::AreaScriptRuntime* ScenarioStartupController::area_script() const {

@@ -138,7 +138,9 @@ TEST_SUITE("Core::Omikron::IamAreaRecord") {
     constexpr std::size_t k_character_offset{IamAreaRecord::k_header_size};
     constexpr std::size_t k_definition_offset{k_character_offset + 0x14U};
     constexpr std::uint16_t k_definition_id{468};
-    std::vector<std::byte> data(k_definition_offset + 0x114U, std::byte{});
+    constexpr std::size_t k_signs_offset{k_definition_offset + 0x114U};
+    constexpr std::size_t k_interests_offset{k_signs_offset + 16U};
+    std::vector<std::byte> data(k_interests_offset + 16U, std::byte{});
 
     write_u32(data, IamAreaRecord::k_offset_script, static_cast<std::uint32_t>(data.size()));
     write_u32(data, IamAreaRecord::k_offset_table_offsets, k_character_offset);
@@ -156,7 +158,15 @@ TEST_SUITE("Core::Omikron::IamAreaRecord") {
     write_i16(data, k_definition_offset + 0xAAU, 11);
     write_u16(data, k_definition_offset + 0xACU, 44);
     write_i16(data, k_definition_offset + 0xAEU, 55);
-    write_u16(data, k_definition_offset + 0x110U, 310);
+    write_i16(data, k_definition_offset + 0x10EU, -1);
+    write_i16(data, k_definition_offset + 0x110U, 310);
+    write_i16(data, k_definition_offset + 0x112U, -9);
+    write_u32(data, k_definition_offset + 0x00U, k_signs_offset);
+    write_u32(data, k_definition_offset + 0x04U, k_interests_offset);
+    constexpr std::string_view k_signs{"Brave and loyal"};
+    constexpr std::string_view k_interests{"Justice"};
+    std::memcpy(data.data() + k_signs_offset, k_signs.data(), k_signs.size());
+    std::memcpy(data.data() + k_interests_offset, k_interests.data(), k_interests.size());
 
     const auto record{IamAreaRecord::load(data)};
     REQUIRE(record.has_value());
@@ -166,10 +176,45 @@ TEST_SUITE("Core::Omikron::IamAreaRecord") {
     REQUIRE(definition.has_value());
     CHECK_EQ(definition->name, "KAY'L 669");
     CHECK_EQ(definition->model_resource, "HO1_FNM");
-    CHECK_EQ(definition->initial_values.field_aa, 11);
-    CHECK_EQ(definition->initial_values.field_9c, 22);
-    CHECK_EQ(definition->initial_values.field_ac, 44);
-    CHECK_EQ(definition->initial_values.field_ae, 55);
+    CHECK_EQ(definition->signs, std::optional<std::string>{"Brave and loyal"});
+    CHECK_EQ(definition->interests, std::optional<std::string>{"Justice"});
+    CHECK_EQ(definition->values.energy, 11);
+    CHECK_EQ(definition->values.mana, 22);
+    CHECK_EQ(definition->values.seteks, 44);
+    CHECK_EQ(definition->values.rings, 55);
+    CHECK_EQ(definition->linked_object_id, -1);
+    CHECK_EQ(definition->character_id, 310);
+    CHECK_EQ(definition->unknown_112, -9);
+  }
+
+  TEST_CASE("AREA authored strings accept zero and reject invalid record-relative offsets") {
+    constexpr std::size_t k_definition_offset{IamAreaRecord::k_header_size};
+    std::vector<std::byte> absent(k_definition_offset + 0x114U, std::byte{});
+    write_u32(absent, IamAreaRecord::k_offset_script, static_cast<std::uint32_t>(absent.size()));
+    write_u32(absent, IamAreaRecord::k_offset_table_offsets + (4U * 4U), k_definition_offset);
+    write_u16(absent, IamAreaRecord::k_offset_table_counts + (4U * 2U), 1);
+    write_i16(absent, k_definition_offset + 0x110U, 7);
+    const auto absent_record{IamAreaRecord::load(absent)};
+    REQUIRE(absent_record.has_value());
+    const auto definition{absent_record->character_definition_by_character_id(7)};
+    REQUIRE(definition.has_value());
+    CHECK_FALSE(definition->signs.has_value());
+    CHECK_FALSE(definition->interests.has_value());
+
+    auto outside{absent};
+    write_u32(outside, k_definition_offset, static_cast<std::uint32_t>(outside.size()));
+    const auto outside_record{IamAreaRecord::load(outside)};
+    REQUIRE_FALSE(outside_record.has_value());
+    CHECK(outside_record.error().find("string") != std::string::npos);
+
+    auto unterminated{absent};
+    unterminated.push_back(std::byte{'x'});
+    write_u32(unterminated,
+        k_definition_offset,
+        static_cast<std::uint32_t>(unterminated.size() - 1U));
+    const auto unterminated_record{IamAreaRecord::load(unterminated)};
+    REQUIRE_FALSE(unterminated_record.has_value());
+    CHECK(unterminated_record.error().find("NUL") != std::string::npos);
   }
 
   TEST_CASE("AREA table 6 exposes recovered camera records by signed ID") {

@@ -1217,9 +1217,12 @@ through the compact context's resident owner AREA and attached SCENE records,
 not whichever world happens to be presented. Both operations are immediate
 and non-rendering.
 
-OpenNomad keeps IAM definitions immutable. `GameState` lazily creates a
-session profile keyed by authored character ID from these recovered 0x114-byte
-definition fields:
+OpenNomad keeps IAM definitions immutable and decodes AREA/SCENE table-4 into
+one shared complete `0x114` representation. `GameState` lazily creates a
+session profile keyed by authored character ID for non-current bodies. For the
+selected body, the persistent START-style current-character record is the
+canonical backing store; `0x56/0x5D` therefore read and mutate its fields rather
+than a shadow profile:
 
 | Kind | Offset | Storage/write rule |
 |---:|---:|---|
