@@ -76,7 +76,7 @@ Buffer make_header(const std::uint32_t material_count,
       .u32(frame_count)
       .zeros(104)
       .u32(root_mesh_id)
-      .f32(1.0F)  // +0xB8 global scalar; semantic remains unresolved.
+      .f32(1.0F)  // +0xB8 Runtime base-light scalar.
       .u32(triangle_count)
       .u32(rectangle_count)
       .u32(vertex_count)
@@ -231,6 +231,7 @@ TEST_SUITE("Core::Omikron::Model3DO") {
     REQUIRE(model.has_value());
 
     CHECK_EQ(model->header.frame_count, 5U);
+    CHECK_EQ(model->header.base_light_level, doctest::Approx(1.0F));
     CHECK_EQ(model->header.material_count, 0U);
     CHECK_EQ(model->header.object_count, 0U);
     CHECK_EQ(model->header.texture_count, 0U);
@@ -477,10 +478,13 @@ TEST_SUITE("Core::Omikron::Model3DO") {
 
     const auto groups{App::Omikron::Model3DO::build_static_geometry(model.value())};
     REQUIRE(groups.has_value());
-    REQUIRE_EQ(groups->size(), std::size_t{1});
-    REQUIRE_EQ(groups->at(0).vertices.size(), std::size_t{6});
+    REQUIRE_EQ(groups->size(), std::size_t{2});
+    CHECK_EQ(groups->at(0).mesh_index, std::size_t{0});
+    CHECK_EQ(groups->at(1).mesh_index, std::size_t{1});
+    REQUIRE_EQ(groups->at(0).vertices.size(), std::size_t{3});
+    REQUIRE_EQ(groups->at(1).vertices.size(), std::size_t{3});
     CHECK(groups->at(0).vertices.at(0).position.at(0) == doctest::Approx(100.0F));
-    CHECK(groups->at(0).vertices.at(3).position.at(0) == doctest::Approx(200.0F));
+    CHECK(groups->at(1).vertices.at(0).position.at(0) == doctest::Approx(200.0F));
   }
 
   TEST_CASE("Nested child siblings retain parent-relative bone offsets") {

@@ -14,6 +14,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -426,8 +427,8 @@ std::expected<void, std::string> Model3DO::resolve_runtime_transforms(
 
 std::expected<std::vector<MaterialGroup>, std::string> Model3DO::build_static_geometry(
     const Model3DOData& model) {
-  return build_posed_geometry(model, std::span<const Model3DOData::RuntimeObjectState>{
-                                         model.runtime_objects});
+  return build_posed_geometry(
+      model, std::span<const Model3DOData::RuntimeObjectState>{model.runtime_objects});
 }
 
 std::expected<std::vector<MaterialGroup>, std::string> Model3DO::build_posed_geometry(
@@ -460,7 +461,7 @@ std::expected<std::vector<MaterialGroup>, std::string> Model3DO::build_posed_geo
   }
 
   std::vector<MaterialGroup> groups;
-  using MaterialKey = std::pair<std::int32_t, std::uint32_t>;
+  using MaterialKey = std::tuple<std::size_t, std::int32_t, std::uint32_t>;
   std::flat_map<MaterialKey, std::size_t> group_by_material;
   std::flat_set<std::int32_t> clamped_materials;
 
@@ -477,15 +478,17 @@ std::expected<std::vector<MaterialGroup>, std::string> Model3DO::build_posed_geo
     return 0;
   };
 
-  const auto group_for_material = [&](const std::int32_t material_id,
+  const auto group_for_material = [&](const std::size_t mesh_index,
+                                      const std::int32_t material_id,
                                       const std::uint32_t render_flags) -> MaterialGroup& {
-    const MaterialKey key{material_id, render_flags};
+    const MaterialKey key{mesh_index, material_id, render_flags};
     const auto found{group_by_material.find(key)};
     if (found != group_by_material.end()) {
       return groups.at(found->second);
     }
     group_by_material.emplace(key, groups.size());
     groups.push_back(MaterialGroup{
+        .mesh_index = mesh_index,
         .material_id = material_id, .flags = render_flags, .vertices = {}, .indices = {}});
     return groups.at(groups.size() - 1U);
   };
@@ -512,14 +515,14 @@ std::expected<std::vector<MaterialGroup>, std::string> Model3DO::build_posed_geo
           fmt::format(
               "vertex index {} out of range ({} vertices)", global_index, source_vertices.size())};
     }
-    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access) -- checked above; span has no at().
-    const RawVertex& raw{source_vertices[global_index]};
+    
+    const RawVertex& raw{source_vertices.subspan(global_index, 1U).front()};
     if (vertex_owner_index >= runtime_objects.size()) {
       return std::expected<void, std::string>{
           std::unexpect, "3DO vertex owner has no Runtime object transform"};
     }
-    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
-    const Model3DOData::RuntimeObjectState& object{runtime_objects[vertex_owner_index]};
+    const Model3DOData::RuntimeObjectState& object{
+        runtime_objects.subspan(vertex_owner_index, 1U).front()};
     const Runtime::Transform transform{.matrix = object.world_matrix,
         .translation = object.world_translation,
         .scale = object.scale};
@@ -572,7 +575,8 @@ std::expected<std::vector<MaterialGroup>, std::string> Model3DO::build_posed_geo
     for (const Triangle& triangle : polygons.triangles) {
       const std::int32_t material_id{resolve_material(triangle.material_id)};
       const Material& material{model.materials.at(static_cast<std::size_t>(material_id))};
-      MaterialGroup& group{group_for_material(material_id, static_cast<std::uint32_t>(mesh.flags))};
+      MaterialGroup& group{
+          group_for_material(mesh_index, material_id, static_cast<std::uint32_t>(mesh.flags))};
       for (std::size_t corner{0}; corner < triangle.vertices.size(); ++corner) {
         const TriangleVertexRef& reference{triangle.vertices.at(corner)};
         if (reference.parented && !skin_parent_mesh_index.has_value()) {
@@ -598,7 +602,8 @@ std::expected<std::vector<MaterialGroup>, std::string> Model3DO::build_posed_geo
     for (const Rectangle& rectangle : polygons.rectangles) {
       const std::int32_t material_id{resolve_material(rectangle.material_id)};
       const Material& material{model.materials.at(static_cast<std::size_t>(material_id))};
-      MaterialGroup& group{group_for_material(material_id, static_cast<std::uint32_t>(mesh.flags))};
+      MaterialGroup& group{
+          group_for_material(mesh_index, material_id, static_cast<std::uint32_t>(mesh.flags))};
 
       // Each quad becomes two triangles: (0, 1, 2) and (0, 2, 3).
       const auto emit = [&](const std::uint16_t vertex_index,
@@ -667,22 +672,21 @@ void Model3DO::read_header(BinaryReader& reader, Header& header) {
   read_raw_array(reader, header.reserved_b);  // +0x4C..+0xB3
   header.root_mesh_id = reader.read_u32();    // +0xB4
 
-  // +0xB8 is a Runtime scalar whose higher-level semantic is still unknown.
-  static_cast<void>(reader.read_f32());
+  header.base_light_level = reader.read_f32();
   header.triangle_count = reader.read_u32();   // +0xBC
   header.rectangle_count = reader.read_u32();  // +0xC0
   header.vertex_count = reader.read_u32();     // +0xC4
   header.reserved2 = reader.read_u64();        // +0xC8
   header.material_count = reader.read_u32();   // +0xD0
-  header.unknown3 = reader.read_u32();          // +0xD4
-  header.reserved3 = reader.read_u32();         // +0xD8
-  header.camera_count = reader.read_u32();      // +0xDC
-  header.object_count = reader.read_u32();      // +0xE0
-  header.unknown2 = reader.read_u32();           // +0xE4 relationship count
-  header.light_count = reader.read_u32();       // +0xE8 serialized light count
-  header.lights_unknown1 = reader.read_u32();   // +0xEC
-  header.lights_unknown2 = reader.read_u32();   // +0xF0 processed light count
-  read_raw_array(reader, header.unknown4);       // +0xF4..+0x147
+  header.unknown3 = reader.read_u32();         // +0xD4
+  header.reserved3 = reader.read_u32();        // +0xD8
+  header.camera_count = reader.read_u32();     // +0xDC
+  header.object_count = reader.read_u32();     // +0xE0
+  header.unknown2 = reader.read_u32();         // +0xE4 relationship count
+  header.light_count = reader.read_u32();      // +0xE8 serialized light count
+  header.lights_unknown1 = reader.read_u32();  // +0xEC
+  header.lights_unknown2 = reader.read_u32();  // +0xF0 processed light count
+  read_raw_array(reader, header.unknown4);     // +0xF4..+0x147
 
   // Compatibility aliases retained until Header is cleaned up separately.
   // They are not additional serialized fields.
@@ -727,7 +731,7 @@ MeshDescriptor Model3DO::read_mesh_descriptor(BinaryReader& reader) {
   mesh.unknown08 = reader.read_f32();
   mesh.unknown09 = reader.read_f32();
   mesh.unknown10 = reader.read_f32();
-  mesh.unknown11 = reader.read_f32();
+  mesh.bounding_radius = reader.read_f32();
   mesh.box_extent_neg = read_vec3(reader);
   mesh.box_extent_pos = read_vec3(reader);
   mesh.unknown18 = reader.read_f32();

@@ -48,20 +48,16 @@ namespace {
 constexpr std::string_view K_WORLD_VERTEX_SHADER{R"glsl(
 #version 410 core
 layout(location = 0) in vec3 a_position;
-layout(location = 1) in vec3 a_normal;
 layout(location = 2) in vec2 a_uv;
 layout(location = 3) in vec4 a_color;
 
 uniform mat4 u_mvp;
-uniform mat4 u_model;
 uniform vec2 u_uv_offset;
 
-out vec3 v_normal;
 out vec2 v_uv;
 out vec4 v_color;
 
 void main() {
-    v_normal = mat3(u_model) * a_normal;
     v_uv = a_uv + u_uv_offset;
     v_color = a_color;
     gl_Position = u_mvp * vec4(a_position, 1.0);
@@ -70,15 +66,11 @@ void main() {
 
 constexpr std::string_view K_MODERN_WORLD_FRAGMENT_SHADER{R"glsl(
 #version 410 core
-in vec3 v_normal;
 in vec2 v_uv;
 in vec4 v_color;
 
 uniform sampler2D u_texture0;
-uniform float u_vertex_color;
 uniform float u_alpha_test;
-uniform vec3 u_light_direction;
-uniform float u_ambient;
 
 out vec4 frag_colour;
 
@@ -92,42 +84,29 @@ void main() {
     if (u_alpha_test > 0.5 && texel.a < 0.5) {
         discard;
     }
-    vec3 linear_vertex = vec3(srgb_to_linear(v_color.r), srgb_to_linear(v_color.g),
-                              srgb_to_linear(v_color.b));
-    vec4 baked = mix(vec4(1.0), vec4(linear_vertex, v_color.a), u_vertex_color);
-    float normal_length = length(v_normal);
-    float diffuse = normal_length > 0.0001
-        ? max(dot(v_normal / normal_length, normalize(u_light_direction)), 0.0)
-        : 1.0;
-    float light = mix(u_ambient + ((1.0 - u_ambient) * diffuse), 1.0, u_vertex_color);
-    frag_colour = vec4(texel.rgb * baked.rgb * light, texel.a * baked.a);
+    vec3 runtime_vertex = vec3(
+        srgb_to_linear(v_color.r),
+        srgb_to_linear(v_color.g),
+        srgb_to_linear(v_color.b));
+    frag_colour = vec4(texel.rgb * runtime_vertex, texel.a);
 }
 )glsl"};
 
 constexpr std::string_view K_LEGACY_WORLD_FRAGMENT_SHADER{R"glsl(
 #version 410 core
-in vec3 v_normal;
 in vec2 v_uv;
 in vec4 v_color;
 uniform sampler2D u_texture0;
-uniform float u_vertex_color;
 uniform float u_alpha_test;
 uniform float u_premultiply_alpha;
-uniform vec3 u_light_direction;
-uniform float u_ambient;
 out vec4 frag_colour;
 void main() {
     vec4 texel = texture(u_texture0, v_uv);
     if (u_alpha_test > 0.5 && texel.a < 0.5) {
         discard;
     }
-    vec4 baked = mix(vec4(1.0), v_color, u_vertex_color);
-    float normal_length = length(v_normal);
-    float diffuse = normal_length > 0.0001
-        ? max(dot(v_normal / normal_length, normalize(u_light_direction)), 0.0)
-        : 1.0;
-    float light = mix(u_ambient + ((1.0 - u_ambient) * diffuse), 1.0, u_vertex_color);
-    vec4 source = vec4(texel.rgb * baked.rgb * light, texel.a * baked.a);
+    vec4 source =
+        vec4(texel.rgb * v_color.rgb, texel.a);
     frag_colour = vec4(mix(source.rgb, source.rgb * source.a, u_premultiply_alpha), source.a);
 }
 )glsl"};
@@ -155,10 +134,6 @@ void main() {
 )glsl"};
 
 constexpr std::array<GLfloat, 4> K_WIREFRAME_COLOR{0.15F, 0.95F, 1.0F, 0.9F};
-
-/// Legacy fallback lighting used when the decor relies on ordinary normals
-/// rather than baked vertex lighting. Keep these aligned with ModelViewerScene.
-constexpr std::array<GLfloat, 3> K_LIGHT_DIRECTION{0.35F, 0.75F, 0.55F};
 
 /// CPU-side integrity summary for one posed decor rebuild. Keep it beside the
 /// renderer boundary so an invalid gameplay pose never reaches GL buffers.
@@ -209,7 +184,6 @@ struct DecorPoseGeometry {
       1.0F);
   return DecorPoseGeometry{.bounds = bounds, .vertex_count = vertex_count};
 }
-constexpr float K_AMBIENT_STRENGTH{0.35F};
 
 bool is_blended(const Omikron::BlendMode mode) {
   return mode == Omikron::BlendMode::k_alpha_blend || mode == Omikron::BlendMode::k_additive ||
@@ -580,9 +554,7 @@ void WorldRenderer::draw_group(const std::size_t index,
       Omikron::uv_scroll_offset(m_group_flags.at(index), uv_phase_u, uv_phase_v)};
   shader.set_uniform_vec2("u_uv_offset", std::span<const GLfloat, 2>{uv_offset});
   const Omikron::BlendMode mode{m_group_modes.at(index)};
-  const bool vertex_lit{
-      Omikron::has_flag(m_group_flags.at(index), Omikron::MeshFlags::k_vertex_lit)};
-  shader.set_uniform_float("u_vertex_color", vertex_lit ? 1.0F : 0.0F);
+
   shader.set_uniform_float("u_alpha_test", mode == Omikron::BlendMode::k_alpha_test ? 1.0F : 0.0F);
   if (legacy_effect) {
     shader.set_uniform_float(
@@ -774,15 +746,13 @@ void WorldRenderer::draw_character_group(const Character::RuntimeCharacter& char
   const Shader& shader{legacy_effect ? *m_legacy_shader : *m_modern_shader};
   shader.bind();
   shader.set_uniform_mat4("u_mvp", std::span<const GLfloat, 16>{glm::value_ptr(mvp), 16});
-  shader.set_uniform_mat4("u_model", std::span<const GLfloat, 16>{glm::value_ptr(model), 16});
+  
   const std::array<float, 2> uv_offset{
       Omikron::uv_scroll_offset(gpu.group_flags.at(group_index), uv_phase_u, uv_phase_v)};
   shader.set_uniform_vec2("u_uv_offset", std::span<const GLfloat, 2>{uv_offset});
 
   const Omikron::BlendMode mode{gpu.group_modes.at(group_index)};
-  const bool vertex_lit{
-      Omikron::has_flag(gpu.group_flags.at(group_index), Omikron::MeshFlags::k_vertex_lit)};
-  shader.set_uniform_float("u_vertex_color", vertex_lit ? 1.0F : 0.0F);
+
   shader.set_uniform_float("u_alpha_test", mode == Omikron::BlendMode::k_alpha_test ? 1.0F : 0.0F);
   if (legacy_effect) {
     shader.set_uniform_float(
@@ -822,15 +792,13 @@ void WorldRenderer::draw_object_group(const ObjectPlacement::RuntimePlacement& p
   const Shader& shader{legacy_effect ? *m_legacy_shader : *m_modern_shader};
   shader.bind();
   shader.set_uniform_mat4("u_mvp", std::span<const GLfloat, 16>{glm::value_ptr(mvp), 16});
-  shader.set_uniform_mat4("u_model", std::span<const GLfloat, 16>{glm::value_ptr(model), 16});
+
   const std::array<float, 2> uv_offset{
       Omikron::uv_scroll_offset(gpu.group_flags.at(group_index), uv_phase_u, uv_phase_v)};
   shader.set_uniform_vec2("u_uv_offset", std::span<const GLfloat, 2>{uv_offset});
 
   const Omikron::BlendMode mode{gpu.group_modes.at(group_index)};
-  const bool vertex_lit{
-      Omikron::has_flag(gpu.group_flags.at(group_index), Omikron::MeshFlags::k_vertex_lit)};
-  shader.set_uniform_float("u_vertex_color", vertex_lit ? 1.0F : 0.0F);
+
   shader.set_uniform_float("u_alpha_test", mode == Omikron::BlendMode::k_alpha_test ? 1.0F : 0.0F);
   if (legacy_effect) {
     shader.set_uniform_float(
@@ -929,7 +897,6 @@ void WorldRenderer::render(const Camera& camera,
   const glm::mat4 view{glm::make_mat4(camera.get_view_matrix().data())};
   const glm::mat4 projection{glm::make_mat4(camera.get_projection_matrix().data())};
   const glm::mat4 mvp{projection * view};
-  const glm::mat4 identity{1.0F};
   const glm::vec3 eye{glm::make_vec3(camera.get_position().data())};
 
   m_last_sprite_runtime = runtime;
@@ -954,9 +921,6 @@ void WorldRenderer::render(const Camera& camera,
   const auto configure_world_shader = [&](Shader& shader) {
     shader.bind();
     shader.set_uniform_mat4("u_mvp", std::span<const GLfloat, 16>{glm::value_ptr(mvp), 16});
-    shader.set_uniform_mat4("u_model", std::span<const GLfloat, 16>{glm::value_ptr(identity), 16});
-    shader.set_uniform_vec3("u_light_direction", std::span<const GLfloat, 3>{K_LIGHT_DIRECTION});
-    shader.set_uniform_float("u_ambient", K_AMBIENT_STRENGTH);
   };
   configure_world_shader(*m_modern_shader);
 

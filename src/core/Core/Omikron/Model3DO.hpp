@@ -120,8 +120,10 @@ struct Header {
   std::array<std::byte, 104> reserved_b{};
   /// Root runtime object ID (Serialized3DORootV4+0xB4).
   std::uint32_t root_mesh_id{0};
-  /// Unparsed bytes 0xB8..0xCF.
-  std::array<std::byte, 24> reserved_b2{};
+  /// Runtime scene base-light scalar (+0xB8). Runtime multiplies this by
+  /// 255, converts it to one byte, and replicates that byte to B/G/R when
+  /// constructing RenderContext+0x1A0.
+  float base_light_level{0.0F};
   /// Texture count used by the original runtime (Serialized3DORootV4+0xD0);
   /// serialized as 0 in observed files. Preserved for documentation only.
   std::uint32_t texture_count{0};
@@ -197,7 +199,8 @@ struct MeshDescriptor {
   float unknown08{0.0F};
   float unknown09{0.0F};
   float unknown10{0.0F};
-  float unknown11{0.0F};
+  /// Runtime object/lighting bounding-sphere radius (+0x58).
+  float bounding_radius{0.0F};
   Vec3 box_extent_neg{};
   Vec3 box_extent_pos{};
   float unknown18{0.0F};
@@ -216,7 +219,9 @@ struct RawVertex {
   Vec3 position{};
   Vec3 normal{};
   std::uint32_t unknown_t1{0};
-  std::array<std::uint8_t, 4> color_bgra{};  ///< File order: B, G, R, A.
+  // Runtime lighting treats this as packed 0x00RRGGBB; the high byte is not
+  // vertex alpha. Retail data examined so far stores zero there.
+  std::array<std::uint8_t, 4> color_bgra{};
 };
 
 /// Corner reference of a triangle. When parented is set, the index refers to
@@ -323,6 +328,9 @@ struct Model3DOData {
 /// Render-ready geometry for a single material and mesh flag combination
 /// (one draw call).
 struct MaterialGroup {
+  /// Source runtime object. Required because Runtime evaluates explicit
+  /// lighting at object/mesh granularity, not material granularity.
+  std::size_t mesh_index{0};
   std::int32_t material_id{0};
   std::uint32_t flags{0};  ///< Flags of the source mesh (vertex-lit, ...).
   std::vector<Vertex> vertices;
