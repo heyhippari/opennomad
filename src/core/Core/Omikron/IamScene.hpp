@@ -11,6 +11,7 @@
 
 #include "Core/Omikron/IamCamera.hpp"
 #include "Core/Omikron/IamCharacterDefinition.hpp"
+#include "Core/Omikron/IamObjectPlacement.hpp"
 #include "Core/Omikron/IamZone.hpp"
 
 namespace App::Omikron {
@@ -28,21 +29,9 @@ struct IamSceneCharacterRecord {
 /// SCENE table-4 uses the shared complete 0x114-byte authored definition.
 using IamSceneCharacterDefinitionRecord = IamCharacterDefinition;
 
-/// One 0x18-byte SCENE table-1 object placement. The last authored word is
-/// intentionally neutral until its persistent-state semantics are recovered.
-struct IamSceneObjectPlacementRecord {
-  std::int16_t runtime_object_slot_seed{0};
-  std::int16_t object_id{0};
-  std::array<std::int32_t, 3> serialized_position{};
-  std::array<std::int16_t, 3> orientation_units{};
-  std::uint16_t persistent_state_field{0};
-};
-
-/// Minimal 0x18-byte SCENE table-3 object-definition representation.
-struct IamSceneObjectDefinitionRecord {
-  std::int16_t object_id{0};
-  std::array<std::byte, 0x16> raw_tail{};
-};
+/// SCENE table 1/table 3 use the shared object placement/definition formats.
+using IamSceneObjectPlacementRecord = IamObjectPlacementRecord;
+using IamSceneObjectDefinitionRecord = IamObjectDefinitionRecord;
 
 /// SCENE table-2 has the same physical and semantic record layout as AREA.
 using IamSceneZoneRecord = IamZoneRecord;
@@ -95,7 +84,11 @@ class IamSceneRecord {
   [[nodiscard]] std::optional<IamCameraRecord> camera_by_id(std::int16_t camera_id) const;
 
   [[nodiscard]] std::vector<IamSceneObjectPlacementRecord> object_placements() const;
+  [[nodiscard]] std::optional<IamSceneObjectPlacementRecord> object_by_id(
+      std::int16_t object_id) const;
   [[nodiscard]] std::vector<IamSceneObjectDefinitionRecord> object_definitions() const;
+  [[nodiscard]] std::optional<IamSceneObjectDefinitionRecord> object_definition_by_object_id(
+      std::int16_t object_id) const;
   [[nodiscard]] std::vector<IamSceneZoneRecord> zones() const;
   [[nodiscard]] std::vector<IamSceneScriptLinkRecord> script_links() const;
 

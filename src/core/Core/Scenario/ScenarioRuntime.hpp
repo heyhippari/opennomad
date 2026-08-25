@@ -14,6 +14,7 @@
 
 #include "Core/Audio/AudioTypes.hpp"
 #include "Core/Character/CharacterRuntime.hpp"
+#include "Core/Object/ObjectPlacementRuntime.hpp"
 #include "Core/Omikron/Animation3DA.hpp"
 #include "Core/Omikron/IamArea.hpp"
 #include "Core/Omikron/Path3DP.hpp"
@@ -96,6 +97,11 @@ class ScenarioRuntime final : public Script::ScriptWorld, private Sfx::Host {
       const Script::AreaCharacterActivationRequest& request);
   [[nodiscard]] Character::Runtime& character_runtime();
   [[nodiscard]] const Character::Runtime& character_runtime() const;
+
+  // --- Runtime AREA/SCENE object placements --------------------------------
+
+  [[nodiscard]] ObjectPlacement::Runtime& object_placement_runtime();
+  [[nodiscard]] const ObjectPlacement::Runtime& object_placement_runtime() const;
 
   // --- Sprite instances -----------------------------------------------------
 
@@ -215,6 +221,7 @@ class ScenarioRuntime final : public Script::ScriptWorld, private Sfx::Host {
   std::array<float, 3> m_world_anchor{0.0F, 0.0F, 0.0F};  ///< Runtime XYZ inches.
 
   Character::Runtime m_character_runtime;
+  ObjectPlacement::Runtime m_object_placement_runtime;
   std::vector<std::unique_ptr<const Omikron::Animation3DA>> m_animation_resources;
   std::vector<std::unique_ptr<const Omikron::Path3DP>> m_path_resources;
 

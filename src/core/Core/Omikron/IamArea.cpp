@@ -2,6 +2,7 @@
 
 #include <fmt/format.h>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -16,6 +17,7 @@
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Omikron/IamCamera.hpp"
 #include "Core/Omikron/IamCharacterDefinition.hpp"
+#include "Core/Omikron/IamObjectPlacement.hpp"
 #include "Core/Omikron/IamZone.hpp"
 
 namespace App::Omikron {
@@ -67,6 +69,8 @@ std::optional<std::size_t> IamAreaRecord::known_table_stride(const std::size_t i
       return 0x18;
     case 2:
       return 0x44;
+    case 3:
+      return 0x18;
     case 4:
       return 0x114;
     case 5:
@@ -76,8 +80,60 @@ std::optional<std::size_t> IamAreaRecord::known_table_stride(const std::size_t i
     case 7:
       return 0x08;
     default:
-      return std::nullopt;  // Table 3 (and out-of-range): unresolved.
+      return std::nullopt;
   }
+}
+
+std::vector<IamAreaObjectPlacementRecord> IamAreaRecord::object_placements() const {
+  std::vector<IamAreaObjectPlacementRecord> result;
+  constexpr std::size_t k_object_table_index{1};
+  constexpr std::size_t k_object_stride{0x18};
+  auto table{table_view(k_object_table_index)};
+  if (!table) {
+    return result;
+  }
+  result.reserve(table_count(k_object_table_index));
+  for (std::size_t index{0}; index < table_count(k_object_table_index); ++index) {
+    const std::span<const std::byte, k_object_stride> record{
+        table->subspan(index * k_object_stride, k_object_stride)};
+    result.push_back(parse_iam_object_placement(record));
+  }
+  return result;
+}
+
+std::optional<IamAreaObjectPlacementRecord> IamAreaRecord::object_by_id(
+    const std::int16_t object_id) const {
+  const auto placements{object_placements()};
+  const auto found{
+      std::ranges::find(placements, object_id, &IamAreaObjectPlacementRecord::object_id)};
+  return found == placements.end() ? std::nullopt
+                                   : std::optional<IamAreaObjectPlacementRecord>{*found};
+}
+
+std::vector<IamAreaObjectDefinitionRecord> IamAreaRecord::object_definitions() const {
+  std::vector<IamAreaObjectDefinitionRecord> result;
+  constexpr std::size_t k_definition_table_index{3};
+  constexpr std::size_t k_definition_stride{0x18};
+  auto table{table_view(k_definition_table_index)};
+  if (!table) {
+    return result;
+  }
+  result.reserve(table_count(k_definition_table_index));
+  for (std::size_t index{0}; index < table_count(k_definition_table_index); ++index) {
+    const std::span<const std::byte, k_definition_stride> record{
+        table->subspan(index * k_definition_stride, k_definition_stride)};
+    result.push_back(parse_iam_object_definition(record));
+  }
+  return result;
+}
+
+std::optional<IamAreaObjectDefinitionRecord> IamAreaRecord::object_definition_by_object_id(
+    const std::int16_t object_id) const {
+  const auto definitions{object_definitions()};
+  const auto found{
+      std::ranges::find(definitions, object_id, &IamAreaObjectDefinitionRecord::object_id)};
+  return found == definitions.end() ? std::nullopt
+                                    : std::optional<IamAreaObjectDefinitionRecord>{*found};
 }
 
 std::expected<IamAreaRecord, std::string> IamAreaRecord::load(

@@ -28,6 +28,7 @@
 #include "Core/GameDataLoader.hpp"
 #include "Core/Log.hpp"
 #include "Core/LogCategory.hpp"
+#include "Core/Object/ObjectPlacementRuntime.hpp"
 #include "Core/Omikron/Model3DO.hpp"
 #include "Core/Omikron/Texture3DT.hpp"
 #include "Core/Reflection.hpp"
@@ -676,6 +677,81 @@ void WorldRenderer::sync_character_models(const ScenarioRuntime& runtime) {
   }
 }
 
+void WorldRenderer::sync_object_models(const ScenarioRuntime& runtime) {
+  const auto placements{runtime.object_placement_runtime().placements()};
+  std::erase_if(m_object_models, [placements](const auto& entry) {
+    return std::ranges::none_of(placements,
+        [instance_id = entry.first](const ObjectPlacement::RuntimePlacement& placement) {
+          return placement.instance_id == instance_id;
+        });
+  });
+
+  for (const ObjectPlacement::RuntimePlacement& placement : placements) {
+    if (!placement.renderable() || placement.model_resource == nullptr ||
+        std::ranges::contains(m_failed_object_models, placement.model_resource_name) ||
+        m_object_models.contains(placement.instance_id)) {
+      continue;
+    }
+
+    auto gpu{std::make_unique<ObjectGpuModel>()};
+    gpu->resource = placement.model_resource;
+
+    std::vector<unsigned char> usage_bits(placement.model_resource->images.size(), 0U);
+    for (const Omikron::MaterialGroup& group : placement.model_resource->groups) {
+      if (group.material_id < 0 ||
+          static_cast<std::size_t>(group.material_id) >= usage_bits.size()) {
+        continue;
+      }
+      usage_bits.at(static_cast<std::size_t>(group.material_id)) |=
+          static_cast<unsigned char>(is_blended(Omikron::blend_mode(group.flags)) ? 2U : 1U);
+    }
+
+    bool failed{false};
+    for (std::size_t image_index{0}; image_index < placement.model_resource->images.size();
+        ++image_index) {
+      const Omikron::Texture3DTImage& image{placement.model_resource->images.at(image_index)};
+      auto texture{GameColorTexture::create(static_cast<int>(image.width),
+          static_cast<int>(image.height),
+          std::span<const std::uint8_t>{image.rgba8},
+          texture_usage(usage_bits.at(image_index)))};
+      if (!texture) {
+        App::Log::warn(LogCategory::Renderer,
+            "Object placement model '{}' texture upload failed: {}",
+            placement.model_resource_name,
+            texture.error());
+        failed = true;
+        break;
+      }
+      gpu->textures.push_back(std::move(texture).value());
+    }
+    if (failed) {
+      m_failed_object_models.push_back(placement.model_resource_name);
+      continue;
+    }
+
+    for (const Omikron::MaterialGroup& group : placement.model_resource->groups) {
+      std::vector<Vertex> presentation_vertices;
+      presentation_vertices.reserve(group.vertices.size());
+      for (const Vertex& vertex : group.vertices) {
+        presentation_vertices.push_back(Runtime::Presentation::to_gl(vertex));
+      }
+      gpu->meshes.emplace_back(presentation_vertices, group.indices);
+      gpu->group_material_ids.push_back(group.material_id);
+      gpu->group_flags.push_back(group.flags);
+      gpu->group_modes.push_back(Omikron::blend_mode(group.flags));
+    }
+
+    App::Log::debug(LogCategory::Renderer,
+        "Object placement renderer ready — model={} instance={} object={} groups={} materials={}",
+        placement.model_resource_name,
+        placement.instance_id,
+        placement.object_id,
+        gpu->meshes.size(),
+        gpu->textures.size());
+    m_object_models.emplace(placement.instance_id, std::move(gpu));
+  }
+}
+
 void WorldRenderer::draw_character_group(const Character::RuntimeCharacter& character,
     const Camera& camera,
     const std::size_t group_index,
@@ -727,12 +803,60 @@ void WorldRenderer::draw_character_group(const Character::RuntimeCharacter& char
   gpu.meshes.at(group_index).draw();
 }
 
+void WorldRenderer::draw_object_group(const ObjectPlacement::RuntimePlacement& placement,
+    const Camera& camera,
+    const std::size_t group_index,
+    const float uv_phase_u,
+    const float uv_phase_v,
+    const bool legacy_effect) {
+  const auto found{m_object_models.find(placement.instance_id)};
+  if (found == m_object_models.end() || group_index >= found->second->meshes.size()) {
+    return;
+  }
+  ObjectGpuModel& gpu{*found->second};
+
+  const glm::mat4 view{glm::make_mat4(camera.get_view_matrix().data())};
+  const glm::mat4 projection{glm::make_mat4(camera.get_projection_matrix().data())};
+  const glm::mat4 model{Runtime::Presentation::to_gl(placement.transform)};
+  const glm::mat4 mvp{projection * view * model};
+  const Shader& shader{legacy_effect ? *m_legacy_shader : *m_modern_shader};
+  shader.bind();
+  shader.set_uniform_mat4("u_mvp", std::span<const GLfloat, 16>{glm::value_ptr(mvp), 16});
+  shader.set_uniform_mat4("u_model", std::span<const GLfloat, 16>{glm::value_ptr(model), 16});
+  const std::array<float, 2> uv_offset{
+      Omikron::uv_scroll_offset(gpu.group_flags.at(group_index), uv_phase_u, uv_phase_v)};
+  shader.set_uniform_vec2("u_uv_offset", std::span<const GLfloat, 2>{uv_offset});
+
+  const Omikron::BlendMode mode{gpu.group_modes.at(group_index)};
+  const bool vertex_lit{
+      Omikron::has_flag(gpu.group_flags.at(group_index), Omikron::MeshFlags::k_vertex_lit)};
+  shader.set_uniform_float("u_vertex_color", vertex_lit ? 1.0F : 0.0F);
+  shader.set_uniform_float("u_alpha_test", mode == Omikron::BlendMode::k_alpha_test ? 1.0F : 0.0F);
+  if (legacy_effect) {
+    shader.set_uniform_float(
+        "u_premultiply_alpha", mode == Omikron::BlendMode::k_alpha_blend ? 1.0F : 0.0F);
+  }
+
+  const std::int32_t material_id{gpu.group_material_ids.at(group_index)};
+  if (material_id < 0 || static_cast<std::size_t>(material_id) >= gpu.textures.size()) {
+    return;
+  }
+  const GameColorTexture& color_texture{gpu.textures.at(static_cast<std::size_t>(material_id))};
+  const Texture2D* texture{legacy_effect ? color_texture.legacy_effect() : color_texture.modern()};
+  if (texture == nullptr) {
+    return;
+  }
+  texture->bind(0);
+  shader.set_uniform_int("u_texture0", 0);
+  gpu.meshes.at(group_index).draw();
+}
+
 void WorldRenderer::render_geometry_wireframe(
     const Camera& camera, const ScenarioRuntime* const runtime) {
   if (m_wireframe_shader == nullptr) {
     return;
   }
-  
+
   const glm::mat4 view{glm::make_mat4(camera.get_view_matrix().data())};
   const glm::mat4 projection{glm::make_mat4(camera.get_projection_matrix().data())};
   const glm::mat4 identity{1.0F};
@@ -762,6 +886,20 @@ void WorldRenderer::render_geometry_wireframe(
       }
       const glm::mat4 character_model{Runtime::Presentation::to_gl(character.transform)};
       mvp = projection * view * character_model;
+      m_wireframe_shader->set_uniform_mat4(
+          "u_mvp", std::span<const GLfloat, 16>{glm::value_ptr(mvp), 16});
+      for (const Mesh& mesh : found->second->meshes) {
+        mesh.draw();
+      }
+    }
+    for (const ObjectPlacement::RuntimePlacement& placement :
+        runtime->object_placement_runtime().placements()) {
+      const auto found{m_object_models.find(placement.instance_id)};
+      if (!placement.renderable() || found == m_object_models.end()) {
+        continue;
+      }
+      const glm::mat4 object_model{Runtime::Presentation::to_gl(placement.transform)};
+      mvp = projection * view * object_model;
       m_wireframe_shader->set_uniform_mat4(
           "u_mvp", std::span<const GLfloat, 16>{glm::value_ptr(mvp), 16});
       for (const Mesh& mesh : found->second->meshes) {
@@ -810,6 +948,7 @@ void WorldRenderer::render(const Camera& camera,
   if (runtime != nullptr) {
     sync_decor_model(*runtime);
     sync_character_models(*runtime);
+    sync_object_models(*runtime);
   }
 
   const auto configure_world_shader = [&](Shader& shader) {
@@ -838,6 +977,19 @@ void WorldRenderer::render(const Camera& camera,
       for (std::size_t index{0}; index < found->second->meshes.size(); ++index) {
         if (!is_blended(found->second->group_modes.at(index))) {
           draw_character_group(character, camera, index, uv_phase_u, uv_phase_v, false);
+        }
+      }
+    }
+
+    for (const ObjectPlacement::RuntimePlacement& placement :
+        runtime->object_placement_runtime().placements()) {
+      const auto found{m_object_models.find(placement.instance_id)};
+      if (!placement.renderable() || found == m_object_models.end()) {
+        continue;
+      }
+      for (std::size_t index{0}; index < found->second->meshes.size(); ++index) {
+        if (!is_blended(found->second->group_modes.at(index))) {
+          draw_object_group(placement, camera, index, uv_phase_u, uv_phase_v, false);
         }
       }
     }
@@ -908,6 +1060,39 @@ void WorldRenderer::render(const Camera& camera,
           }
         });
         character_begin = character_end;
+      }
+    }
+
+    for (const ObjectPlacement::RuntimePlacement& placement :
+        runtime->object_placement_runtime().placements()) {
+      const auto found{m_object_models.find(placement.instance_id)};
+      if (!placement.renderable() || found == m_object_models.end()) {
+        continue;
+      }
+      std::size_t object_begin{0};
+      while (object_begin < found->second->meshes.size()) {
+        while (object_begin < found->second->meshes.size() &&
+               !is_blended(found->second->group_modes.at(object_begin))) {
+          ++object_begin;
+        }
+        if (object_begin == found->second->meshes.size()) {
+          break;
+        }
+        const LegacyBlendOperator blend_operator{
+            legacy_operator(found->second->group_modes.at(object_begin))};
+        std::size_t object_end{object_begin + 1U};
+        while (object_end < found->second->meshes.size() &&
+               is_blended(found->second->group_modes.at(object_end)) &&
+               legacy_operator(found->second->group_modes.at(object_end)) == blend_operator) {
+          ++object_end;
+        }
+        color_pipeline.composite_legacy_stage(blend_operator, object_end - object_begin, [&] {
+          configure_world_shader(*m_legacy_shader);
+          for (std::size_t index{object_begin}; index < object_end; ++index) {
+            draw_object_group(placement, camera, index, uv_phase_u, uv_phase_v, true);
+          }
+        });
+        object_begin = object_end;
       }
     }
   }

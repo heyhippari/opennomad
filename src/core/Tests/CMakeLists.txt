@@ -48,6 +48,10 @@ add_executable(CharacterRuntimeTest CharacterRuntime.spec.cpp $<TARGET_OBJECTS:T
 add_test(NAME CharacterRuntimeTest COMMAND CharacterRuntimeTest)
 target_link_libraries(CharacterRuntimeTest PRIVATE doctest::doctest Core)
 
+add_executable(ObjectPlacementRuntimeTest ObjectPlacementRuntime.spec.cpp $<TARGET_OBJECTS:TestRunner>)
+add_test(NAME ObjectPlacementRuntimeTest COMMAND ObjectPlacementRuntimeTest)
+target_link_libraries(ObjectPlacementRuntimeTest PRIVATE doctest::doctest Core)
+
 add_executable(Model3DOTest Model3DO.spec.cpp $<TARGET_OBJECTS:TestRunner>)
 add_test(NAME Model3DOTest COMMAND Model3DOTest)
 target_link_libraries(Model3DOTest PRIVATE doctest::doctest Core)

@@ -58,6 +58,8 @@ constexpr std::uint32_t K_OP_START_DIALOG{0x3D};
 constexpr std::uint32_t K_OP_START_CURRENT_CHARACTER_MOVE{0x3F};
 constexpr std::uint32_t K_OP_ACTIVATE_ZONE{0x40};
 constexpr std::uint32_t K_OP_DEACTIVATE_ZONE{0x41};
+constexpr std::uint32_t K_OP_ENABLE_OBJECT_PLACEMENT{0x4C};
+constexpr std::uint32_t K_OP_DISABLE_OBJECT_PLACEMENT{0x4D};
 constexpr std::uint32_t K_OP_ACTIVATE_CHARACTER{0x4E};
 constexpr std::uint32_t K_OP_DEACTIVATE_CHARACTER{0x4F};
 constexpr std::uint32_t K_OP_GET_CHARACTER_VALUE_TO_VARIABLE{0x56};
@@ -141,7 +143,7 @@ constexpr std::array<AreaOperandWidth, 3> K_OPERANDS_PRESENTATION{
       static_cast<std::uint32_t>(lhs) | static_cast<std::uint32_t>(rhs));
 }
 
-constexpr std::array<AreaOpcodeInfo, 49> K_AREA_OPCODE_TABLE{
+constexpr std::array<AreaOpcodeInfo, 51> K_AREA_OPCODE_TABLE{
     AreaOpcodeInfo{.opcode = K_OP_END_EVENT,
         .name = "EndEvent",
         .support = OpcodeSupport::k_supported,
@@ -311,8 +313,8 @@ constexpr std::array<AreaOpcodeInfo, 49> K_AREA_OPCODE_TABLE{
         .name = "StartCharacterScriptTracked",
         .support = OpcodeSupport::k_supported,
         .provisional = true,
-        .notes =
-            "requests an explicit-character script and blocks the AREA context in Runtime state 4",
+        .notes = "requests an explicit-character script and blocks the AREA context in Runtime "
+                 "state 4",
         .operands = K_OPERANDS_3X_I16.data(),
         .operand_count = K_OPERANDS_3X_I16.size()},
     AreaOpcodeInfo{.opcode = K_OP_START_DIALOG,
@@ -327,8 +329,8 @@ constexpr std::array<AreaOpcodeInfo, 49> K_AREA_OPCODE_TABLE{
         .name = "StartCurrentCharacterMove",
         .support = OpcodeSupport::k_supported,
         .provisional = true,
-        .notes =
-            "selects a current-actor CTL move/control-bank record; CTL execution remains deferred",
+        .notes = "selects a current-actor CTL move/control-bank record; CTL execution remains "
+                 "deferred",
         .operands = K_OPERANDS_I16.data(),
         .operand_count = K_OPERANDS_I16.size()},
     AreaOpcodeInfo{.opcode = K_OP_ACTIVATE_ZONE,
@@ -343,6 +345,22 @@ constexpr std::array<AreaOpcodeInfo, 49> K_AREA_OPCODE_TABLE{
         .support = OpcodeSupport::k_supported,
         .provisional = false,
         .notes = "clears a persistent Scalar16 ZONE bit and rebuilds resident active zones",
+        .operands = K_OPERANDS_I16.data(),
+        .operand_count = K_OPERANDS_I16.size()},
+    AreaOpcodeInfo{.opcode = K_OP_ENABLE_OBJECT_PLACEMENT,
+        .name = "EnableObjectPlacement",
+        .support = OpcodeSupport::k_supported,
+        .provisional = false,
+        .notes = "sets bit 1 of an existing AREA/SCENE table-1 placement and enables its live "
+                 "object",
+        .operands = K_OPERANDS_I16.data(),
+        .operand_count = K_OPERANDS_I16.size()},
+    AreaOpcodeInfo{.opcode = K_OP_DISABLE_OBJECT_PLACEMENT,
+        .name = "DisableObjectPlacement",
+        .support = OpcodeSupport::k_supported,
+        .provisional = false,
+        .notes = "clears bit 1 of an existing AREA/SCENE table-1 placement and disables its "
+                 "live object",
         .operands = K_OPERANDS_I16.data(),
         .operand_count = K_OPERANDS_I16.size()},
     AreaOpcodeInfo{.opcode = K_OP_ACTIVATE_CHARACTER,
@@ -594,6 +612,10 @@ void AreaScriptRuntime::set_character_script_sink(CharacterScriptSink sink) {
 
 void AreaScriptRuntime::set_dialog_sink(DialogSink sink) {
   m_dialog_sink = std::move(sink);
+}
+
+void AreaScriptRuntime::set_object_placement_state_sink(ObjectPlacementStateSink sink) {
+  m_object_placement_state_sink = std::move(sink);
 }
 
 void AreaScriptRuntime::set_object_activation_sink(ObjectActivationSink sink) {
@@ -1731,6 +1753,35 @@ void AreaScriptRuntime::execute_instruction() {
       entry.effect = fmt::format("{} ZONE {}",
           request.enabled ? "activate" : "deactivate",
           static_cast<std::uint16_t>(request.zone_id));
+      break;
+    }
+
+    case K_OP_ENABLE_OBJECT_PLACEMENT:
+    case K_OP_DISABLE_OBJECT_PLACEMENT: {
+      const bool enabled{opcode == K_OP_ENABLE_OBJECT_PLACEMENT};
+      const std::string_view operation{
+          enabled ? "EnableObjectPlacement" : "DisableObjectPlacement"};
+      auto object_id{resolve_scalar16(operands.at(0), operation)};
+      if (!object_id) {
+        fail_instruction(object_id.error());
+        return;
+      }
+      if (!m_object_placement_state_sink) {
+        fail_instruction("object-placement state bridge is not wired");
+        return;
+      }
+      const AreaObjectPlacementStateRequest request{
+          .object_id = object_id.value(), .enabled = enabled};
+      m_last_object_placement_state_request = request;
+      if (auto updated{m_object_placement_state_sink(request)}; !updated) {
+        fail_instruction(fmt::format("failed to {} object placement {}: {}",
+            enabled ? "enable" : "disable",
+            request.object_id,
+            updated.error()));
+        return;
+      }
+      entry.effect =
+          fmt::format("{} object placement {}", enabled ? "enable" : "disable", request.object_id);
       break;
     }
     case K_OP_ACTIVATE_CHARACTER: {

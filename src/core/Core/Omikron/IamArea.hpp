@@ -11,6 +11,7 @@
 
 #include "Core/Omikron/IamCamera.hpp"
 #include "Core/Omikron/IamCharacterDefinition.hpp"
+#include "Core/Omikron/IamObjectPlacement.hpp"
 #include "Core/Omikron/IamZone.hpp"
 
 namespace App::Omikron {
@@ -33,6 +34,10 @@ struct IamAreaCharacterRecord {
 
 /// AREA table-4 uses the shared complete 0x114-byte authored definition.
 using IamAreaCharacterDefinitionRecord = IamCharacterDefinition;
+
+/// AREA table 1/table 3 use the shared object placement/definition formats.
+using IamAreaObjectPlacementRecord = IamObjectPlacementRecord;
+using IamAreaObjectDefinitionRecord = IamObjectDefinitionRecord;
 
 /// AREA table-2 has the same physical and semantic record layout as SCENE.
 using IamAreaZoneRecord = IamZoneRecord;
@@ -128,6 +133,13 @@ class IamAreaRecord {
   [[nodiscard]] std::optional<IamAreaCharacterDefinitionRecord>
   character_definition_by_character_id(std::int16_t character_id) const;
 
+  [[nodiscard]] std::vector<IamAreaObjectPlacementRecord> object_placements() const;
+  [[nodiscard]] std::optional<IamAreaObjectPlacementRecord> object_by_id(
+      std::int16_t object_id) const;
+  [[nodiscard]] std::vector<IamAreaObjectDefinitionRecord> object_definitions() const;
+  [[nodiscard]] std::optional<IamAreaObjectDefinitionRecord> object_definition_by_object_id(
+      std::int16_t object_id) const;
+
   /// Finds a table-6 camera by its signed camera ID.
   [[nodiscard]] std::optional<IamAreaCameraRecord> camera_by_id(std::int16_t camera_id) const;
 
@@ -138,9 +150,9 @@ class IamAreaRecord {
   /// offsets; trigger semantics are deliberately not inferred here.
   [[nodiscard]] std::vector<IamAreaZoneRecord> zones() const;
 
-  /// Known serialized stride of a table, when established. Tables 0, 1, 2, 4,
-  /// 5, 6 and 7 have confirmed strides; table 3's semantics remain unresolved.
-  [[nodiscard]] static std::optional<std::size_t> known_table_stride(std::size_t index);
+  /// Known serialized stride of each recovered AREA table family.
+  [[nodiscard]] static std::optional<std::size_t> known_table_stride(
+      std::size_t index);
 
  private:
   explicit IamAreaRecord(std::vector<std::byte> bytes) : m_bytes(std::move(bytes)) {}

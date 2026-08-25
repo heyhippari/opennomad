@@ -84,14 +84,10 @@ std::string dependency_path(const std::string_view directory,
       previous = current++) {
     const auto& vertex{zone.serialized_vertices.at(current)};
     const auto& prior{zone.serialized_vertices.at(previous)};
-    const double vertex_x{
-        static_cast<double>(Runtime::area_position_to_inches(vertex.at(0)))};
-    const double vertex_z{
-        static_cast<double>(Runtime::area_position_to_inches(vertex.at(2)))};
-    const double prior_x{
-        static_cast<double>(Runtime::area_position_to_inches(prior.at(0)))};
-    const double prior_z{
-        static_cast<double>(Runtime::area_position_to_inches(prior.at(2)))};
+    const double vertex_x{static_cast<double>(Runtime::area_position_to_inches(vertex.at(0)))};
+    const double vertex_z{static_cast<double>(Runtime::area_position_to_inches(vertex.at(2)))};
+    const double prior_x{static_cast<double>(Runtime::area_position_to_inches(prior.at(0)))};
+    const double prior_z{static_cast<double>(Runtime::area_position_to_inches(prior.at(2)))};
     const double actor_x{static_cast<double>(position.x)};
     const double actor_z{static_cast<double>(position.z)};
     if ((vertex_z > actor_z) == (prior_z > actor_z)) {
@@ -137,6 +133,29 @@ std::expected<PreparedAreaWorld, std::string> prepare_area_world(ScenarioManager
     return std::expected<PreparedAreaWorld, std::string>{
         std::unexpect, fmt::format("world scenario load for AREA {}: {}", area_id, world.error())};
   }
+
+  const auto fail_after_world_load =
+      [&manager, world_scene_id](
+          std::string error) -> std::expected<PreparedAreaWorld, std::string> {
+    if (auto unloaded{manager.unload_world_context(world_scene_id)}; !unloaded) {
+      error = fmt::format("{}; rollback failed: {}", error, unloaded.error());
+    }
+    return std::expected<PreparedAreaWorld, std::string>{std::unexpect, std::move(error)};
+  };
+
+  const GameState* const game_state{manager.game_state()};
+  ScenarioRuntime* const runtime{world.value()->runtime.get()};
+  if (game_state == nullptr || runtime == nullptr) {
+    return fail_after_world_load(
+        fmt::format("AREA {} object placement owner was not initialized", area_id));
+  }
+  if (auto materialized{runtime->object_placement_runtime().materialize_area_objects(
+          area_id, area_record, *game_state)};
+      !materialized) {
+    return fail_after_world_load(
+        fmt::format("AREA {} object materialization: {}", area_id, materialized.error()));
+  }
+
   return PreparedAreaWorld{.context = world.value(),
       .decor_path = std::move(decor_path),
       .scenario_path = scenario_path,
@@ -908,6 +927,10 @@ void ScenarioStartupController::bind_compact_state_services(Script::AreaScriptRu
   runtime.set_zone_activation_sink([this](const Script::AreaZoneActivationRequest& request) {
     return set_zone_activation(request);
   });
+  runtime.set_object_placement_state_sink(
+      [this, owner_slot](const Script::AreaObjectPlacementStateRequest& request) {
+        return set_object_placement_state(owner_slot, request);
+      });
   runtime.set_object_activation_sink([this](const Script::AreaObjectActivationRequest& request) {
     return present_compact_object(request);
   });
@@ -1200,10 +1223,6 @@ std::expected<void, std::string> ScenarioStartupController::attach_area_scene(
   if (!parsed_scene) {
     return std::expected<void, std::string>{std::unexpect, parsed_scene.error()};
   }
-  if (!parsed_scene->object_placements().empty()) {
-    return std::expected<void, std::string>{std::unexpect,
-        "SCENE-local object materialization is not implemented for a nonempty table 1"};
-  }
 
   RuntimeAreaSlot& slot{m_area_slots.at(slot_index.value())};
   if (!slot.primary.has_value()) {
@@ -1214,6 +1233,10 @@ std::expected<void, std::string> ScenarioStartupController::attach_area_scene(
   if (scenario_runtime == nullptr) {
     return std::expected<void, std::string>{
         std::unexpect, fmt::format("AREA {} has no prepared world runtime", request.area_id)};
+  }
+  GameState* const game_state{m_manager->game_state()};
+  if (game_state == nullptr) {
+    return std::expected<void, std::string>{std::unexpect, "session game state is not initialized"};
   }
   if (slot.scene.has_value()) {
     // The compact context must release its borrowed byte span before the owned
@@ -1226,6 +1249,8 @@ std::expected<void, std::string> ScenarioStartupController::attach_area_scene(
     }
     scenario_runtime->character_runtime().dematerialize_scene_characters(
         slot.primary_area_id, slot.scene_id, preserved_character_id);
+    scenario_runtime->object_placement_runtime().dematerialize_scene_objects(
+        slot.primary_area_id, slot.scene_id);
     slot.scene.reset();
     slot.scene_id = -1;
   }
@@ -1263,6 +1288,31 @@ std::expected<void, std::string> ScenarioStartupController::attach_area_scene(
     }
     scenario_runtime->character_runtime().dematerialize_scene_characters(
         slot.primary_area_id, slot.scene_id);
+
+    slot.scene.reset();
+    slot.scene_id = -1;
+    return std::expected<void, std::string>{std::unexpect, materialize_error};
+  }
+  if (auto materialized_objects{
+          scenario_runtime->object_placement_runtime().materialize_scene_objects(
+              slot.primary_area_id, slot.scene_id, *slot.scene, *game_state)};
+      !materialized_objects) {
+    const std::string materialize_error{std::move(materialized_objects).error()};
+    scenario_runtime->object_placement_runtime().dematerialize_scene_objects(
+        slot.primary_area_id, slot.scene_id);
+    scenario_runtime->character_runtime().dematerialize_scene_characters(
+        slot.primary_area_id, slot.scene_id);
+    if (transfer_current) {
+      if (auto returned{
+              m_manager->transfer_controlled_character(slot.world_scene_id, source_world_scene_id)};
+          !returned) {
+        return std::expected<void, std::string>{std::unexpect,
+            fmt::format(
+                "SCENE object materialization failed: {}; current-character rollback failed: {}",
+                materialize_error,
+                returned.error())};
+      }
+    }
     slot.scene.reset();
     slot.scene_id = -1;
     return std::expected<void, std::string>{std::unexpect, materialize_error};
@@ -1294,15 +1344,13 @@ std::expected<void, std::string> ScenarioStartupController::attach_area_scene(
       slot.scene_script.reset();
       scenario_runtime->character_runtime().dematerialize_scene_characters(
           slot.primary_area_id, slot.scene_id);
+      scenario_runtime->object_placement_runtime().dematerialize_scene_objects(
+          slot.primary_area_id, slot.scene_id);
       slot.scene.reset();
       slot.scene_id = -1;
       return std::expected<void, std::string>{std::unexpect, switch_error};
     }
     m_active_area_slot = slot_index.value();
-  }
-  GameState* const game_state{m_manager->game_state()};
-  if (game_state == nullptr) {
-    return std::expected<void, std::string>{std::unexpect, "session game state is not initialized"};
   }
   if (auto mapped{game_state->set_area_mapping(request.area_id, request.scene_id)}; !mapped) {
     return mapped;
@@ -1349,6 +1397,8 @@ std::expected<void, std::string> ScenarioStartupController::release_area(
       runtime != nullptr && slot.scene.has_value()) {
     slot.scene_script.reset();
     runtime->character_runtime().dematerialize_scene_characters(
+        slot.primary_area_id, slot.scene_id);
+    runtime->object_placement_runtime().dematerialize_scene_objects(
         slot.primary_area_id, slot.scene_id);
   }
   slot.scene_script.reset();
@@ -1577,6 +1627,123 @@ std::expected<void, std::string> ScenarioStartupController::start_compact_dialog
   return {};
 }
 
+std::expected<void, std::string> ScenarioStartupController::set_object_placement_state(
+    const std::size_t owner_slot, const Script::AreaObjectPlacementStateRequest& request) {
+  if (m_manager == nullptr || m_manager->game_state() == nullptr) {
+    return std::expected<void, std::string>{
+        std::unexpect, "persistent IAM game state is not initialized"};
+  }
+  if (owner_slot >= m_area_slots.size()) {
+    return std::expected<void, std::string>{
+        std::unexpect, "object-placement owner AREA slot is out of range"};
+  }
+
+  const RuntimeAreaSlot& slot{m_area_slots.at(owner_slot)};
+  if (!slot.primary.has_value()) {
+    return std::expected<void, std::string>{
+        std::unexpect, "object-placement owner has no parsed AREA record"};
+  }
+
+  std::optional<std::int16_t> persistent_state_index;
+  std::optional<std::int32_t> scene_owner;
+  if (const auto area_placement{slot.primary->object_by_id(request.object_id)};
+      area_placement.has_value()) {
+    persistent_state_index = area_placement->persistent_state_index;
+  } else if (slot.scene.has_value()) {
+    if (const auto scene_placement{slot.scene->object_by_id(request.object_id)};
+        scene_placement.has_value()) {
+      persistent_state_index = scene_placement->persistent_state_index;
+      scene_owner = slot.scene_id;
+    }
+  }
+
+  if (!persistent_state_index.has_value()) {
+    // Retail 0x4D explicitly tolerates an absent target. 0x4C falls through
+    // to a null dereference instead; turn that trusted-data invariant into a
+    // structured diagnostic rather than reproducing the crash.
+    if (!request.enabled) {
+      App::Log::debug(LogCategory::Script,
+          "DisableObjectPlacement ignored missing object {} in owner AREA {}",
+          request.object_id,
+          slot.primary_area_id);
+      return {};
+    }
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format("object placement {} was not found in owner AREA {} or attached SCENE",
+            request.object_id,
+            slot.primary_area_id)};
+  }
+  if (persistent_state_index.value() < 0) {
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format("object placement {} has negative packed-state index {}",
+            request.object_id,
+            persistent_state_index.value())};
+  }
+
+  GameState& game_state{*m_manager->game_state()};
+  const std::size_t state_index{static_cast<std::size_t>(persistent_state_index.value())};
+  auto old_state{game_state.packed_state(state_index)};
+  if (!old_state) {
+    return std::expected<void, std::string>{std::unexpect, old_state.error()};
+  }
+
+  // Bit 0 is the placement-exists/materialization gate. 0x4C/0x4D only
+  // operate on an already-existing placement and never create/destroy it.
+  if ((old_state.value() & 0x01U) == 0U) {
+    record("AreaScript.ObjectPlacementStateIgnored",
+        fmt::format("id={} stateIndex={} state={} reason=not-materialized",
+            request.object_id,
+            state_index,
+            old_state.value()));
+    return {};
+  }
+
+  const std::uint8_t new_state{static_cast<std::uint8_t>(
+      request.enabled ? (old_state.value() | 0x02U) : (old_state.value() & ~0x02U))};
+  if (auto written{game_state.set_packed_state(state_index, new_state)}; !written) {
+    return written;
+  }
+
+  ScenarioRuntime* const runtime{m_manager->world_runtime(slot.world_scene_id)};
+  if (runtime == nullptr) {
+    auto rollback{game_state.set_packed_state(state_index, old_state.value())};
+    return std::expected<void, std::string>{std::unexpect,
+        rollback ? std::string{"object-placement owner has no world runtime"}
+                 : fmt::format("object-placement owner has no world runtime; persistent-state "
+                               "rollback failed: {}",
+                       rollback.error())};
+  }
+  auto updated{runtime->object_placement_runtime().set_enabled(
+      slot.primary_area_id, scene_owner, request.object_id, request.enabled)};
+  if (!updated) {
+    auto rollback{game_state.set_packed_state(state_index, old_state.value())};
+    return std::expected<void, std::string>{std::unexpect,
+        rollback
+            ? updated.error()
+            : fmt::format(
+                  "{}; persistent-state rollback failed: {}", updated.error(), rollback.error())};
+  }
+
+  record("AreaScript.ObjectPlacementState",
+      fmt::format("id={} source={} stateIndex={} {}->{} enabled={}",
+          request.object_id,
+          scene_owner.has_value() ? fmt::format("SCENE {}", scene_owner.value())
+                                  : fmt::format("AREA {}", slot.primary_area_id),
+          state_index,
+          old_state.value(),
+          new_state,
+          request.enabled));
+  App::Log::debug(LogCategory::Scenario,
+      "object placement {} {} — AREA {}{} packedState[{}]={}",
+      request.object_id,
+      request.enabled ? "enabled" : "disabled",
+      slot.primary_area_id,
+      scene_owner.has_value() ? fmt::format(" SCENE {}", scene_owner.value()) : std::string{},
+      state_index,
+      new_state);
+  return {};
+}
+
 std::expected<void, std::string> ScenarioStartupController::present_compact_object(
     const Script::AreaObjectActivationRequest& request) {
   if (request.object_id == -1) {
@@ -1612,8 +1779,8 @@ std::expected<void, std::string> ScenarioStartupController::present_compact_obje
 
   auto object_bytes{m_object_archive->read_record(static_cast<std::uint16_t>(request.object_id))};
   if (!object_bytes) {
-    return std::expected<void, std::string>{std::unexpect,
-        fmt::format("IAM/OBJECT {}: {}", request.object_id, object_bytes.error())};
+    return std::expected<void, std::string>{
+        std::unexpect, fmt::format("IAM/OBJECT {}: {}", request.object_id, object_bytes.error())};
   }
   auto object{Omikron::IamObjectRecord::load(object_bytes.value())};
   if (!object) {

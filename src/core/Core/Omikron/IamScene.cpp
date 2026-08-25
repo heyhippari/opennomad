@@ -2,6 +2,7 @@
 
 #include <fmt/format.h>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -17,6 +18,7 @@
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Omikron/IamCamera.hpp"
 #include "Core/Omikron/IamCharacterDefinition.hpp"
+#include "Core/Omikron/IamObjectPlacement.hpp"
 #include "Core/Omikron/IamZone.hpp"
 
 namespace App::Omikron {
@@ -351,19 +353,19 @@ std::vector<IamSceneObjectPlacementRecord> IamSceneRecord::object_placements() c
   result.reserve(static_cast<std::size_t>(table_count(1)));
   const std::size_t count{static_cast<std::size_t>(table_count(1))};
   for (std::size_t index{0}; index < count; ++index) {
-    const std::span<const std::byte> record{table->subspan(index * 0x18U, 0x18U)};
-    result.push_back(
-        IamSceneObjectPlacementRecord{.runtime_object_slot_seed = read_at<std::int16_t>(record, 0U),
-            .object_id = read_at<std::int16_t>(record, 2U),
-            .serialized_position = {read_at<std::int32_t>(record, 4U),
-                read_at<std::int32_t>(record, 8U),
-                read_at<std::int32_t>(record, 12U)},
-            .orientation_units = {read_at<std::int16_t>(record, 16U),
-                read_at<std::int16_t>(record, 18U),
-                read_at<std::int16_t>(record, 20U)},
-            .persistent_state_field = read_at<std::uint16_t>(record, 22U)});
+    const std::span<const std::byte, 0x18> record{table->subspan(index * 0x18U, 0x18U)};
+    result.push_back(parse_iam_object_placement(record));
   }
   return result;
+}
+
+std::optional<IamSceneObjectPlacementRecord> IamSceneRecord::object_by_id(
+    const std::int16_t object_id) const {
+  const auto placements{object_placements()};
+  const auto found{
+      std::ranges::find(placements, object_id, &IamSceneObjectPlacementRecord::object_id)};
+  return found == placements.end() ? std::nullopt
+                                   : std::optional<IamSceneObjectPlacementRecord>{*found};
 }
 
 std::vector<IamSceneObjectDefinitionRecord> IamSceneRecord::object_definitions() const {
@@ -375,13 +377,19 @@ std::vector<IamSceneObjectDefinitionRecord> IamSceneRecord::object_definitions()
   result.reserve(static_cast<std::size_t>(table_count(3)));
   const std::size_t count{static_cast<std::size_t>(table_count(3))};
   for (std::size_t index{0}; index < count; ++index) {
-    const std::span<const std::byte> record{table->subspan(index * 0x18U, 0x18U)};
-    IamSceneObjectDefinitionRecord definition{
-        .object_id = read_at<std::int16_t>(record, 0U), .raw_tail = {}};
-    std::memcpy(definition.raw_tail.data(), record.subspan(2U).data(), definition.raw_tail.size());
-    result.push_back(definition);
+    const std::span<const std::byte, 0x18> record{table->subspan(index * 0x18U, 0x18U)};
+    result.push_back(parse_iam_object_definition(record));
   }
   return result;
+}
+
+std::optional<IamSceneObjectDefinitionRecord> IamSceneRecord::object_definition_by_object_id(
+    const std::int16_t object_id) const {
+  const auto definitions{object_definitions()};
+  const auto found{
+      std::ranges::find(definitions, object_id, &IamSceneObjectDefinitionRecord::object_id)};
+  return found == definitions.end() ? std::nullopt
+                                    : std::optional<IamSceneObjectDefinitionRecord>{*found};
 }
 
 std::vector<IamSceneZoneRecord> IamSceneRecord::zones() const {

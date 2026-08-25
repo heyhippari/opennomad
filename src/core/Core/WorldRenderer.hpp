@@ -12,6 +12,7 @@
 
 #include "Core/Character/CharacterRuntime.hpp"
 #include "Core/Debug/SceneDebugView.hpp"
+#include "Core/Object/ObjectPlacementRuntime.hpp"
 #include "Core/Mesh.hpp"
 #include "Core/Omikron/Model3DO.hpp"
 #include "Core/Shader.hpp"
@@ -93,8 +94,15 @@ class WorldRenderer {
       float uv_phase_u,
       float uv_phase_v,
       bool legacy_effect);
+  void draw_object_group(const ObjectPlacement::RuntimePlacement& placement,
+      const Camera& camera,
+      std::size_t group_index,
+      float uv_phase_u,
+      float uv_phase_v,
+      bool legacy_effect);
   void render_geometry_wireframe(const Camera& camera, const ScenarioRuntime* runtime);
   void sync_character_models(const ScenarioRuntime& runtime);
+  void sync_object_models(const ScenarioRuntime& runtime);
   void sync_decor_model(const ScenarioRuntime& runtime);
 
   struct CharacterGpuModel {
@@ -105,6 +113,15 @@ class WorldRenderer {
     std::vector<Omikron::BlendMode> group_modes;
     std::vector<GameColorTexture> textures;
     std::uint64_t pose_revision{0};
+  };
+
+  struct ObjectGpuModel {
+    std::shared_ptr<const ObjectPlacement::ModelResource> resource;
+    std::deque<Mesh> meshes;
+    std::vector<std::int32_t> group_material_ids;
+    std::vector<std::uint32_t> group_flags;
+    std::vector<Omikron::BlendMode> group_modes;
+    std::vector<GameColorTexture> textures;
   };
 
   std::unique_ptr<Shader> m_modern_shader;
@@ -123,6 +140,8 @@ class WorldRenderer {
   bool m_geometry_wireframe{false};
   std::unordered_map<std::size_t, std::unique_ptr<CharacterGpuModel>> m_character_models;
   std::vector<std::string> m_failed_character_models;
+  std::unordered_map<std::size_t, std::unique_ptr<ObjectGpuModel>> m_object_models;
+  std::vector<std::string> m_failed_object_models;
   std::uint64_t m_decor_pose_revision{0};
   /// Last accepted posed-decor bounds, retained only for mutation diagnostics.
   WorldBounds m_decor_pose_bounds{};

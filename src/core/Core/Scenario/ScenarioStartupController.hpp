@@ -253,6 +253,9 @@ class ScenarioStartupController {
   /// Applies persistent ZONE state, then rebuilds resident active zones.
   [[nodiscard]] std::expected<void, std::string> set_zone_activation(
       const Script::AreaZoneActivationRequest& request);
+  /// Applies 0x4C/0x4D to the owner AREA first, then its attached SCENE.
+  [[nodiscard]] std::expected<void, std::string> set_object_placement_state(
+      std::size_t owner_slot, const Script::AreaObjectPlacementStateRequest& request);
   /// Wires one compact context to playthrough-owned globals and character
   /// profiles. `prefer_scene_definition` preserves the context's resource
   /// ownership when an authored ID exists in both definition tables.

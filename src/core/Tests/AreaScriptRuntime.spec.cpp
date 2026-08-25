@@ -39,6 +39,7 @@ using App::Script::AreaCharacterValueRequest;
 using App::Script::AreaCinematicLetterboxRequest;
 using App::Script::AreaDialogRequest;
 using App::Script::AreaObjectActivationRequest;
+using App::Script::AreaObjectPlacementStateRequest;
 using App::Script::AreaPersistentObjectCollectionRequest;
 using App::Script::AreaPresentationRequest;
 using App::Script::AreaReleaseRequest;
@@ -220,6 +221,64 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
       CHECK(runtime.run() == AreaScriptState::k_ready);
       CHECK_EQ(globals.values.at(60), 0);
     }
+  }
+
+  TEST_CASE("0x4C consumes one Scalar16 and continues exactly into the following 0x47") {
+    Buffer bytes;
+    bytes.u8(0x4C).u16(162);
+    bytes.u8(0x47).u16(237).u16(57);
+    bytes.u8(0x03);
+
+    AreaScriptRuntime runtime{bytes.data()};
+    std::optional<AreaObjectPlacementStateRequest> placement_request;
+    std::optional<AreaSceneAttachRequest> attach_request;
+    runtime.set_object_placement_state_sink(
+        [&placement_request](const AreaObjectPlacementStateRequest& request)
+            -> std::expected<void, std::string> {
+          placement_request = request;
+          return {};
+        });
+    runtime.set_area_scene_attach_sink(
+        [&attach_request](const AreaSceneAttachRequest& request)
+            -> std::expected<void, std::string> {
+          attach_request = request;
+          return {};
+        });
+    runtime.queue_event(1);
+    runtime.activate();
+
+    CHECK(runtime.run() == AreaScriptState::k_ready);
+    REQUIRE(placement_request.has_value());
+    CHECK_EQ(placement_request->object_id, 162);
+    CHECK(placement_request->enabled);
+    REQUIRE(attach_request.has_value());
+    CHECK_EQ(attach_request->area_id, 237);
+    CHECK_EQ(attach_request->scene_id, 57);
+    CHECK_EQ(runtime.instruction_pointer(), bytes.data().size());
+  }
+
+  TEST_CASE("0x4D resolves parameter-indirected Scalar16 object IDs without waiting") {
+    Buffer bytes;
+    bytes.u8(0x4D).u16(0x4000).u8(0x03);
+    AreaScriptRuntime runtime{bytes.data()};
+    const std::array<std::int16_t, 1> parameters{162};
+    runtime.set_scalar16_parameters(parameters);
+
+    std::optional<AreaObjectPlacementStateRequest> request;
+    runtime.set_object_placement_state_sink(
+        [&request](const AreaObjectPlacementStateRequest& value)
+            -> std::expected<void, std::string> {
+          request = value;
+          return {};
+        });
+    runtime.queue_event(1);
+    runtime.activate();
+
+    CHECK(runtime.run() == AreaScriptState::k_ready);
+    REQUIRE(request.has_value());
+    CHECK_EQ(request->object_id, 162);
+    CHECK_FALSE(request->enabled);
+    CHECK(runtime.wait_info().kind == AreaWaitKind::k_none);
   }
 
   TEST_CASE("0x5D writes the selected current-character value from a shared global") {

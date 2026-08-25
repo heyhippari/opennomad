@@ -201,6 +201,14 @@ struct AreaDialogRequest {
   std::int16_t dialog_id{0};
 };
 
+/// Persistent enable/disable of one authored AREA/SCENE table-1 placement.
+/// Opcodes 0x4C/0x4D resolve AREA first and attached SCENE second; the owner
+/// updates START's packed two-bit state and the live placement together.
+struct AreaObjectPlacementStateRequest {
+  std::int16_t object_id{0};
+  bool enabled{false};
+};
+
 /// Nonblocking OBJECTS activation requested by compact opcode 0x5C.  The
 /// session-owned sink resolves the checked IAM/OBJECT record and submits any
 /// resulting presentation; the compact VM keeps only the authored ID.
@@ -294,6 +302,10 @@ class AreaScriptRuntime {
 
   /// Bridge from opcode 0x3D to the session-owned IAM/DIALOG runtime.
   using DialogSink = std::function<std::expected<void, std::string>(const AreaDialogRequest&)>;
+
+  /// Bridge from opcodes 0x4C/0x4D to resident AREA/SCENE placement state.
+  using ObjectPlacementStateSink =
+      std::function<std::expected<void, std::string>(const AreaObjectPlacementStateRequest&)>;
 
   /// Bridge from opcode 0x5C to session-owned IAM/OBJECT presentation.
   using ObjectActivationSink =
@@ -401,6 +413,9 @@ class AreaScriptRuntime {
 
   /// Wires AREA opcode 0x3D to the session dialog runtime.
   void set_dialog_sink(DialogSink sink);
+
+  /// Wires AREA opcodes 0x4C/0x4D to resident object placement state.
+  void set_object_placement_state_sink(ObjectPlacementStateSink sink);
 
   /// Wires AREA opcode 0x5C to session-owned OBJECTS presentation.
   void set_object_activation_sink(ObjectActivationSink sink);
@@ -587,6 +602,10 @@ class AreaScriptRuntime {
   [[nodiscard]] const std::optional<AreaDialogRequest>& last_dialog_request() const {
     return m_last_dialog_request;
   }
+  [[nodiscard]] const std::optional<AreaObjectPlacementStateRequest>&
+  last_object_placement_state_request() const {
+    return m_last_object_placement_state_request;
+  }
   [[nodiscard]] const std::optional<AreaObjectActivationRequest>& last_object_activation_request()
       const {
     return m_last_object_activation_request;
@@ -687,6 +706,7 @@ class AreaScriptRuntime {
   ScxScriptSink m_scx_script_sink;
   CharacterScriptSink m_character_script_sink;
   DialogSink m_dialog_sink;
+  ObjectPlacementStateSink m_object_placement_state_sink;
   ObjectActivationSink m_object_activation_sink;
   AreaTransitionSink m_area_transition_sink;
   AreaReleaseSink m_area_release_sink;
@@ -716,6 +736,7 @@ class AreaScriptRuntime {
   std::optional<AreaCurrentCharacterControllerRequest> m_last_current_character_controller_request;
   std::optional<AreaCharacterScriptRequest> m_last_character_script_request;
   std::optional<AreaDialogRequest> m_last_dialog_request;
+  std::optional<AreaObjectPlacementStateRequest> m_last_object_placement_state_request;
   std::optional<AreaObjectActivationRequest> m_last_object_activation_request;
   std::optional<AreaTransitionRequest> m_last_area_transition_request;
   std::optional<AreaReleaseRequest> m_last_area_release_request;

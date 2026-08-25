@@ -96,11 +96,57 @@ TEST_SUITE("Core::Omikron::IamAreaRecord") {
     CHECK_EQ(IamAreaRecord::known_table_stride(0), std::optional<std::size_t>{0x14});
     CHECK_EQ(IamAreaRecord::known_table_stride(1), std::optional<std::size_t>{0x18});
     CHECK_EQ(IamAreaRecord::known_table_stride(2), std::optional<std::size_t>{0x44});
-    CHECK_EQ(IamAreaRecord::known_table_stride(3), std::nullopt);
+    CHECK_EQ(IamAreaRecord::known_table_stride(3), std::optional<std::size_t>{0x18});
     CHECK_EQ(IamAreaRecord::known_table_stride(4), std::optional<std::size_t>{0x114});
     CHECK_EQ(IamAreaRecord::known_table_stride(5), std::optional<std::size_t>{0x10});
     CHECK_EQ(IamAreaRecord::known_table_stride(6), std::optional<std::size_t>{0x2C});
     CHECK_EQ(IamAreaRecord::known_table_stride(7), std::optional<std::size_t>{0x08});
+  }
+
+  TEST_CASE("AREA table 1/table 3 expose object placement state and model resource") {
+    constexpr std::size_t k_placement_offset{IamAreaRecord::k_header_size};
+    constexpr std::size_t k_definition_offset{k_placement_offset + 0x18U};
+    std::vector<std::byte> data(k_definition_offset + 0x18U, std::byte{});
+
+    write_u32(data, IamAreaRecord::k_offset_script, static_cast<std::uint32_t>(data.size()));
+    write_u32(data, IamAreaRecord::k_offset_table_offsets + (1U * 4U), k_placement_offset);
+    write_u16(data, IamAreaRecord::k_offset_table_counts + (1U * 2U), 1);
+    write_u32(data, IamAreaRecord::k_offset_table_offsets + (3U * 4U), k_definition_offset);
+    write_u16(data, IamAreaRecord::k_offset_table_counts + (3U * 2U), 1);
+
+    write_i16(data, k_placement_offset + 0x00U, -1);
+    write_i16(data, k_placement_offset + 0x02U, 162);
+    write_i32(data, k_placement_offset + 0x04U, 100);
+    write_i32(data, k_placement_offset + 0x08U, -200);
+    write_i32(data, k_placement_offset + 0x0CU, 300);
+    write_i16(data, k_placement_offset + 0x10U, 10);
+    write_i16(data, k_placement_offset + 0x12U, 20);
+    write_i16(data, k_placement_offset + 0x14U, 30);
+    write_i16(data, k_placement_offset + 0x16U, 471);
+
+    write_i16(data, k_definition_offset + 0x00U, 162);
+    write_u16(data, k_definition_offset + 0x02U, 0x1234);
+    write_u16(data, k_definition_offset + 0x04U, 1);
+    write_u16(data, k_definition_offset + 0x0CU, 5);
+    constexpr std::string_view k_model{"RINGS3"};
+    std::memcpy(data.data() + k_definition_offset + 0x0EU, k_model.data(), k_model.size());
+
+    const auto record{IamAreaRecord::load(data)};
+    REQUIRE(record.has_value());
+    const auto placement{record->object_by_id(162)};
+    REQUIRE(placement.has_value());
+    CHECK_EQ(placement->serialized_position.at(1), -200);
+    CHECK_EQ(placement->orientation_units.at(0), 10);
+    CHECK_EQ(placement->orientation_units.at(1), 20);
+    CHECK_EQ(placement->orientation_units.at(2), 30);
+    CHECK_EQ(placement->persistent_state_index, 471);
+
+    const auto definition{record->object_definition_by_object_id(162)};
+    REQUIRE(definition.has_value());
+    CHECK_EQ(definition->type_or_flags, 0x1234);
+    CHECK_EQ(definition->fields_04_0c.front(), 1);
+    CHECK_EQ(definition->fields_04_0c.back(), 5);
+    CHECK_EQ(definition->model_resource, "RINGS3");
   }
 
   TEST_CASE("AREA table 0 exposes recovered character records by signed ID") {

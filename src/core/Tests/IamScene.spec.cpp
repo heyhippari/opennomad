@@ -61,6 +61,23 @@ std::vector<std::byte> valid_scene() {
   write(data, k_table0 + 0x0CU, static_cast<std::int32_t>(19386));
   write(data, k_table0 + 0x10U, static_cast<std::int16_t>(4073));
 
+  write(data, k_table1 + 0x00U, static_cast<std::int16_t>(-1));
+  write(data, k_table1 + 0x02U, static_cast<std::int16_t>(162));
+  write(data, k_table1 + 0x04U, static_cast<std::int32_t>(100));
+  write(data, k_table1 + 0x08U, static_cast<std::int32_t>(-200));
+  write(data, k_table1 + 0x0CU, static_cast<std::int32_t>(300));
+  write(data, k_table1 + 0x10U, static_cast<std::int16_t>(10));
+  write(data, k_table1 + 0x12U, static_cast<std::int16_t>(20));
+  write(data, k_table1 + 0x14U, static_cast<std::int16_t>(30));
+  write(data, k_table1 + 0x16U, static_cast<std::int16_t>(471));
+
+  write(data, k_table3 + 0x00U, static_cast<std::int16_t>(162));
+  write(data, k_table3 + 0x02U, static_cast<std::uint16_t>(0x1234));
+  write(data, k_table3 + 0x04U, static_cast<std::uint16_t>(1));
+  write(data, k_table3 + 0x0CU, static_cast<std::uint16_t>(5));
+  constexpr char k_object_model[]{"RINGS3"};
+  std::memcpy(data.data() + k_table3 + 0x0EU, k_object_model, sizeof(k_object_model));
+
   write(data, k_table2 + 0x00U, static_cast<std::uint32_t>(k_script));
   write(data, k_table2 + 0x04U, static_cast<std::uint32_t>(k_script + 1U));
   write(data, k_table2 + 0x08U, static_cast<std::uint32_t>(k_script));
@@ -139,6 +156,21 @@ TEST_SUITE("Core::Omikron::IamSceneRecord") {
     CHECK_EQ(definition->character_id, 57);
     CHECK_EQ(definition->unknown_112, -4);
     CHECK(definition->character_type == App::Omikron::CharacterType::Unspecified);
+
+    const auto object{scene->object_by_id(162)};
+    REQUIRE(object.has_value());
+    CHECK_EQ(object->serialized_position.at(1), -200);
+    CHECK_EQ(object->orientation_units.at(0), 10);
+    CHECK_EQ(object->orientation_units.at(1), 20);
+    CHECK_EQ(object->orientation_units.at(2), 30);
+    CHECK_EQ(object->persistent_state_index, 471);
+    const auto object_definition{scene->object_definition_by_object_id(162)};
+    REQUIRE(object_definition.has_value());
+    CHECK_EQ(object_definition->type_or_flags, 0x1234);
+    CHECK_EQ(object_definition->fields_04_0c.front(), 1);
+    CHECK_EQ(object_definition->fields_04_0c.back(), 5);
+    CHECK_EQ(object_definition->model_resource, "RINGS3");
+
     const std::vector<App::Omikron::IamSceneZoneRecord> zones{scene->zones()};
     REQUIRE_EQ(zones.size(), 1U);
     CHECK_EQ(zones.front().event_offsets.at(0), scene->script_offset());

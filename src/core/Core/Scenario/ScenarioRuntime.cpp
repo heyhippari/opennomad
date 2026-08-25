@@ -23,6 +23,7 @@
 #include "Core/Audio/AudioTypes.hpp"
 #include "Core/Character/CharacterRuntime.hpp"
 #include "Core/Debug/Instrumentor.hpp"
+#include "Core/Object/ObjectPlacementRuntime.hpp"
 #include "Core/Log.hpp"
 #include "Core/LogCategory.hpp"
 #include "Core/Omikron/Animation3DA.hpp"
@@ -572,6 +573,14 @@ Character::Runtime& ScenarioRuntime::character_runtime() {
 
 const Character::Runtime& ScenarioRuntime::character_runtime() const {
   return m_character_runtime;
+}
+
+ObjectPlacement::Runtime& ScenarioRuntime::object_placement_runtime() {
+  return m_object_placement_runtime;
+}
+
+const ObjectPlacement::Runtime& ScenarioRuntime::object_placement_runtime() const {
+  return m_object_placement_runtime;
 }
 
 Sprite::SpritePool& ScenarioRuntime::sprite_pool() {

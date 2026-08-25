@@ -36,6 +36,7 @@ add_library(${NAME} STATIC
   Core/Dialog/DialogRuntime.hpp Core/Dialog/DialogRuntime.cpp
   Core/Dialog/DialogPerformanceRuntime.hpp Core/Dialog/DialogPerformanceRuntime.cpp
   Core/Character/CharacterRuntime.hpp Core/Character/CharacterRuntime.cpp
+  Core/Object/ObjectPlacementRuntime.hpp Core/Object/ObjectPlacementRuntime.cpp
   Core/CameraController.cpp Core/CameraController.hpp
   Core/Input/InputAction.hpp
   Core/Input/InputSource.hpp
@@ -78,6 +79,7 @@ add_library(${NAME} STATIC
   Core/Omikron/IamArchive.hpp Core/Omikron/IamArchive.cpp
   Core/Omikron/IamStart.hpp Core/Omikron/IamStart.cpp
   Core/Omikron/IamZone.hpp
+  Core/Omikron/IamObjectPlacement.hpp Core/Omikron/IamObjectPlacement.cpp
   Core/Omikron/IamArea.hpp Core/Omikron/IamArea.cpp
   Core/Omikron/IamScene.hpp Core/Omikron/IamScene.cpp
   Core/Omikron/IamDialog.hpp Core/Omikron/IamDialog.cpp
