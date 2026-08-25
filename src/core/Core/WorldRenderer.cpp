@@ -693,7 +693,7 @@ void WorldRenderer::draw_character_group(const Character::RuntimeCharacter& char
 
   const glm::mat4 view{glm::make_mat4(camera.get_view_matrix().data())};
   const glm::mat4 projection{glm::make_mat4(camera.get_projection_matrix().data())};
-  const glm::mat4 model{Runtime::Presentation::to_gl(character.transform)};
+  const glm::mat4 model{Runtime::Presentation::to_gl(character.presentation_transform())};
   const glm::mat4 mvp{projection * view * model};
   const Shader& shader{legacy_effect ? *m_legacy_shader : *m_modern_shader};
   shader.bind();
@@ -732,7 +732,7 @@ void WorldRenderer::render_geometry_wireframe(
   if (m_wireframe_shader == nullptr) {
     return;
   }
-
+  
   const glm::mat4 view{glm::make_mat4(camera.get_view_matrix().data())};
   const glm::mat4 projection{glm::make_mat4(camera.get_projection_matrix().data())};
   const glm::mat4 identity{1.0F};
@@ -760,8 +760,8 @@ void WorldRenderer::render_geometry_wireframe(
       if (!character.renderable() || found == m_character_models.end()) {
         continue;
       }
-      const glm::mat4 model{Runtime::Presentation::to_gl(character.transform)};
-      mvp = projection * view * model;
+      const glm::mat4 character_model{Runtime::Presentation::to_gl(character.transform)};
+      mvp = projection * view * character_model;
       m_wireframe_shader->set_uniform_mat4(
           "u_mvp", std::span<const GLfloat, 16>{glm::value_ptr(mvp), 16});
       for (const Mesh& mesh : found->second->meshes) {

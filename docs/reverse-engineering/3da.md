@@ -1011,27 +1011,40 @@ raw integrated animation delta
     v
 transformed root delta
 ```
+The multiplication uses Runtime's row-vector convention:
 
-The multiplication uses Runtime's row-vector convention.
+```text
+worldDelta = integrated3DADelta * liveRootOrientation
+```
 
-The exact caller/context semantics of every matrix argument are still being
-mapped.
+The body-animation caller supplies the live top/root object orientation. This
+is the actor's current world-facing basis; it is distinct from the animation
+quaternion sampled for the current 3DA frame. Runtime writes that quaternion to
+object animation state separately.
 
-This matters because an animation's authored local-space motion may need to be
-rotated into another object/world basis before being applied.
+In OpenNomad the original top-level object state is split: actor/world placement
+and orientation live in `RuntimeCharacter::transform`, while the 3DO hierarchy
+keeps model/object animation state. The equivalent root-motion operation is:
 
-## 21.1 Current OpenNomad difference
+```cpp
+rootDelta =
+    Runtime::transform_vector(integratedDelta, character.transform.matrix);
 
-OpenNomad's current `Animation3DAChannel::integrate_translation()` returns the
-raw integrated vector.
+character.transform.translation += rootDelta;
+```
 
-`ScenarioRuntime` then adds that vector directly to the character transform.
+Do not multiply the current root `animation_matrix` into this transform.
 
-That reproduces the currently validated intro behavior but does not yet expose
-the optional matrix-transform step seen in Runtime's general integrator.
+## 21.1 Absolute reseeding across executions
 
-This should remain a fidelity follow-up rather than being hidden as a format
-difference.
+Ordinary `SelectBodyAnimation` calls the key-zero helper recovered around
+`0x00471100` at every execution start. When the mutable previous-progress slot
+wraps to zero, the top/root absolute position is therefore restored from the
+3DA reference before samples `1..N` are integrated again.
+
+`SelectRelativeBodyAnimation` shares the same repeat boundary, but its absolute
+seed remains the sampled 3DP path position. This distinction prevents repeated
+idle/talking animation passes from accumulating root increments indefinitely.
 
 ---
 

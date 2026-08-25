@@ -946,19 +946,16 @@ arg0  binding-table-A object index
 arg1  3DA animation descriptor index
 arg2  previous progress (mutable float)
 arg3  current progress (mutable float)
-arg4-6 body-animation vector (floats; meaning still unresolved)
+arg4-6 additive XYZ Euler orientation offsets (degrees)
 arg7-9 authored non-path anchor offset (floats)
 ```
 
-It operates on the explicitly character-bound SCX instance. On its first tick
-it binds 3DA channels to the selected 3DO hierarchy by numeric `script_id`,
-anchors from the selected object's current runtime position plus the authored
-centimetre-to-inch offset, and then uses the shared 3DA rotation/root-motion
-playback path. `arg2`/`arg3` reset to `0`/`1` on command reinitialization.
+It operates on the explicitly character-bound SCX instance. On an execution boundary it binds 3DA channels to the selected 3DO hierarchy by numeric `script_id`, seeds the absolute anchor from the first 3DA position stream's key
++zero plus the authored centimetre-to-inch offset, and then uses the shared 3DA rotation/root-motion playback path. `arg2`/`arg3` reset to `0`/`1` on command reinitialization.
 
-Unlike `SelectRelativeBodyAnimation`, it does not resolve a 3DP path or
-subpath. Both commands remain group-active while their 30 Hz script-frame
-progression has not reached the animation endpoint.
+Runtime stores `arg4-6` separately from the actor's base Euler orientation and adds them when building the effective body orientation. Integrated 3DA root motion is transformed through that effective orientation. Its X/Z components advance the logical character position; the full XYZ displacement is applied to the visual root, so vertical body motion does not rewrite logical actor Y.
+
+Unlike `SelectRelativeBodyAnimation`, it does not resolve a 3DP path or subpath. Both commands remain group-active while their 30 Hz script-frame progression has not reached the animation endpoint.
 
 Representative diagnostics:
 
@@ -1020,14 +1017,9 @@ Script_SelectRelativeBodyAnimation()
 Script_Reinit_SelectRelativeBodyAnimation()
 ```
 
-The action uses the same selected-hierarchy 3DA playback and progress machinery
-as `SelectBodyAnimation`, but its 12-slot ABI additionally contains a 3DP
-resource/subpath pair. Its first anchor comes from the sampled 3DP position
-plus the authored offset rather than the selected object's current runtime
-position.
+The action uses the same selected-hierarchy 3DA playback, additive Euler orientation offsets, transformed root motion, and logical-X/Z versus visual-XYZ position split as `SelectBodyAnimation`, but its 12-slot ABI additionally contains a 3DP resource/subpath pair. Its first anchor comes from the sampled 3DP position plus the authored offset rather than the 3DA position-key-zero reference.
 
-The exact meaning of “relative” should remain Runtime terminology until the
-transform/root-motion semantics are traced.
+The term “relative” remains Runtime terminology; it describes the path-anchored variant rather than a different 3DA root-motion representation.
 
 ---
 

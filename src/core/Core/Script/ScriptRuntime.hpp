@@ -194,6 +194,7 @@ struct BodyAnimationRequest {
   std::uint32_t animation_index{0};
   float previous_progress{0.0F};
   float current_progress{1.0F};
+  /// Script arguments 4/5/6: additive XYZ Euler orientation offsets, degrees.
   std::array<float, 3> body_animation_vector{};
   std::array<float, 3> authored_offset{};
   bool first_tick{true};
@@ -209,6 +210,7 @@ struct RelativeBodyAnimationRequest {
   std::uint32_t animation_index{0};
   float previous_progress{0.0F};
   float current_progress{1.0F};
+  /// Script arguments 4/5/6: additive XYZ Euler orientation offsets, degrees.
   std::array<float, 3> body_animation_vector{};
   std::uint32_t path_index{0};
   std::uint32_t subpath_index{0};

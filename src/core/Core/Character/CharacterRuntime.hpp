@@ -69,7 +69,14 @@ struct BodyAnimationPlayback {
   App::Runtime::Vec3 final_anchor{};
   App::Runtime::Vec3 root_motion_delta{};
   App::Runtime::Vec3 accumulated_root_translation{};
+  /// Runtime Script_Select*BodyAnimation arguments 4/5/6: additive XYZ Euler
+  /// orientation offsets in degrees.
   App::Runtime::Vec3 body_animation_vector{};
+  /// Effective presentation orientation after adding body_animation_vector to
+  /// the actor's base Runtime transform. The base transform itself remains
+  /// logical/controller state and is not overwritten by body choreography.
+  App::Runtime::Matrix3 effective_orientation{};
+  bool effective_orientation_valid{false};
 };
 
 struct DialogFaceVertexOverride {
@@ -124,6 +131,17 @@ struct RuntimeCharacter {
 
   [[nodiscard]] bool loaded() const {
     return model_resource != nullptr;
+  }
+
+  /// Character transform used by 3D presentation. Runtime keeps the base actor
+  /// orientation and the body-animation Euler offsets as separate state; mirror
+  /// that split instead of baking animation orientation into transform.matrix.
+  [[nodiscard]] App::Runtime::Transform presentation_transform() const {
+    App::Runtime::Transform result{transform};
+    if (body_animation.effective_orientation_valid) {
+      result.matrix = body_animation.effective_orientation;
+    }
+    return result;
   }
 
   [[nodiscard]] bool renderable() const {

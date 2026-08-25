@@ -590,8 +590,22 @@ root-motion vector.
 This means root motion can be accumulated in a transformed local/world
 orientation rather than blindly adding raw XYZ components.
 
-The exact higher-level ownership/name of that matrix remains partially
-unresolved.
+For the recovered body-animation caller, this is the live top/root actor orientation. With Runtime's row-vector convention:
+
+```text
+worldDelta = integrated3DADelta * liveRootOrientation
+```
+
+The per-frame 3DA quaternion is not part of this matrix; Runtime applies it separately to object animation state.
+
+OpenNomad stores the equivalent live actor orientation in:
+
+```text
+RuntimeCharacter::transform.matrix
+```
+
+so root motion must pass through that matrix before mutating
+`transform.translation`.
 
 ---
 

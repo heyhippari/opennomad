@@ -124,7 +124,8 @@ struct BodyResourcesFixture {
   std::vector<std::byte> bytes;
 };
 
-BodyResourcesFixture make_body_resources(const App::Runtime::Vec3 reference = {}) {
+BodyResourcesFixture make_body_resources(const App::Runtime::Vec3 reference = {},
+    const App::Runtime::Vec3 root_motion = {.x = 10.0F}) {
   Buffer path;
   path.u32(1).chars("UBas.p1", 20).u32(2).u32(3);
   for (std::uint32_t key{0}; key < 3U; ++key) {
@@ -153,10 +154,10 @@ BodyResourcesFixture make_body_resources(const App::Runtime::Vec3 reference = {}
   animation.u32(3).chars("Child", 20).u32(4).u32(0).u32(4).u32(child_rotation_offset);
   // Translation sample zero is the reference position; each later sample is
   // an interval-local root-motion vector. Keep the vectors uniform so a
-  // half interval is unambiguously half of the ten-inch movement.
+  // fractional interval is an unambiguous fraction of root_motion.
   animation.f32(reference.x).f32(reference.y).f32(reference.z);
   for (std::uint32_t frame{1}; frame < 4U; ++frame) {
-    animation.f32(10.0F).f32(0.0F).f32(0.0F);
+    animation.f32(root_motion.x).f32(root_motion.y).f32(root_motion.z);
   }
   animation.f32(1.0F).f32(0.0F).f32(0.0F).f32(0.0F);
   animation.f32(0.0F).f32(0.0F).f32(0.0F).f32(1.0F);
@@ -558,7 +559,7 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
         .animation_index = 0,
         .previous_progress = 0.0F,
         .current_progress = 1.0F,
-        .body_animation_vector = {4.0F, 5.0F, 6.0F},
+        .body_animation_vector = {},
         .path_index = 0,
         .subpath_index = 0,
         .authored_offset = {0.0F, 0.0F, 0.0F},
@@ -585,7 +586,7 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
     CHECK_EQ(animated->object_poses.at(1).channel_id, std::optional<std::uint32_t>{3});
     CHECK(animated->runtime_objects.at(0).animation_matrix.has_value());
     CHECK(animated->runtime_objects.at(1).animation_matrix.has_value());
-    CHECK_EQ(animated->body_animation.body_animation_vector.z, doctest::Approx(6.0F));
+    CHECK_EQ(animated->body_animation.body_animation_vector.z, doctest::Approx(0.0F));
 
     // Both runtime characters share the immutable resource, but only one pose changed.
     CHECK(animated->model_resource == untouched->model_resource);
@@ -630,24 +631,24 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
     REQUIRE(character != nullptr);
     // Ordinary SelectBodyAnimation must ignore this pre-existing actor XYZ.
     character->transform.translation = {.x = 7000.0F, .y = -120.0F, .z = 3040.0F};
-    character->transform.matrix = App::Runtime::rotation_y(std::numbers::pi_v<float> * 0.5F);
+    character->transform.matrix = App::Runtime::rotation_y(std::numbers::pi_v<float> * 0.25F);
 
     App::Script::BodyAnimationRequest request{.character_id = 310,
         .object_binding = "RootBody",
         .animation_index = 0,
         .previous_progress = 0.0F,
         .current_progress = 1.0F,
-        .body_animation_vector = {0.0F, 0.0F, 0.0F},
+        .body_animation_vector = {0.0F, 45.0F, 0.0F},
         .authored_offset = {0.0F, 0.0F, 0.0F},
         .first_tick = true,
         .execution_count = 0,
         .execution_limit = 2};
 
-    // sample[0] is the absolute seed. sample[1] is +X local motion; a +90°
-    // live actor yaw transforms it into +Z world motion. The fixture's frame-1
-    // 3DA root quaternion is a 180° Z rotation, so +Z also proves that the
-    // per-frame animation quaternion was not incorrectly folded into the
-    // root-motion basis.
+    // sample[0] is the absolute seed. sample[1] is +X local motion. Runtime
+    // adds args 4/5/6 to the actor's base Euler orientation, so base yaw 45°
+    // plus authored yaw 45° produces +90° and moves the root along +Z. The
+    // fixture's frame-1 3DA root quaternion is a 180° Z rotation, so +Z also
+    // proves that per-frame joint animation is not folded into this basis.
     REQUIRE(runtime.select_body_animation(request).has_value());
     character = runtime.character_runtime().find(310);
     REQUIRE(character != nullptr);
@@ -662,6 +663,10 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
     CHECK_EQ(character->transform.translation.z, doctest::Approx(35.0F).epsilon(0.0001));
     CHECK_EQ(character->body_animation.accumulated_root_translation.z,
         doctest::Approx(10.0F).epsilon(0.0001));
+    const App::Runtime::Vec3 presentation_x{App::Runtime::transform_vector(
+        App::Runtime::Vec3{.x = 1.0F}, character->presentation_transform().matrix)};
+    CHECK_EQ(presentation_x.x, doctest::Approx(0.0F).epsilon(0.0001));
+    CHECK_EQ(presentation_x.z, doctest::Approx(1.0F).epsilon(0.0001));
 
     // Simulate the scheduler's next command execution. first_tick is
     // deliberately false: previous_progress==0 is itself the authoritative
@@ -692,6 +697,53 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
     CHECK_EQ(character->transform.translation.x, doctest::Approx(103.937008F));
     CHECK_EQ(character->transform.translation.y, doctest::Approx(-42.125984F));
     CHECK_EQ(character->transform.translation.z, doctest::Approx(36.811024F));
+  }
+
+  TEST_CASE("Body root motion keeps logical Y fixed and moves the visual root") {
+    BodyResourcesFixture resources{make_body_resources(
+        App::Runtime::Vec3{.x = 100.0F, .y = -50.0F, .z = 25.0F},
+        App::Runtime::Vec3{.x = 10.0F, .y = 6.0F, .z = 0.0F})};
+    resources.scx.section0_records.clear();
+    resources.scx.section0_resources.clear();
+    const std::shared_ptr<const App::Character::ModelResource> shared{make_body_model_resource()};
+    const auto loader = [shared](const std::string_view)
+        -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
+      return shared;
+    };
+
+    App::ScenarioRuntime runtime;
+    REQUIRE(runtime.initialize(resources.scx, resources.bytes, "body-vertical-root", nullptr, false)
+            .has_value());
+    runtime.character_runtime().set_model_loader(loader);
+    REQUIRE(runtime
+            .activate_character(118,
+                make_character_area(),
+                App::Script::AreaCharacterActivationRequest{
+                    .character_id = 310, .apply_area_transform = true})
+            .has_value());
+    App::Character::RuntimeCharacter* character{runtime.character_runtime().find(310)};
+    REQUIRE(character != nullptr);
+    character->transform.matrix = App::Runtime::Matrix3::identity();
+
+    const App::Script::BodyAnimationRequest request{.character_id = 310,
+        .object_binding = "RootBody",
+        .animation_index = 0,
+        .previous_progress = 0.0F,
+        .current_progress = 1.0F,
+        .body_animation_vector = {},
+        .authored_offset = {},
+        .first_tick = true,
+        .execution_count = 0,
+        .execution_limit = 1};
+    REQUIRE(runtime.select_body_animation(request).has_value());
+    character = runtime.character_runtime().find(310);
+    REQUIRE(character != nullptr);
+
+    CHECK_EQ(character->body_animation.root_motion_delta.x, doctest::Approx(10.0F));
+    CHECK_EQ(character->body_animation.root_motion_delta.y, doctest::Approx(6.0F));
+    CHECK_EQ(character->transform.translation.x, doctest::Approx(110.0F));
+    CHECK_EQ(character->transform.translation.y, doctest::Approx(-50.0F));
+    CHECK_EQ(character->runtime_objects.at(0).world_translation.y, doctest::Approx(6.0F));
   }
 
   TEST_CASE("Body animation uses the 3DA reference anchor without a 3DP resource") {
@@ -727,7 +779,7 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
         .animation_index = 0,
         .previous_progress = 0.0F,
         .current_progress = 1.0F,
-        .body_animation_vector = {4.0F, 5.0F, 6.0F},
+        .body_animation_vector = {},
         .authored_offset = {10.0F, 20.0F, 30.0F},
         .first_tick = true,
         .execution_count = 0,
