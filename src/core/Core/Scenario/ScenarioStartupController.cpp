@@ -1197,14 +1197,36 @@ std::expected<void, std::string> ScenarioStartupController::attach_area_scene(
   if (m_manager == nullptr) {
     return std::expected<void, std::string>{std::unexpect, "scenario manager is not available"};
   }
-  const auto slot_index{resident_area_slot(request.area_id)};
-  if (!slot_index.has_value()) {
-    return std::expected<void, std::string>{std::unexpect,
-        fmt::format("AREA {} is not resident for SCENE attachment", request.area_id)};
-  }
   if (request.scene_id < 0) {
     return std::expected<void, std::string>{
         std::unexpect, fmt::format("SCENE ID {} is negative", request.scene_id)};
+  }
+
+  GameState* const game_state{m_manager->game_state()};
+  if (game_state == nullptr) {
+    return std::expected<void, std::string>{std::unexpect, "session game state is not initialized"};
+  }
+
+  const auto slot_index{resident_area_slot(request.area_id)};
+  if (!slot_index.has_value()) {
+    // Runtime 0x00403950 always commits the AREA -> SCENE mapping through
+    // 0x0040B120, even when neither of its two resident AREA slots matches.
+    // The SCENE loader/materializer lives inside the resident-slot match, so a
+    // nonresident AREA must not touch IAM/SCENE yet: the AREA loader consumes
+    // this mapping if/when that AREA becomes resident later.
+    if (auto mapped{game_state->set_area_mapping(request.area_id, request.scene_id)}; !mapped) {
+      return mapped;
+    }
+    if (auto refreshed{refresh_active_zones()}; !refreshed) {
+      return refreshed;
+    }
+    record("AreaScript.AreaSceneMapped",
+        fmt::format("area={} scene={} resident=false", request.area_id, request.scene_id));
+    App::Log::debug(LogCategory::Scenario,
+        "AREA {} selected SCENE {} for future residency",
+        request.area_id,
+        request.scene_id);
+    return {};
   }
 
   if (!m_scene_archive.has_value()) {
@@ -1234,10 +1256,7 @@ std::expected<void, std::string> ScenarioStartupController::attach_area_scene(
     return std::expected<void, std::string>{
         std::unexpect, fmt::format("AREA {} has no prepared world runtime", request.area_id)};
   }
-  GameState* const game_state{m_manager->game_state()};
-  if (game_state == nullptr) {
-    return std::expected<void, std::string>{std::unexpect, "session game state is not initialized"};
-  }
+  
   if (slot.scene.has_value()) {
     // The compact context must release its borrowed byte span before the owned
     // scene record is replaced, then only SCENE-owned entities are removed.

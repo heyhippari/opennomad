@@ -685,8 +685,7 @@ void write_zone_contact_fixtures(const TempDirectory& temp) {
 
 void write_live_zone_contact_fixtures(const TempDirectory& temp) {
   write_bytes(temp.root() / "IAM" / "START", make_start());
-  write_bytes(
-      temp.root() / "IAM" / "AREA", make_zone_contact_area_archive(false, false));
+  write_bytes(temp.root() / "IAM" / "AREA", make_zone_contact_area_archive(false, false));
   write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
   write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_minimal_scx());
 }
@@ -1356,6 +1355,49 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
       CHECK_EQ(manager.world_presentation().pending_voice_over_count(), 0U);
       CHECK_EQ(manager.world_presentation().pending_subtitle_count(), 0U);
     }
+  }
+
+  TEST_CASE("0x47 maps a nonresident AREA without loading its SCENE") {
+    const TempDirectory temp;
+    write_bytes(temp.root() / "IAM" / "START", make_start());
+
+    std::vector<std::byte> area_archive{make_area_archive()};
+    Buffer script;
+    script.u8(0x47).u16(237).u16(57).u8(0x03);
+    constexpr std::size_t k_record_offset{0x800U};
+    constexpr std::size_t k_script_offset{0x3FCU};
+    std::memcpy(area_archive.data() + k_record_offset + k_script_offset,
+        script.data().data(),
+        script.data().size());
+    write_bytes(temp.root() / "IAM" / "AREA", area_archive);
+
+    // Deliberately do not provide IAM/SCENE. Runtime's nonresident 0x47 path
+    // updates only the AREA -> SCENE mapping and cannot require SCENE bytes.
+    write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
+    write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_minimal_scx());
+
+    const ScopedGameDataRoot root{temp.root()};
+    App::ScenarioManager manager;
+    App::ScenarioStartupController controller;
+    REQUIRE(controller.initialize(manager).has_value());
+    REQUIRE(controller.tick().has_value());
+
+    CHECK_EQ(controller.area_mapping(237), std::optional<std::int32_t>{57});
+    REQUIRE(manager.game_state() != nullptr);
+    CHECK_EQ(manager.game_state()->current_area(), 118);
+    CHECK_EQ(controller.active_area_slot(), 0U);
+
+    const App::RuntimeAreaSlot* const source{controller.runtime_area_slot(0)};
+    const App::RuntimeAreaSlot* const alternate{controller.runtime_area_slot(1)};
+    REQUIRE(source != nullptr);
+    REQUIRE(alternate != nullptr);
+    CHECK_EQ(source->primary_area_id, 118);
+    CHECK_FALSE(alternate->primary.has_value());
+    CHECK_EQ(alternate->primary_area_id, -1);
+
+    REQUIRE_EQ(manager.world_contexts().size(), 2U);
+    CHECK(manager.world_contexts()[0].residency == WorldSceneResidencyState::LoadedActive);
+    CHECK(manager.world_contexts()[1].residency == WorldSceneResidencyState::Free);
   }
 }
 

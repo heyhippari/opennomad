@@ -477,7 +477,8 @@ constexpr std::array<AreaOpcodeInfo, 51> K_AREA_OPCODE_TABLE{
         .name = "AttachAreaScene",
         .support = OpcodeSupport::k_supported,
         .provisional = false,
-        .notes = "attaches/replaces a SCENE in a resident AREA and commits it for presentation",
+        .notes = "sets AREA->SCENE mapping; a resident target replaces/materializes the attached "
+                 "SCENE immediately, while a nonresident target is deferred until AREA load",
         .operands = K_OPERANDS_4E.data(),
         .operand_count = K_OPERANDS_4E.size()},
     AreaOpcodeInfo{.opcode = K_OP_PLACE_CURRENT_CHARACTER_AT_ADDRESS,
