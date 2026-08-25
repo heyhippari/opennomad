@@ -777,8 +777,41 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
     CHECK_EQ(instance.instance_id, id);
     CHECK(instance.repeat_index >= 2U);
     CHECK(fixture.world.body_animation_requests.size() >= 8U);
+    CHECK(fixture.world.body_animation_requests.at(0).first_tick);
+    CHECK_FALSE(fixture.world.body_animation_requests.at(1).first_tick);
+    CHECK_FALSE(fixture.world.body_animation_requests.at(2).first_tick);
+    CHECK(fixture.world.body_animation_requests.at(3).first_tick);
+    CHECK_EQ(fixture.world.body_animation_requests.at(3).previous_progress, doctest::Approx(0.0F));
     CHECK(fixture.world.body_animation_resets.empty());
     CHECK_EQ(instance.launch_context.character_id, std::optional<std::int16_t>{310});
+  }
+
+  TEST_CASE("Ordinary body animation marks every command execution repeat as a fresh seed") {
+    // A command execution limit of two makes the command wrap once internally
+    // before it completes; this is distinct from a whole-script repeat.
+    App::Omikron::ScxScript script{body_animation_script(2)};
+    RuntimeFixture fixture{{script}, body_animation_values()};
+    REQUIRE(fixture.runtime
+            ->create_instance(
+                0, App::Script::ScriptLaunchContext{.character_id = 310, .parameter = 0})
+            .has_value());
+
+    for (std::size_t tick{0}; tick < 4U; ++tick) {
+      fixture.runtime->step_tick(1.0F);
+    }
+
+    REQUIRE_EQ(fixture.world.select_body_animation_requests.size(), 4U);
+    const auto& first{fixture.world.select_body_animation_requests.at(0)};
+    const auto& second{fixture.world.select_body_animation_requests.at(1)};
+    const auto& endpoint{fixture.world.select_body_animation_requests.at(2)};
+    const auto& repeated{fixture.world.select_body_animation_requests.at(3)};
+    CHECK(first.first_tick);
+    CHECK_FALSE(second.first_tick);
+    CHECK_FALSE(endpoint.first_tick);
+    CHECK(repeated.first_tick);
+    CHECK_EQ(repeated.previous_progress, doctest::Approx(0.0F));
+    CHECK_EQ(repeated.current_progress, doctest::Approx(1.0F));
+    CHECK_EQ(repeated.execution_count, 1U);
   }
 
   TEST_CASE("SetSpriteFrame selects the frame and completes in one tick") {

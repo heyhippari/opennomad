@@ -331,6 +331,9 @@ HandlerResult advance_body_animation_window(ScriptInstance& instance,
           .reason_text = {}};
     }
     const float remainder{current - static_cast<float>(max_frame_index)};
+    // Runtime command reinitialization exposes each new execution pass by
+    // wrapping previous progress to zero. ScenarioRuntime treats this exact
+    // value as a fresh absolute-anchor seed before integrating root motion.
     instance.value_pool.at(base + 2U).set_float(0.0F);
     instance.value_pool.at(base + 3U).set_float(remainder + 1.0F);
     return HandlerResult{.status = ScriptCommandStatus::k_running,

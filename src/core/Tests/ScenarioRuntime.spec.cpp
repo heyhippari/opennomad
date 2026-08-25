@@ -11,6 +11,7 @@
 #include <cstring>
 #include <expected>
 #include <memory>
+#include <numbers>
 #include <optional>
 #include <span>
 #include <string>
@@ -123,7 +124,7 @@ struct BodyResourcesFixture {
   std::vector<std::byte> bytes;
 };
 
-BodyResourcesFixture make_body_resources() {
+BodyResourcesFixture make_body_resources(const App::Runtime::Vec3 reference = {}) {
   Buffer path;
   path.u32(1).chars("UBas.p1", 20).u32(2).u32(3);
   for (std::uint32_t key{0}; key < 3U; ++key) {
@@ -153,7 +154,7 @@ BodyResourcesFixture make_body_resources() {
   // Translation sample zero is the reference position; each later sample is
   // an interval-local root-motion vector. Keep the vectors uniform so a
   // half interval is unambiguously half of the ten-inch movement.
-  animation.f32(0.0F).f32(0.0F).f32(0.0F);
+  animation.f32(reference.x).f32(reference.y).f32(reference.z);
   for (std::uint32_t frame{1}; frame < 4U; ++frame) {
     animation.f32(10.0F).f32(0.0F).f32(0.0F);
   }
@@ -533,6 +534,12 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
                 App::Script::AreaCharacterActivationRequest{
                     .character_id = 310, .apply_area_transform = true})
             .has_value());
+    App::Character::RuntimeCharacter* animated_character{
+        animated_runtime.character_runtime().find(310)};
+    REQUIRE(animated_character != nullptr);
+    // Keep this regression focused on the relative 3DP seed. Root-orientation
+    // transformation is covered independently below.
+    animated_character->transform.matrix = App::Runtime::Matrix3::identity();
 
     App::ScenarioRuntime untouched_runtime;
     REQUIRE(
@@ -597,7 +604,97 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
     CHECK_EQ(animated->transform.translation.x, doctest::Approx(-463.393341F));
   }
 
-  TEST_CASE("Body animation uses the selected object anchor without a 3DP resource") {
+  TEST_CASE("Body animation uses 3DA key zero, live orientation, and repeat reseeding") {
+    BodyResourcesFixture resources{
+        make_body_resources(App::Runtime::Vec3{.x = 100.0F, .y = -50.0F, .z = 25.0F})};
+    resources.scx.section0_records.clear();
+    resources.scx.section0_resources.clear();
+    const std::shared_ptr<const App::Character::ModelResource> shared{make_body_model_resource()};
+    const auto loader = [shared](const std::string_view)
+        -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
+      return shared;
+    };
+
+    App::ScenarioRuntime runtime;
+    REQUIRE(runtime.initialize(resources.scx, resources.bytes, "body-world-anchor", nullptr, false)
+            .has_value());
+    runtime.character_runtime().set_model_loader(loader);
+    REQUIRE(runtime
+            .activate_character(118,
+                make_character_area(),
+                App::Script::AreaCharacterActivationRequest{
+                    .character_id = 310, .apply_area_transform = true})
+            .has_value());
+
+    App::Character::RuntimeCharacter* character{runtime.character_runtime().find(310)};
+    REQUIRE(character != nullptr);
+    // Ordinary SelectBodyAnimation must ignore this pre-existing actor XYZ.
+    character->transform.translation = {.x = 7000.0F, .y = -120.0F, .z = 3040.0F};
+    character->transform.matrix = App::Runtime::rotation_y(std::numbers::pi_v<float> * 0.5F);
+
+    App::Script::BodyAnimationRequest request{.character_id = 310,
+        .object_binding = "RootBody",
+        .animation_index = 0,
+        .previous_progress = 0.0F,
+        .current_progress = 1.0F,
+        .body_animation_vector = {0.0F, 0.0F, 0.0F},
+        .authored_offset = {0.0F, 0.0F, 0.0F},
+        .first_tick = true,
+        .execution_count = 0,
+        .execution_limit = 2};
+
+    // sample[0] is the absolute seed. sample[1] is +X local motion; a +90°
+    // live actor yaw transforms it into +Z world motion. The fixture's frame-1
+    // 3DA root quaternion is a 180° Z rotation, so +Z also proves that the
+    // per-frame animation quaternion was not incorrectly folded into the
+    // root-motion basis.
+    REQUIRE(runtime.select_body_animation(request).has_value());
+    character = runtime.character_runtime().find(310);
+    REQUIRE(character != nullptr);
+    CHECK_EQ(character->body_animation.final_anchor.x, doctest::Approx(100.0F));
+    CHECK_EQ(character->body_animation.final_anchor.y, doctest::Approx(-50.0F));
+    CHECK_EQ(character->body_animation.final_anchor.z, doctest::Approx(25.0F));
+    CHECK_EQ(character->body_animation.root_motion_delta.x, doctest::Approx(0.0F).epsilon(0.0001F));
+    CHECK_EQ(character->body_animation.root_motion_delta.y, doctest::Approx(0.0F).epsilon(0.0001F));
+    CHECK_EQ(character->body_animation.root_motion_delta.z, doctest::Approx(10.0F).epsilon(0.0001));
+    CHECK_EQ(character->transform.translation.x, doctest::Approx(100.0F).epsilon(0.0001));
+    CHECK_EQ(character->transform.translation.y, doctest::Approx(-50.0F));
+    CHECK_EQ(character->transform.translation.z, doctest::Approx(35.0F).epsilon(0.0001));
+    CHECK_EQ(character->body_animation.accumulated_root_translation.z,
+        doctest::Approx(10.0F).epsilon(0.0001));
+
+    // Simulate the scheduler's next command execution. first_tick is
+    // deliberately false: previous_progress==0 is itself the authoritative
+    // execution-boundary signal. The pass must reseed to sample[0], not add a
+    // second ten inches on top of the previous pass.
+    App::Script::BodyAnimationRequest repeated{request};
+    repeated.first_tick = false;
+    repeated.execution_count = 1;
+    REQUIRE(runtime.select_body_animation(repeated).has_value());
+    character = runtime.character_runtime().find(310);
+    REQUIRE(character != nullptr);
+    CHECK_EQ(character->body_animation.final_anchor.x, doctest::Approx(100.0F));
+    CHECK_EQ(character->transform.translation.x, doctest::Approx(100.0F).epsilon(0.0001));
+    CHECK_EQ(character->transform.translation.z, doctest::Approx(35.0F).epsilon(0.0001));
+    CHECK_EQ(character->body_animation.accumulated_root_translation.z,
+        doctest::Approx(10.0F).epsilon(0.0001));
+
+    // Authored 7/8/9 values offset the 3DA reference, not the prior actor XYZ.
+    App::Script::BodyAnimationRequest offset_request{request};
+    offset_request.current_progress = 0.0F;
+    offset_request.authored_offset = {10.0F, 20.0F, 30.0F};
+    REQUIRE(runtime.select_body_animation(offset_request).has_value());
+    character = runtime.character_runtime().find(310);
+    REQUIRE(character != nullptr);
+    CHECK_EQ(character->body_animation.final_anchor.x, doctest::Approx(103.937008F));
+    CHECK_EQ(character->body_animation.final_anchor.y, doctest::Approx(-42.125984F));
+    CHECK_EQ(character->body_animation.final_anchor.z, doctest::Approx(36.811024F));
+    CHECK_EQ(character->transform.translation.x, doctest::Approx(103.937008F));
+    CHECK_EQ(character->transform.translation.y, doctest::Approx(-42.125984F));
+    CHECK_EQ(character->transform.translation.z, doctest::Approx(36.811024F));
+  }
+
+  TEST_CASE("Body animation uses the 3DA reference anchor without a 3DP resource") {
     BodyResourcesFixture resources{make_body_resources()};
     resources.scx.section0_records.clear();
     resources.scx.section0_resources.clear();
@@ -616,9 +713,14 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
                 App::Script::AreaCharacterActivationRequest{
                     .character_id = 310, .apply_area_transform = true})
             .has_value());
-    const App::Character::RuntimeCharacter* before{runtime.character_runtime().find(310)};
+    App::Character::RuntimeCharacter* before{runtime.character_runtime().find(310)};
     REQUIRE(before != nullptr);
     const std::uint64_t initial_revision{before->pose_revision};
+    // Keep this test focused on authored offset conversion and hierarchy
+    // binding. The dedicated regression immediately above covers non-zero
+    // sample-zero anchors and live root orientation.
+    before->transform.translation = {};
+    before->transform.matrix = App::Runtime::Matrix3::identity();
 
     const App::Script::BodyAnimationRequest root_request{.character_id = 310,
         .object_binding = "RootBody",
@@ -662,8 +764,10 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
     CHECK_EQ(child->object_poses.at(1).channel_id, std::optional<std::uint32_t>{3});
     CHECK_FALSE(child->runtime_objects.at(0).animation_matrix.has_value());
     CHECK(child->runtime_objects.at(1).animation_matrix.has_value());
-    CHECK_EQ(child->body_animation.final_anchor.x, doctest::Approx(5.93700778F));
-    CHECK_EQ(child->runtime_objects.at(1).world_translation.x, doctest::Approx(5.93700778F));
+    // Ordinary anchoring always uses the 3DA reference (zero in this fixture),
+    // even when the selected hierarchy object is parented.
+    CHECK_EQ(child->body_animation.final_anchor.x, doctest::Approx(3.93700778F));
+    CHECK_EQ(child->runtime_objects.at(1).world_translation.x, doctest::Approx(3.93700778F));
     CHECK_EQ(child->transform.translation.x, doctest::Approx(character_x_before_child));
     CHECK_EQ(child->body_animation.root_motion_delta.x, doctest::Approx(0.0F));
   }

@@ -55,6 +55,29 @@ TEST_SUITE("Core::Omikron::BodyAnimationResources") {
     CHECK(animation->channel_by_id(9) == &child);
   }
 
+  TEST_CASE("3DA reference translation uses the first present position stream") {
+    App::Omikron::Animation3DA animation;
+    animation.channels.push_back(
+        App::Omikron::Animation3DAChannel{.channel_id = 1, .name = "NoPosition"});
+    animation.channels.push_back(App::Omikron::Animation3DAChannel{.channel_id = 2,
+        .name = "FirstPosition",
+        .translations = {App::Runtime::Vec3{.x = 100.0F, .y = -50.0F, .z = 25.0F},
+            App::Runtime::Vec3{.x = 1.0F, .y = 2.0F, .z = 3.0F}}});
+    animation.channels.push_back(App::Omikron::Animation3DAChannel{.channel_id = 3,
+        .name = "LaterPosition",
+        .translations = {App::Runtime::Vec3{.x = 999.0F, .y = 999.0F, .z = 999.0F}}});
+
+    const auto reference{animation.reference_translation()};
+    REQUIRE(reference.has_value());
+    const App::Runtime::Vec3 reference_value{reference.value_or(App::Runtime::Vec3{})};
+    CHECK_EQ(reference_value.x, doctest::Approx(100.0F));
+    CHECK_EQ(reference_value.y, doctest::Approx(-50.0F));
+    CHECK_EQ(reference_value.z, doctest::Approx(25.0F));
+
+    const App::Omikron::Animation3DA no_position;
+    CHECK_FALSE(no_position.reference_translation().has_value());
+  }
+
   TEST_CASE("3DA root translation integrates per-frame motion records") {
     App::Omikron::Animation3DAChannel channel;
     channel.translations = {

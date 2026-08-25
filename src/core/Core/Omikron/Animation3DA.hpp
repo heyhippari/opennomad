@@ -46,6 +46,10 @@ struct Animation3DA {
 
   [[nodiscard]] static std::expected<Animation3DA, std::string> load(
       std::span<const std::byte> data);
+  /// Runtime 0x00471100 scans channels in serialized order and returns
+  /// position key zero from the first channel with an actual position stream.
+  /// This is the absolute reference used by ordinary SelectBodyAnimation.
+  [[nodiscard]] std::optional<Runtime::Vec3> reference_translation() const;
   [[nodiscard]] const Animation3DAChannel* channel_by_id(std::uint32_t channel_id) const;
 };
 

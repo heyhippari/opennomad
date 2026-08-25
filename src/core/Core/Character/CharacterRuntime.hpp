@@ -98,8 +98,12 @@ struct RuntimeCharacter {
   /// without changing ownership or destroying the materialized character.
   bool presentation_enabled{true};
 
+  /// Authored AREA/address placement snapshot. Animation/controller motion does
+  /// not rewrite this field; live spatial consumers must use transform.translation.
   std::array<std::int32_t, 3> serialized_area_position{};
   std::int16_t serialized_orientation_units{0};
+  /// Live Runtime world transform. Body root motion mutates translation and
+  /// uses matrix as the actor/root orientation basis.
   App::Runtime::Transform transform{};
   std::int32_t runtime_orientation_degrees{0};
   /// Selected authored CTL move/control-bank ID. Execution is intentionally

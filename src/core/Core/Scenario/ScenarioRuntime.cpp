@@ -63,7 +63,6 @@ using MoveObjectOnPathFailure = Script::MoveObjectOnPathFailure;
 struct BodyAnimationBinding {
   std::size_t selected_index{0};
   bool initialized{false};
-  Runtime::Vec3 initial_world_translation{};
 };
 
 [[nodiscard]] std::expected<BodyAnimationBinding, BodyAnimationFailure> prepare_body_animation(
@@ -91,6 +90,10 @@ struct BodyAnimationBinding {
     return BodyAnimationBinding{.selected_index = selected_index};
   }
 
+  // Re-establish the instance-local hierarchy before binding the 3DA. Absolute
+  // command anchoring is intentionally *not* derived from this hierarchy:
+  // ordinary SelectBodyAnimation seeds from 3DA position key zero, while the
+  // relative variant seeds from its 3DP path.
   character.runtime_objects = model.runtime_objects;
   character.object_poses.assign(model.meshes.size(), Character::BodyAnimationObjectPose{});
   for (std::size_t object_index{0}; object_index < model.meshes.size(); ++object_index) {
@@ -126,9 +129,8 @@ struct BodyAnimationBinding {
         body_animation_failure(
             Script::BodyAnimationApplyError::k_resource_resolution, std::move(resolved).error())};
   }
-  return BodyAnimationBinding{.selected_index = selected_index,
-      .initialized = true,
-      .initial_world_translation = character.runtime_objects.at(selected_index).world_translation};
+
+  return BodyAnimationBinding{.selected_index = selected_index, .initialized = true};
 }
 
 /// Inverts a row-vector Runtime object matrix. Both body-animation anchoring
@@ -256,7 +258,15 @@ void begin_body_animation(Character::RuntimeCharacter& character,
       const std::optional<Runtime::Vec3> integrated{
           root_channel.integrate_translation(previous, current)};
       if (integrated.has_value()) {
-        root_delta = integrated.value();
+        // Runtime 0x004711D0 optionally transforms the integrated root vector
+        // through the live top/root object orientation before it reaches world
+        // position. OpenNomad stores that actor/world orientation separately
+        // from the 3DO hierarchy in RuntimeCharacter::transform.matrix.
+        //
+        // Do not fold the current-frame 3DA quaternion into this basis. Runtime
+        // applies that quaternion separately to object animation state; it is
+        // not the matrix supplied to root-motion integration.
+        root_delta = Runtime::transform_vector(integrated.value(), character.transform.matrix);
         character.transform.translation.x += root_delta.x;
         character.transform.translation.y += root_delta.y;
         character.transform.translation.z += root_delta.z;
@@ -883,18 +893,29 @@ ScenarioRuntime::select_body_animation(const Script::BodyAnimationRequest& reque
   }
 
   const Omikron::Animation3DA& animation{**animation_result};
+  // Runtime's mutable previous-progress slot is the execution-boundary signal.
+  // The script scheduler resets it to zero whenever a command execution wraps.
+  const bool execution_start{request.first_tick || request.previous_progress == 0.0F};
   auto binding{prepare_body_animation(
-      *character, request.object_binding, request.animation_index, animation, request.first_tick)};
+      *character, request.object_binding, request.animation_index, animation, execution_start)};
   if (!binding) {
     return std::expected<Script::BodyAnimationResult, Script::BodyAnimationFailure>{
         std::unexpect, std::move(binding).error()};
   }
   if (binding->initialized) {
+    const std::optional<Runtime::Vec3> reference{animation.reference_translation()};
+    if (!reference.has_value()) {
+      return std::expected<Script::BodyAnimationResult, Script::BodyAnimationFailure>{
+          std::unexpect,
+          body_animation_failure(Script::BodyAnimationApplyError::k_resource_resolution,
+              fmt::format("animation {} '{}' has no 3DA position-key-zero reference",
+                  request.animation_index,
+                  m_scx.animations.at(request.animation_index).name))};
+    }
     const Runtime::Vec3 authored{.x = request.authored_offset.at(0),
         .y = request.authored_offset.at(1),
         .z = request.authored_offset.at(2)};
-    const Runtime::Vec3 anchor{
-        Runtime::body_animation_anchor(binding->initial_world_translation, authored)};
+    const Runtime::Vec3 anchor{Runtime::body_animation_anchor(reference.value(), authored)};
     if (auto positioned{set_body_animation_anchor(*character, binding->selected_index, anchor)};
         !positioned) {
       return std::expected<Script::BodyAnimationResult, Script::BodyAnimationFailure>{
@@ -958,8 +979,11 @@ ScenarioRuntime::select_relative_body_animation(
   }
 
   const Omikron::Animation3DA& animation{**animation_result};
+  // Relative body animation has the same execution/reseed boundary, but its
+  // absolute seed remains the 3DP path sample rather than 3DA position key 0.
+  const bool execution_start{request.first_tick || request.previous_progress == 0.0F};
   auto binding{prepare_body_animation(
-      *character, request.object_binding, request.animation_index, animation, request.first_tick)};
+      *character, request.object_binding, request.animation_index, animation, execution_start)};
   if (!binding) {
     return std::expected<Script::RelativeBodyAnimationResult, Script::RelativeBodyAnimationFailure>{
         std::unexpect, std::move(binding).error()};

@@ -220,11 +220,13 @@ std::vector<std::byte> make_object_archive(const std::uint16_t object_id,
 /// current body and enables zone 3795; the record-relative zone event selects
 /// a move, toggles the controller, self-disables, waits on a camera, then
 /// toggles the controller off and ends.
-std::vector<std::byte> make_zone_contact_area_archive(const bool starts_dialog = false) {
+std::vector<std::byte> make_zone_contact_area_archive(
+    const bool starts_dialog = false, const bool self_disables = true) {
   Buffer top_level;
   top_level.u8(0x38).u16(136);
   top_level.u8(0x40).u16(3795);
   top_level.u8(0x03);
+
   Buffer zone_event;
   if (starts_dialog) {
     zone_event.u8(0x3D).u16(272);
@@ -254,9 +256,9 @@ std::vector<std::byte> make_zone_contact_area_archive(const bool starts_dialog =
   write_u16(data, k_record_offset + 0x48U, 1);
   write_u16(data, k_record_offset + k_table0_offset + 0x00U, 0xFFFF);
   write_u16(data, k_record_offset + k_table0_offset + 0x02U, 136);
-  write_u32(data, k_record_offset + k_table0_offset + 0x04U, 5);
+  write_u32(data, k_record_offset + k_table0_offset + 0x04U, 50);
   write_u32(data, k_record_offset + k_table0_offset + 0x08U, 999);
-  write_u32(data, k_record_offset + k_table0_offset + 0x0CU, 5);
+  write_u32(data, k_record_offset + k_table0_offset + 0x0CU, 50);
   write_u16(data, k_record_offset + k_table0_offset + 0x10U, 4090);
   write_u16(data, k_record_offset + k_table0_offset + 0x12U, 136);
 
@@ -265,7 +267,7 @@ std::vector<std::byte> make_zone_contact_area_archive(const bool starts_dialog =
   write_u32(data, k_record_offset + k_table2_offset, static_cast<std::uint32_t>(zone_event_offset));
   // Four X/Y/Z vertices; y deliberately varies to prove contact is X/Z-only.
   constexpr std::array<std::array<std::uint32_t, 3>, 4> k_vertices{
-      {{0U, 100U, 0U}, {10U, 200U, 0U}, {10U, 300U, 10U}, {0U, 400U, 10U}}};
+      {{0U, 100U, 0U}, {100U, 200U, 0U}, {100U, 300U, 100U}, {0U, 400U, 100U}}};
   for (std::size_t index{0}; index < k_vertices.size(); ++index) {
     for (std::size_t coordinate{0}; coordinate < k_vertices.at(index).size(); ++coordinate) {
       write_u32(data,
@@ -681,6 +683,14 @@ void write_zone_contact_fixtures(const TempDirectory& temp) {
   write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_minimal_scx());
 }
 
+void write_live_zone_contact_fixtures(const TempDirectory& temp) {
+  write_bytes(temp.root() / "IAM" / "START", make_start());
+  write_bytes(
+      temp.root() / "IAM" / "AREA", make_zone_contact_area_archive(false, false));
+  write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
+  write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_minimal_scx());
+}
+
 void write_zone_dialog_fixtures(const TempDirectory& temp) {
   write_bytes(temp.root() / "IAM" / "START", make_start());
   write_bytes(temp.root() / "IAM" / "AREA", make_zone_contact_area_archive(true));
@@ -786,6 +796,54 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     // The disabled zone is not recreated while the actor remains inside it.
     REQUIRE(controller.tick(1.0F / 30.0F).has_value());
     CHECK_EQ(controller.zone_contact_count(), 0U);
+  }
+
+  TEST_CASE("zone contact follows live runtime position instead of the AREA placement snapshot") {
+    const TempDirectory temp;
+    write_live_zone_contact_fixtures(temp);
+    const ScopedGameDataRoot root{temp.root()};
+
+    App::ScenarioManager manager;
+    App::ScenarioStartupController controller;
+    REQUIRE(controller.initialize(manager).has_value());
+    App::ScenarioRuntime* runtime{manager.world_runtime(0)};
+    REQUIRE(runtime != nullptr);
+    runtime->character_runtime().set_model_loader(
+        [](const std::string_view name)
+            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
+          auto resource{std::make_shared<App::Character::ModelResource>()};
+          resource->name = name;
+          resource->groups.push_back(App::Omikron::MaterialGroup{});
+          return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
+        });
+
+    REQUIRE(controller.tick().has_value());
+    CHECK_EQ(controller.zone_contact_count(), 1U);
+    REQUIRE(manager.game_state() != nullptr);
+    CHECK(manager.game_state()->zone_flag(3795).value());
+
+    App::Character::RuntimeCharacter* character{runtime->character_runtime().find(136)};
+    REQUIRE(character != nullptr);
+    CHECK_EQ(character->serialized_area_position.at(0), 50);
+    CHECK_EQ(character->serialized_area_position.at(2), 50);
+
+    // Leave the immutable AREA snapshot inside the zone but move the live actor
+    // far outside. The existing contact must become ineligible and finish.
+    character->transform.translation.x = 1000.0F;
+    character->transform.translation.z = 1000.0F;
+    REQUIRE(controller.tick(1.0F).has_value());
+    CHECK_EQ(controller.zone_contact_count(), 0U);
+    CHECK(manager.game_state()->zone_flag(3795).value());
+
+    // Now make the serialized snapshot explicitly outside while putting the
+    // continuous live transform back at the authored inside coordinate.
+    character->serialized_area_position = {10000, 999, 10000};
+    character->transform.translation =
+        App::Runtime::area_position_to_inches(std::array<std::int32_t, 3>{50, 999, 50});
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+    CHECK_EQ(controller.zone_contact_count(), 1U);
+    CHECK_EQ(character->current_move_id, std::optional<std::int16_t>{100});
+    CHECK(character->controller_enabled);
   }
 
   TEST_CASE("zone-owned StartDialog enters the shared global dialog takeover") {

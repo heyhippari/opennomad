@@ -70,6 +70,42 @@ std::string dependency_path(const std::string_view directory,
   return path;
 }
 
+/// Tests an authored IAM zone polygon against a live Runtime-space actor
+/// position. IAM table-2 vertices remain serialized AREA integers, whereas
+/// RuntimeCharacter::transform.translation is continuous world-space inches.
+///
+/// Convert the immutable polygon into Runtime space instead of quantizing the
+/// moving actor back into AREA integers; root motion can be fractional.
+[[nodiscard]] bool zone_contains_runtime_xz(
+    const Omikron::IamZoneRecord& zone, const Runtime::Vec3& position) {
+  bool inside{false};
+  for (std::size_t current{0}, previous{zone.serialized_vertices.size() - 1U};
+      current < zone.serialized_vertices.size();
+      previous = current++) {
+    const auto& vertex{zone.serialized_vertices.at(current)};
+    const auto& prior{zone.serialized_vertices.at(previous)};
+    const double vertex_x{
+        static_cast<double>(Runtime::area_position_to_inches(vertex.at(0)))};
+    const double vertex_z{
+        static_cast<double>(Runtime::area_position_to_inches(vertex.at(2)))};
+    const double prior_x{
+        static_cast<double>(Runtime::area_position_to_inches(prior.at(0)))};
+    const double prior_z{
+        static_cast<double>(Runtime::area_position_to_inches(prior.at(2)))};
+    const double actor_x{static_cast<double>(position.x)};
+    const double actor_z{static_cast<double>(position.z)};
+    if ((vertex_z > actor_z) == (prior_z > actor_z)) {
+      continue;
+    }
+    const double left{(actor_x - vertex_x) * (prior_z - vertex_z)};
+    const double right{(prior_x - vertex_x) * (actor_z - vertex_z)};
+    if ((prior_z > vertex_z) ? (left < right) : (left > right)) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
 struct PreparedAreaWorld {
   WorldSceneContext* context{nullptr};
   std::optional<std::string> decor_path;
@@ -2125,8 +2161,7 @@ bool ScenarioStartupController::zone_contact_eligible(const ZoneContactContext& 
                active.zone.event_offsets == contact.zone.event_offsets;
       })};
   return still_enabled &&
-         contact.zone.contains_xz(character->serialized_area_position.at(0),
-             character->serialized_area_position.at(2)) &&
+         zone_contains_runtime_xz(contact.zone, character->transform.translation) &&
          contact.zone.accepts_orientation(character->serialized_orientation_units);
 }
 

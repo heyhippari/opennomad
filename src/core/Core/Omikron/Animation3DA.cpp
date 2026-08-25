@@ -182,6 +182,18 @@ std::expected<Animation3DA, std::string> Animation3DA::load(
   return animation;
 }
 
+std::optional<Runtime::Vec3> Animation3DA::reference_translation() const {
+  // Runtime.exe 0x00471100 does not resolve the selected object's track here.
+  // It walks the 3DA track table in file order and takes positionKeys[0] from
+  // the first non-null position stream with at least one key.
+  for (const Animation3DAChannel& channel : channels) {
+    if (!channel.translations.empty()) {
+      return channel.translations.front();
+    }
+  }
+  return std::nullopt;
+}
+
 const Animation3DAChannel* Animation3DA::channel_by_id(const std::uint32_t channel_id) const {
   const auto found{std::ranges::find(channels, channel_id, &Animation3DAChannel::channel_id)};
   return found == channels.end() ? nullptr : &(*found);
