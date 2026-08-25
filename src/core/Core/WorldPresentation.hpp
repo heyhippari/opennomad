@@ -50,7 +50,15 @@ class WorldUvPhaseState {
 /// gameplay-to-presentation capability boundary.
 struct WorldCameraAttachmentPose {
   Runtime::Vec3 translation{};
-  Runtime::Matrix3 orientation{};
+  /// Native selector 0: Script_Select*BodyAnimation offset Euler only.
+  Runtime::Matrix3 body_offset_orientation{};
+  /// Native selector 1: actor base Euler plus the body-animation offset.
+  Runtime::Matrix3 effective_orientation{};
+};
+
+enum class WorldCameraCommandKind : std::uint8_t {
+  k_authored_camera,
+  k_controller_mode,
 };
 
 /// One Runtime AREA camera command waiting to be consumed by the presentation
@@ -59,14 +67,18 @@ struct WorldCameraAttachmentPose {
 /// Serialized AREA integers are retained for diagnostics alongside normalized
 /// Runtime-native positions. Scenario code never depends on GL conventions.
 struct WorldCameraCommand {
+  WorldCameraCommandKind kind{WorldCameraCommandKind::k_authored_camera};
   std::uint32_t scene_id{0};
   std::uint32_t scene_generation{0};
   std::uint16_t camera_id{0};
+  /// Native camera-controller selector. Character-bound SCX launches switch
+  /// to mode 13 after the child is started.
+  std::uint16_t controller_mode{0};
 
   std::array<std::int32_t, 3> serialized_eye{};
   std::array<std::int32_t, 3> serialized_target{};
-  /// Absolute fallback vectors. Actor-attached vectors are re-resolved from
-  /// serialized data every presentation update, never baked at command issue.
+  /// Absolute fallback vectors. IAM camera dwords are direct Runtime camera
+  /// coordinates; actor-attached vectors are re-resolved every update.
   Runtime::Vec3 runtime_eye{};
   Runtime::Vec3 runtime_target{};
 
@@ -82,8 +94,9 @@ struct WorldCameraCommand {
   std::int16_t horizontal_fov_units{0};
   std::int32_t roll_degrees{0};
   std::int32_t horizontal_fov_degrees{0};
-  /// IAM +0x20 / +0x22. -1 is absolute, 0 is the current actor. Other
-  /// selectors stay explicitly unsupported and use the safe absolute fallback.
+  /// IAM +0x20 / +0x22. -1 is absolute; 0 is current actor + body-offset
+  /// orientation; 1 is current actor + base-and-body effective orientation.
+  /// Other selectors stay unsupported and use the safe absolute fallback.
   std::int16_t target_attachment_selector{-1};
   std::int16_t eye_attachment_selector{-1};
   std::array<std::uint16_t, 4> tail_fields{};
@@ -240,20 +253,20 @@ class WorldSubtitleState {
 ///
 /// Runtime confirms the transition endpoints and its 60-unit duration. The
 /// linear interpolation below is provisional until Runtime's exact curve is
-/// recovered. Pixel geometry is deliberately derived from the live viewport.
+/// recovered. Native geometry is height-relative: 64 pixels at 480 lines.
 class WorldLetterboxState {
  public:
-  static constexpr float k_target_aspect{1.85F};
+  static constexpr float k_retail_bar_fraction{2.0F / 15.0F};
   static constexpr float k_transition_duration_seconds{2.0F};
   static constexpr std::uint32_t k_transition_runtime_units{60U};
 
-  /// Returns one full-strength bar height for OpenNomad's modernized 1.85:1
-  /// target. Viewports already at or wider than 1.85:1 are not pillarboxed.
+  /// Runtime scales the retail 64-pixel bar from the 480-line reference
+  /// viewport. Width/aspect ratio does not participate in native mask geometry.
   [[nodiscard]] static float target_bar_height(float width, float height) {
     if (width <= 0.0F || height <= 0.0F) {
       return 0.0F;
     }
-    return std::max(0.0F, 0.5F * (height - (width / k_target_aspect)));
+    return height * k_retail_bar_fraction;
   }
 
   [[nodiscard]] float current_bar_height(float width, float height) const {

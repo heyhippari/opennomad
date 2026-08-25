@@ -22,8 +22,8 @@ WorldCameraCommand camera_2172() {
       .camera_id = 2172,
       .serialized_eye = {-3287, -159, -1701},
       .serialized_target = {-3214, -269, -944},
-      .runtime_eye = App::Runtime::area_position_to_inches({-3287, -159, -1701}),
-      .runtime_target = App::Runtime::area_position_to_inches({-3214, -269, -944}),
+      .runtime_eye = App::Runtime::iam_camera_vector_to_runtime({-3287, -159, -1701}),
+      .runtime_target = App::Runtime::iam_camera_vector_to_runtime({-3214, -269, -944}),
       .duration_units = 0,
       .flags = 2,
       .wait_for_completion = false,
@@ -43,8 +43,8 @@ WorldCameraCommand camera_2148() {
       .camera_id = 2148,
       .serialized_eye = {-3178, -246, -1507},
       .serialized_target = {-3157, -316, -743},
-      .runtime_eye = App::Runtime::area_position_to_inches({-3178, -246, -1507}),
-      .runtime_target = App::Runtime::area_position_to_inches({-3157, -316, -743}),
+      .runtime_eye = App::Runtime::iam_camera_vector_to_runtime({-3178, -246, -1507}),
+      .runtime_target = App::Runtime::iam_camera_vector_to_runtime({-3157, -316, -743}),
       .duration_units = 130,
       .flags = 2,
       .wait_for_completion = false,
@@ -152,8 +152,10 @@ TEST_SUITE("Core::WorldCameraSystem") {
     CHECK(camera.has_scripted_pose());
     CHECK_FALSE(camera.transitioning());
     CHECK_EQ(camera.active_camera_id().value_or(0U), 2172U);
-    CHECK(camera.pose().eye.x == doctest::Approx(-506.0F));
-    CHECK(camera.pose().target.z == doctest::Approx(-146.0F));
+    CHECK(camera.pose().eye.x == doctest::Approx(
+        static_cast<float>(App::Runtime::area_position_to_inches(-3287))));
+    CHECK(camera.pose().target.z == doctest::Approx(
+        static_cast<float>(App::Runtime::area_position_to_inches(-944))));
     CHECK(camera.pose().horizontal_fov_degrees == doctest::Approx(74.0F));
   }
 
@@ -165,7 +167,7 @@ TEST_SUITE("Core::WorldCameraSystem") {
     REQUIRE(camera.transitioning());
 
     const App::Runtime::Vec3 target_eye{
-        App::Runtime::area_position_to_inches({-3178, -246, -1507})};
+        App::Runtime::iam_camera_vector_to_runtime({-3178, -246, -1507})};
 
     // Runtime's first quarter of the transition has only reached 12.5%
     // because the first half is quadratic ease-in: 2 * 0.25^2 = 0.125.
@@ -189,12 +191,18 @@ TEST_SUITE("Core::WorldCameraSystem") {
     command.duration_units = 0;
     camera.apply_command(command);
 
-    CHECK(camera.pose().eye.x == doctest::Approx(-489.0F));
-    CHECK(camera.pose().eye.y == doctest::Approx(-38.0F));
-    CHECK(camera.pose().eye.z == doctest::Approx(-232.0F));
-    CHECK(camera.pose().target.x == doctest::Approx(-486.0F));
-    CHECK(camera.pose().target.y == doctest::Approx(-49.0F));
-    CHECK(camera.pose().target.z == doctest::Approx(-115.0F));
+    CHECK(camera.pose().eye.x == doctest::Approx(
+        static_cast<float>(App::Runtime::area_position_to_inches(-3178))));
+    CHECK(camera.pose().eye.y == doctest::Approx(
+        static_cast<float>(App::Runtime::area_position_to_inches(-246))));
+    CHECK(camera.pose().eye.z == doctest::Approx(
+        static_cast<float>(App::Runtime::area_position_to_inches(-1507))));
+    CHECK(camera.pose().target.x == doctest::Approx(
+        static_cast<float>(App::Runtime::area_position_to_inches(-3157))));
+    CHECK(camera.pose().target.y == doctest::Approx(
+        static_cast<float>(App::Runtime::area_position_to_inches(-316))));
+    CHECK(camera.pose().target.z == doctest::Approx(
+        static_cast<float>(App::Runtime::area_position_to_inches(-743))));
     CHECK(camera.pose().roll_degrees == doctest::Approx(0.0F));
     CHECK(camera.pose().horizontal_fov_degrees == doctest::Approx(74.0F));
     CHECK(camera.camera().get_near_plane() == doctest::Approx(2.0F));
@@ -203,8 +211,10 @@ TEST_SUITE("Core::WorldCameraSystem") {
 
   TEST_CASE("Selector-zero cameras resolve against the live current-actor pose") {
     WorldCameraSystem camera;
-    App::WorldCameraAttachmentPose attachment{.translation = {.x = 100.0F, .y = 20.0F, .z = 300.0F},
-        .orientation = App::Runtime::Matrix3::identity()};
+    App::WorldCameraAttachmentPose attachment{
+        .translation = {.x = 100.0F, .y = 20.0F, .z = 300.0F},
+        .body_offset_orientation = App::Runtime::Matrix3::identity(),
+        .effective_orientation = App::Runtime::Matrix3::identity()};
     camera.set_attachment_pose_provider([&attachment]() {
       return std::optional{attachment};
     });
@@ -213,29 +223,65 @@ TEST_SUITE("Core::WorldCameraSystem") {
     WorldCameraCommand command{.camera_id = 9,
         .serialized_eye = eye_serialized,
         .serialized_target = target_serialized,
-        .runtime_eye = App::Runtime::area_position_to_inches(eye_serialized),
-        .runtime_target = App::Runtime::area_position_to_inches(target_serialized),
+        .runtime_eye = App::Runtime::iam_camera_vector_to_runtime(eye_serialized),
+        .runtime_target = App::Runtime::iam_camera_vector_to_runtime(target_serialized),
         .duration_units = 0,
         .target_attachment_selector = 0,
         .eye_attachment_selector = 0};
     camera.apply_command(command);
+    const App::Runtime::Vec3 initial_relative_eye{
+        App::Runtime::iam_camera_vector_to_runtime(eye_serialized)};
     CHECK(camera.pose().eye.x ==
-          doctest::Approx(
-              attachment.translation.x - App::Runtime::area_position_to_inches(eye_serialized).x));
+          doctest::Approx(attachment.translation.x - initial_relative_eye.x));
 
     attachment.translation = {.x = 500.0F, .y = 40.0F, .z = 50.0F};
-    attachment.orientation = App::Runtime::rotation_y(1.57079632679F);
+    attachment.body_offset_orientation = App::Runtime::rotation_y(1.57079632679F);
     camera.update(0.0F);
     const App::Runtime::Vec3 expected_eye{App::Runtime::transform_vector(
-        App::Runtime::area_position_to_inches(eye_serialized), attachment.orientation)};
+        App::Runtime::iam_camera_vector_to_runtime(eye_serialized),
+        attachment.body_offset_orientation)};
     CHECK(camera.pose().eye.x == doctest::Approx(attachment.translation.x - expected_eye.x));
     CHECK(camera.pose().eye.z == doctest::Approx(attachment.translation.z - expected_eye.z));
+
+    // Selector 1 uses actor base + body offset, not selector 0's offset-only basis.
+    attachment.body_offset_orientation = App::Runtime::Matrix3::identity();
+    attachment.effective_orientation = App::Runtime::rotation_y(1.57079632679F);
+    command.eye_attachment_selector = 1;
+    command.target_attachment_selector = -1;
+    camera.apply_command(command);
+    const App::Runtime::Vec3 expected_effective_eye{App::Runtime::transform_vector(
+        App::Runtime::iam_camera_vector_to_runtime(eye_serialized),
+        attachment.effective_orientation)};
+    CHECK(camera.pose().eye.x == doctest::Approx(attachment.translation.x - expected_effective_eye.x));
+    CHECK(camera.pose().eye.z == doctest::Approx(attachment.translation.z - expected_effective_eye.z));
 
     command.eye_attachment_selector = 3;
     command.target_attachment_selector = -1;
     camera.apply_command(command);
     CHECK(camera.pose().eye.x == doctest::Approx(command.runtime_eye.x));
     CHECK(camera.pose().target.y == doctest::Approx(command.runtime_target.y));
+  }
+
+  TEST_CASE("Character-script controller 13 preserves the copied live camera pose") {
+    WorldCameraSystem camera;
+    camera.apply_command(camera_2172());
+    const App::WorldCameraPose before{camera.pose()};
+
+    camera.apply_command(WorldCameraCommand{.kind = App::WorldCameraCommandKind::k_controller_mode,
+        .controller_mode = 13U,
+        .duration_units = 30});
+
+    CHECK_EQ(camera.active_camera_id().value_or(0U), 2172U);
+    CHECK(camera.last_command().has_value());
+    CHECK_EQ(camera.active_controller_mode().value_or(0U), 13U);
+    CHECK(camera.controller_transitioning());
+    CHECK(camera.controller_transition_duration_seconds() == doctest::Approx(1.0F));
+    CHECK(camera.pose().eye.x == doctest::Approx(before.eye.x));
+    CHECK(camera.pose().target.z == doctest::Approx(before.target.z));
+
+    camera.update(1.0F);
+    CHECK_FALSE(camera.controller_transitioning());
+    CHECK(camera.pose().eye.x == doctest::Approx(before.eye.x));
   }
 }
 

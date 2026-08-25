@@ -743,8 +743,8 @@ void ScenarioManager::service_dialog_camera() {
 
         .serialized_eye = camera.serialized_eye,
         .serialized_target = camera.serialized_target,
-        .runtime_eye = Runtime::area_position_to_inches(camera.serialized_eye),
-        .runtime_target = Runtime::area_position_to_inches(camera.serialized_target),
+        .runtime_eye = Runtime::iam_camera_vector_to_runtime(camera.serialized_eye),
+        .runtime_target = Runtime::iam_camera_vector_to_runtime(camera.serialized_target),
 
         .duration_units = duration_units,
         .flags = 0,

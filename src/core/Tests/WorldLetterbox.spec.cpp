@@ -13,15 +13,12 @@ using App::WorldPresentationState;
 }  // namespace
 
 TEST_SUITE("Core::WorldLetterboxState") {
-  TEST_CASE("Modernized 1.85 geometry adapts to the live viewport") {
-    CHECK(WorldLetterboxState::target_bar_height(640.0F, 480.0F) ==
-          doctest::Approx(67.027F).epsilon(0.0001));
-    CHECK(WorldLetterboxState::target_bar_height(1920.0F, 1080.0F) ==
-          doctest::Approx(21.081F).epsilon(0.0001));
-    CHECK_EQ(WorldLetterboxState::target_bar_height(2560.0F, 1080.0F), 0.0F);
-    CHECK_EQ(WorldLetterboxState::target_bar_height(1850.0F, 1000.0F), 0.0F);
-    CHECK(WorldLetterboxState::target_bar_height(1849.0F, 1000.0F) > 0.0F);
-    CHECK_EQ(WorldLetterboxState::target_bar_height(1851.0F, 1000.0F), 0.0F);
+  TEST_CASE("Runtime cinematic mask scales 64 retail pixels by viewport height") {
+    CHECK_EQ(WorldLetterboxState::target_bar_height(640.0F, 480.0F), doctest::Approx(64.0F));
+    CHECK_EQ(WorldLetterboxState::target_bar_height(1920.0F, 1080.0F), doctest::Approx(144.0F));
+    CHECK_EQ(WorldLetterboxState::target_bar_height(2560.0F, 1080.0F), doctest::Approx(144.0F));
+    CHECK_EQ(WorldLetterboxState::target_bar_height(1850.0F, 1000.0F),
+        doctest::Approx(133.333333F).epsilon(0.0001));
   }
 
   TEST_CASE("Begin and end use the confirmed two-second duration") {
@@ -63,8 +60,8 @@ TEST_SUITE("Core::WorldLetterboxState") {
     const float resized_height{state.current_bar_height(1920.0F, 1080.0F)};
 
     CHECK_EQ(state.amount(), amount);
-    CHECK(first_height == doctest::Approx(33.5135F).epsilon(0.0001));
-    CHECK(resized_height == doctest::Approx(10.5405F).epsilon(0.0001));
+    CHECK(first_height == doctest::Approx(32.0F).epsilon(0.0001));
+    CHECK(resized_height == doctest::Approx(72.0F).epsilon(0.0001));
   }
 
   TEST_CASE("Commands are generation-safe and reset prevents world leakage") {

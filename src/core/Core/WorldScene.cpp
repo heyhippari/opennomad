@@ -293,7 +293,8 @@ WorldScene::WorldScene(ScenarioManager& scenarios, Interface::InterfaceManager& 
       return std::nullopt;
     }
     return WorldCameraAttachmentPose{.translation = character->transform.translation,
-        .orientation = character->transform.matrix};
+        .body_offset_orientation = character->body_offset_orientation(),
+        .effective_orientation = character->live_root_orientation()};
   });
 }
 
@@ -802,14 +803,29 @@ void WorldScene::update(const float delta_time, const Input::InputManager& input
         m_scenarios->world_presentation().take_camera()}) {
       if (context == nullptr || command->scene_id != context->scene_id ||
           command->scene_generation != context->generation) {
-        App::Log::debug(LogCategory::Renderer,
-            "WorldScene: discarded stale camera {} for scene={} generation={}",
-            command->camera_id,
-            command->scene_id,
-            command->scene_generation);
+        if (command->kind == WorldCameraCommandKind::k_controller_mode) {
+          App::Log::debug(LogCategory::Renderer,
+              "WorldScene: discarded stale camera controller {} for scene={} generation={}",
+              command->controller_mode,
+              command->scene_id,
+              command->scene_generation);
+        } else {
+          App::Log::debug(LogCategory::Renderer,
+              "WorldScene: discarded stale camera {} for scene={} generation={}",
+              command->camera_id,
+              command->scene_id,
+              command->scene_generation);
+        }
         continue;
       }
       m_camera.apply_command(command.value());
+      if (command->kind == WorldCameraCommandKind::k_controller_mode) {
+        App::Log::debug(LogCategory::Renderer,
+            "World camera controller {} — duration={}",
+            command->controller_mode,
+            command->duration_units);
+        continue;
+      }
       App::Log::debug(LogCategory::Renderer,
           "World camera {} — duration={} flags={} roll={}deg hFov={}deg",
           command->camera_id,

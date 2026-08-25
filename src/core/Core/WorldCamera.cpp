@@ -51,6 +51,9 @@ void WorldCameraSystem::reset() {
   m_has_pose = false;
   m_has_scripted_pose = false;
   m_active_camera_id.reset();
+  m_active_controller_mode.reset();
+  m_controller_transition_elapsed = 0.0F;
+  m_controller_transition_duration = 0.0F;
   m_last_command.reset();
 }
 
@@ -74,10 +77,18 @@ void WorldCameraSystem::set_fallback_pose(const std::array<float, 3>& center, co
 void WorldCameraSystem::apply_command(const WorldCameraCommand& command) {
   APP_PROFILE_FUNCTION();
 
+  if (command.kind == WorldCameraCommandKind::k_controller_mode) {
+    apply_controller_mode(command);
+    return;
+  }
+
   const WorldCameraPose requested{resolve_command_pose(command)};
 
   m_last_command = command;
   m_active_camera_id = command.camera_id;
+  m_active_controller_mode = command.camera_type;
+  m_controller_transition_elapsed = 0.0F;
+  m_controller_transition_duration = 0.0F;
   m_has_scripted_pose = true;
 
   const float duration_seconds{
@@ -103,11 +114,31 @@ void WorldCameraSystem::apply_command(const WorldCameraCommand& command) {
   m_transition_duration = duration_seconds;
 }
 
+void WorldCameraSystem::apply_controller_mode(const WorldCameraCommand& command) {
+  m_active_controller_mode = command.controller_mode;
+  m_controller_transition_elapsed = 0.0F;
+  m_controller_transition_duration =
+      std::max(static_cast<float>(command.duration_units), 0.0F) / k_scenario_frames_per_second;
+  m_has_scripted_pose = true;
+
+  // Native mode 13 is not a frozen camera. Runtime's controller update
+  // (0x00417D10) continuously copies eye/target/roll/FOV from the live camera
+  // source at 0x009103D4 while that source exists. OpenNomad does not model
+  // that source object yet, so recording the controller mode must be
+  // non-destructive: retain the currently evaluated IAM camera and any active
+  // interpolation rather than discarding the best pose information we have.
+}
+
 void WorldCameraSystem::update(const float delta_seconds) {
   APP_PROFILE_FUNCTION();
 
   if (!m_has_pose) {
     return;
+  }
+
+  if (controller_transitioning()) {
+    m_controller_transition_elapsed = std::min(m_controller_transition_duration,
+        m_controller_transition_elapsed + std::max(delta_seconds, 0.0F));
   }
 
   if (m_last_command.has_value()) {
@@ -117,6 +148,10 @@ void WorldCameraSystem::update(const float delta_seconds) {
       commit_pose();
       return;
     }
+  }
+
+  if (m_transition_duration <= 0.0F) {
+    return;
   }
 
   m_transition_elapsed += std::max(delta_seconds, 0.0F);
@@ -161,15 +196,17 @@ Runtime::Vec3 WorldCameraSystem::resolve_attachment_point(
   if (selector == -1) {
     return absolute_fallback;
   }
-  if (selector != 0 || !m_attachment_pose_provider) {
+  if ((selector != 0 && selector != 1) || !m_attachment_pose_provider) {
     return absolute_fallback;
   }
   const std::optional<WorldCameraAttachmentPose> attachment{m_attachment_pose_provider()};
   if (!attachment.has_value()) {
     return absolute_fallback;
   }
-  const Runtime::Vec3 relative{Runtime::area_position_to_inches(serialized)};
-  const Runtime::Vec3 rotated{Runtime::transform_vector(relative, attachment->orientation)};
+  const Runtime::Vec3 relative{Runtime::iam_camera_vector_to_runtime(serialized)};
+  const Runtime::Matrix3& orientation{selector == 0 ? attachment->body_offset_orientation
+                                                    : attachment->effective_orientation};
+  const Runtime::Vec3 rotated{Runtime::transform_vector(relative, orientation)};
   return Runtime::Vec3{.x = attachment->translation.x - rotated.x,
       .y = attachment->translation.y - rotated.y,
       .z = attachment->translation.z - rotated.z};

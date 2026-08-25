@@ -290,7 +290,7 @@ TEST_SUITE("Core::Character::Runtime") {
           return fake_resource(name);
         }};
 
-    REQUIRE(runtime.materialize_scene_characters(222, 55, scene).has_value());
+    REQUIRE(runtime.preload_scene_characters(222, 55, scene).has_value());
     const App::Character::RuntimeCharacter* character{runtime.find(57)};
     REQUIRE(character != nullptr);
     REQUIRE(character->scene_id.has_value());
@@ -298,8 +298,24 @@ TEST_SUITE("Core::Character::Runtime") {
     CHECK_EQ(character->area_id, 222);
     CHECK_EQ(character->model_resource_name, "DE1_FN");
     CHECK_EQ(loads, 1U);
+    CHECK(character->active);
+    CHECK(character->area_present);
+    CHECK_FALSE(character->presentation_enabled);
+    CHECK_FALSE(character->renderable());
+    REQUIRE(runtime.set_presentation_enabled(57, true).has_value());
+    CHECK_FALSE(character->presentation_enabled);
+    CHECK_FALSE(character->renderable());
     CHECK_EQ(character->transform.translation.x,
         static_cast<float>(App::Runtime::area_position_to_inches(49457)));
+
+    // Preload establishes a logical resident body so a bound SCX script may
+    // start before visibility. Compact 0x4E changes presentation separately.
+    REQUIRE(runtime.ensure_scene_character(222, 55, scene, 57).has_value());
+    character = runtime.find(57);
+    REQUIRE(character != nullptr);
+    CHECK(character->active);
+    CHECK(character->area_present);
+    CHECK(character->renderable());
 
     const App::Omikron::IamAreaAddressRecord address{.serialized_position = {43922, 2592, 19656},
         .orientation_units = 0,

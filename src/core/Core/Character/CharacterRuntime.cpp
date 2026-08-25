@@ -165,7 +165,8 @@ std::expected<void, std::string> Runtime::activate(const std::int32_t area_id,
       placement->orientation_units,
       definition->name,
       definition->model_resource,
-      request.apply_area_transform);
+      request.apply_area_transform,
+      true);
 }
 
 std::expected<void, std::string> Runtime::ensure_area_character(const std::int32_t area_id,
@@ -200,6 +201,7 @@ std::expected<void, std::string> Runtime::ensure_area_character(const std::int32
       placement->orientation_units,
       definition->name,
       definition->model_resource,
+      true,
       true);
 }
 
@@ -236,16 +238,45 @@ std::expected<void, std::string> Runtime::ensure_scene_character(const std::int3
       placement->orientation_units,
       definition->name,
       definition->model_resource,
+      true,
       true);
 }
 
-std::expected<void, std::string> Runtime::materialize_scene_characters(
+std::expected<void, std::string> Runtime::preload_scene_characters(
     const std::int32_t area_id, const std::int32_t scene_id, const Omikron::IamSceneRecord& scene) {
   const std::vector<Omikron::IamSceneCharacterRecord> placements{scene.character_placements()};
   for (const Omikron::IamSceneCharacterRecord& placement : placements) {
-    if (auto result{ensure_scene_character(area_id, scene_id, scene, placement.character_id)};
+    RuntimeCharacter* const existing{find(placement.character_id)};
+    if (existing != nullptr && existing->active && existing->area_present) {
+      // A transferred/current body is already live. SCENE attachment may take
+      // ownership of it, but must not teleport, hide or reset that live body.
+      existing->area_id = area_id;
+      existing->scene_id = scene_id;
+      continue;
+    }
+
+    const auto definition{scene.character_definition_by_character_id(placement.character_id)};
+    if (!definition.has_value()) {
+      return std::expected<void, std::string>{std::unexpect,
+          fmt::format("SCENE character {} has no matching definition", placement.character_id)};
+    }
+    if (auto result{materialize_character(area_id,
+            scene_id,
+            placement.character_id,
+            placement.serialized_position,
+            placement.orientation_units,
+            definition->name,
+            definition->model_resource,
+            true,
+            true)};
         !result) {
       return result;
+
+      // SCENE attachment makes the body resident so bound SCX scripts can run,
+      // but it must not make that body visible before compact 0x4E requests it.
+      if (RuntimeCharacter* const preloaded{find(placement.character_id)}; preloaded != nullptr) {
+        preloaded->presentation_enabled = false;
+      }
     }
   }
   return {};
@@ -361,7 +392,8 @@ std::expected<void, std::string> Runtime::materialize_character(const std::int32
     const std::int16_t orientation_units,
     const std::string_view definition_name,
     const std::string_view model_resource,
-    const bool apply_transform) {
+    const bool apply_transform,
+    const bool activate) {
   if (model_resource.empty()) {
     return std::expected<void, std::string>{
         std::unexpect, fmt::format("character definition {} has no model resource", character_id)};
@@ -386,8 +418,8 @@ std::expected<void, std::string> Runtime::materialize_character(const std::int32
         .character_id = character_id,
         .area_id = area_id,
         .scene_id = scene_id,
-        .active = true,
-        .area_present = true,
+        .active = activate,
+        .area_present = activate,
         .serialized_area_position = serialized_position,
         .serialized_orientation_units = orientation_units,
         .transform = {},
@@ -405,8 +437,8 @@ std::expected<void, std::string> Runtime::materialize_character(const std::int32
         .dialog_performance = {}});
     character = &m_characters.back();
   } else {
-    character->active = true;
-    character->area_present = true;
+    character->active = activate;
+    character->area_present = activate;
     character->area_id = area_id;
     character->scene_id = scene_id;
     character->serialized_area_position = serialized_position;

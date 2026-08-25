@@ -645,24 +645,29 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
         .execution_limit = 2};
 
     // sample[0] is the absolute seed. sample[1] is +X local motion. Runtime
-    // adds args 4/5/6 to the actor's base Euler orientation, so base yaw 45°
-    // plus authored yaw 45° produces +90° and moves the root along +Z. The
-    // fixture's frame-1 3DA root quaternion is a 180° Z rotation, so +Z also
-    // proves that per-frame joint animation is not folded into this basis.
+    // integrates this interval through the *previously persisted* live +0x9C
+    // orientation before storing this invocation's args 4/5/6. The initial
+    // persistent offset is zero, so base yaw 45° turns +X into equal +X/+Z.
+    // Only after integration does the authored +45° become the presentation
+    // orientation used by subsequent intervals. The frame-1 3DA quaternion is
+    // still deliberately excluded from this root-motion basis.
     REQUIRE(runtime.select_body_animation(request).has_value());
     character = runtime.character_runtime().find(310);
     REQUIRE(character != nullptr);
     CHECK_EQ(character->body_animation.final_anchor.x, doctest::Approx(100.0F));
     CHECK_EQ(character->body_animation.final_anchor.y, doctest::Approx(-50.0F));
     CHECK_EQ(character->body_animation.final_anchor.z, doctest::Approx(25.0F));
-    CHECK_EQ(character->body_animation.root_motion_delta.x, doctest::Approx(0.0F).epsilon(0.0001F));
+    CHECK_EQ(character->body_animation.root_motion_delta.x,
+        doctest::Approx(7.0710678F).epsilon(0.0001F));
     CHECK_EQ(character->body_animation.root_motion_delta.y, doctest::Approx(0.0F).epsilon(0.0001F));
-    CHECK_EQ(character->body_animation.root_motion_delta.z, doctest::Approx(10.0F).epsilon(0.0001));
-    CHECK_EQ(character->transform.translation.x, doctest::Approx(100.0F).epsilon(0.0001));
+    CHECK_EQ(character->body_animation.root_motion_delta.z,
+        doctest::Approx(7.0710678F).epsilon(0.0001F));
+    CHECK_EQ(character->transform.translation.x, doctest::Approx(107.071068F).epsilon(0.0001F));
     CHECK_EQ(character->transform.translation.y, doctest::Approx(-50.0F));
-    CHECK_EQ(character->transform.translation.z, doctest::Approx(35.0F).epsilon(0.0001));
+    CHECK_EQ(character->transform.translation.z, doctest::Approx(32.071068F).epsilon(0.0001F));
     CHECK_EQ(character->body_animation.accumulated_root_translation.z,
-        doctest::Approx(10.0F).epsilon(0.0001));
+        doctest::Approx(7.0710678F).epsilon(0.0001F));
+    CHECK_EQ(character->body_orientation_offset_degrees.y, doctest::Approx(45.0F));
     const App::Runtime::Vec3 presentation_x{App::Runtime::transform_vector(
         App::Runtime::Vec3{.x = 1.0F}, character->presentation_transform().matrix)};
     CHECK_EQ(presentation_x.x, doctest::Approx(0.0F).epsilon(0.0001));
@@ -670,8 +675,9 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
 
     // Simulate the scheduler's next command execution. first_tick is
     // deliberately false: previous_progress==0 is itself the authoritative
-    // execution-boundary signal. The pass must reseed to sample[0], not add a
-    // second ten inches on top of the previous pass.
+    // execution-boundary signal. The pass must reseed to sample[0], and now
+    // integrates through the +45° offset persisted by the prior invocation,
+    // producing the full +90° live root orientation.
     App::Script::BodyAnimationRequest repeated{request};
     repeated.first_tick = false;
     repeated.execution_count = 1;
@@ -683,7 +689,9 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
     CHECK_EQ(character->transform.translation.z, doctest::Approx(35.0F).epsilon(0.0001));
     CHECK_EQ(character->body_animation.accumulated_root_translation.z,
         doctest::Approx(10.0F).epsilon(0.0001));
-
+    CHECK_EQ(character->body_animation.root_motion_delta.x,
+        doctest::Approx(0.0F).epsilon(0.0001F));
+ 
     // Authored 7/8/9 values offset the 3DA reference, not the prior actor XYZ.
     App::Script::BodyAnimationRequest offset_request{request};
     offset_request.current_progress = 0.0F;

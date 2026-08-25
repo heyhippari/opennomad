@@ -2310,24 +2310,26 @@ raw u16  scriptId
 Scalar16 cameraDurationUnits
 ```
 
-The raw script ID must not receive Scalar16 `0x4000` parameter remapping. The
-trailing value does receive ordinary Scalar16 resolution. Runtime reads the
-target from its global current-character slot; it does not infer a body from
-the resident AREA, active entities, or the first character record.
+The raw script ID must not receive Scalar16 `0x4000` parameter remapping. The trailing value does receive ordinary Scalar16 resolution. Runtime reads the target from its global current-character slot; it does not infer a body from the resident AREA, active entities, or the first character record.
 
 The SCX source is resolved against the compact context's owner world/AREA.
-Current-character launches whose selected body belongs to another world must
-fail rather than fall back to the active presentation world.
+Current-character launches whose selected body belongs to another world must fail rather than fall back to the active presentation world.
 
-`0x2E` records the exact child activation and enters state 4; completion of
-that exact child resumes the compact context. `0x5A` supplies no tracking
-context and immediately continues bytecode dispatch.
+`0x2E` records the exact child activation and enters state 4; completion of that exact child resumes the compact context. `0x5A` supplies no tracking context and immediately continues bytecode dispatch.
 
-The explicit `0x3B`/`0x3C` trailing Scalar16 is the same presentation/camera
-duration field, not a structured `ScriptLaunchContext.parameter`. OpenNomad
-preserves it in typed compact-request metadata. Runtime clamps a negative
-effective presentation duration to zero when relevant script context state is
-active; OpenNomad does not yet model that presentation-controller side effect.
+The explicit `0x3B`/`0x3C` trailing Scalar16 is the same presentation/camera duration field, not a structured `ScriptLaunchContext.parameter`.
+
+The post-launch presentation path is now recovered for all four character variants. After successful child activation Runtime clamps a negative duration to zero, writes that duration into the camera command state, copies the live camera/controller state, and calls the camera-controller switch with:
+
+```text
+mode = 13 (0x0D)
+```
+
+Tracked variants enter compact state 4 only after this camera operation.
+
+The controller-13 update itself is now traced further at `0x00417D10`. While mode 13 is active, Runtime reads the live source pointer at `0x009103D4` and, when non-null, continuously copies source `+0x14..+0x30` into the active camera's eye, target, roll, and FOV fields. Mode 13 is therefore a live camera follow/copy controller, not a request to freeze the current pose.
+
+OpenNomad does not yet model the `0x009103D4` source object. Until that source is recovered, a mode-13 command must preserve the currently evaluated IAM camera and interpolation while recording the recovered controller mode and duration; clearing the live camera state fabricates behavior Runtime does not have.
 
 ---
 

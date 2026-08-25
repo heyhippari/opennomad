@@ -42,7 +42,8 @@ class WorldCameraSystem {
   /// only until the first scripted IAM camera is received.
   void set_fallback_pose(const std::array<float, 3>& center, float radius);
 
-  /// Starts/snap-applies one resolved AREA camera command.
+  /// Starts/snap-applies one authored camera, or switches the recovered native
+  /// camera controller when command.kind == k_controller_mode.
   void apply_command(const WorldCameraCommand& command);
 
   /// Advances an active interpolation using real display-frame seconds.
@@ -70,6 +71,16 @@ class WorldCameraSystem {
   [[nodiscard]] std::optional<std::uint16_t> active_camera_id() const {
     return m_active_camera_id;
   }
+  [[nodiscard]] std::optional<std::uint16_t> active_controller_mode() const {
+    return m_active_controller_mode;
+  }
+  [[nodiscard]] bool controller_transitioning() const {
+    return m_controller_transition_duration > 0.0F &&
+          m_controller_transition_elapsed < m_controller_transition_duration;
+  }
+  [[nodiscard]] float controller_transition_duration_seconds() const {
+    return m_controller_transition_duration;
+  }
   [[nodiscard]] const std::optional<WorldCameraCommand>& last_command() const {
     return m_last_command;
   }
@@ -78,6 +89,7 @@ class WorldCameraSystem {
   }
 
  private:
+  void apply_controller_mode(const WorldCameraCommand& command);
   void commit_pose();
   [[nodiscard]] WorldCameraPose resolve_command_pose(const WorldCameraCommand& command) const;
   [[nodiscard]] Runtime::Vec3 resolve_attachment_point(
@@ -105,6 +117,9 @@ class WorldCameraSystem {
   bool m_has_pose{false};
   bool m_has_scripted_pose{false};
   std::optional<std::uint16_t> m_active_camera_id;
+  std::optional<std::uint16_t> m_active_controller_mode;
+  float m_controller_transition_elapsed{0.0F};
+  float m_controller_transition_duration{0.0F};
   std::optional<WorldCameraCommand> m_last_command;
   AttachmentPoseProvider m_attachment_pose_provider;
 };

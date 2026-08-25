@@ -64,6 +64,12 @@ inline constexpr float k_default_clip_distance_metres{50.0F};
 [[nodiscard]] std::int32_t area_position_to_inches(std::int32_t serialized);
 [[nodiscard]] Vec3 area_position_to_inches(const std::array<std::int32_t, 3>& serialized);
 
+/// Converts one serialized IAM camera eye/target vector through the same
+/// in-place normalization performed by Runtime's AREA/SCENE record loader.
+/// Compact camera handlers consume the already-normalized dwords afterward.
+[[nodiscard]] Vec3 iam_camera_vector_to_runtime(
+    const std::array<std::int32_t, 3>& serialized);
+
 /// Converts one signed 16-bit AREA angle to Runtime integer degrees.
 [[nodiscard]] std::int32_t area_angle_to_degrees(std::int16_t units);
 
@@ -101,6 +107,15 @@ inline constexpr float k_default_clip_distance_metres{50.0F};
 /// Runtime Euler builder: `Ry(y) * Rx(x) * Rz(z)`. With row vectors this
 /// applies Y, then X, then Z.
 [[nodiscard]] Matrix3 euler_rotation(float x_radians, float y_radians, float z_radians);
+
+/// Degree-space convenience wrapper for Runtime's recovered Euler builder.
+[[nodiscard]] Matrix3 euler_rotation_degrees(const Vec3& degrees);
+
+/// Adds an authored XYZ Euler-degree triple to an existing Runtime orientation.
+/// This mirrors the actor base-angle + body-animation-offset composition used
+/// by Runtime while keeping those two pieces of state distinct in OpenNomad.
+[[nodiscard]] Matrix3 additive_euler_orientation(
+    const Matrix3& base, const Vec3& additive_degrees);
 
 /// Builds Runtime's recovered world-to-camera affine transform, including
 /// roll. Camera-space positive Z is in front of the camera.

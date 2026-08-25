@@ -11,7 +11,6 @@
 #include <iterator>
 #include <limits>
 #include <memory>
-#include <numbers>
 #include <optional>
 #include <span>
 #include <string>
@@ -23,9 +22,9 @@
 #include "Core/Audio/AudioTypes.hpp"
 #include "Core/Character/CharacterRuntime.hpp"
 #include "Core/Debug/Instrumentor.hpp"
-#include "Core/Object/ObjectPlacementRuntime.hpp"
 #include "Core/Log.hpp"
 #include "Core/LogCategory.hpp"
+#include "Core/Object/ObjectPlacementRuntime.hpp"
 #include "Core/Omikron/Animation3DA.hpp"
 #include "Core/Omikron/IamArea.hpp"
 #include "Core/Omikron/Model3DO.hpp"
@@ -168,33 +167,6 @@ struct BodyAnimationBinding {
       ((matrix_00 * matrix_11) - (matrix_01 * matrix_10)) * reciprocal}};
 }
 
-/// Runtime character orientation is authored as a base XYZ Euler triple plus
-/// Script_Select*BodyAnimation arguments 4/5/6. OpenNomad currently stores the
-/// base as a matrix, so recover the equivalent Ry*Rx*Rz angles, add the script
-/// degrees, then rebuild the matrix without accumulating the offset each tick.
-[[nodiscard]] Runtime::Matrix3 body_animation_orientation(const Runtime::Matrix3& base,
-    const Runtime::Vec3& additive_degrees) {
-  constexpr float k_degrees_to_radians{std::numbers::pi_v<float> / 180.0F};
-  const float x_radians{std::asin(std::clamp(-base.at(1, 2), -1.0F, 1.0F))};
-  const float cos_x{std::cos(x_radians)};
-
-  float y_radians{0.0F};
-  float z_radians{0.0F};
-  if (std::abs(cos_x) > 0.00001F) {
-    y_radians = std::atan2(base.at(0, 2), base.at(2, 2));
-    z_radians = std::atan2(base.at(1, 0), base.at(1, 1));
-  } else {
-    // Gimbal lock: only a combined Y/Z angle is observable. Choose Z=0 and
-    // recover an equivalent Y so the rebuilt base matrix remains unchanged.
-    const float sign{x_radians >= 0.0F ? 1.0F : -1.0F};
-    y_radians = std::atan2(sign * base.at(0, 1), base.at(0, 0));
-  }
-
-  return Runtime::euler_rotation(x_radians + (additive_degrees.x * k_degrees_to_radians),
-      y_radians + (additive_degrees.y * k_degrees_to_radians),
-      z_radians + (additive_degrees.z * k_degrees_to_radians));
-}
-
 [[nodiscard]] std::expected<void, BodyAnimationFailure> set_body_animation_anchor(
     Character::RuntimeCharacter& character,
     const std::size_t selected_index,
@@ -266,8 +238,7 @@ void begin_body_animation(Character::RuntimeCharacter& character,
   const Runtime::Vec3 orientation_offset_degrees{.x = body_animation_vector.at(0),
       .y = body_animation_vector.at(1),
       .z = body_animation_vector.at(2)};
-  const Runtime::Matrix3 effective_orientation{
-      body_animation_orientation(character.transform.matrix, orientation_offset_degrees)};
+  const Runtime::Matrix3 root_motion_orientation{character.live_root_orientation()};
 
   for (std::size_t object_index{0}; object_index < character.object_poses.size(); ++object_index) {
     Character::BodyAnimationObjectPose& pose{character.object_poses.at(object_index)};
@@ -284,49 +255,48 @@ void begin_body_animation(Character::RuntimeCharacter& character,
   }
 
   Runtime::Vec3 root_delta{};
+  std::optional<std::size_t> root_index;
   if (model.root_mesh_index >= 0) {
-    const std::size_t root_index{static_cast<std::size_t>(model.root_mesh_index)};
-    const Character::BodyAnimationObjectPose& root_pose{character.object_poses.at(root_index)};
+    root_index = static_cast<std::size_t>(model.root_mesh_index);
+    const Character::BodyAnimationObjectPose& root_pose{character.object_poses.at(*root_index)};
     if (root_pose.channel_index.has_value()) {
       const Omikron::Animation3DAChannel& root_channel{
           animation.channels.at(root_pose.channel_index.value())};
       const std::optional<Runtime::Vec3> integrated{
           root_channel.integrate_translation(previous, current)};
       if (integrated.has_value()) {
-        // Runtime 0x004711D0 optionally transforms the integrated root vector
-        // through the live top/root object orientation before it reaches world
-        // position. OpenNomad stores that actor/world orientation separately
-        // from the 3DO hierarchy in RuntimeCharacter::transform.matrix.
-        //
-        // Do not fold the current-frame 3DA quaternion into this basis. Runtime
-        // applies that quaternion separately to object animation state; it is
-        // not the matrix supplied to root-motion integration.
-        root_delta = Runtime::transform_vector(integrated.value(), character.transform.matrix);
-        root_delta = Runtime::transform_vector(integrated.value(), effective_orientation);
-
-        // Runtime 0x00469450 advances the logical actor position in X/Z only,
-        // then applies the full XYZ displacement to the selected visual root.
-        // OpenNomad already carries visual X/Z through character.transform, so
-        // retain only the world-Y residual in the 3DO root to avoid doubling.
-        character.transform.translation.x += root_delta.x;
-        character.transform.translation.z += root_delta.z;
-        if (root_delta.y != 0.0F) {
-          auto inverse{inverse_runtime_matrix(effective_orientation)};
-          if (!inverse) {
-            return std::expected<void, BodyAnimationFailure>{std::unexpect,
-                body_animation_failure(Script::BodyAnimationApplyError::k_resource_resolution,
-                    std::move(inverse).error())};
-          }
-          const Runtime::Vec3 local_residual{Runtime::transform_vector(
-              Runtime::Vec3{.x = 0.0F, .y = root_delta.y, .z = 0.0F}, inverse.value())};
-          Omikron::Model3DOData::RuntimeObjectState& root_object{
-              character.runtime_objects.at(root_index)};
-          root_object.local_offset.x += local_residual.x;
-          root_object.local_offset.y += local_residual.y;
-          root_object.local_offset.z += local_residual.z;
-        }
+        // Runtime integrates through the selected object's live +0x9C matrix
+        // before Script_Select*BodyAnimation stores this invocation's args
+        // 4/5/6. Therefore the current interval sees the persistent orientation
+        // left by the previous invocation, never the just-decoded values.
+        root_delta = Runtime::transform_vector(integrated.value(), root_motion_orientation);
       }
     }
+  }
+
+  // Native 0x00469420 happens after root integration and before 0x00469450.
+  character.body_orientation_offset_degrees = orientation_offset_degrees;
+  const Runtime::Matrix3 presentation_orientation{character.live_root_orientation()};
+
+  // Runtime advances the logical actor in X/Z only, while the complete XYZ
+  // displacement reaches the visual root. X/Z already flow through the actor
+  // transform in OpenNomad, so retain only the visual world-Y residual locally.
+  character.transform.translation.x += root_delta.x;
+  character.transform.translation.z += root_delta.z;
+  if (root_delta.y != 0.0F && root_index.has_value()) {
+    auto inverse{inverse_runtime_matrix(presentation_orientation)};
+    if (!inverse) {
+      return std::expected<void, BodyAnimationFailure>{std::unexpect,
+          body_animation_failure(
+              Script::BodyAnimationApplyError::k_resource_resolution, std::move(inverse).error())};
+    }
+    const Runtime::Vec3 local_residual{Runtime::transform_vector(
+        Runtime::Vec3{.x = 0.0F, .y = root_delta.y, .z = 0.0F}, inverse.value())};
+    Omikron::Model3DOData::RuntimeObjectState& root_object{
+        character.runtime_objects.at(root_index.value())};
+    root_object.local_offset.x += local_residual.x;
+    root_object.local_offset.y += local_residual.y;
+    root_object.local_offset.z += local_residual.z;
   }
 
   if (auto resolved{Omikron::Model3DO::resolve_runtime_transforms(
@@ -357,8 +327,6 @@ void begin_body_animation(Character::RuntimeCharacter& character,
   playback.accumulated_root_translation.y += root_delta.y;
   playback.accumulated_root_translation.z += root_delta.z;
   playback.body_animation_vector = orientation_offset_degrees;
-  playback.effective_orientation = effective_orientation;
-  playback.effective_orientation_valid = true;
   playback.completed = current >= static_cast<float>(animation.max_frame_index);
   playback.active = !playback.completed;
   return {};
@@ -968,8 +936,7 @@ ScenarioRuntime::select_body_animation(const Script::BodyAnimationRequest& reque
   if (binding->initialized) {
     const std::optional<Runtime::Vec3> reference{animation.reference_translation()};
     if (!reference.has_value()) {
-      return std::expected<Script::BodyAnimationResult, Script::BodyAnimationFailure>{
-          std::unexpect,
+      return std::expected<Script::BodyAnimationResult, Script::BodyAnimationFailure>{std::unexpect,
           body_animation_failure(Script::BodyAnimationApplyError::k_resource_resolution,
               fmt::format("animation {} '{}' has no 3DA position-key-zero reference",
                   request.animation_index,

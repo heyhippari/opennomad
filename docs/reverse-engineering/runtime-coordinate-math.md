@@ -136,10 +136,6 @@ The conversion above is directly confirmed for:
 ```text
 AREA table 0:
     character placement X/Y/Z
-
-AREA table 6:
-    camera eye X/Y/Z
-    camera target X/Y/Z
 ```
 
 Examples:
@@ -147,8 +143,29 @@ Examples:
 | Source | Serialized | Runtime inches |
 |---|---|---|
 | character 310 | `(-2588, -271, -816)` | `(-399, -42, -126)` |
-| camera 2148 eye | `(-3178, -246, -1507)` | `(-489, -38, -232)` |
-| camera 2148 target | `(-3157, -316, -743)` | `(-486, -49, -115)` |
+
+AREA/SCENE/DIALOG camera eye/target dwords use the same numeric normalization before the camera handlers consume them. The crucial ordering is that Runtime's AREA/SCENE record loader mutates all six camera dwords in place.
+For each component it performs:
+
+```text
+serialized * 100
+FILD
+* (1 / 256)
+* 0.39370078740157477
+- 1.0
+_ftol / truncate toward zero
+```
+
+which is exactly:
+
+```text
+runtimeCameraInteger =
+    trunc_toward_zero(
+        serializedCameraDword * 39.37007874015748 / 256.0 - 1.0
+    )
+```
+
+The later compact camera handler does indeed `FILD` the camera dwords directly, but by then it is reading these already-normalized in-memory records. Treating the archive dwords as final Runtime coordinates skips the loader stage and is incorrect.
 
 ---
 
@@ -598,14 +615,28 @@ worldDelta = integrated3DADelta * liveRootOrientation
 
 The per-frame 3DA quaternion is not part of this matrix; Runtime applies it separately to object animation state.
 
-OpenNomad stores the equivalent live actor orientation in:
+The selected Runtime 3DO stores a pointer to this live orientation at `+0x9C`.
+It is built from the actor's base orientation plus the persistent body-animation Euler offsets, and is distinct from the per-frame 3DA quaternion matrix.
+
+Ordering inside `Script_Select*BodyAnimation` is significant:
 
 ```text
-RuntimeCharacter::transform.matrix
+integrate current 3DA root interval through live +0x9C orientation
+    ->
+store this command's args 4/5/6 as the new persistent Euler offsets
+    ->
+apply root displacement
 ```
 
-so root motion must pass through that matrix before mutating
-`transform.translation`.
+The newly decoded args 4/5/6 therefore affect presentation and subsequent root intervals, not the interval that was just integrated.
+
+OpenNomad mirrors this as `transform.matrix` (base orientation) plus `body_orientation_offset_degrees` (persistent offset).
+
+---
+
+# 22.1 Camera attachment orientation selectors
+
+Native camera attachment selector `0` anchors to the current actor position and rotates the authored camera vector using only the persistent body-animation offset Euler triple. Selector `1` uses the actor base Euler orientation plus that same body offset. Both finish with `anchor - transformedVector`.
 
 ---
 

@@ -1,5 +1,6 @@
 #include "Core/RuntimeMath.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -17,6 +18,13 @@ Vec3 area_position_to_inches(const std::array<std::int32_t, 3>& serialized) {
   return Vec3{.x = static_cast<float>(area_position_to_inches(serialized.at(0))),
       .y = static_cast<float>(area_position_to_inches(serialized.at(1))),
       .z = static_cast<float>(area_position_to_inches(serialized.at(2)))};
+}
+
+Vec3 iam_camera_vector_to_runtime(const std::array<std::int32_t, 3>& serialized) {
+  // IAM camera records are normalized in-place by Runtime's AREA/SCENE loader
+  // before the compact camera handlers read them. Reproduce that loader stage
+  // while keeping OpenNomad's parsed archive records immutable.
+  return area_position_to_inches(serialized);
 }
 
 std::int32_t area_angle_to_degrees(const std::int16_t units) {
@@ -118,6 +126,37 @@ Matrix3 quaternion_matrix(const Quaternion& quaternion) {
 
 Matrix3 euler_rotation(const float x_radians, const float y_radians, const float z_radians) {
   return multiply(multiply(rotation_y(y_radians), rotation_x(x_radians)), rotation_z(z_radians));
+}
+
+Matrix3 euler_rotation_degrees(const Vec3& degrees) {
+  constexpr float k_degrees_to_radians{std::numbers::pi_v<float> / 180.0F};
+  return euler_rotation(degrees.x * k_degrees_to_radians,
+      degrees.y * k_degrees_to_radians,
+      degrees.z * k_degrees_to_radians);
+}
+
+Matrix3 additive_euler_orientation(const Matrix3& base, const Vec3& additive_degrees) {
+  if (additive_degrees.x == 0.0F && additive_degrees.y == 0.0F &&
+      additive_degrees.z == 0.0F) {
+    return base;
+  }
+
+  constexpr float k_degrees_to_radians{std::numbers::pi_v<float> / 180.0F};
+  const float x_radians{std::asin(std::clamp(-base.at(1, 2), -1.0F, 1.0F))};
+  const float cos_x{std::cos(x_radians)};
+  float y_radians{0.0F};
+  float z_radians{0.0F};
+  if (std::abs(cos_x) > 0.00001F) {
+    y_radians = std::atan2(base.at(0, 2), base.at(2, 2));
+    z_radians = std::atan2(base.at(1, 0), base.at(1, 1));
+  } else {
+    const float sign{x_radians >= 0.0F ? 1.0F : -1.0F};
+    y_radians = std::atan2(sign * base.at(0, 1), base.at(0, 0));
+  }
+
+  return euler_rotation(x_radians + (additive_degrees.x * k_degrees_to_radians),
+      y_radians + (additive_degrees.y * k_degrees_to_radians),
+      z_radians + (additive_degrees.z * k_degrees_to_radians));
 }
 
 CameraView camera_view(const Vec3& eye, const Vec3& target, const float roll_radians) {

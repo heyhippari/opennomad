@@ -72,11 +72,6 @@ struct BodyAnimationPlayback {
   /// Runtime Script_Select*BodyAnimation arguments 4/5/6: additive XYZ Euler
   /// orientation offsets in degrees.
   App::Runtime::Vec3 body_animation_vector{};
-  /// Effective presentation orientation after adding body_animation_vector to
-  /// the actor's base Runtime transform. The base transform itself remains
-  /// logical/controller state and is not overwritten by body choreography.
-  App::Runtime::Matrix3 effective_orientation{};
-  bool effective_orientation_valid{false};
 };
 
 struct DialogFaceVertexOverride {
@@ -109,10 +104,14 @@ struct RuntimeCharacter {
   /// not rewrite this field; live spatial consumers must use transform.translation.
   std::array<std::int32_t, 3> serialized_area_position{};
   std::int16_t serialized_orientation_units{0};
-  /// Live Runtime world transform. Body root motion mutates translation and
-  /// uses matrix as the actor/root orientation basis.
+  /// Live Runtime world transform. `matrix` is the actor's base orientation;
+  /// body-animation angular offsets remain separate below.
   App::Runtime::Transform transform{};
   std::int32_t runtime_orientation_degrees{0};
+  /// Persistent entity +0x1A0/+0x1A4/+0x1A8 equivalent. Script body-animation
+  /// args 4/5/6 overwrite this after the current root-motion interval is
+  /// integrated; the value therefore survives BodyAnimationPlayback resets.
+  App::Runtime::Vec3 body_orientation_offset_degrees{};
   /// Selected authored CTL move/control-bank ID. Execution is intentionally
   /// deferred until the full CTL controller is recovered.
   std::optional<std::int16_t> current_move_id;
@@ -133,14 +132,22 @@ struct RuntimeCharacter {
     return model_resource != nullptr;
   }
 
-  /// Character transform used by 3D presentation. Runtime keeps the base actor
-  /// orientation and the body-animation Euler offsets as separate state; mirror
-  /// that split instead of baking animation orientation into transform.matrix.
+  /// Orientation used by camera attachment selector 0: body offset only.
+  [[nodiscard]] App::Runtime::Matrix3 body_offset_orientation() const {
+    return App::Runtime::euler_rotation_degrees(body_orientation_offset_degrees);
+  }
+
+  /// Runtime selected/root 3DO +0x9C equivalent: actor base orientation plus
+  /// the persistent body-animation offset, without the current 3DA quaternion.
+  [[nodiscard]] App::Runtime::Matrix3 live_root_orientation() const {
+    return App::Runtime::additive_euler_orientation(
+        transform.matrix, body_orientation_offset_degrees);
+  }
+
+  /// Character transform used by 3D presentation.
   [[nodiscard]] App::Runtime::Transform presentation_transform() const {
     App::Runtime::Transform result{transform};
-    if (body_animation.effective_orientation_valid) {
-      result.matrix = body_animation.effective_orientation;
-    }
+    result.matrix = live_root_orientation();
     return result;
   }
 
@@ -185,9 +192,10 @@ class Runtime {
       const Omikron::IamSceneRecord& scene,
       std::int16_t character_id);
 
-  /// Materializes every SCENE table-0 character against its SCENE-first
-  /// table-4 definitions. This never rematerializes AREA-local characters.
-  [[nodiscard]] std::expected<void, std::string> materialize_scene_characters(
+  /// Preloads every SCENE table-0 character against its SCENE-first table-4
+  /// definition as a resident logical body while keeping presentation disabled.
+  /// Already-live bodies keep their live transform/presentation state.
+  [[nodiscard]] std::expected<void, std::string> preload_scene_characters(
       std::int32_t area_id, std::int32_t scene_id, const Omikron::IamSceneRecord& scene);
 
   /// Deactivates only characters currently owned by one attached SCENE.
@@ -246,7 +254,8 @@ class Runtime {
       std::int16_t orientation_units,
       std::string_view definition_name,
       std::string_view model_resource,
-      bool apply_transform);
+      bool apply_transform,
+      bool activate);
 
   ModelLoader m_model_loader;
   std::vector<RuntimeCharacter> m_characters;
