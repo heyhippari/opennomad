@@ -130,6 +130,10 @@ add_executable(IamSceneTest IamScene.spec.cpp $<TARGET_OBJECTS:TestRunner>)
 add_test(NAME IamSceneTest COMMAND IamSceneTest)
 target_link_libraries(IamSceneTest PRIVATE doctest::doctest Core)
 
+add_executable(IamGlobalTest IamGlobal.spec.cpp $<TARGET_OBJECTS:TestRunner>)
+add_test(NAME IamGlobalTest COMMAND IamGlobalTest)
+target_link_libraries(IamGlobalTest PRIVATE doctest::doctest Core)
+
 add_executable(IamDialogTest IamDialog.spec.cpp $<TARGET_OBJECTS:TestRunner>)
 add_test(NAME IamDialogTest COMMAND IamDialogTest)
 target_link_libraries(IamDialogTest PRIVATE doctest::doctest Core)

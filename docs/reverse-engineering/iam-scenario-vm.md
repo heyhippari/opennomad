@@ -2591,7 +2591,11 @@ state 7
 
 for a timed/native wait.
 
-The AREA camera table itself is documented in `iam-area.md`.
+AREA and SCENE share the camera-record ABI documented in `iam-area.md`.
+Definition lookup is independent of compact-context ownership: Runtime searches
+slot-0 AREA, slot-0 SCENE, slot-1 AREA, slot-1 SCENE, then `IAM/GLOBAL`, first
+match winning. Caller and active-slot identity do not reorder it. See
+[`iam-global.md`](iam-global.md).
 
 ---
 

@@ -260,6 +260,7 @@ class ScopedGameDataRoot {
 
 void write_boot_fixtures(const TempDirectory& temp) {
   write_bytes(temp.root() / "IAM" / "START", make_start());
+  write_bytes(temp.root() / "IAM" / "GLOBAL", App::Tests::make_empty_iam_global());
   write_bytes(temp.root() / "IAM" / "AREA", make_area_archive(make_prefix()));
   write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
   write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_minimal_scx());
@@ -269,6 +270,7 @@ void write_dialog_boot_fixtures(const TempDirectory& temp, const bool action_cho
   Buffer script;
   script.u8(0x3D).u16(0).u8(0x68).u8(0x03);
   write_bytes(temp.root() / "IAM" / "START", make_start());
+  write_bytes(temp.root() / "IAM" / "GLOBAL", App::Tests::make_empty_iam_global());
   write_bytes(temp.root() / "IAM" / "AREA", make_area_archive(script.data()));
   write_bytes(temp.root() / "IAM" / "DIALOG", make_dialog_archive(action_choice));
   write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
@@ -280,6 +282,7 @@ void write_transition_boot_fixtures(const TempDirectory& temp, const bool includ
   script.u8(0x2F).u16(222).u16(0xFFFF).u16(0xFFFF);
   script.u8(0x47).u16(222).u16(55).u8(0x03);
   write_bytes(temp.root() / "IAM" / "START", make_start());
+  write_bytes(temp.root() / "IAM" / "GLOBAL", App::Tests::make_empty_iam_global());
   write_bytes(
       temp.root() / "IAM" / "AREA", make_transition_area_archive(script.data()));
   write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
@@ -416,6 +419,7 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
   TEST_CASE("an unknown opcode pauses the area script without opening the menu") {
     const TempDirectory temp;
     write_bytes(temp.root() / "IAM" / "START", make_start());
+    write_bytes(temp.root() / "IAM" / "GLOBAL", App::Tests::make_empty_iam_global());
     // A single unknown opcode byte as the area script prefix.
     std::vector<std::byte> unknown_prefix{std::byte{0xFF}};
     write_bytes(temp.root() / "IAM" / "AREA", make_area_archive(unknown_prefix));

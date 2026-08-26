@@ -1709,6 +1709,10 @@ the recovered roll/FOV fields. Camera controller state retains authored
 participant character IDs and resolves their live entity transforms during
 camera updates.
 
+Compact camera IDs are not resolved only against the calling AREA. Runtime's
+fixed two-resident AREA/SCENE order and session-wide fallback are documented in
+[`iam-global.md`](iam-global.md).
+
 - Selector `-1` uses the normalized vector as an absolute endpoint.
 - Selector `0` resolves participant A and uses
   `A.position - transform_vector(relative, A.principalOrientation)`.
@@ -2082,7 +2086,9 @@ AREA camera opcodes:
 0x60
 ```
 
-resolve camera IDs against table 6.
+resolve camera IDs through the complete resident AREA/SCENE namespace and then
+`IAM/GLOBAL`; see [`iam-global.md`](iam-global.md). The calling compact context
+still owns command presentation and wait completion.
 
 Current recovered distinction:
 

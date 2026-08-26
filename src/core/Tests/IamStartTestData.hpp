@@ -59,4 +59,9 @@ inline std::vector<std::byte> make_canonical_start(
   return data;
 }
 
+/// Minimum valid required IAM/GLOBAL fixture with an empty camera table.
+inline std::vector<std::byte> make_empty_iam_global() {
+  return std::vector<std::byte>(0x20U, std::byte{});
+}
+
 }  // namespace App::Tests

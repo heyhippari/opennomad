@@ -29,6 +29,7 @@
 #include "Core/Omikron/IamArea.hpp"
 #include "Core/Omikron/IamCamera.hpp"
 #include "Core/Omikron/IamCharacterDefinition.hpp"
+#include "Core/Omikron/IamGlobal.hpp"
 #include "Core/Omikron/IamObject.hpp"
 #include "Core/Omikron/IamScene.hpp"
 #include "Core/Omikron/IamStart.hpp"
@@ -47,6 +48,7 @@ namespace App {
 namespace {
 
 constexpr std::string_view K_IAM_START_PATH{"IAM/START"};
+constexpr std::string_view K_IAM_GLOBAL_PATH{"IAM/GLOBAL"};
 constexpr std::string_view K_IAM_AREA_PATH{"IAM/AREA"};
 constexpr std::string_view K_IAM_SCENE_PATH{"IAM/SCENE"};
 constexpr std::string_view K_IAM_OBJECT_PATH{"IAM/OBJECT"};
@@ -58,6 +60,19 @@ constexpr std::string_view K_DECOR_DIRECTORY{"MESHES/DECORS"};
 /// Extensions appended by the original AREA dependency loader.
 constexpr std::string_view K_SCX_EXTENSION{".SCX"};
 constexpr std::string_view K_3DO_EXTENSION{".3DO"};
+
+constexpr std::string_view compact_camera_definition_source_name(
+    const CompactCameraDefinitionSource source) {
+  switch (source) {
+    case CompactCameraDefinitionSource::k_area:
+      return "AREA";
+    case CompactCameraDefinitionSource::k_scene:
+      return "SCENE";
+    case CompactCameraDefinitionSource::k_global:
+      return "GLOBAL";
+  }
+  return "unknown";
+}
 
 /// Builds an archive-relative dependency path: directory/name + extension.
 std::string dependency_path(const std::string_view directory,
@@ -216,6 +231,7 @@ void ScenarioStartupController::reset_session() {
   APP_PROFILE_FUNCTION();
 
   m_start.reset();
+  m_global.reset();
   m_area_archive.reset();
   m_scene_archive.reset();
   m_object_archive.reset();
@@ -241,6 +257,7 @@ void ScenarioStartupController::reset_session() {
   m_active_zones.clear();
   m_zone_contacts.clear();
   m_start_bytes.clear();
+  m_global_bytes.clear();
   m_area_archive_bytes.clear();
   m_scene_archive_bytes.clear();
   m_object_archive_bytes.clear();
@@ -311,7 +328,25 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
     return std::expected<void, std::string>{std::unexpect, m_last_error};
   }
 
-  // 2. IAM/AREA indexed archive, record <initial area>.
+  // 2. Session-global IAM camera definitions. Runtime makes this namespace
+  // available before any resident compact context can select a camera.
+  auto global_file{read_file(std::string{K_IAM_GLOBAL_PATH})};
+  if (!global_file) {
+    m_last_error = global_file.error();
+    App::Log::error(LogCategory::Startup, "Startup failed: {}", m_last_error);
+    return std::expected<void, std::string>{std::unexpect, m_last_error};
+  }
+  m_global_bytes = std::move(global_file).value();
+  auto global{Omikron::IamGlobal::load(std::span<const std::byte>{m_global_bytes})};
+  if (!global) {
+    m_last_error = global.error();
+    App::Log::error(LogCategory::Startup, "Startup failed: {}", m_last_error);
+    return std::expected<void, std::string>{std::unexpect, m_last_error};
+  }
+  m_global.emplace(std::move(global).value());
+  record("IAM_GLOBAL.Loaded", fmt::format("cameras={}", m_global->cameras().size()));
+
+  // 3. IAM/AREA indexed archive, record <initial area>.
   auto area_file{read_file(std::string{K_IAM_AREA_PATH})};
   if (!area_file) {
     m_last_error = area_file.error();
@@ -349,7 +384,7 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
   record("IAM_AREA.RecordLoaded", fmt::format("id={} size={:#x}", area_id, record_size));
   record("IAM_AREA.Parsed", fmt::format("scriptOffset={:#x}", script_offset));
 
-  // 3. Dependencies in the original loader's order. The names are supplied
+  // 4. Dependencies in the original loader's order. The names are supplied
   // by the active IAM/AREA record; GRID is merely the value used by area 118,
   // not a special world-scenario role.
 
@@ -396,7 +431,7 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
   record("AreaDependency.Scenario.Loaded",
       fmt::format("slot=world{} path={}", m_active_area_slot, m_initial_world_scenario_path));
 
-  // 4. Area script context: create, queue event/state 1, activate. The
+  // 5. Area script context: create, queue event/state 1, activate. The
   // first interpreter tick runs in tick().
   const std::size_t area_script_owner_slot{m_active_area_slot};
   Script::AreaScriptRuntime& area_script{
@@ -515,7 +550,7 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
 
   area_script.set_camera_sink(
       [this, area_script_owner_slot](const Script::AreaCameraRequest& request) {
-        return enqueue_compact_camera(area_script_owner_slot, false, request);
+        return enqueue_compact_camera(area_script_owner_slot, request);
       });
 
   area_script.set_interface_sink([this](const InterfaceOpenRequest& request)
@@ -972,9 +1007,49 @@ std::optional<std::size_t> ScenarioStartupController::resident_area_slot(
   return std::nullopt;
 }
 
+std::optional<ResolvedCompactCamera> ScenarioStartupController::resolve_compact_camera(
+    const std::int16_t camera_id) const {
+  for (std::size_t index{0}; index < m_area_slots.size(); ++index) {
+    const RuntimeAreaSlot& slot{m_area_slots.at(index)};
+    if (slot.primary.has_value()) {
+      const std::optional<Omikron::IamCameraRecord> camera{
+          slot.primary->camera_by_id(camera_id)};
+      if (camera.has_value()) {
+        return ResolvedCompactCamera{.camera = camera.value(),
+            .source = CompactCameraDefinitionSource::k_area,
+            .resident_slot = index,
+            .area_id = slot.primary_area_id,
+            .scene_id = -1};
+      }
+    }
+    if (slot.scene.has_value()) {
+      const std::optional<Omikron::IamCameraRecord> camera{
+          slot.scene->camera_by_id(camera_id)};
+      if (camera.has_value()) {
+        return ResolvedCompactCamera{.camera = camera.value(),
+            .source = CompactCameraDefinitionSource::k_scene,
+            .resident_slot = index,
+            .area_id = slot.primary_area_id,
+            .scene_id = slot.scene_id};
+      }
+    }
+  }
+
+  if (m_global.has_value()) {
+    const std::optional<Omikron::IamCameraRecord> camera{m_global->camera_by_id(camera_id)};
+    if (camera.has_value()) {
+      return ResolvedCompactCamera{.camera = camera.value(),
+          .source = CompactCameraDefinitionSource::k_global,
+          .resident_slot = std::nullopt,
+          .area_id = -1,
+          .scene_id = -1};
+    }
+  }
+  return std::nullopt;
+}
+
 std::expected<Script::AreaCameraOperationHandle, std::string>
 ScenarioStartupController::enqueue_compact_camera(const std::size_t owner_slot,
-    const bool prefer_scene_definition,
     const Script::AreaCameraRequest& request) {
   if (m_manager == nullptr || owner_slot >= m_area_slots.size()) {
     const std::string error{
@@ -984,30 +1059,49 @@ ScenarioStartupController::enqueue_compact_camera(const std::size_t owner_slot,
   }
   const RuntimeAreaSlot& slot{m_area_slots.at(owner_slot)};
   const std::int16_t camera_id{static_cast<std::int16_t>(request.camera_id)};
-  const std::optional<Omikron::IamCameraRecord> area_camera{
-      slot.primary.has_value() ? slot.primary->camera_by_id(camera_id)
-                               : std::optional<Omikron::IamCameraRecord>{}};
-  const std::optional<Omikron::IamCameraRecord> scene_camera{
-      slot.scene.has_value() ? slot.scene->camera_by_id(camera_id)
-                             : std::optional<Omikron::IamCameraRecord>{}};
-  std::optional<Omikron::IamCameraRecord> camera;
-  if (prefer_scene_definition) {
-    camera = scene_camera.has_value() ? scene_camera : area_camera;
-  } else {
-    camera = area_camera.has_value() ? area_camera : scene_camera;
-  }
+  const std::optional<ResolvedCompactCamera> resolved{resolve_compact_camera(camera_id)};
   const WorldSceneContext* context{m_manager->find_world_context(slot.world_scene_id)};
-  if (!camera.has_value() || context == nullptr) {
-    const std::string error{fmt::format(
-        "compact camera {} has no owner-resident definition or owner world", request.camera_id)};
+  if (!resolved.has_value()) {
+    const std::string error{fmt::format("compact camera {} was not found in any resident "
+                                        "AREA/SCENE or IAM/GLOBAL",
+        request.camera_id)};
     App::Log::warn(LogCategory::Scenario, "{}", error);
     return std::expected<Script::AreaCameraOperationHandle, std::string>{std::unexpect, error};
   }
-  if (request.wait_for_completion && camera->camera_type != 12U) {
+  if (context == nullptr) {
+    const std::string error{
+        fmt::format("compact camera {} requested without an owner world", request.camera_id)};
+    App::Log::warn(LogCategory::Scenario, "{}", error);
+    return std::expected<Script::AreaCameraOperationHandle, std::string>{std::unexpect, error};
+  }
+  const Omikron::IamCameraRecord& camera{resolved->camera};
+  if (request.wait_for_completion && camera.camera_type != 12U) {
     return std::expected<Script::AreaCameraOperationHandle, std::string>{std::unexpect,
         fmt::format("tracked camera {} uses unsupported controller mode {}",
             request.camera_id,
-            camera->camera_type)};
+            camera.camera_type)};
+  }
+
+  switch (resolved->source) {
+    case CompactCameraDefinitionSource::k_area:
+      App::Log::debug(LogCategory::Scenario,
+          "compact camera {} resolved from AREA slot={} area={}",
+          request.camera_id,
+          resolved->resident_slot.value_or(0U),
+          resolved->area_id);
+      break;
+    case CompactCameraDefinitionSource::k_scene:
+      App::Log::debug(LogCategory::Scenario,
+          "compact camera {} resolved from SCENE slot={} scene={} area={}",
+          request.camera_id,
+          resolved->resident_slot.value_or(0U),
+          resolved->scene_id,
+          resolved->area_id);
+      break;
+    case CompactCameraDefinitionSource::k_global:
+      App::Log::debug(
+          LogCategory::Scenario, "compact camera {} resolved from IAM/GLOBAL", request.camera_id);
+      break;
   }
 
   const std::optional<std::uint64_t> operation_generation{
@@ -1029,28 +1123,29 @@ ScenarioStartupController::enqueue_compact_camera(const std::size_t owner_slot,
       .source_area_id = slot.primary_area_id,
       .operation_generation = operation_generation,
       .attachment_participants = participants,
-      .serialized_eye = camera->serialized_eye,
-      .serialized_target = camera->serialized_target,
-      .runtime_eye = Runtime::iam_camera_vector_to_runtime(camera->serialized_eye),
-      .runtime_target = Runtime::iam_camera_vector_to_runtime(camera->serialized_target),
+      .serialized_eye = camera.serialized_eye,
+      .serialized_target = camera.serialized_target,
+      .runtime_eye = Runtime::iam_camera_vector_to_runtime(camera.serialized_eye),
+      .runtime_target = Runtime::iam_camera_vector_to_runtime(camera.serialized_target),
       .duration_units = request.duration_units,
       .flags = request.flags,
       .wait_for_completion = request.wait_for_completion,
-      .camera_type = camera->camera_type,
-      .roll_units = camera->roll_units,
-      .horizontal_fov_units = camera->horizontal_fov_units,
-      .roll_degrees = Runtime::area_angle_to_degrees(camera->roll_units),
-      .horizontal_fov_degrees = Runtime::area_angle_to_degrees(camera->horizontal_fov_units),
-      .target_attachment_selector = camera->target_attachment_selector,
-      .eye_attachment_selector = camera->eye_attachment_selector,
-      .tail_fields = camera->tail_fields});
+      .camera_type = camera.camera_type,
+      .roll_units = camera.roll_units,
+      .horizontal_fov_units = camera.horizontal_fov_units,
+      .roll_degrees = Runtime::area_angle_to_degrees(camera.roll_units),
+      .horizontal_fov_degrees = Runtime::area_angle_to_degrees(camera.horizontal_fov_units),
+      .target_attachment_selector = camera.target_attachment_selector,
+      .eye_attachment_selector = camera.eye_attachment_selector,
+      .tail_fields = camera.tail_fields});
   record("AreaScript.CameraRequested",
-      fmt::format("id={} duration={} flags={} type={} hFov={}deg operation={}",
+      fmt::format("id={} duration={} flags={} type={} hFov={}deg source={} operation={}",
           request.camera_id,
           request.duration_units,
           request.flags,
-          camera->camera_type,
-          Runtime::area_angle_to_degrees(camera->horizontal_fov_units),
+          camera.camera_type,
+          Runtime::area_angle_to_degrees(camera.horizontal_fov_units),
+          compact_camera_definition_source_name(resolved->source),
           operation_generation.has_value() ? fmt::format("{}", operation_generation.value())
                                            : std::string{"none"}));
   return Script::AreaCameraOperationHandle{.generation = operation_generation.value_or(0U)};
@@ -1263,10 +1358,9 @@ void ScenarioStartupController::bind_scene_compact_services(Script::AreaScriptRu
       }
     }
   });
-  runtime.set_camera_sink(
-      [this, owner_slot, prefer_scene_definition](const Script::AreaCameraRequest& request) {
-        return enqueue_compact_camera(owner_slot, prefer_scene_definition, request);
-      });
+  runtime.set_camera_sink([this, owner_slot](const Script::AreaCameraRequest& request) {
+    return enqueue_compact_camera(owner_slot, request);
+  });
   runtime.set_presentation_sink([this](const Script::AreaPresentationRequest& request) {
     if (m_manager == nullptr) {
       return;

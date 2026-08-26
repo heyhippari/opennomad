@@ -13,6 +13,7 @@
 #include "Core/Interface/InterfaceDispatcher.hpp"
 #include "Core/Omikron/IamArchive.hpp"
 #include "Core/Omikron/IamArea.hpp"
+#include "Core/Omikron/IamGlobal.hpp"
 #include "Core/Omikron/IamScene.hpp"
 #include "Core/Omikron/IamStart.hpp"
 #include "Core/Omikron/IamZone.hpp"
@@ -45,6 +46,23 @@ struct RuntimeAreaSlot {
   std::uint32_t world_scene_id{0};
   /// Independent compact IAM context for the attached SCENE top-level script.
   std::optional<Script::AreaScriptRuntime> scene_script;
+};
+
+/// Definition-table provenance for one compact camera resolved from Runtime's
+/// complete two-resident IAM namespace.
+enum class CompactCameraDefinitionSource : std::uint8_t {
+  k_area,
+  k_scene,
+  k_global,
+};
+
+/// Immutable camera definition plus the namespace entry that supplied it.
+struct ResolvedCompactCamera {
+  Omikron::IamCameraRecord camera;
+  CompactCameraDefinitionSource source{CompactCameraDefinitionSource::k_area};
+  std::optional<std::size_t> resident_slot;
+  std::int32_t area_id{-1};
+  std::int32_t scene_id{-1};
 };
 
 /// Origin of one transient, residency-derived active spatial-zone record.
@@ -332,12 +350,14 @@ class ScenarioStartupController {
   void bind_scene_compact_services(Script::AreaScriptRuntime& runtime,
       std::size_t owner_slot,
       bool prefer_scene_definition = true);
-  /// Finds an owner-resident IAM camera and submits its unbaked serialized
-  /// fields to presentation, where live attachment resolution occurs.
+  /// Finds the first camera in Runtime's slot0 AREA/SCENE, slot1 AREA/SCENE,
+  /// then IAM/GLOBAL namespace. Definition lookup is independent of caller.
+  [[nodiscard]] std::optional<ResolvedCompactCamera> resolve_compact_camera(
+      std::int16_t camera_id) const;
+  /// Submits globally resolved immutable fields through the calling compact
+  /// context's owner world, where live attachment resolution occurs.
   [[nodiscard]] std::expected<Script::AreaCameraOperationHandle, std::string>
-  enqueue_compact_camera(std::size_t owner_slot,
-      bool prefer_scene_definition,
-      const Script::AreaCameraRequest& request);
+  enqueue_compact_camera(std::size_t owner_slot, const Script::AreaCameraRequest& request);
   void service_scene_scripts(float delta_seconds);
   [[nodiscard]] std::expected<void, std::string> service_zone_contacts(float delta_seconds);
   [[nodiscard]] bool zone_contact_backing_resident(const ZoneContactContext& contact) const;
@@ -355,11 +375,13 @@ class ScenarioStartupController {
   };
 
   std::vector<std::byte> m_start_bytes;
+  std::vector<std::byte> m_global_bytes;
   std::vector<std::byte> m_area_archive_bytes;
   std::vector<std::byte> m_scene_archive_bytes;
   std::vector<std::byte> m_object_archive_bytes;
 
   std::optional<Omikron::IamStart> m_start;
+  std::optional<Omikron::IamGlobal> m_global;
   std::optional<Omikron::IamIndexedArchive> m_area_archive;
   std::optional<Omikron::IamIndexedArchive> m_scene_archive;
   std::optional<Omikron::IamFixedStrideArchive> m_object_archive;

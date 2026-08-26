@@ -57,6 +57,56 @@ void write_name(
   }
 }
 
+constexpr std::uint16_t K_NAMESPACE_CAMERA_ID{42};
+
+void write_camera_record(std::vector<std::byte>& data,
+    const std::size_t offset,
+    const std::int32_t marker,
+    const std::uint16_t camera_id = K_NAMESPACE_CAMERA_ID) {
+  for (std::size_t axis{0}; axis < 3U; ++axis) {
+    write_u32(data,
+        offset + (axis * 4U),
+        static_cast<std::uint32_t>(marker + static_cast<std::int32_t>(axis)));
+    write_u32(data,
+        offset + 0x0CU + (axis * 4U),
+        static_cast<std::uint32_t>(-marker - static_cast<std::int32_t>(axis)));
+  }
+  write_u16(data, offset + 0x18U, camera_id);
+  write_u16(data, offset + 0x1AU, 12U);
+  write_u16(data, offset + 0x1CU, 0U);
+  write_u16(data, offset + 0x1EU, static_cast<std::uint16_t>(800 + marker));
+  write_u16(data, offset + 0x20U, 0U);
+  write_u16(data, offset + 0x22U, 0U);
+}
+
+struct CameraNamespaceFixture {
+  bool slot_0_area{false};
+  bool slot_0_scene{false};
+  bool slot_1_area{false};
+  bool slot_1_scene{false};
+  bool global{false};
+  bool request_from_slot_1_scene{false};
+  bool tracked{false};
+};
+
+void append_camera_request(
+    Buffer& script, const bool tracked, const std::uint16_t camera_id = K_NAMESPACE_CAMERA_ID) {
+  script.u8(tracked ? 0x60U : 0x5FU).u16(camera_id).u16(1).u16(0);
+}
+
+std::vector<std::byte> make_camera_namespace_global(const bool has_camera) {
+  constexpr std::size_t k_header_size{0x20U};
+  constexpr std::size_t k_camera_size{0x2CU};
+  std::vector<std::byte> data(
+      k_header_size + (has_camera ? k_camera_size : 0U), std::byte{});
+  write_u32(data, 0x14U, k_header_size);
+  write_u16(data, 0x1EU, has_camera ? 1U : 0U);
+  if (has_camera) {
+    write_camera_record(data, k_header_size, 500);
+  }
+  return data;
+}
+
 void write_bytes(const std::filesystem::path& path, const std::vector<std::byte>& data) {
   std::filesystem::create_directories(path.parent_path());
   std::ofstream stream{path, std::ios::binary};
@@ -427,6 +477,96 @@ std::vector<std::byte> make_handoff_scene_archive() {
   return data;
 }
 
+std::vector<std::byte> make_camera_namespace_area_archive(
+    const CameraNamespaceFixture& fixture) {
+  Buffer script;
+  script.u8(0x47).u16(118).u16(0);
+  script.u8(0x2F).u16(222).u16(0xFFFF).u16(0xFFFF);
+  script.u8(0x47).u16(222).u16(1);
+  if (!fixture.request_from_slot_1_scene) {
+    append_camera_request(script, fixture.tracked);
+  }
+  script.u8(0x03);
+
+  constexpr std::size_t k_source_offset{0x800U};
+  constexpr std::size_t k_target_offset{0xC00U};
+  constexpr std::size_t k_header_size{0xB4U};
+  constexpr std::size_t k_camera_size{0x2CU};
+  const std::size_t source_script_offset{
+      k_header_size + (fixture.slot_0_area ? k_camera_size : 0U)};
+  const std::size_t source_size{source_script_offset + script.data().size()};
+  const std::size_t target_size{k_header_size + (fixture.slot_1_area ? k_camera_size : 0U)};
+  std::vector<std::byte> data(k_target_offset + target_size, std::byte{});
+
+  write_u32(data, 118U * 8U, k_source_offset);
+  write_u32(data, (118U * 8U) + 4U, static_cast<std::uint32_t>(source_size));
+  write_u32(data, k_source_offset + 0x04U, static_cast<std::uint32_t>(source_script_offset));
+  write_name(data, k_source_offset + 0x61U, "GRID");
+  write_u32(data, k_source_offset + 0x28U + (6U * 4U), k_header_size);
+  write_u16(data, k_source_offset + 0x48U + (6U * 2U), fixture.slot_0_area ? 1U : 0U);
+  if (fixture.slot_0_area) {
+    write_camera_record(data, k_source_offset + k_header_size, 100);
+  }
+  std::memcpy(data.data() + k_source_offset + source_script_offset,
+      script.data().data(),
+      script.data().size());
+
+  write_u32(data, 222U * 8U, k_target_offset);
+  write_u32(data, (222U * 8U) + 4U, static_cast<std::uint32_t>(target_size));
+  write_name(data, k_target_offset + 0x61U, "DEST");
+  write_u32(data, k_target_offset + 0x28U + (6U * 4U), k_header_size);
+  write_u16(data, k_target_offset + 0x48U + (6U * 2U), fixture.slot_1_area ? 1U : 0U);
+  if (fixture.slot_1_area) {
+    write_camera_record(data, k_target_offset + k_header_size, 300);
+  }
+  return data;
+}
+
+std::vector<std::byte> make_camera_namespace_scene_record(const bool has_camera,
+    const std::int32_t marker,
+    const bool request_camera,
+    const bool tracked) {
+  Buffer script;
+  if (request_camera) {
+    append_camera_request(script, tracked);
+  }
+  script.u8(0x03);
+
+  constexpr std::size_t k_header_size{0x44U};
+  constexpr std::size_t k_camera_size{0x2CU};
+  const std::size_t camera_offset{k_header_size + script.data().size()};
+  std::vector<std::byte> data(
+      camera_offset + (has_camera ? k_camera_size : 0U), std::byte{});
+  write_u32(data, 0x04U, k_header_size);
+  write_u32(data, 0x08U + (6U * 4U), static_cast<std::uint32_t>(camera_offset));
+  write_u16(data, 0x28U + (6U * 2U), has_camera ? 1U : 0U);
+  std::memcpy(data.data() + k_header_size, script.data().data(), script.data().size());
+  if (has_camera) {
+    write_camera_record(data, camera_offset, marker);
+  }
+  return data;
+}
+
+std::vector<std::byte> make_camera_namespace_scene_archive(
+    const CameraNamespaceFixture& fixture) {
+  const std::vector<std::byte> source{make_camera_namespace_scene_record(
+      fixture.slot_0_scene, 200, false, false)};
+  const std::vector<std::byte> target{make_camera_namespace_scene_record(fixture.slot_1_scene,
+      400,
+      fixture.request_from_slot_1_scene,
+      fixture.tracked)};
+  constexpr std::size_t k_source_offset{0x800U};
+  constexpr std::size_t k_target_offset{0xA00U};
+  std::vector<std::byte> data(k_target_offset + target.size(), std::byte{});
+  write_u32(data, 0U, k_source_offset);
+  write_u32(data, 4U, static_cast<std::uint32_t>(source.size()));
+  write_u32(data, 8U, k_target_offset);
+  write_u32(data, 12U, static_cast<std::uint32_t>(target.size()));
+  std::memcpy(data.data() + k_source_offset, source.data(), source.size());
+  std::memcpy(data.data() + k_target_offset, target.data(), target.size());
+  return data;
+}
+
 /// Minimal valid SCX container (empty descriptor, end tag only).
 std::vector<std::byte> make_minimal_scx() {
   Buffer bytes;
@@ -670,6 +810,7 @@ class ScopedGameDataRoot {
 
 void write_boot_fixtures(const TempDirectory& temp) {
   write_bytes(temp.root() / "IAM" / "START", make_start());
+  write_bytes(temp.root() / "IAM" / "GLOBAL", App::Tests::make_empty_iam_global());
   write_bytes(temp.root() / "IAM" / "AREA", make_area_archive());
   write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
   write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_minimal_scx());
@@ -678,6 +819,7 @@ void write_boot_fixtures(const TempDirectory& temp) {
 
 void write_zone_contact_fixtures(const TempDirectory& temp) {
   write_bytes(temp.root() / "IAM" / "START", make_start());
+  write_bytes(temp.root() / "IAM" / "GLOBAL", App::Tests::make_empty_iam_global());
   write_bytes(temp.root() / "IAM" / "AREA", make_zone_contact_area_archive());
   write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
   write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_minimal_scx());
@@ -685,6 +827,7 @@ void write_zone_contact_fixtures(const TempDirectory& temp) {
 
 void write_live_zone_contact_fixtures(const TempDirectory& temp) {
   write_bytes(temp.root() / "IAM" / "START", make_start());
+  write_bytes(temp.root() / "IAM" / "GLOBAL", App::Tests::make_empty_iam_global());
   write_bytes(temp.root() / "IAM" / "AREA", make_zone_contact_area_archive(false, false));
   write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
   write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_minimal_scx());
@@ -692,6 +835,7 @@ void write_live_zone_contact_fixtures(const TempDirectory& temp) {
 
 void write_zone_dialog_fixtures(const TempDirectory& temp) {
   write_bytes(temp.root() / "IAM" / "START", make_start());
+  write_bytes(temp.root() / "IAM" / "GLOBAL", App::Tests::make_empty_iam_global());
   write_bytes(temp.root() / "IAM" / "AREA", make_zone_contact_area_archive(true));
   write_bytes(temp.root() / "IAM" / "DIALOG", make_dialog_archive(272));
   write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
@@ -705,6 +849,7 @@ void write_current_character_script_fixtures(const TempDirectory& temp) {
   std::memcpy(area.data() + 0x800U + 0x3FCU, script.data().data(), script.data().size());
 
   write_bytes(temp.root() / "IAM" / "START", make_start());
+  write_bytes(temp.root() / "IAM" / "GLOBAL", App::Tests::make_empty_iam_global());
   write_bytes(temp.root() / "IAM" / "AREA", area);
   write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
   write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_kayl_arrives_scx(221));
@@ -738,6 +883,7 @@ void write_character_value_fixtures(const TempDirectory& temp) {
   std::memcpy(area.data() + k_record_offset + 0x3FCU, script.data().data(), script.data().size());
 
   write_bytes(temp.root() / "IAM" / "START", start);
+  write_bytes(temp.root() / "IAM" / "GLOBAL", App::Tests::make_empty_iam_global());
   write_bytes(temp.root() / "IAM" / "AREA", area);
   write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
   write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_minimal_scx());
@@ -748,6 +894,7 @@ void write_handoff_fixtures(const TempDirectory& temp) {
   std::vector<std::byte> start{make_start()};
   start.at(0x13FCU) = std::byte{0x40};  // ZONE 6 starts persistently enabled.
   write_bytes(temp.root() / "IAM" / "START", start);
+  write_bytes(temp.root() / "IAM" / "GLOBAL", App::Tests::make_empty_iam_global());
   write_bytes(temp.root() / "IAM" / "AREA", make_handoff_area_archive());
   write_bytes(temp.root() / "IAM" / "SCENE", make_handoff_scene_archive());
   write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
@@ -755,9 +902,180 @@ void write_handoff_fixtures(const TempDirectory& temp) {
   write_bytes(temp.root() / "SCPTDATA" / "DEST.SCX", make_kayl_arrives_scx(221));
 }
 
+void write_camera_namespace_fixtures(
+    const TempDirectory& temp, const CameraNamespaceFixture& fixture) {
+  write_bytes(temp.root() / "IAM" / "START", make_start());
+  write_bytes(temp.root() / "IAM" / "GLOBAL", make_camera_namespace_global(fixture.global));
+  write_bytes(temp.root() / "IAM" / "AREA", make_camera_namespace_area_archive(fixture));
+  write_bytes(temp.root() / "IAM" / "SCENE", make_camera_namespace_scene_archive(fixture));
+  write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
+  write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_minimal_scx());
+  write_bytes(temp.root() / "SCPTDATA" / "DEST.SCX", make_minimal_scx());
+}
+
 }  // namespace
 
 TEST_SUITE("Core::Scenario::ScenarioStartupController") {
+  TEST_CASE("new session requires a valid IAM/GLOBAL before compact execution") {
+    const TempDirectory temp;
+    write_boot_fixtures(temp);
+    const ScopedGameDataRoot root{temp.root()};
+
+    SUBCASE("missing GLOBAL") {
+      std::filesystem::remove(temp.root() / "IAM" / "GLOBAL");
+      App::ScenarioManager manager;
+      App::ScenarioStartupController controller;
+      const auto result{controller.initialize(manager)};
+      REQUIRE_FALSE(result.has_value());
+      CHECK(result.error().find("IAM/GLOBAL") != std::string::npos);
+    }
+
+    SUBCASE("malformed GLOBAL") {
+      write_bytes(temp.root() / "IAM" / "GLOBAL", std::vector<std::byte>(0x1FU, std::byte{}));
+      App::ScenarioManager manager;
+      App::ScenarioStartupController controller;
+      const auto result{controller.initialize(manager)};
+      REQUIRE_FALSE(result.has_value());
+      CHECK(result.error().find("IAM/GLOBAL: too small") != std::string::npos);
+    }
+  }
+
+  TEST_CASE("compact cameras use resident slot order then GLOBAL regardless of active slot") {
+    struct LookupCase {
+      CameraNamespaceFixture fixture;
+      std::int32_t expected_marker{0};
+    };
+    const std::array cases{LookupCase{.fixture = {.slot_0_area = true,
+                                          .slot_0_scene = true,
+                                          .slot_1_area = true,
+                                          .slot_1_scene = true,
+                                          .global = true},
+                               .expected_marker = 100},
+        LookupCase{.fixture = {.slot_0_scene = true,
+                       .slot_1_area = true,
+                       .slot_1_scene = true,
+                       .global = true},
+            .expected_marker = 200},
+        LookupCase{.fixture = {.slot_1_area = true, .slot_1_scene = true, .global = true},
+            .expected_marker = 300},
+        LookupCase{.fixture = {.slot_1_scene = true, .global = true},
+            .expected_marker = 400},
+        LookupCase{.fixture = {.global = true}, .expected_marker = 500}};
+
+    for (const LookupCase& lookup : cases) {
+      const TempDirectory temp;
+      write_camera_namespace_fixtures(temp, lookup.fixture);
+      const ScopedGameDataRoot root{temp.root()};
+      App::ScenarioManager manager;
+      App::ScenarioStartupController controller;
+      REQUIRE(controller.initialize(manager).has_value());
+      REQUIRE(controller.tick().has_value());
+      REQUIRE(controller.tick().has_value());
+      CHECK_EQ(controller.active_area_slot(), 1U);
+      REQUIRE_EQ(manager.world_presentation().pending_camera_count(), 1U);
+      const auto command{manager.world_presentation().take_camera()};
+      REQUIRE(command.has_value());
+      CHECK_EQ(command->serialized_eye.at(0), lookup.expected_marker);
+      CHECK_EQ(command->horizontal_fov_units, 800 + lookup.expected_marker);
+    }
+  }
+
+  TEST_CASE("slot1 SCENE caller does not reorder definitions and retains owner metadata") {
+    SUBCASE("slot0 AREA shadows the caller's slot1 SCENE") {
+      const TempDirectory temp;
+      write_camera_namespace_fixtures(temp,
+          CameraNamespaceFixture{.slot_0_area = true,
+              .slot_1_scene = true,
+              .request_from_slot_1_scene = true});
+      const ScopedGameDataRoot root{temp.root()};
+      App::ScenarioManager manager;
+      App::ScenarioStartupController controller;
+      REQUIRE(controller.initialize(manager).has_value());
+      REQUIRE(controller.tick().has_value());
+      REQUIRE(controller.tick().has_value());
+      const auto command{manager.world_presentation().take_camera()};
+      REQUIRE(command.has_value());
+      CHECK_EQ(command->serialized_eye.at(0), 100);
+      const App::RuntimeAreaSlot* owner{controller.runtime_area_slot(1)};
+      REQUIRE(owner != nullptr);
+      const auto contexts{manager.world_contexts()};
+      const App::WorldSceneContext& context{contexts[owner->world_scene_id]};
+      CHECK_EQ(command->scene_id, context.scene_id);
+      CHECK_EQ(command->scene_generation, context.generation);
+      CHECK_EQ(command->source_area_id, 222);
+    }
+
+    SUBCASE("GLOBAL supplies fields without becoming the owner world") {
+      const TempDirectory temp;
+      write_camera_namespace_fixtures(temp,
+          CameraNamespaceFixture{.global = true, .request_from_slot_1_scene = true});
+      const ScopedGameDataRoot root{temp.root()};
+      App::ScenarioManager manager;
+      App::ScenarioStartupController controller;
+      REQUIRE(controller.initialize(manager).has_value());
+      REQUIRE(controller.tick().has_value());
+      REQUIRE(controller.tick().has_value());
+      const auto command{manager.world_presentation().take_camera()};
+      REQUIRE(command.has_value());
+      CHECK_EQ(command->serialized_eye.at(0), 500);
+      const App::RuntimeAreaSlot* owner{controller.runtime_area_slot(1)};
+      REQUIRE(owner != nullptr);
+      const auto contexts{manager.world_contexts()};
+      const App::WorldSceneContext& context{contexts[owner->world_scene_id]};
+      CHECK_EQ(command->scene_id, context.scene_id);
+      CHECK_EQ(command->scene_generation, context.generation);
+      CHECK_EQ(command->source_area_id, 222);
+    }
+  }
+
+  TEST_CASE("missing camera fails cleanly without emitting a command") {
+    const TempDirectory temp;
+    write_camera_namespace_fixtures(temp, CameraNamespaceFixture{.tracked = true});
+    const ScopedGameDataRoot root{temp.root()};
+    App::ScenarioManager manager;
+    App::ScenarioStartupController controller;
+    REQUIRE(controller.initialize(manager).has_value());
+    REQUIRE(controller.tick().has_value());
+    const auto result{controller.tick()};
+    REQUIRE_FALSE(result.has_value());
+    CHECK(result.error().find("not found in any resident AREA/SCENE or IAM/GLOBAL") !=
+          std::string::npos);
+    CHECK_EQ(manager.world_presentation().pending_camera_count(), 0U);
+  }
+
+  TEST_CASE("tracked GLOBAL camera completion resumes the exact slot1 SCENE context") {
+    const TempDirectory temp;
+    write_camera_namespace_fixtures(temp,
+        CameraNamespaceFixture{
+            .global = true, .request_from_slot_1_scene = true, .tracked = true});
+    const ScopedGameDataRoot root{temp.root()};
+    App::ScenarioManager manager;
+    App::ScenarioStartupController controller;
+    REQUIRE(controller.initialize(manager).has_value());
+    REQUIRE(controller.tick().has_value());
+    REQUIRE(controller.tick().has_value());
+    const auto command{manager.world_presentation().take_camera()};
+    REQUIRE(command.has_value());
+    REQUIRE(command->operation_generation.has_value());
+    const App::RuntimeAreaSlot* owner{controller.runtime_area_slot(1)};
+    REQUIRE(owner != nullptr);
+    REQUIRE(owner->scene_script.has_value());
+    CHECK(owner->scene_script->state() == AreaScriptState::k_waiting);
+    CHECK_EQ(owner->scene_script->wait_state(), 7);
+    manager.world_presentation().enqueue_camera_completion(
+        App::WorldCameraOperationCompletion{.operation_generation =
+                                                command->operation_generation.value(),
+            .scene_id = command->scene_id,
+            .scene_generation = command->scene_generation,
+            .source_area_id = command->source_area_id,
+            .camera_id = command->camera_id});
+    REQUIRE(controller.tick().has_value());
+    owner = controller.runtime_area_slot(1);
+    REQUIRE(owner != nullptr);
+    REQUIRE(owner->scene_script.has_value());
+    CHECK(owner->scene_script->state() == AreaScriptState::k_ready);
+  }
+
   TEST_CASE("AREA-shaped zone contact runs record-relative event one through self-deactivation") {
     const TempDirectory temp;
     write_zone_contact_fixtures(temp);
@@ -1282,6 +1600,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
   TEST_CASE("OBJECTS non-image types submit VOICEOFF audio and a recovered-lifetime subtitle") {
     const TempDirectory temp;
     write_bytes(temp.root() / "IAM" / "START", make_start());
+    write_bytes(temp.root() / "IAM" / "GLOBAL", App::Tests::make_empty_iam_global());
     write_bytes(temp.root() / "IAM" / "AREA", make_object_activation_area_archive(141U));
     write_bytes(temp.root() / "IAM" / "OBJECT",
         make_object_archive(141U, 7U, "ZVO M010 Agression", "123456789012345678901234567890"));
@@ -1311,6 +1630,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     SUBCASE("ZVOT uses the recovered JINGOFF3 replacement") {
       const TempDirectory temp;
       write_bytes(temp.root() / "IAM" / "START", make_start());
+      write_bytes(temp.root() / "IAM" / "GLOBAL", App::Tests::make_empty_iam_global());
       write_bytes(temp.root() / "IAM" / "AREA", make_object_activation_area_archive(141U));
       write_bytes(
           temp.root() / "IAM" / "OBJECT", make_object_archive(141U, 0U, "ZVOT Intro", "short"));
@@ -1332,6 +1652,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     SUBCASE("-1 does not require IAM/OBJECT") {
       const TempDirectory temp;
       write_bytes(temp.root() / "IAM" / "START", make_start());
+      write_bytes(temp.root() / "IAM" / "GLOBAL", App::Tests::make_empty_iam_global());
       write_bytes(temp.root() / "IAM" / "AREA", make_object_activation_area_archive(0xFFFFU));
       write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
       write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_minimal_scx());
@@ -1347,6 +1668,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     SUBCASE("type 0x10 is not treated as voice-over") {
       const TempDirectory temp;
       write_bytes(temp.root() / "IAM" / "START", make_start());
+      write_bytes(temp.root() / "IAM" / "GLOBAL", App::Tests::make_empty_iam_global());
       write_bytes(temp.root() / "IAM" / "AREA", make_object_activation_area_archive(141U));
       write_bytes(temp.root() / "IAM" / "OBJECT",
           make_object_archive(141U, 0x10U, "NOT_A_VOICE", "not speech"));
@@ -1365,6 +1687,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
   TEST_CASE("0x47 maps a nonresident AREA without loading its SCENE") {
     const TempDirectory temp;
     write_bytes(temp.root() / "IAM" / "START", make_start());
+    write_bytes(temp.root() / "IAM" / "GLOBAL", App::Tests::make_empty_iam_global());
 
     std::vector<std::byte> area_archive{make_area_archive()};
     Buffer script;

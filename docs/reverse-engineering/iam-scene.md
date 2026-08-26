@@ -60,6 +60,11 @@ Table 7 is `{ uint32 program_offset, int32 field_04 }` with intentionally
 unresolved higher-level semantics. Table 6 reuses the checked AREA camera
 parser.
 
+A SCENE camera command does not prefer its own table 6. Compact camera
+definitions use Runtime's fixed slot-ordered AREA/SCENE namespace followed by
+`IAM/GLOBAL`, while the SCENE context remains the presentation/wait owner. See
+[`iam-global.md`](iam-global.md).
+
 ## Compact context and two-slot residency
 
 SCENE uses the same compact IAM interpreter as AREA; OpenNomad retains the
