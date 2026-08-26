@@ -880,8 +880,9 @@ Main-dispatched: yes
 Blocks group: no
 ```
 
-The handler resolves a camera in the current scene and performs an immediate
-camera-selection operation.
+The handler resolves a camera in the current scene and performs an immediate camera-selection operation.
+
+The operand is an index into the script's **binding table B**. Runtime resolves the corresponding name through the current scene's named 3DO camera table and stores the resulting camera pointer in the scene's current-camera slot at `+0x178`. The scene/presentation path subsequently publishes that live camera to controller mode 13 (the source historically observed at global `0x009103D4`).
 
 The exact source-level name is not exposed by a dedicated Runtime diagnostic.
 `SelectCamera` is used here because:
@@ -916,8 +917,34 @@ Script_InterpolateCameras(): Can't find camera "%s" in current scene.
 Script_Reinit_InterpolateCameras(): Can't find camera "%s" in current scene.
 ```
 
-Its two camera selectors (`0x04`, `0x05`) plus two timing/state selectors
-(`0x10`, `0x11`) are consistent with a timed transition between camera states.
+Both camera operands are binding-table-B indices. Parameters are:
+
+```text
+arg 0  camera A
+arg 1  camera B
+arg 2  duration, native 30 Hz script-frame units
+arg 3  mutable elapsed progress
+```
+
+The reinitializer resets only arg 3 to zero. It does not restore camera A, which is significant because the action mutates the loaded 3DO camera record itself.
+
+For an active interval Runtime computes:
+
+```text
+fraction = scriptDelta / (duration - elapsed)
+
+A.eye    += (B.eye    - A.eye)    * fraction
+A.target += (B.target - A.target) * fraction
+A.roll   += (B.roll   - A.roll)   * fraction
+A.fov    += (B.fov    - A.fov)    * fraction
+
+elapsed += scriptDelta
+```
+
+This interpolation is **linear remaining-time interpolation** and is distinct from the quadratic ease-in/ease-out used by the compact AREA camera controller.
+Do not route it through the AREA transition implementation.
+
+When the updated elapsed value reaches or crosses the duration, Runtime copies all eight pose/FOV floats of B exactly into A before reporting completion. A's name remains unchanged.
 
 ---
 

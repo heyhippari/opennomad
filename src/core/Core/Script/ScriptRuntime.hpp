@@ -186,6 +186,18 @@ struct HandlerResult {
   std::string reason_text;
 };
 
+/// One Runtime Script_InterpolateCameras update. Camera names are SCX binding
+/// table-B entries; `fraction` is the native delta/(duration-elapsed) value and
+/// deliberately is not clamped. Crossing the endpoint is followed by a second
+/// request with snap_to_target=true so camera A becomes an exact field-for-field
+/// pose copy of B while retaining A's own authored name.
+struct CameraInterpolationRequest {
+  std::string_view camera_a;
+  std::string_view camera_b;
+  float fraction{0.0F};
+  bool snap_to_target{false};
+};
+
 /// Typed request for Runtime's Script_SelectBodyAnimation operation. All
 /// coordinates and progress values remain in Runtime-native units.
 struct BodyAnimationRequest {
@@ -327,6 +339,25 @@ class ScriptWorld {
 
   /// Compact audio context for the script debugger's audio diagnostics.
   [[nodiscard]] virtual Audio::AudioContextInfo audio_context() const = 0;
+
+  /// Selects one named camera from the mutable world-decor 3DO camera table.
+  /// Runtime stores the resolved camera pointer in the current scene at +0x178.
+  [[nodiscard]] virtual std::expected<void, std::string> select_camera(
+      const std::string_view camera_name) {
+    (void)camera_name;
+    return std::expected<void, std::string>{
+        std::unexpect, "structured 3DO cameras are unavailable in this world"};
+  }
+
+  /// Mutates named 3DO camera A toward B using Runtime's structured-script
+  /// interpolation algorithm. This is intentionally separate from the eased
+  /// AREA/SCENE presentation transition.
+  [[nodiscard]] virtual std::expected<void, std::string> interpolate_cameras(
+      const CameraInterpolationRequest& request) {
+    (void)request;
+    return std::expected<void, std::string>{
+        std::unexpect, "structured 3DO cameras are unavailable in this world"};
+  }
 
   /// Resolves cached SCX resources and applies one non-path body-animation
   /// interval to the explicitly character-bound model instance.
@@ -491,6 +522,9 @@ class ScriptRuntime {
   void reset_instance_to_initial_state(ScriptInstance& instance);
 
   /// Handler implementations.
+  HandlerResult handle_select_camera(ScriptInstance& instance, RuntimeScriptCommand& command);
+  HandlerResult handle_interpolate_cameras(
+      ScriptInstance& instance, RuntimeScriptCommand& command, float script_delta_frames);
   HandlerResult handle_set_sprite_type(ScriptInstance& instance, RuntimeScriptCommand& command);
   HandlerResult handle_set_sprite_frame(ScriptInstance& instance, RuntimeScriptCommand& command);
   HandlerResult handle_interpolated(

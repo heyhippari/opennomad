@@ -23,10 +23,11 @@ constexpr std::size_t K_MATERIAL_SIZE{80};
 constexpr std::size_t K_VERTEX_SIZE{32};
 constexpr std::size_t K_TRIANGLE_SIZE{28};
 constexpr std::size_t K_MESH_SIZE{140};
+constexpr std::size_t K_CAMERA_SIZE{52};
 constexpr std::size_t K_LIGHT_SIZE{304};
 
 /// Builds a header whose sections immediately follow it in the order
-/// materials, vertices, triangles, rectangles, meshes, lights.
+/// materials, vertices, triangles, rectangles, meshes, cameras, lights.
 Buffer make_header(const std::uint32_t material_count,
     const std::uint32_t mesh_count,
     const std::uint32_t vertex_count,
@@ -38,7 +39,8 @@ Buffer make_header(const std::uint32_t material_count,
     const std::uint32_t texture_count = 0,
     const std::uint32_t object_count = 0,
     const std::uint32_t root_mesh_id = 1,
-    const std::uint32_t root_offset = K_DIRECTORY_SIZE) {
+    const std::uint32_t root_offset = K_DIRECTORY_SIZE,
+    const std::uint32_t camera_count = 0) {
   // These two legacy fixture arguments used to populate fields from the
   // incorrect flat-header interpretation. Keep their positions temporarily
   // so existing tests do not need unrelated call-site churn.
@@ -55,8 +57,10 @@ Buffer make_header(const std::uint32_t material_count,
       triangles_offset + (static_cast<std::size_t>(triangle_count) * K_TRIANGLE_SIZE)};
   const std::size_t meshes_offset{
       rectangles_offset + (static_cast<std::size_t>(rectangle_count) * 32U)};
-  const std::size_t lights_offset{
+  const std::size_t cameras_offset{
       meshes_offset + (static_cast<std::size_t>(mesh_count) * K_MESH_SIZE)};
+  const std::size_t lights_offset{
+      cameras_offset + (static_cast<std::size_t>(camera_count) * K_CAMERA_SIZE)};
 
   Buffer buffer;
   // Real files start with the OD3X signature and version 4.
@@ -69,7 +73,7 @@ Buffer make_header(const std::uint32_t material_count,
       .u32(static_cast<std::uint32_t>(rectangles_offset))
       .u32(static_cast<std::uint32_t>(meshes_offset))
       .u32(0)
-      .u32(0)
+      .u32(camera_count == 0U ? 0U : static_cast<std::uint32_t>(cameras_offset))
       .u32(static_cast<std::uint32_t>(lights_offset))  // relationships, cameras, lights.
       .zeros(root_offset - K_DIRECTORY_SIZE)
       .zeros(72)
@@ -84,9 +88,9 @@ Buffer make_header(const std::uint32_t material_count,
       .u32(material_count)
       .u32(0)
       .u32(0)
-      .u32(0)           // +0xDC camera count.
-      .u32(mesh_count)  // +0xE0 object count.
-      .u32(0)           // +0xE4 relationship count.
+      .u32(camera_count)                       // +0xDC camera count.
+      .u32(mesh_count)                         // +0xE0 object count.
+      .u32(0)                                  // +0xE4 relationship count.
       .u32(lights_unknown1 + lights_unknown2)  // +0xE8 serialized light count.
       .u32(lights_unknown1)
       .u32(lights_unknown2)
@@ -202,6 +206,23 @@ void append_light(Buffer& buffer,
   buffer.zeros(64);
 }
 
+void append_camera(Buffer& buffer,
+    const std::string_view name,
+    const std::array<float, 3> eye,
+    const std::array<float, 3> target,
+    const float roll_degrees,
+    const float horizontal_fov_degrees) {
+  buffer.chars(name, 20)
+      .f32(eye.at(0))
+      .f32(eye.at(1))
+      .f32(eye.at(2))
+      .f32(target.at(0))
+      .f32(target.at(1))
+      .f32(target.at(2))
+      .f32(roll_degrees)
+      .f32(horizontal_fov_degrees);
+}
+
 }  // namespace
 
 TEST_SUITE("Core::Omikron::Model3DO") {
@@ -221,7 +242,32 @@ TEST_SUITE("Core::Omikron::Model3DO") {
     CHECK(model->materials.empty());
     CHECK(model->meshes.empty());
     CHECK(model->vertices.empty());
+    CHECK(model->cameras.empty());
     CHECK(model->lights.empty());
+  }
+
+  TEST_CASE("Parses named 0x34-byte scene cameras in Runtime-native units") {
+    Buffer file{make_header(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, K_DIRECTORY_SIZE, 1)};
+    append_camera(file,
+        "CAMERA",
+        {10.0F, -20.0F, 30.0F},
+        {40.0F, 50.0F, -60.0F},
+        15.0F,
+        80.0F);
+
+    const auto model{App::Omikron::Model3DO::load(file.data())};
+    REQUIRE(model.has_value());
+    REQUIRE_EQ(model->cameras.size(), std::size_t{1});
+    const App::Omikron::CameraRecord& camera{model->cameras.front()};
+    CHECK_EQ(camera.name, "CAMERA");
+    CHECK(camera.eye.x == doctest::Approx(10.0F));
+    CHECK(camera.eye.y == doctest::Approx(-20.0F));
+    CHECK(camera.eye.z == doctest::Approx(30.0F));
+    CHECK(camera.target.x == doctest::Approx(40.0F));
+    CHECK(camera.target.y == doctest::Approx(50.0F));
+    CHECK(camera.target.z == doctest::Approx(-60.0F));
+    CHECK(camera.roll_degrees == doctest::Approx(15.0F));
+    CHECK(camera.horizontal_fov_degrees == doctest::Approx(80.0F));
   }
 
   TEST_CASE("Preserves recovered root fields") {

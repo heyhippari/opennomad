@@ -255,27 +255,64 @@ TEST_SUITE("Core::WorldCameraSystem") {
     CHECK(camera.pose().target.y == doctest::Approx(command.runtime_target.y));
   }
 
-  TEST_CASE("Character-script controller 13 preserves the copied live camera pose") {
+  TEST_CASE("Character-script controller 13 follows the live structured-camera source") {
     WorldCameraSystem camera;
     camera.apply_command(camera_2172());
     const App::WorldCameraPose before{camera.pose()};
+
+    std::optional<App::WorldCameraPose> live{App::WorldCameraPose{
+        .eye = {.x = 10.0F, .y = 20.0F, .z = 30.0F},
+        .target = {.x = 40.0F, .y = 50.0F, .z = 60.0F},
+        .roll_degrees = 7.0F,
+        .horizontal_fov_degrees = 80.0F}};
+    camera.set_controller_pose_provider([&live]() { return live; });
 
     camera.apply_command(WorldCameraCommand{.kind = App::WorldCameraCommandKind::k_controller_mode,
         .controller_mode = 13U,
         .duration_units = 30});
 
     CHECK_EQ(camera.active_camera_id().value_or(0U), 2172U);
-    CHECK(camera.last_command().has_value());
+    CHECK_FALSE(camera.last_command().has_value());
     CHECK_EQ(camera.active_controller_mode().value_or(0U), 13U);
     CHECK(camera.controller_transitioning());
     CHECK(camera.controller_transition_duration_seconds() == doctest::Approx(1.0F));
     CHECK(camera.pose().eye.x == doctest::Approx(before.eye.x));
-    CHECK(camera.pose().target.z == doctest::Approx(before.target.z));
 
-    camera.update(1.0F);
+    camera.update(0.0F);
+    CHECK_FALSE(camera.active_camera_id().has_value());
+    CHECK(camera.pose().eye.x == doctest::Approx(10.0F));
+   CHECK(camera.pose().target.z == doctest::Approx(60.0F));
+    CHECK(camera.pose().roll_degrees == doctest::Approx(7.0F));
+    CHECK(camera.pose().horizontal_fov_degrees == doctest::Approx(80.0F));
+
+    live->eye.x = 123.0F;
+    camera.update(0.5F);
+    CHECK(camera.controller_transitioning());
+    CHECK(camera.pose().eye.x == doctest::Approx(123.0F));
+
+    // Native mode 13 does nothing when 0x009103D4 is null. It must retain the
+    // last copied pose rather than reviving an interrupted AREA transition.
+    live.reset();
+    camera.update(0.5F);
     CHECK_FALSE(camera.controller_transitioning());
-    CHECK(camera.pose().eye.x == doctest::Approx(before.eye.x));
+    CHECK(camera.pose().eye.x == doctest::Approx(123.0F));
   }
+
+  TEST_CASE("Controller 13 can establish the first world-camera pose") {
+    WorldCameraSystem camera;
+    camera.set_controller_pose_provider([]() {
+      return std::optional<App::WorldCameraPose>{App::WorldCameraPose{
+          .eye = {.x = 1.0F, .y = 2.0F, .z = 3.0F},
+          .target = {.x = 4.0F, .y = 5.0F, .z = 6.0F},
+          .horizontal_fov_degrees = 75.0F}};
+    });
+    camera.apply_command(WorldCameraCommand{.kind = App::WorldCameraCommandKind::k_controller_mode,
+        .controller_mode = 13U});
+    CHECK_FALSE(camera.has_pose());
+    camera.update(0.0F);
+    CHECK(camera.has_pose());
+    CHECK(camera.pose().eye.z == doctest::Approx(3.0F));
+   }
 
   TEST_CASE("Tracked mode-12 transition exposes its exact completion once") {
     WorldCameraSystem camera;

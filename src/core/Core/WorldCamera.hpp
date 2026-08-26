@@ -27,13 +27,16 @@ struct WorldCameraPose {
 class WorldCameraSystem {
  public:
   using AttachmentPoseProvider = std::function<std::optional<WorldCameraAttachmentPose>()>;
+  using ControllerPoseProvider = std::function<std::optional<WorldCameraPose>()>;
   WorldCameraSystem() = default;
 
   void set_aspect_ratio(float aspect_ratio);
   /// Supplies the live current-actor attachment pose without coupling this
   /// presentation class to ScenarioManager or a gameplay runtime.
   void set_attachment_pose_provider(AttachmentPoseProvider provider);
-
+  /// Supplies Runtime's live controller source (global 0x009103D4 equivalent).
+  /// Controller mode 13 copies this pose every presentation update.
+  void set_controller_pose_provider(ControllerPoseProvider provider);
   /// Clears the current scripted/fallback pose while preserving projection
   /// settings such as the current aspect ratio.
   void reset();
@@ -131,6 +134,7 @@ class WorldCameraSystem {
   std::optional<WorldCameraOperationCompletion> m_completed_operation;
   std::optional<WorldCameraCommand> m_last_command;
   AttachmentPoseProvider m_attachment_pose_provider;
+  ControllerPoseProvider m_controller_pose_provider;
 };
 
 }  // namespace App

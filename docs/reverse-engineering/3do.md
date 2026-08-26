@@ -1059,12 +1059,19 @@ doors remain unresolved.
 
 # 19. Camera records — `0x34` bytes
 
-Retail section sizes and visible names support:
+**Confirmed — Runtime.** The lookup at `0x00446AA0` walks `root+0xDC` records from `camerasOffset` with a `0x34` stride and compares the fixed name at record `+0x00`. The camera accessors/setters around `0x00446B70..0x00446C20` establish the complete payload:
 
 ```c
 struct CameraRecordV4 {
     char  name[20];
-    float parameters[8];
+    float eyeX;
+    float eyeY;
+    float eyeZ;
+    float targetX;
+    float targetY;
+    float targetZ;
+    float roll;
+    float horizontalFov;
 }; // 0x34
 ```
 
@@ -1073,17 +1080,20 @@ Current map:
 | Offset | Size | Meaning |
 |---:|---:|---|
 | `0x00` | 20 | fixed-width camera name |
-| `0x14` | 32 | eight floats, semantics unresolved |
+| `0x14` | 4 | eye X, Runtime-native inches |
+| `0x18` | 4 | eye Y, Runtime-native inches |
+| `0x1C` | 4 | eye Z, Runtime-native inches |
+| `0x20` | 4 | target X, Runtime-native inches |
+| `0x24` | 4 | target Y, Runtime-native inches |
+| `0x28` | 4 | target Z, Runtime-native inches |
+| `0x2C` | 4 | roll, degrees |
+| `0x30` | 4 | horizontal field of view, degrees |
 
-The 3DO parser exposes the camera section but the consumer that gives the eight
-floats their runtime meaning still needs deeper tracing.
+These coordinate floats are already in Runtime's native 3DO space. They are not serialized IAM AREA/SCENE camera dwords and must not pass through the `serialized * 39.370078... / 256 - 1` camera-record normalization.
+ 
+Structured IAM/SCX camera functions resolve these records by name. In particular `SelectCamera` stores one resolved record as the scene's current camera, while `InterpolateCameras` mutates camera A's eight float fields in place toward camera B. The record name is not overwritten by interpolation.
 
-Do not pre-label them as position/FOV/target solely from likely editor usage.
-
-Camera data in Omikron is cross-system: GEM, RAM and IAM could all refer to
-camera concepts. A camera record inside a 3DO should therefore be documented by
-its observed runtime consumer, not by assuming sole ownership by one original
-editor.
+The current scene camera is subsequently exposed to camera-controller mode 13, which continuously copies its eight live fields into the rendered camera.
 
 ---
 

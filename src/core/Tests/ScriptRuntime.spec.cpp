@@ -22,6 +22,8 @@
 
 namespace {
 
+constexpr std::uint32_t K_SELECT_CAMERA{0x01000001U};
+constexpr std::uint32_t K_INTERPOLATE_CAMERAS{0x01000002U};
 constexpr std::uint32_t K_SET_SPRITE_TYPE{0x0400000CU};
 constexpr std::uint32_t K_SELECT_BODY_ANIMATION{0x02000004U};
 constexpr std::uint32_t K_SELECT_RELATIVE_BODY_ANIMATION{0x0200002AU};
@@ -49,6 +51,9 @@ class FakeWorld final : public App::Script::ScriptWorld {
   std::vector<float> scale_x;
   std::vector<float> scale_y;
   std::vector<float> rotations;
+  std::vector<std::string> selected_cameras;
+  std::vector<App::Script::CameraInterpolationRequest> camera_interpolation_requests;
+  bool fail_camera{false};
   std::array<float, 3> fallback_position{1.0F, 2.0F, 3.0F};
   bool fail_ensure{false};
   bool fail_frame{false};
@@ -151,6 +156,21 @@ class FakeWorld final : public App::Script::ScriptWorld {
     stop_requests.push_back({sound, owner});
   }
   App::Audio::AudioContextInfo audio_context() const override {
+    return {};
+  }
+  std::expected<void, std::string> select_camera(const std::string_view camera_name) override {
+    selected_cameras.emplace_back(camera_name);
+   if (fail_camera) {
+      return std::expected<void, std::string>{std::unexpect, "no camera"};
+    }
+    return {};
+  }
+  std::expected<void, std::string> interpolate_cameras(
+      const App::Script::CameraInterpolationRequest& request) override {
+    camera_interpolation_requests.push_back(request);
+    if (fail_camera) {
+      return std::expected<void, std::string>{std::unexpect, "no camera"};
+    }
     return {};
   }
   std::expected<App::Script::BodyAnimationResult, App::Script::BodyAnimationFailure>
@@ -257,6 +277,21 @@ App::Omikron::ScxScript body_animation_script(const std::uint32_t execution_limi
   return script;
 }
 
+App::Omikron::ScxScript select_camera_script() {
+  App::Omikron::ScxScript script{single_root_script(command(K_SELECT_CAMERA, 0, 1))};
+  script.binding_table_a.entries.push_back(App::Omikron::ScxBindingEntry{.name = "WRONG_TABLE"});
+  script.binding_table_b.entries.push_back(App::Omikron::ScxBindingEntry{.name = "CLOSEUP"});
+  return script;
+}
+
+App::Omikron::ScxScript interpolate_cameras_script() {
+  App::Omikron::ScxScript script{
+      single_root_script(command(K_INTERPOLATE_CAMERAS, 0, 4))};
+  script.binding_table_b.entries.push_back(App::Omikron::ScxBindingEntry{.name = "CAM_A"});
+  script.binding_table_b.entries.push_back(App::Omikron::ScxBindingEntry{.name = "CAM_B"});
+  return script;
+}
+
 App::Omikron::ScxScript move_object_on_path_script(const std::uint32_t execution_limit = 1) {
   App::Omikron::ScxScript script{
       single_root_script(command(K_MOVE_OBJECT_ON_PATH, 0, 15, std::nullopt, execution_limit))};
@@ -325,6 +360,15 @@ std::vector<App::Omikron::ScriptValue> make_values(
 
 TEST_SUITE("Core::Script::ScriptRuntime") {
   TEST_CASE("Opcode registry resolves confirmed opcodes") {
+    REQUIRE_NE(App::Script::opcode_info(K_SELECT_CAMERA), nullptr);
+    CHECK_EQ(std::string{App::Script::opcode_name(K_SELECT_CAMERA)}, "SelectCamera");
+    CHECK(App::Script::opcode_info(K_SELECT_CAMERA)->support ==
+          App::Script::OpcodeSupport::k_supported);
+    REQUIRE_NE(App::Script::opcode_info(K_INTERPOLATE_CAMERAS), nullptr);
+    CHECK_EQ(std::string{App::Script::opcode_name(K_INTERPOLATE_CAMERAS)},
+        "Script_InterpolateCameras");
+    CHECK(App::Script::opcode_info(K_INTERPOLATE_CAMERAS)->support ==
+          App::Script::OpcodeSupport::k_supported);
     REQUIRE_NE(App::Script::opcode_info(K_SELECT_BODY_ANIMATION), nullptr);
     CHECK_EQ(std::string{App::Script::opcode_name(K_SELECT_BODY_ANIMATION)},
         "Script_SelectBodyAnimation");
@@ -352,6 +396,58 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
     CHECK_FALSE(App::Script::opcode_owns_sprite(K_PLAY_SOUND));
     CHECK_EQ(std::string{App::Script::opcode_name(K_WAIT)}, "Wait");
     CHECK_FALSE(App::Script::opcode_owns_sprite(K_WAIT));
+  }
+
+  TEST_CASE("SelectCamera resolves its camera name through binding table B") {
+    RuntimeFixture fixture{{select_camera_script()}, make_values(1, {0})};
+    REQUIRE(fixture.runtime->create_instance(0).has_value());
+
+    fixture.runtime->step_tick(1.0F);
+
+    REQUIRE_EQ(fixture.world.selected_cameras.size(), std::size_t{1});
+    CHECK_EQ(fixture.world.selected_cameras.front(), "CLOSEUP");
+    CHECK(fixture.runtime->instances().front().completed);
+  }
+
+  TEST_CASE("InterpolateCameras reinitializes elapsed and uses native remaining-time fractions") {
+    std::vector<App::Omikron::ScriptValue> values(4);
+    values.at(0).set_unsigned(0);
+    values.at(1).set_unsigned(1);
+    values.at(2).set_float(4.0F);
+    values.at(3).set_float(99.0F);
+    RuntimeFixture fixture{{interpolate_cameras_script()}, std::move(values)};
+    const std::size_t id{fixture.runtime->create_instance(0).value()};
+
+    REQUIRE(fixture.runtime->instance(id) != nullptr);
+    CHECK(fixture.runtime->instance(id)->value_pool.at(3).as_float() == doctest::Approx(0.0F));
+
+    fixture.runtime->step_tick(1.0F);
+    REQUIRE_EQ(fixture.world.camera_interpolation_requests.size(), std::size_t{1});
+    const App::Script::CameraInterpolationRequest& first{
+        fixture.world.camera_interpolation_requests.at(0)};
+    CHECK_EQ(first.camera_a, "CAM_A");
+    CHECK_EQ(first.camera_b, "CAM_B");
+    CHECK(first.fraction == doctest::Approx(0.25F));
+    CHECK_FALSE(first.snap_to_target);
+    CHECK(fixture.runtime->instance(id)->value_pool.at(3).as_float() == doctest::Approx(1.0F));
+    CHECK_FALSE(fixture.runtime->instance(id)->completed);
+
+    // The public fixed-step helper accepts native script frames directly, so
+    // the remaining three frames complete this four-frame interpolation in
+    // one scheduler update. Runtime first performs the normal update and then
+    // snaps A exactly to B on the endpoint crossing.
+    fixture.runtime->step_tick(3.0F);
+    REQUIRE_EQ(fixture.world.camera_interpolation_requests.size(), std::size_t{3});
+    const auto& crossing{fixture.world.camera_interpolation_requests.at(1)};
+    CHECK(crossing.fraction == doctest::Approx(1.0F));
+    CHECK_FALSE(crossing.snap_to_target);
+    const auto& snap{fixture.world.camera_interpolation_requests.at(2)};
+    CHECK(snap.snap_to_target);
+    CHECK(fixture.runtime->instances().front().completed);
+    CHECK_EQ(fixture.runtime->instances().front().root_commands.front().execution_count, 1U);
+
+    REQUIRE(fixture.runtime->reset_instance(id).has_value());
+    CHECK(fixture.runtime->instance(id)->value_pool.at(3).as_float() == doctest::Approx(0.0F));
   }
 
   TEST_CASE("SelectBodyAnimation preserves its ten-slot ABI and progresses in script frames") {

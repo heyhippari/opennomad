@@ -95,8 +95,8 @@ enum class BlendMode : std::uint8_t {
 /// Native Runtime XYZ vector. 3DO values are preserved exactly as serialized.
 using Vec3 = Runtime::Vec3;
 
-/// Parsed .3DO file header. Section offsets and counts are kept for future
-/// expansion (doors and cameras are not decoded yet).
+/// Parsed .3DO file header. Section offsets and counts remain serialized even
+/// when a section also has a typed decoded representation below.
 struct Header {
   std::array<char, 4> signature{};
   std::uint32_t version_major{0};
@@ -254,6 +254,23 @@ struct MeshPolygons {
   std::vector<Rectangle> rectangles;
 };
 
+/// One 0x34-byte camera record from the .3DO camera section.
+///
+/// Runtime's camera lookup at 0x00446AA0 walks these records by the fixed-width
+/// name at +0x00.  The setters/getters around 0x00446B70..0x00446C20 establish
+/// the remaining eight floats as eye XYZ, target XYZ, roll and horizontal FOV.
+/// Coordinates are already Runtime-native inches; unlike IAM AREA/SCENE camera
+/// dwords they require no loader normalization.
+struct CameraRecord {
+  static constexpr std::size_t k_serialized_size{0x34};
+
+  std::string name;  ///< +0x00, fixed 20-byte field.
+  Vec3 eye{};        ///< +0x14..+0x1C, Runtime-native inches.
+  Vec3 target{};     ///< +0x20..+0x28, Runtime-native inches.
+  float roll_degrees{0.0F};            ///< +0x2C.
+  float horizontal_fov_degrees{0.0F};  ///< +0x30.
+};
+
 /// One 304-byte explicit light record from the .3DO light section.
 ///
 /// Only the lights counted in the header's second light count field
@@ -291,6 +308,7 @@ struct Model3DOData {
   std::vector<MeshDescriptor> meshes;
   std::vector<MeshPolygons> polygons;  ///< Parallel to meshes.
   std::vector<RawVertex> vertices;     ///< Global vertex list.
+  std::vector<CameraRecord> cameras;   ///< Named scene cameras, mutable only in runtime copies.
   std::vector<Light> lights;           ///< Explicit light records.
 
   /// Descriptor selected by Serialized3DORootV4+0xB4, or -1 for a model
@@ -386,6 +404,7 @@ class Model3DO {
   static RawVertex read_raw_vertex(BinaryReader& reader);
   static Triangle read_triangle(BinaryReader& reader);
   static Rectangle read_rectangle(BinaryReader& reader);
+  static CameraRecord read_camera(BinaryReader& reader);
   static Light read_light(BinaryReader& reader);
   static std::string read_fixed_string(BinaryReader& reader, std::size_t length);
   static Vec3 read_vec3(BinaryReader& reader);

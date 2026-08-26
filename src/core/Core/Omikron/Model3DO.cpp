@@ -32,6 +32,7 @@ namespace {
 constexpr std::size_t K_TRIANGLE_SIZE{28};
 constexpr std::size_t K_RECTANGLE_SIZE{32};
 constexpr std::uint32_t K_MAX_MESH_COUNT{65536};
+constexpr std::uint32_t K_MAX_CAMERA_COUNT{65536};
 constexpr std::uint32_t K_MAX_LIGHT_COUNT{65536};
 constexpr std::size_t K_MAX_VERTEX_COUNT{static_cast<std::size_t>(4U) * 1024U * 1024U};
 
@@ -141,6 +142,29 @@ std::expected<Model3DOData, std::string> Model3DO::load(const std::span<const st
   if (reader.has_error()) {
     return std::expected<Model3DOData, std::string>{
         std::unexpect, fmt::format("polygons: {}", reader.error())};
+  }
+
+  // Named scene cameras. Runtime keeps these records mutable: structured SCX
+  // InterpolateCameras edits camera A in place, while SelectCamera publishes a
+  // pointer to one record as the current scene camera.
+  if (model.header.camera_count > K_MAX_CAMERA_COUNT) {
+    return std::expected<Model3DOData, std::string>{
+        std::unexpect, fmt::format("implausible camera count {}", model.header.camera_count)};
+  }
+  if (model.header.camera_count > 0U && model.header.cameras_offset == 0U) {
+    return std::expected<Model3DOData, std::string>{std::unexpect,
+        fmt::format("cameras: {} records but the cameras offset is 0", model.header.camera_count)};
+  }
+  if (model.header.camera_count > 0U) {
+    reader.seek(model.header.cameras_offset);
+    model.cameras.reserve(model.header.camera_count);
+    for (std::uint32_t index{0}; index < model.header.camera_count; ++index) {
+      model.cameras.push_back(read_camera(reader));
+    }
+    if (reader.has_error()) {
+      return std::expected<Model3DOData, std::string>{
+          std::unexpect, fmt::format("cameras: {}", reader.error())};
+    }
   }
 
   // Explicit light records. Only the second count field (lights_unknown2)
@@ -785,6 +809,16 @@ Rectangle Model3DO::read_rectangle(BinaryReader& reader) {
     rectangle.unknown_ints.at(value) = reader.read_i32();
   }
   return rectangle;
+}
+
+CameraRecord Model3DO::read_camera(BinaryReader& reader) {
+  CameraRecord camera;
+  camera.name = read_fixed_string(reader, 20);
+  camera.eye = read_vec3(reader);
+  camera.target = read_vec3(reader);
+  camera.roll_degrees = reader.read_f32();
+  camera.horizontal_fov_degrees = reader.read_f32();
+  return camera;
 }
 
 Light Model3DO::read_light(BinaryReader& reader) {

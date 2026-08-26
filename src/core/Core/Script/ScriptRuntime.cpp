@@ -27,6 +27,8 @@ namespace App::Script {
 namespace {
 
 // Native opcodes confirmed from the reference runtime.
+constexpr std::uint32_t K_SELECT_CAMERA{0x01000001U};
+constexpr std::uint32_t K_INTERPOLATE_CAMERAS{0x01000002U};
 constexpr std::uint32_t K_SET_SPRITE_TYPE{0x0400000CU};
 constexpr std::uint32_t K_DISPLAY_3D_SPRITE_ON_PATH{0x0400000DU};
 constexpr std::uint32_t K_SCALE_SPRITE_ON_X{0x0400001BU};
@@ -65,6 +67,16 @@ constexpr float K_DEGREES_TO_RADIANS{0.017453292519943295F};
 constexpr std::uint16_t K_KIND_SCALE_X{0};
 constexpr std::uint16_t K_KIND_SCALE_Y{1};
 constexpr std::uint16_t K_KIND_ROLL{2};
+
+constexpr std::array<OpcodeSemanticParam, 1> K_SELECT_CAMERA_PARAMS{
+    OpcodeSemanticParam{.semantic_type = k_semantic_camera_1, .argument_index = 0},
+};
+constexpr std::array<OpcodeSemanticParam, 4> K_INTERPOLATE_CAMERAS_PARAMS{
+    OpcodeSemanticParam{.semantic_type = k_semantic_camera_1, .argument_index = 0},
+    OpcodeSemanticParam{.semantic_type = k_semantic_camera_2, .argument_index = 1},
+    OpcodeSemanticParam{.semantic_type = k_semantic_duration, .argument_index = 2},
+    OpcodeSemanticParam{.semantic_type = k_semantic_progress_elapsed, .argument_index = 3},
+};
 
 constexpr std::array<OpcodeSemanticParam, 6> K_PATH_PARAMS{
     OpcodeSemanticParam{.semantic_type = k_semantic_sprite, .argument_index = 0},
@@ -106,7 +118,23 @@ constexpr std::array<OpcodeSemanticParam, 2> K_WAIT_PARAMS{
     OpcodeSemanticParam{.semantic_type = k_semantic_progress_elapsed, .argument_index = 1},
 };
 
-constexpr std::array<OpcodeInfo, 15> K_OPCODE_TABLE{
+constexpr std::array<OpcodeInfo, 17> K_OPCODE_TABLE{
+    OpcodeInfo{.opcode = K_SELECT_CAMERA,
+        .name = "SelectCamera",
+        .expected_argument_count = 1,
+        .semantic_params = K_SELECT_CAMERA_PARAMS.data(),
+        .semantic_param_count = K_SELECT_CAMERA_PARAMS.size(),
+        .owns_sprite = false,
+        .support = OpcodeSupport::k_supported,
+        .notes = "Selects a named camera from SCX binding table B in the current 3DO scene."},
+    OpcodeInfo{.opcode = K_INTERPOLATE_CAMERAS,
+        .name = "Script_InterpolateCameras",
+        .expected_argument_count = 4,
+        .semantic_params = K_INTERPOLATE_CAMERAS_PARAMS.data(),
+        .semantic_param_count = K_INTERPOLATE_CAMERAS_PARAMS.size(),
+        .owns_sprite = false,
+        .support = OpcodeSupport::k_supported,
+        .notes = "Linearly mutates named 3DO camera A toward B using 30 Hz script time."},
     OpcodeInfo{.opcode = K_SELECT_BODY_ANIMATION,
         .name = "Script_SelectBodyAnimation",
         .expected_argument_count = 10,
@@ -264,6 +292,11 @@ void reinitialize_command(ScriptInstance& instance, RuntimeScriptCommand& comman
   const std::uint32_t base{command.first_value_index};
   const std::size_t pool_size{instance.value_pool.size()};
   switch (command.opcode) {
+    case K_INTERPOLATE_CAMERAS:
+      if ((base + 3U) < pool_size && command.value_count >= 4U) {
+        instance.value_pool.at(base + 3U).set_float(0.0F);
+      }
+      break;
     case K_SELECT_BODY_ANIMATION:
     case K_SELECT_RELATIVE_BODY_ANIMATION:
       if ((base + 3U) < pool_size &&
@@ -690,6 +723,12 @@ ScriptCommandStatus ScriptRuntime::dispatch_command(ScriptInstance& instance,
     result.status = ScriptCommandStatus::k_completed;
   } else {
     switch (command.opcode) {
+      case K_SELECT_CAMERA:
+        result = handle_select_camera(instance, command);
+        break;
+      case K_INTERPOLATE_CAMERAS:
+        result = handle_interpolate_cameras(instance, command, script_delta_frames);
+        break;
       case K_SELECT_BODY_ANIMATION:
         result = handle_select_body_animation(instance, command, script_delta_frames);
         break;
@@ -778,6 +817,128 @@ ScriptCommandStatus ScriptRuntime::dispatch_command(ScriptInstance& instance,
   }
 
   return result.status;
+}
+
+HandlerResult ScriptRuntime::handle_select_camera(
+    ScriptInstance& instance, RuntimeScriptCommand& command) {
+  const Omikron::ScxScript& source{m_scx->scripts.at(instance.source_script_index)};
+  const std::uint32_t base{command.first_value_index};
+  const std::uint32_t binding_index{instance.value_pool.at(base).as_unsigned()};
+  if (binding_index >= source.binding_table_b.entries.size()) {
+    return HandlerResult{.status = ScriptCommandStatus::k_error,
+        .pause_reason = ScriptPauseReason::k_out_of_range_index,
+        .reason_text = fmt::format("camera binding table B index {} out of range ({} entries)",
+            binding_index,
+            source.binding_table_b.entries.size())};
+  }
+
+  const std::string_view camera_name{source.binding_table_b.entries.at(binding_index).name};
+  if (auto selected{m_world->select_camera(camera_name)}; !selected) {
+    return HandlerResult{.status = ScriptCommandStatus::k_error,
+        .pause_reason = ScriptPauseReason::k_missing_resource,
+        .reason_text = fmt::format("SelectCamera: {}", selected.error())};
+  }
+
+  // SelectCamera is an immediate/non-blocking Runtime operation. OpenNomad's
+  // scheduler uses explicit command exhaustion to advance the group, so count
+  // this execution immediately just like the other side-effect-only handlers.
+  command.execution_count += 1U;
+  if (command.execution_limit != K_INFINITE_EXECUTION_LIMIT &&
+      command.execution_count >= command.execution_limit) {
+    return HandlerResult{.status = ScriptCommandStatus::k_completed,
+        .pause_reason = ScriptPauseReason::k_none,
+        .reason_text = {}};
+  }
+  return HandlerResult{.status = ScriptCommandStatus::k_running,
+      .pause_reason = ScriptPauseReason::k_none,
+      .reason_text = {}};
+}
+
+HandlerResult ScriptRuntime::handle_interpolate_cameras(ScriptInstance& instance,
+    RuntimeScriptCommand& command,
+    const float script_delta_frames) {
+  const std::uint32_t base{command.first_value_index};
+  const float duration{instance.value_pool.at(base + 2U).as_float()};
+  const float elapsed{instance.value_pool.at(base + 3U).as_float()};
+
+  const auto finish_execution = [&]() -> HandlerResult {
+    command.execution_count += 1U;
+    if (command.execution_limit != K_INFINITE_EXECUTION_LIMIT &&
+        command.execution_count >= command.execution_limit) {
+      return HandlerResult{.status = ScriptCommandStatus::k_completed,
+          .pause_reason = ScriptPauseReason::k_none,
+          .reason_text = {}};
+    }
+    // Runtime's reinitializer resets only mutable elapsed progress. Camera A
+    // stays where the previous execution left it.
+    instance.value_pool.at(base + 3U).set_float(0.0F);
+    return HandlerResult{.status = ScriptCommandStatus::k_running,
+        .pause_reason = ScriptPauseReason::k_none,
+        .reason_text = {}};
+  };
+
+  // Native 0x004A4630 performs this completion check before camera lookup.
+  // Zero/negative durations therefore finish without requiring either camera.
+  if (elapsed >= duration) {
+    return finish_execution();
+  }
+
+  const Omikron::ScxScript& source{m_scx->scripts.at(instance.source_script_index)};
+  const auto camera_name = [&](const std::uint32_t argument_index)
+      -> std::expected<std::string_view, std::string> {
+    const std::uint32_t binding_index{
+        instance.value_pool.at(base + argument_index).as_unsigned()};
+    if (binding_index >= source.binding_table_b.entries.size()) {
+      return std::expected<std::string_view, std::string>{std::unexpect,
+          fmt::format("camera binding table B index {} out of range ({} entries)",
+              binding_index,
+              source.binding_table_b.entries.size())};
+    }
+    return std::string_view{source.binding_table_b.entries.at(binding_index).name};
+  };
+
+  auto camera_a{camera_name(0U)};
+  auto camera_b{camera_name(1U)};
+  if (!camera_a || !camera_b) {
+    return HandlerResult{.status = ScriptCommandStatus::k_error,
+        .pause_reason = ScriptPauseReason::k_out_of_range_index,
+        .reason_text = !camera_a ? camera_a.error() : camera_b.error()};
+  }
+
+  const float remaining{duration - elapsed};
+  const float fraction{script_delta_frames / remaining};
+  if (auto interpolated{m_world->interpolate_cameras(CameraInterpolationRequest{
+          .camera_a = camera_a.value(),
+          .camera_b = camera_b.value(),
+          .fraction = fraction,
+          .snap_to_target = false})};
+      !interpolated) {
+    return HandlerResult{.status = ScriptCommandStatus::k_error,
+        .pause_reason = ScriptPauseReason::k_missing_resource,
+        .reason_text = fmt::format("Script_InterpolateCameras: {}", interpolated.error())};
+  }
+
+  const float next_elapsed{elapsed + script_delta_frames};
+  instance.value_pool.at(base + 3U).set_float(next_elapsed);
+  if (next_elapsed < duration) {
+    return HandlerResult{.status = ScriptCommandStatus::k_running,
+        .pause_reason = ScriptPauseReason::k_none,
+        .reason_text = {}};
+  }
+
+  // Runtime can overshoot while applying delta/(duration-elapsed), then
+  // immediately copies all eight pose fields of B into A on the crossing tick.
+  if (auto snapped{m_world->interpolate_cameras(CameraInterpolationRequest{
+          .camera_a = camera_a.value(),
+          .camera_b = camera_b.value(),
+          .fraction = 1.0F,
+          .snap_to_target = true})};
+      !snapped) {
+    return HandlerResult{.status = ScriptCommandStatus::k_error,
+        .pause_reason = ScriptPauseReason::k_missing_resource,
+        .reason_text = fmt::format("Script_InterpolateCameras: {}", snapped.error())};
+  }
+  return finish_execution();
 }
 
 HandlerResult ScriptRuntime::handle_select_body_animation(

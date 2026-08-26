@@ -1069,11 +1069,75 @@ void ScenarioRuntime::reset_body_animation(const std::int16_t character_id) {
   m_character_runtime.reset_pose(character_id);
 }
 
+std::expected<void, std::string> ScenarioRuntime::select_camera(const std::string_view camera_name) {
+  const auto camera{std::ranges::find_if(m_decor_cameras,
+      [camera_name](const Omikron::CameraRecord& candidate) {
+        return candidate.name == camera_name;
+      })};
+  if (camera == m_decor_cameras.end()) {
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format("can't find 3DO camera '{}' in current scene", camera_name)};
+  }
+
+  m_selected_decor_camera_index =
+      static_cast<std::size_t>(std::distance(m_decor_cameras.begin(), camera));
+  App::Log::trace(LogCategory::Script,
+      "structured camera selected — scenario='{}' camera='{}'",
+      m_scenario_name,
+      camera_name);
+  return {};
+}
+
+std::expected<void, std::string> ScenarioRuntime::interpolate_cameras(
+    const Script::CameraInterpolationRequest& request) {
+  const auto find_camera = [this](const std::string_view name) {
+    return std::ranges::find_if(m_decor_cameras,
+        [name](const Omikron::CameraRecord& candidate) { return candidate.name == name; });
+  };
+  auto camera_a{find_camera(request.camera_a)};
+  auto camera_b{find_camera(request.camera_b)};
+  if (camera_a == m_decor_cameras.end()) {
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format("can't find 3DO camera '{}' in current scene", request.camera_a)};
+  }
+  if (camera_b == m_decor_cameras.end()) {
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format("can't find 3DO camera '{}' in current scene", request.camera_b)};
+  }
+
+  // Runtime mutates only camera A's eight float fields. Its fixed-width name
+  // remains A even when the endpoint is copied exactly from B.
+  if (request.snap_to_target) {
+    camera_a->eye = camera_b->eye;
+    camera_a->target = camera_b->target;
+    camera_a->roll_degrees = camera_b->roll_degrees;
+    camera_a->horizontal_fov_degrees = camera_b->horizontal_fov_degrees;
+    return {};
+  }
+
+  const auto advance = [fraction = request.fraction](const float from, const float to) {
+    return from + ((to - from) * fraction);
+  };
+  camera_a->eye = Runtime::Vec3{.x = advance(camera_a->eye.x, camera_b->eye.x),
+      .y = advance(camera_a->eye.y, camera_b->eye.y),
+      .z = advance(camera_a->eye.z, camera_b->eye.z)};
+  camera_a->target = Runtime::Vec3{.x = advance(camera_a->target.x, camera_b->target.x),
+      .y = advance(camera_a->target.y, camera_b->target.y),
+      .z = advance(camera_a->target.z, camera_b->target.z)};
+  camera_a->roll_degrees = advance(camera_a->roll_degrees, camera_b->roll_degrees);
+  camera_a->horizontal_fov_degrees =
+      advance(camera_a->horizontal_fov_degrees, camera_b->horizontal_fov_degrees);
+  return {};
+}
+
 void ScenarioRuntime::bind_decor_model(const Omikron::Model3DOData* const decor_model) {
   m_decor_model = decor_model;
   m_decor_runtime_objects = decor_model == nullptr
                                 ? std::vector<Omikron::Model3DOData::RuntimeObjectState>{}
                                 : decor_model->runtime_objects;
+  m_decor_cameras =
+      decor_model == nullptr ? std::vector<Omikron::CameraRecord>{} : decor_model->cameras;
+  m_selected_decor_camera_index.reset();
   m_decor_pose_revision = 0;
 }
 
@@ -1088,6 +1152,14 @@ std::span<const Omikron::Model3DOData::RuntimeObjectState> ScenarioRuntime::deco
 
 std::uint64_t ScenarioRuntime::decor_pose_revision() const {
   return m_decor_pose_revision;
+}
+
+const Omikron::CameraRecord* ScenarioRuntime::selected_structured_camera() const {
+  if (!m_selected_decor_camera_index.has_value() ||
+      m_selected_decor_camera_index.value() >= m_decor_cameras.size()) {
+    return nullptr;
+  }
+  return &m_decor_cameras.at(m_selected_decor_camera_index.value());
 }
 
 std::expected<Script::MoveObjectOnPathResult, Script::MoveObjectOnPathFailure>

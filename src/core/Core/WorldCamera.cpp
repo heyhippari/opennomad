@@ -41,6 +41,10 @@ void WorldCameraSystem::set_attachment_pose_provider(AttachmentPoseProvider prov
   m_attachment_pose_provider = std::move(provider);
 }
 
+void WorldCameraSystem::set_controller_pose_provider(ControllerPoseProvider provider) {
+  m_controller_pose_provider = std::move(provider);
+}
+
 void WorldCameraSystem::reset() {
   m_current = WorldCameraPose{};
   m_transition_start = WorldCameraPose{};
@@ -134,24 +138,49 @@ void WorldCameraSystem::apply_controller_mode(const WorldCameraCommand& command)
       std::max(static_cast<float>(command.duration_units), 0.0F) / k_scenario_frames_per_second;
   m_has_scripted_pose = true;
 
-  // Native mode 13 is not a frozen camera. Runtime's controller update
-  // (0x00417D10) continuously copies eye/target/roll/FOV from the live camera
-  // source at 0x009103D4 while that source exists. OpenNomad does not model
-  // that source object yet, so recording the controller mode must be
-  // non-destructive: retain the currently evaluated IAM camera and any active
-  // interpolation rather than discarding the best pose information we have.
+  // Mode 13 owns the evaluated pose from this point onward. Keep the current
+  // pose as the native null-source fallback, but do not allow an interrupted
+  // AREA interpolation to resume underneath the live structured-camera source.
+  if (command.controller_mode == 13U) {
+    m_transition_elapsed = 0.0F;
+    m_transition_duration = 0.0F;
+    m_last_command.reset();
+  }
 }
 
 void WorldCameraSystem::update(const float delta_seconds) {
   APP_PROFILE_FUNCTION();
 
-  if (!m_has_pose) {
-    return;
-  }
-
   if (controller_transitioning()) {
     m_controller_transition_elapsed = std::min(m_controller_transition_duration,
         m_controller_transition_elapsed + std::max(delta_seconds, 0.0F));
+  }
+
+  // Runtime controller 13 (0x00417D10) reads the source pointer at
+  // 0x009103D4 and copies source +0x14..+0x30 into the active camera every
+  // update. A null source does nothing: the last evaluated camera is retained.
+  if (m_active_controller_mode.has_value() && m_active_controller_mode.value() == 13U) {
+    if (m_controller_pose_provider) {
+      const std::optional<WorldCameraPose> source{m_controller_pose_provider()};
+      if (source.has_value()) {
+        m_current = source.value();
+        m_transition_start = m_current;
+        m_transition_target = m_current;
+        m_transition_elapsed = 0.0F;
+        m_transition_duration = 0.0F;
+        m_has_pose = true;
+        m_has_scripted_pose = true;
+        // A named 3DO camera, not a numeric IAM AREA/SCENE camera, now owns
+        // the presentation pose.
+        m_active_camera_id.reset();
+        commit_pose();
+      }
+    }
+    return;
+  }
+
+  if (!m_has_pose) {
+    return;
   }
 
   if (m_last_command.has_value()) {

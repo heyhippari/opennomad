@@ -168,6 +168,9 @@ class ScenarioRuntime final : public Script::ScriptWorld, private Sfx::Host {
       const Audio::SoundPlayRequest& request) override;
   void stop_sound(Audio::SoundResourceId sound, const Audio::AudioOwnerToken& owner) override;
   [[nodiscard]] Audio::AudioContextInfo audio_context() const override;
+  [[nodiscard]] std::expected<void, std::string> select_camera(std::string_view camera_name) override;
+  [[nodiscard]] std::expected<void, std::string> interpolate_cameras(
+      const Script::CameraInterpolationRequest& request) override;
   [[nodiscard]] std::expected<Script::BodyAnimationResult, Script::BodyAnimationFailure>
   select_body_animation(const Script::BodyAnimationRequest& request) override;
   [[nodiscard]] std::expected<Script::RelativeBodyAnimationResult,
@@ -188,6 +191,9 @@ class ScenarioRuntime final : public Script::ScriptWorld, private Sfx::Host {
   [[nodiscard]] std::span<const Omikron::Model3DOData::RuntimeObjectState> decor_runtime_objects()
       const;
   [[nodiscard]] std::uint64_t decor_pose_revision() const;
+  /// Runtime scene+0x178 equivalent selected by structured SCX SelectCamera.
+  /// The returned pointer refers to this runtime's mutable 3DO camera copy.
+  [[nodiscard]] const Omikron::CameraRecord* selected_structured_camera() const;
 
   // --- Audio subsystem ------------------------------------------------------
 
@@ -245,6 +251,8 @@ class ScenarioRuntime final : public Script::ScriptWorld, private Sfx::Host {
   bool m_xyz_fallback_logged{false};
   const Omikron::Model3DOData* m_decor_model{nullptr};
   std::vector<Omikron::Model3DOData::RuntimeObjectState> m_decor_runtime_objects;
+  std::vector<Omikron::CameraRecord> m_decor_cameras;
+  std::optional<std::size_t> m_selected_decor_camera_index;
   std::uint64_t m_decor_pose_revision{0};
   bool m_initialized{false};
 };

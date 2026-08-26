@@ -10,6 +10,8 @@ namespace App::Script {
 /// (0x0044C090). Used to label arguments in the debugger and to locate
 /// sprite-owning arguments during instance creation.
 inline constexpr std::uint16_t k_semantic_none{0};
+inline constexpr std::uint16_t k_semantic_camera_1{4};
+inline constexpr std::uint16_t k_semantic_camera_2{5};
 inline constexpr std::uint16_t k_semantic_unknown_7{7};
 inline constexpr std::uint16_t k_semantic_unknown_8{8};
 inline constexpr std::uint16_t k_semantic_sprite{9};

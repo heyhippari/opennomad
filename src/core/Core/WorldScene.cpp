@@ -295,6 +295,28 @@ WorldScene::WorldScene(ScenarioManager& scenarios, Interface::InterfaceManager& 
     return WorldCameraAttachmentPose{.translation = character->transform.translation,
         .principal_orientation = character->principal_orientation()};
   });
+
+  // Runtime publishes the scene's currently selected named 3DO camera through
+  // global 0x009103D4 after structured script execution. Controller mode 13
+  // consumes that live record continuously. Resolve it from the exact active
+  // world rather than from the controlled-character owner.
+  m_camera.set_controller_pose_provider([this]() -> std::optional<WorldCameraPose> {
+    if (m_scenarios == nullptr) {
+      return std::nullopt;
+    }
+    const WorldSceneContext* context{m_scenarios->active_world_context()};
+    const ScenarioRuntime* runtime{
+        context == nullptr || context->runtime == nullptr ? nullptr : context->runtime.get()};
+    const Omikron::CameraRecord* source{
+        runtime == nullptr ? nullptr : runtime->selected_structured_camera()};
+    if (source == nullptr) {
+      return std::nullopt;
+    }
+    return WorldCameraPose{.eye = source->eye,
+        .target = source->target,
+        .roll_degrees = source->roll_degrees,
+        .horizontal_fov_degrees = source->horizontal_fov_degrees};
+  });
 }
 
 WorldScene::~WorldScene() = default;

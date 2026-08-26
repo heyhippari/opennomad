@@ -124,8 +124,8 @@ struct BodyResourcesFixture {
   std::vector<std::byte> bytes;
 };
 
-BodyResourcesFixture make_body_resources(const App::Runtime::Vec3 reference = {},
-    const App::Runtime::Vec3 root_motion = {.x = 10.0F}) {
+BodyResourcesFixture make_body_resources(
+    const App::Runtime::Vec3 reference = {}, const App::Runtime::Vec3 root_motion = {.x = 10.0F}) {
   Buffer path;
   path.u32(1).chars("UBas.p1", 20).u32(2).u32(3);
   for (std::uint32_t key{0}; key < 3U; ++key) {
@@ -212,6 +212,21 @@ App::Omikron::Model3DOData make_movable_decor() {
   decor.hierarchy_reachable = {1U};
   decor.skin_parent_index = {-1};
   decor.runtime_objects.push_back(App::Omikron::Model3DOData::RuntimeObjectState{});
+  return decor;
+}
+
+App::Omikron::Model3DOData make_camera_decor() {
+  App::Omikron::Model3DOData decor;
+  decor.cameras.push_back(App::Omikron::CameraRecord{.name = "CAM_A",
+      .eye = {.x = 0.0F, .y = 10.0F, .z = 20.0F},
+      .target = {.x = 30.0F, .y = 40.0F, .z = 50.0F},
+      .roll_degrees = 0.0F,
+      .horizontal_fov_degrees = 80.0F});
+  decor.cameras.push_back(App::Omikron::CameraRecord{.name = "CAM_B",
+      .eye = {.x = 100.0F, .y = 110.0F, .z = 120.0F},
+      .target = {.x = 130.0F, .y = 140.0F, .z = 150.0F},
+      .roll_degrees = 20.0F,
+      .horizontal_fov_degrees = 60.0F});
   return decor;
 }
 
@@ -336,6 +351,44 @@ App::Omikron::ScxData make_sfx_script_scx() {
 }  // namespace
 
 TEST_SUITE("Core::Scenario::ScenarioRuntime") {
+  TEST_CASE("Structured 3DO cameras select and mutate an instance-local camera A") {
+    App::ScenarioRuntime runtime;
+    const App::Omikron::Model3DOData decor{make_camera_decor()};
+    runtime.bind_decor_model(&decor);
+
+    REQUIRE(runtime.select_camera("CAM_A").has_value());
+    const App::Omikron::CameraRecord* selected{runtime.selected_structured_camera()};
+    REQUIRE(selected != nullptr);
+    CHECK_EQ(selected->name, "CAM_A");
+    CHECK(selected->eye.x == doctest::Approx(0.0F));
+
+    REQUIRE(runtime
+            .interpolate_cameras(App::Script::CameraInterpolationRequest{.camera_a = "CAM_A",
+                .camera_b = "CAM_B",
+                .fraction = 0.25F,
+                .snap_to_target = false})
+            .has_value());
+    selected = runtime.selected_structured_camera();
+    REQUIRE(selected != nullptr);
+    CHECK_EQ(selected->name, "CAM_A");
+    CHECK(selected->eye.x == doctest::Approx(25.0F));
+    CHECK(selected->target.z == doctest::Approx(75.0F));
+    CHECK(selected->roll_degrees == doctest::Approx(5.0F));
+    CHECK(selected->horizontal_fov_degrees == doctest::Approx(75.0F));
+
+    REQUIRE(runtime
+            .interpolate_cameras(App::Script::CameraInterpolationRequest{
+                .camera_a = "CAM_A", .camera_b = "CAM_B", .fraction = 1.0F, .snap_to_target = true})
+            .has_value());
+    selected = runtime.selected_structured_camera();
+    REQUIRE(selected != nullptr);
+    CHECK_EQ(selected->name, "CAM_A");  // Native copy does not overwrite the record name.
+    CHECK(selected->eye.x == doctest::Approx(100.0F));
+    CHECK(selected->target.z == doctest::Approx(150.0F));
+    CHECK(selected->roll_degrees == doctest::Approx(20.0F));
+    CHECK(selected->horizontal_fov_degrees == doctest::Approx(60.0F));
+  }
+
   TEST_CASE("Initializes an empty scenario") {
     App::Omikron::ScxData scx;
     App::ScenarioRuntime runtime;
@@ -690,9 +743,8 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
     CHECK_EQ(character->transform.translation.z, doctest::Approx(35.0F).epsilon(0.0001));
     CHECK_EQ(character->body_animation.accumulated_root_translation.z,
         doctest::Approx(10.0F).epsilon(0.0001));
-    CHECK_EQ(character->body_animation.root_motion_delta.x,
-        doctest::Approx(0.0F).epsilon(0.0001F));
- 
+    CHECK_EQ(character->body_animation.root_motion_delta.x, doctest::Approx(0.0F).epsilon(0.0001F));
+
     // Authored 7/8/9 values offset the 3DA reference, not the prior actor XYZ.
     App::Script::BodyAnimationRequest offset_request{request};
     offset_request.current_progress = 0.0F;
@@ -709,9 +761,9 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
   }
 
   TEST_CASE("Body root motion keeps logical Y fixed and moves the visual root") {
-    BodyResourcesFixture resources{make_body_resources(
-        App::Runtime::Vec3{.x = 100.0F, .y = -50.0F, .z = 25.0F},
-        App::Runtime::Vec3{.x = 10.0F, .y = 6.0F, .z = 0.0F})};
+    BodyResourcesFixture resources{
+        make_body_resources(App::Runtime::Vec3{.x = 100.0F, .y = -50.0F, .z = 25.0F},
+            App::Runtime::Vec3{.x = 10.0F, .y = 6.0F, .z = 0.0F})};
     resources.scx.section0_records.clear();
     resources.scx.section0_resources.clear();
     const std::shared_ptr<const App::Character::ModelResource> shared{make_body_model_resource()};
