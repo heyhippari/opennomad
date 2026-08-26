@@ -54,6 +54,8 @@ void WorldCameraSystem::reset() {
   m_active_controller_mode.reset();
   m_controller_transition_elapsed = 0.0F;
   m_controller_transition_duration = 0.0F;
+  m_active_operation.reset();
+  m_completed_operation.reset();
   m_last_command.reset();
 }
 
@@ -89,6 +91,16 @@ void WorldCameraSystem::apply_command(const WorldCameraCommand& command) {
   m_active_controller_mode = command.camera_type;
   m_controller_transition_elapsed = 0.0F;
   m_controller_transition_duration = 0.0F;
+  m_active_operation.reset();
+  if (command.camera_type == 12U && command.wait_for_completion &&
+      command.operation_generation.has_value()) {
+    m_active_operation = WorldCameraOperationCompletion{
+        .operation_generation = command.operation_generation.value(),
+        .scene_id = command.scene_id,
+        .scene_generation = command.scene_generation,
+        .source_area_id = command.source_area_id,
+        .camera_id = command.camera_id};
+  }
   m_has_scripted_pose = true;
 
   const float duration_seconds{
@@ -102,6 +114,7 @@ void WorldCameraSystem::apply_command(const WorldCameraCommand& command) {
     m_transition_duration = 0.0F;
     m_has_pose = true;
     commit_pose();
+    complete_active_operation();
     return;
   }
 
@@ -176,6 +189,7 @@ void WorldCameraSystem::update(const float delta_seconds) {
     m_transition_elapsed = 0.0F;
     m_transition_duration = 0.0F;
     commit_pose();
+    complete_active_operation();
   }
 }
 
@@ -196,7 +210,9 @@ Runtime::Vec3 WorldCameraSystem::resolve_attachment_point(
   if (selector == -1) {
     return absolute_fallback;
   }
-  if ((selector != 0 && selector != 1) || !m_attachment_pose_provider) {
+  // Runtime's selector-0 resolver consumes the actor's principal orientation.
+  // Selectors 1..9 follow separate native paths that remain unrecovered.
+  if (selector != 0 || !m_attachment_pose_provider) {
     return absolute_fallback;
   }
   const std::optional<WorldCameraAttachmentPose> attachment{m_attachment_pose_provider()};
@@ -204,9 +220,8 @@ Runtime::Vec3 WorldCameraSystem::resolve_attachment_point(
     return absolute_fallback;
   }
   const Runtime::Vec3 relative{Runtime::iam_camera_vector_to_runtime(serialized)};
-  const Runtime::Matrix3& orientation{selector == 0 ? attachment->body_offset_orientation
-                                                    : attachment->effective_orientation};
-  const Runtime::Vec3 rotated{Runtime::transform_vector(relative, orientation)};
+  const Runtime::Vec3 rotated{
+      Runtime::transform_vector(relative, attachment->principal_orientation)};
   return Runtime::Vec3{.x = attachment->translation.x - rotated.x,
       .y = attachment->translation.y - rotated.y,
       .z = attachment->translation.z - rotated.z};
@@ -227,6 +242,14 @@ WorldCameraPose WorldCameraSystem::interpolate(
       from.horizontal_fov_degrees +
       ((to.horizontal_fov_degrees - from.horizontal_fov_degrees) * amount);
   return result;
+}
+
+void WorldCameraSystem::complete_active_operation() {
+  if (!m_active_operation.has_value()) {
+    return;
+  }
+  m_completed_operation = m_active_operation;
+  m_active_operation.reset();
 }
 
 void WorldCameraSystem::commit_pose() {

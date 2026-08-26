@@ -90,8 +90,6 @@ constexpr std::uint16_t K_TRACKED_SCRIPT_WAIT_STATE{4};
 constexpr std::uint16_t K_CAMERA_WAIT_STATE{7};
 /// Runtime context state while native AREA transition coordination is active.
 constexpr std::uint16_t K_AREA_TRANSITION_WAIT_STATE{10};
-/// Runtime's script/scenario time base (1.0 unit = 1/30 second).
-constexpr float K_AREA_FRAMES_PER_SECOND{30.0F};
 /// Runtime Scalar16 parameter-reference marker.
 constexpr std::uint16_t K_SCALAR16_PARAMETER_REFERENCE{0x4000U};
 constexpr std::uint16_t K_SCALAR16_PARAMETER_INDEX_MASK{0x3FFFU};
@@ -801,6 +799,30 @@ std::expected<void, std::string> AreaScriptRuntime::complete_character_script_wa
   return {};
 }
 
+std::expected<void, std::string> AreaScriptRuntime::complete_camera_wait(
+    const AreaCameraOperationHandle handle) {
+  if (m_state != AreaScriptState::k_waiting) {
+    return std::expected<void, std::string>{std::unexpect, "area script is not waiting"};
+  }
+  if (m_wait.kind != AreaWaitKind::k_camera) {
+    return std::expected<void, std::string>{
+        std::unexpect, "area script is not waiting on a camera operation"};
+  }
+  if (!m_wait.camera_operation.has_value() || m_wait.camera_operation.value() != handle) {
+    return std::expected<void, std::string>{
+        std::unexpect, "camera completion does not match the waiting operation"};
+  }
+
+  m_wait = AreaWaitState{};
+  m_wait_state = 0;
+  m_state = AreaScriptState::k_running;
+  App::Log::debug(LogCategory::Script,
+      "area script resumed after camera operation generation {} (Runtime state 7 -> 1) at +{:#x}",
+      handle.generation,
+      m_ip);
+  return {};
+}
+
 std::expected<void, std::string> AreaScriptRuntime::complete_area_transition(
     const AreaTransitionHandle handle) {
   if (m_state != AreaScriptState::k_waiting) {
@@ -841,7 +863,7 @@ std::span<const std::int32_t> AreaScriptRuntime::global_variables() const {
   return m_global_variable_snapshot_sink();
 }
 
-AreaScriptState AreaScriptRuntime::run(const float real_delta_seconds) {
+AreaScriptState AreaScriptRuntime::run(const float /*real_delta_seconds*/) {
   APP_PROFILE_FUNCTION();
 
   m_last_run_yielded = false;
@@ -850,21 +872,9 @@ AreaScriptState AreaScriptRuntime::run(const float real_delta_seconds) {
     return m_state;
   }
 
-  // Camera opcode 0x60 uses legacy wait state 7. Until the WorldRenderer owns
-  // Runtime's callback path, advance the recovered duration in the same 30 Hz
-  // scenario units used by the rest of the script system.
-  if (m_state == AreaScriptState::k_waiting && m_wait.kind == AreaWaitKind::k_camera) {
-    const float delta_frames{std::max(0.0F, real_delta_seconds) * K_AREA_FRAMES_PER_SECOND};
-    m_wait.remaining_scenario_frames =
-        std::max(0.0F, m_wait.remaining_scenario_frames - delta_frames);
-    if (m_wait.remaining_scenario_frames > 0.0F) {
-      return m_state;
-    }
-    m_wait = AreaWaitState{};
-    m_wait_state = 0;
-    m_state = AreaScriptState::k_running;
-  }
-
+  // Runtime state 7 is released only by the presentation-owned completion for
+  // the exact mode-12 operation submitted by 0x60. The camera controller owns
+  // the sole transition clock; run() must never reproduce that duration here.
   if (m_state != AreaScriptState::k_ready && m_state != AreaScriptState::k_running) {
     return m_state;
   }
@@ -1405,8 +1415,7 @@ void AreaScriptRuntime::execute_instruction() {
           .character_script = std::nullopt,
           .character_script_instance = std::nullopt,
           .area_transition = request,
-          .area_transition_handle = accepted.value(),
-          .remaining_scenario_frames = 0.0F};
+          .area_transition_handle = accepted.value()};
       wait_after_instruction = true;
       entry.effect = fmt::format(
           "begin AREA transition to {} as generation {} and wait in "
@@ -1564,8 +1573,7 @@ void AreaScriptRuntime::execute_instruction() {
             .character_script = std::nullopt,
             .character_script_instance = std::nullopt,
             .area_transition = std::nullopt,
-            .area_transition_handle = std::nullopt,
-            .remaining_scenario_frames = 0.0F};
+            .area_transition_handle = std::nullopt};
         wait_after_instruction = true;
         entry.effect = fmt::format("start SCX script {} as instance {} and wait in Runtime state 4",
             request.script_id,
@@ -1647,8 +1655,7 @@ void AreaScriptRuntime::execute_instruction() {
             .character_script = request,
             .character_script_instance = instance.value(),
             .area_transition = std::nullopt,
-            .area_transition_handle = std::nullopt,
-            .remaining_scenario_frames = 0.0F};
+            .area_transition_handle = std::nullopt};
         wait_after_instruction = true;
         entry.effect = fmt::format(
             "start {} script {} camera duration {} as instance {} and wait "
@@ -1943,8 +1950,7 @@ void AreaScriptRuntime::execute_instruction() {
           .character_script = std::nullopt,
           .character_script_instance = std::nullopt,
           .area_transition = std::nullopt,
-          .area_transition_handle = std::nullopt,
-          .remaining_scenario_frames = 0.0F};
+          .area_transition_handle = std::nullopt};
       wait_after_instruction = true;
       entry.effect = fmt::format(
           "open interface {} (operand {}, result variable {})", interface_id, operand_b, operand_c);
@@ -2074,8 +2080,32 @@ void AreaScriptRuntime::execute_instruction() {
               .duration_units = duration,
               .flags = static_cast<std::int16_t>(operands.at(2)),
               .wait_for_completion = wait};
+      std::optional<AreaCameraOperationHandle> operation;
       if (m_camera_sink) {
-        m_camera_sink(m_last_camera_request.value());
+        auto submitted{m_camera_sink(m_last_camera_request.value())};
+        if (submitted) {
+          operation = submitted.value();
+        } else if (wait) {
+          m_pause_info = AreaPauseInfo{.offset = instruction_offset,
+              .opcode = opcode,
+              .opcode_name = std::string{info->name},
+              .reason_text = fmt::format(
+                  "failed to start tracked camera {}: {}",
+                  m_last_camera_request->camera_id,
+                  submitted.error()),
+              .nearby_bytes = nearby_bytes_hex(instruction_offset)};
+          m_state = AreaScriptState::k_failed;
+          return;
+        }
+      }
+      if (wait && !operation.has_value()) {
+        m_pause_info = AreaPauseInfo{.offset = instruction_offset,
+            .opcode = opcode,
+            .opcode_name = std::string{info->name},
+            .reason_text = "tracked camera completion bridge is not wired",
+            .nearby_bytes = nearby_bytes_hex(instruction_offset)};
+        m_state = AreaScriptState::k_failed;
+        return;
       }
       entry.effect = fmt::format("camera {} duration={} flags={}{}",
           m_last_camera_request->camera_id,
@@ -2083,8 +2113,6 @@ void AreaScriptRuntime::execute_instruction() {
           m_last_camera_request->flags,
           wait ? " and wait" : "");
       if (wait) {
-        const float duration_frames{
-            duration < 0 ? -static_cast<float>(duration) : static_cast<float>(duration)};
         m_wait_state = K_CAMERA_WAIT_STATE;
         m_wait = AreaWaitState{.kind = AreaWaitKind::k_camera,
             .runtime_state = K_CAMERA_WAIT_STATE,
@@ -2095,7 +2123,7 @@ void AreaScriptRuntime::execute_instruction() {
             .character_script_instance = std::nullopt,
             .area_transition = std::nullopt,
             .area_transition_handle = std::nullopt,
-            .remaining_scenario_frames = duration_frames};
+            .camera_operation = operation};
         wait_after_instruction = true;
       }
       m_yield_requested = true;

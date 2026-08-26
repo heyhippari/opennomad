@@ -880,9 +880,12 @@ void DebugUI::show_area_vm() {
             request.duration_units,
             request.flags);
       }
-      ImGui::Text("Remaining: %.3f scenario frames @ 30 Hz (%.6f s)",
-          static_cast<double>(context.wait.remaining_scenario_frames),
-          static_cast<double>(context.wait.remaining_scenario_frames / 30.0F));
+      if (context.wait.camera_operation.has_value()) {
+        ImGui::Text("Camera operation generation: %llu",
+            static_cast<unsigned long long>(context.wait.camera_operation->generation));
+      } else {
+        ImGui::TextUnformatted("Camera operation generation: unavailable");
+      }
     }
 
     ImGui::SeparatorText("Global variables");

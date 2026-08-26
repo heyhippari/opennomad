@@ -28,6 +28,7 @@ using App::InterfaceOpenRequest;
 using App::Audio::MusicTrackRequest;
 using App::Script::AreaAddressFlagRequest;
 using App::Script::AreaAddressPlacementRequest;
+using App::Script::AreaCameraOperationHandle;
 using App::Script::AreaCameraRequest;
 using App::Script::AreaCharacterActivationRequest;
 using App::Script::AreaCharacterDeactivationRequest;
@@ -1678,6 +1679,7 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
 
     const InterfaceHandle menu_handle{.interface_id = 29, .generation = 1};
     std::vector<AreaScxScriptRequest> scripts;
+    std::uint64_t next_camera_operation{1};
     runtime.set_interface_sink(
         [menu_handle](const InterfaceOpenRequest&) -> std::expected<InterfaceHandle, std::string> {
           return menu_handle;
@@ -1686,6 +1688,12 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
         [&scripts](const AreaScxScriptRequest& request) -> std::expected<std::size_t, std::string> {
           scripts.push_back(request);
           return 42U;
+        });
+    runtime.set_camera_sink(
+        [&next_camera_operation](const AreaCameraRequest& request)
+            -> std::expected<AreaCameraOperationHandle, std::string> {
+          return AreaCameraOperationHandle{
+              .generation = request.wait_for_completion ? next_camera_operation++ : 0U};
         });
     wire_startup_character_sinks(runtime);
 
@@ -1721,19 +1729,32 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     REQUIRE(runtime.last_camera_request().has_value());
     CHECK_EQ(runtime.last_camera_request()->camera_id, 2154U);
     CHECK_EQ(runtime.wait_state(), 7U);
+    REQUIRE(runtime.wait_info().camera_operation.has_value());
+    const AreaCameraOperationHandle camera_2154{runtime.wait_info().camera_operation.value()};
 
-    // Camera 2154 waits 100 scenario frames. The resumed tick reaches 0x76,
-    // records presentation mode 1, and yields before camera 2158.
-    REQUIRE(runtime.run(100.0F / 30.0F) == AreaScriptState::k_running);
+    // A large VM delta cannot expire state 7: WorldCamera owns the only clock.
+    CHECK(runtime.run(100.0F / 30.0F) == AreaScriptState::k_waiting);
+    REQUIRE_FALSE(runtime.complete_camera_wait(
+        AreaCameraOperationHandle{.generation = camera_2154.generation + 100U})
+                      .has_value());
+    CHECK(runtime.state() == AreaScriptState::k_waiting);
+    REQUIRE(runtime.complete_camera_wait(camera_2154).has_value());
+ 
+    // The presentation-owned completion resumes into 0x76, which records
+    // presentation mode 1 and yields before camera 2158.
+    REQUIRE(runtime.run() == AreaScriptState::k_running);
     REQUIRE(runtime.last_presentation_request().has_value());
     CHECK_EQ(runtime.last_presentation_request()->mode, 1U);
 
     REQUIRE(runtime.run() == AreaScriptState::k_waiting);
     REQUIRE(runtime.last_camera_request().has_value());
     CHECK_EQ(runtime.last_camera_request()->camera_id, 2158U);
-
-    // The final timed wait resumes into 0x04, which lands exactly on +0x11F
-    // and executes the event terminator 0x03.
+    REQUIRE(runtime.wait_info().camera_operation.has_value());
+    const AreaCameraOperationHandle camera_2158{runtime.wait_info().camera_operation.value()};
+ 
+    // The exact second camera completion resumes into 0x04, which lands
+    // exactly on +0x11F and executes the event terminator 0x03.
+    REQUIRE(runtime.complete_camera_wait(camera_2158).has_value());
     CHECK(runtime.run(25.0F / 30.0F) == AreaScriptState::k_ready);
     CHECK_EQ(runtime.instruction_pointer(), 0x120U);
     CHECK_EQ(runtime.evaluation_stack_depth(), 0U);

@@ -293,8 +293,7 @@ WorldScene::WorldScene(ScenarioManager& scenarios, Interface::InterfaceManager& 
       return std::nullopt;
     }
     return WorldCameraAttachmentPose{.translation = character->transform.translation,
-        .body_offset_orientation = character->body_offset_orientation(),
-        .effective_orientation = character->live_root_orientation()};
+        .principal_orientation = character->principal_orientation()};
   });
 }
 
@@ -826,6 +825,14 @@ void WorldScene::update(const float delta_time, const Input::InputManager& input
             command->duration_units);
         continue;
       }
+      if (command->source_area_id == 222) {
+        if (command->camera_id == 4290U) {
+          App::Log::info(LogCategory::Scenario, "AREA 222 sequence: 4290 applied");
+        } else if (command->camera_id == 4291U || command->camera_id == 4292U) {
+          App::Log::info(
+              LogCategory::Scenario, "AREA 222 sequence: {} started", command->camera_id);
+        }
+      }
       App::Log::debug(LogCategory::Renderer,
           "World camera {} — duration={} flags={} roll={}deg hFov={}deg",
           command->camera_id,
@@ -845,6 +852,15 @@ void WorldScene::update(const float delta_time, const Input::InputManager& input
   m_uv_phases.update(delta_time);
 
   m_camera.update(delta_time);
+  if (std::optional<WorldCameraOperationCompletion> completed{m_camera.take_completed_operation()};
+      completed.has_value() && m_scenarios != nullptr) {
+    if (completed->source_area_id == 222 &&
+        (completed->camera_id == 4291U || completed->camera_id == 4292U)) {
+      App::Log::info(
+          LogCategory::Scenario, "AREA 222 sequence: {} completed", completed->camera_id);
+    }
+    m_scenarios->world_presentation().enqueue_camera_completion(completed.value());
+  }
 
   // The world camera is also the listener for scenario-owned spatial audio.
   if (context != nullptr && context->runtime != nullptr && m_camera.has_pose()) {

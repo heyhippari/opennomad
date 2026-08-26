@@ -294,12 +294,16 @@ class ScenarioStartupController {
   /// Polls a character-bound child through the compact context's owner world.
   [[nodiscard]] std::expected<void, std::string> service_character_script_wait(
       Script::AreaScriptRuntime& area_script, std::size_t owner_slot);
+  /// Delivers presentation-owned camera completions to the exact compact
+  /// context suspended on their operation generation.
+  [[nodiscard]] std::expected<void, std::string> service_camera_completions();
   void bind_scene_compact_services(Script::AreaScriptRuntime& runtime,
       std::size_t owner_slot,
       bool prefer_scene_definition = true);
   /// Finds an owner-resident IAM camera and submits its unbaked serialized
   /// fields to presentation, where live attachment resolution occurs.
-  void enqueue_compact_camera(std::size_t owner_slot,
+  [[nodiscard]] std::expected<Script::AreaCameraOperationHandle, std::string>
+  enqueue_compact_camera(std::size_t owner_slot,
       bool prefer_scene_definition,
       const Script::AreaCameraRequest& request);
   void service_scene_scripts(float delta_seconds);
@@ -349,6 +353,7 @@ class ScenarioStartupController {
   std::size_t m_area_script_owner_slot{0};
   std::optional<PendingAreaTransition> m_area_transition;
   std::uint64_t m_next_area_transition_generation{1};
+  std::uint64_t m_next_camera_operation_generation{1};
   std::optional<Script::AreaScriptRuntime> m_area_script;
   std::vector<ActiveZoneRef> m_active_zones;
   std::vector<std::unique_ptr<ZoneContactContext>> m_zone_contacts;

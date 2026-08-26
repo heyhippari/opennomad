@@ -81,6 +81,12 @@ class WorldCameraSystem {
   [[nodiscard]] float controller_transition_duration_seconds() const {
     return m_controller_transition_duration;
   }
+  /// Returns one exact tracked mode-12 completion once, then clears it.
+  [[nodiscard]] std::optional<WorldCameraOperationCompletion> take_completed_operation() {
+    const std::optional<WorldCameraOperationCompletion> completed{m_completed_operation};
+    m_completed_operation.reset();
+    return completed;
+  }
   [[nodiscard]] const std::optional<WorldCameraCommand>& last_command() const {
     return m_last_command;
   }
@@ -90,6 +96,7 @@ class WorldCameraSystem {
 
  private:
   void apply_controller_mode(const WorldCameraCommand& command);
+  void complete_active_operation();
   void commit_pose();
   [[nodiscard]] WorldCameraPose resolve_command_pose(const WorldCameraCommand& command) const;
   [[nodiscard]] Runtime::Vec3 resolve_attachment_point(
@@ -120,6 +127,8 @@ class WorldCameraSystem {
   std::optional<std::uint16_t> m_active_controller_mode;
   float m_controller_transition_elapsed{0.0F};
   float m_controller_transition_duration{0.0F};
+  std::optional<WorldCameraOperationCompletion> m_active_operation;
+  std::optional<WorldCameraOperationCompletion> m_completed_operation;
   std::optional<WorldCameraCommand> m_last_command;
   AttachmentPoseProvider m_attachment_pose_provider;
 };

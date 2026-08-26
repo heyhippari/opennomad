@@ -50,10 +50,9 @@ class WorldUvPhaseState {
 /// gameplay-to-presentation capability boundary.
 struct WorldCameraAttachmentPose {
   Runtime::Vec3 translation{};
-  /// Native selector 0: Script_Select*BodyAnimation offset Euler only.
-  Runtime::Matrix3 body_offset_orientation{};
-  /// Native selector 1: actor base Euler plus the body-animation offset.
-  Runtime::Matrix3 effective_orientation{};
+  /// Native +0x1A0/+0x1A4/+0x1A8 principal actor orientation. AREA 222
+  /// cameras 4290/4291/4292 use selector 0 for both eye and target.
+  Runtime::Matrix3 principal_orientation{};
 };
 
 enum class WorldCameraCommandKind : std::uint8_t {
@@ -74,6 +73,11 @@ struct WorldCameraCommand {
   /// Native camera-controller selector. Character-bound SCX launches switch
   /// to mode 13 after the child is started.
   std::uint16_t controller_mode{0};
+  /// Owning IAM AREA, retained so cross-layer sequence diagnostics do not have
+  /// to infer provenance from globally numbered camera IDs.
+  std::int32_t source_area_id{-1};
+  /// Unique compact-VM operation generation for tracked 0x60 requests.
+  std::optional<std::uint64_t> operation_generation{};
 
   std::array<std::int32_t, 3> serialized_eye{};
   std::array<std::int32_t, 3> serialized_target{};
@@ -94,12 +98,22 @@ struct WorldCameraCommand {
   std::int16_t horizontal_fov_units{0};
   std::int32_t roll_degrees{0};
   std::int32_t horizontal_fov_degrees{0};
-  /// IAM +0x20 / +0x22. -1 is absolute; 0 is current actor + body-offset
-  /// orientation; 1 is current actor + base-and-body effective orientation.
-  /// Other selectors stay unsupported and use the safe absolute fallback.
+  /// IAM +0x20 / +0x22. -1 is absolute; 0 resolves through the current
+  /// actor's principal native orientation. Selectors 1..9 remain unresolved
+  /// and deliberately use the safe absolute fallback.
   std::int16_t target_attachment_selector{-1};
   std::int16_t eye_attachment_selector{-1};
   std::array<std::uint16_t, 4> tail_fields{};
+};
+
+/// Completion emitted by WorldCameraSystem only when the exact tracked
+/// mode-12 transition represented by `operation_generation` reaches its end.
+struct WorldCameraOperationCompletion {
+  std::uint64_t operation_generation{0};
+  std::uint32_t scene_id{0};
+  std::uint32_t scene_generation{0};
+  std::int32_t source_area_id{-1};
+  std::uint16_t camera_id{0};
 };
 
 /// One AREA 0x76/0x77 presentation command resolved against the active world.
@@ -340,6 +354,10 @@ class WorldPresentationState {
     m_camera_commands.push_back(std::move(command));
   }
 
+  void enqueue_camera_completion(WorldCameraOperationCompletion completion) {
+    m_camera_completions.push_back(std::move(completion));
+  }
+
   void enqueue_fade(WorldFadeCommand command) {
     m_fade_commands.push_back(std::move(command));
   }
@@ -363,6 +381,15 @@ class WorldPresentationState {
     WorldCameraCommand command{std::move(m_camera_commands.front())};
     m_camera_commands.pop_front();
     return command;
+  }
+
+  [[nodiscard]] std::optional<WorldCameraOperationCompletion> take_camera_completion() {
+    if (m_camera_completions.empty()) {
+      return std::nullopt;
+    }
+    WorldCameraOperationCompletion completion{std::move(m_camera_completions.front())};
+    m_camera_completions.pop_front();
+    return completion;
   }
 
   [[nodiscard]] std::optional<WorldFadeCommand> take_fade() {
@@ -405,6 +432,10 @@ class WorldPresentationState {
     return m_camera_commands.size();
   }
 
+  [[nodiscard]] std::size_t pending_camera_completion_count() const {
+    return m_camera_completions.size();
+  }
+
   [[nodiscard]] std::size_t pending_fade_count() const {
     return m_fade_commands.size();
   }
@@ -421,6 +452,7 @@ class WorldPresentationState {
 
   void clear() {
     m_camera_commands.clear();
+    m_camera_completions.clear();
     m_fade_commands.clear();
     m_letterbox_commands.clear();
     m_voice_over_commands.clear();
@@ -429,6 +461,7 @@ class WorldPresentationState {
 
  private:
   std::deque<WorldCameraCommand> m_camera_commands;
+  std::deque<WorldCameraOperationCompletion> m_camera_completions;
   std::deque<WorldFadeCommand> m_fade_commands;
   std::deque<WorldLetterboxCommand> m_letterbox_commands;
   std::deque<WorldVoiceOverCommand> m_voice_over_commands;

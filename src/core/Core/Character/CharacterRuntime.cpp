@@ -11,7 +11,6 @@
 #include <filesystem>
 #include <limits>
 #include <memory>
-#include <numbers>
 #include <optional>
 #include <span>
 #include <string>
@@ -371,15 +370,14 @@ std::expected<void, std::string> Runtime::place_character_at_address(
     return std::expected<void, std::string>{std::unexpect,
         fmt::format("current controlled character {} is not materialized", character_id)};
   }
-  constexpr float k_degrees_to_radians{std::numbers::pi_v<float> / 180.0F};
   character->serialized_area_position = address.serialized_position;
   character->serialized_orientation_units = address.orientation_units;
   character->runtime_orientation_degrees =
       App::Runtime::area_angle_to_degrees(address.orientation_units);
   character->transform.translation =
       App::Runtime::area_position_to_inches(address.serialized_position);
-  character->transform.matrix = App::Runtime::rotation_y(
-      static_cast<float>(character->runtime_orientation_degrees) * k_degrees_to_radians);
+  character->set_principal_orientation(App::Runtime::Vec3{
+      .x = 0.0F, .y = static_cast<float>(character->runtime_orientation_degrees), .z = 0.0F});
   character->transform.scale = App::Runtime::Vec3{.x = 1.0F, .y = 1.0F, .z = 1.0F};
   character->pose_revision += 1U;
   return {};
@@ -449,11 +447,10 @@ std::expected<void, std::string> Runtime::materialize_character(const std::int32
   }
 
   if (apply_transform) {
-    constexpr float k_degrees_to_radians{std::numbers::pi_v<float> / 180.0F};
     character->runtime_orientation_degrees = App::Runtime::area_angle_to_degrees(orientation_units);
     character->transform.translation = App::Runtime::area_position_to_inches(serialized_position);
-    character->transform.matrix = App::Runtime::rotation_y(
-        static_cast<float>(character->runtime_orientation_degrees) * k_degrees_to_radians);
+    character->set_principal_orientation(App::Runtime::Vec3{
+        .x = 0.0F, .y = static_cast<float>(character->runtime_orientation_degrees), .z = 0.0F});
     character->transform.scale = App::Runtime::Vec3{.x = 1.0F, .y = 1.0F, .z = 1.0F};
   }
   character->runtime_objects = character->model_resource->model.runtime_objects;

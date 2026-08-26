@@ -235,7 +235,7 @@ void begin_body_animation(Character::RuntimeCharacter& character,
       std::clamp(requested_previous, 0.0F, static_cast<float>(animation.max_frame_index))};
   const float current{
       std::clamp(requested_current, 0.0F, static_cast<float>(animation.max_frame_index))};
-  const Runtime::Vec3 orientation_offset_degrees{.x = body_animation_vector.at(0),
+  const Runtime::Vec3 principal_orientation_degrees{.x = body_animation_vector.at(0),
       .y = body_animation_vector.at(1),
       .z = body_animation_vector.at(2)};
   const Runtime::Matrix3 root_motion_orientation{character.live_root_orientation()};
@@ -265,17 +265,17 @@ void begin_body_animation(Character::RuntimeCharacter& character,
       const std::optional<Runtime::Vec3> integrated{
           root_channel.integrate_translation(previous, current)};
       if (integrated.has_value()) {
-        // Runtime integrates through the selected object's live +0x9C matrix
-        // before Script_Select*BodyAnimation stores this invocation's args
-        // 4/5/6. Therefore the current interval sees the persistent orientation
-        // left by the previous invocation, never the just-decoded values.
+        // Runtime integrates the current interval through the previous live
+        // +0x9C orientation. Only after that interval is resolved do args
+        // 4/5/6 replace native +0x1A0/+0x1A4/+0x1A8.
         root_delta = Runtime::transform_vector(integrated.value(), root_motion_orientation);
       }
     }
   }
 
-  // Native 0x00469420 happens after root integration and before 0x00469450.
-  character.body_orientation_offset_degrees = orientation_offset_degrees;
+  // Native 0x00469420 overwrites the principal XYZ orientation after root
+  // integration and before 0x00469450 applies the translated interval.
+  character.set_principal_orientation(principal_orientation_degrees);
   const Runtime::Matrix3 presentation_orientation{character.live_root_orientation()};
 
   // Runtime advances the logical actor in X/Z only, while the complete XYZ
@@ -326,7 +326,7 @@ void begin_body_animation(Character::RuntimeCharacter& character,
   playback.accumulated_root_translation.x += root_delta.x;
   playback.accumulated_root_translation.y += root_delta.y;
   playback.accumulated_root_translation.z += root_delta.z;
-  playback.body_animation_vector = orientation_offset_degrees;
+  playback.body_animation_vector = principal_orientation_degrees;
   playback.completed = current >= static_cast<float>(animation.max_frame_index);
   playback.active = !playback.completed;
   return {};

@@ -184,7 +184,11 @@ TEST_SUITE("Core::Character::Runtime") {
         static_cast<float>(App::Runtime::area_position_to_inches(-271)));
     CHECK_EQ(character->transform.translation.z,
         static_cast<float>(App::Runtime::area_position_to_inches(-816)));
-    CHECK_EQ(character->runtime_orientation_degrees, App::Runtime::area_angle_to_degrees(4084));
+    CHECK_EQ(character->runtime_orientation_degrees, App::Runtime::area_angle_to_degrees(4084));CHECK_EQ(character->principal_orientation_degrees.x, doctest::Approx(0.0F));
+    CHECK_EQ(character->principal_orientation_degrees.y,
+        doctest::Approx(static_cast<float>(character->runtime_orientation_degrees)));
+    CHECK_EQ(character->principal_orientation_degrees.z, doctest::Approx(0.0F));
+    CHECK_EQ(character->transform.matrix.values, character->principal_orientation().values);
   }
 
   TEST_CASE("Repeated activation reuses character and model while false preserves transform") {

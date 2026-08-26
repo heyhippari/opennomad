@@ -69,8 +69,9 @@ struct BodyAnimationPlayback {
   App::Runtime::Vec3 final_anchor{};
   App::Runtime::Vec3 root_motion_delta{};
   App::Runtime::Vec3 accumulated_root_translation{};
-  /// Runtime Script_Select*BodyAnimation arguments 4/5/6: additive XYZ Euler
-  /// orientation offsets in degrees.
+  /// Runtime Script_Select*BodyAnimation arguments 4/5/6. Each invocation
+  /// overwrites the actor's principal XYZ Euler orientation after integrating
+  /// the current root-motion interval through the previous live orientation.
   App::Runtime::Vec3 body_animation_vector{};
 };
 
@@ -104,14 +105,17 @@ struct RuntimeCharacter {
   /// not rewrite this field; live spatial consumers must use transform.translation.
   std::array<std::int32_t, 3> serialized_area_position{};
   std::int16_t serialized_orientation_units{0};
-  /// Live Runtime world transform. `matrix` is the actor's base orientation;
-  /// body-animation angular offsets remain separate below.
+  /// Live Runtime world transform. `matrix` is kept synchronized with the
+  /// principal actor orientation below so existing spatial/render consumers
+  /// continue to see the current native actor basis.
   App::Runtime::Transform transform{};
+  /// Last AREA/address yaw converted to integer degrees. This is placement
+  /// provenance only; live orientation is `principal_orientation_degrees`.
   std::int32_t runtime_orientation_degrees{0};
-  /// Persistent entity +0x1A0/+0x1A4/+0x1A8 equivalent. Script body-animation
-  /// args 4/5/6 overwrite this after the current root-motion interval is
-  /// integrated; the value therefore survives BodyAnimationPlayback resets.
-  App::Runtime::Vec3 body_orientation_offset_degrees{};
+  /// Persistent entity +0x1A0/+0x1A4/+0x1A8 equivalent. AREA/address
+  /// placement initializes (0,Y,0); Script_Select*BodyAnimation and
+  /// Script_SelectRelativeBodyAnimation overwrite all three components.
+  App::Runtime::Vec3 principal_orientation_degrees{};
   /// Selected authored CTL move/control-bank ID. Execution is intentionally
   /// deferred until the full CTL controller is recovered.
   std::optional<std::int16_t> current_move_id;
@@ -133,21 +137,25 @@ struct RuntimeCharacter {
   }
 
   /// Orientation used by camera attachment selector 0: body offset only.
-  [[nodiscard]] App::Runtime::Matrix3 body_offset_orientation() const {
-    return App::Runtime::euler_rotation_degrees(body_orientation_offset_degrees);
+  [[nodiscard]] App::Runtime::Matrix3 principal_orientation() const {
+    return App::Runtime::euler_rotation_degrees(principal_orientation_degrees);
+  }
+  
+  void set_principal_orientation(const App::Runtime::Vec3& degrees) {
+    principal_orientation_degrees = degrees;
+    transform.matrix = principal_orientation();
   }
 
-  /// Runtime selected/root 3DO +0x9C equivalent: actor base orientation plus
-  /// the persistent body-animation offset, without the current 3DA quaternion.
+  /// Runtime selected/root 3DO +0x9C equivalent, excluding the current 3DA
+  /// quaternion. Root motion integrates through this previous live basis.
   [[nodiscard]] App::Runtime::Matrix3 live_root_orientation() const {
-    return App::Runtime::additive_euler_orientation(
-        transform.matrix, body_orientation_offset_degrees);
+    return principal_orientation();
   }
 
   /// Character transform used by 3D presentation.
   [[nodiscard]] App::Runtime::Transform presentation_transform() const {
     App::Runtime::Transform result{transform};
-    result.matrix = live_root_orientation();
+    result.matrix = principal_orientation();
     return result;
   }
 

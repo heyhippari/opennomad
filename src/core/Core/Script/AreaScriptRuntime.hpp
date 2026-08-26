@@ -154,6 +154,13 @@ struct AreaTransitionHandle {
   bool operator==(const AreaTransitionHandle&) const = default;
 };
 
+/// Stable identity of one presentation-owned mode-12 camera operation.
+struct AreaCameraOperationHandle {
+  std::uint64_t generation{0};
+
+  bool operator==(const AreaCameraOperationHandle&) const = default;
+};
+
 /// Typed reason an area context is waiting. The recovered legacy wait-state
 /// value is preserved separately for diagnostics.
 enum class AreaWaitKind : std::uint8_t {
@@ -182,8 +189,8 @@ struct AreaWaitState {
   /// Request and exact coordinator generation blocked by opcode 0x2F.
   std::optional<AreaTransitionRequest> area_transition;
   std::optional<AreaTransitionHandle> area_transition_handle;
-  /// Remaining 30 Hz scenario units for the timed camera wait used by 0x60.
-  float remaining_scenario_frames{0.0F};
+  /// Exact presentation operation that releases Runtime state 7 for 0x60.
+  std::optional<AreaCameraOperationHandle> camera_operation{};
 };
 
 /// AREA opcode 0x39/0x3A request. Runtime resolves operand 0 against the active
@@ -361,9 +368,10 @@ class AreaScriptRuntime {
   using CurrentCharacterControllerSink =
       std::function<std::expected<void, std::string>(const AreaCurrentCharacterControllerRequest&)>;
 
-  /// Presentation bridge for 0x5F/0x60. The VM still owns AREA wait/yield
-  /// semantics; the sink receives each command exactly once for rendering.
-  using CameraSink = std::function<void(const AreaCameraRequest&)>;
+  /// Presentation bridge for 0x5F/0x60. The presentation owner returns the
+  /// stable operation identity used by a blocking 0x60 wait.
+  using CameraSink = std::function<std::expected<AreaCameraOperationHandle, std::string>(
+      const AreaCameraRequest&)>;
 
   /// Presentation bridge for 0x76/0x77. The VM owns opcode/yield semantics;
   /// the sink receives each presentation request exactly once.
@@ -486,6 +494,11 @@ class AreaScriptRuntime {
   /// exactly match the concrete child returned by the launch bridge.
   [[nodiscard]] std::expected<void, std::string> complete_character_script_wait(
       std::size_t instance_id);
+
+  /// Completes the state-7 wait created by opcode 0x60. Only the exact
+  /// presentation operation returned by the camera bridge can resume it.
+  [[nodiscard]] std::expected<void, std::string> complete_camera_wait(
+      AreaCameraOperationHandle handle);
 
   /// Completes the state-10 wait created by opcode 0x2F. Only the exact
   /// transition generation returned by the sink can resume the context.

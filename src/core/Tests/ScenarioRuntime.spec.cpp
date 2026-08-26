@@ -540,7 +540,7 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
     REQUIRE(animated_character != nullptr);
     // Keep this regression focused on the relative 3DP seed. Root-orientation
     // transformation is covered independently below.
-    animated_character->transform.matrix = App::Runtime::Matrix3::identity();
+    animated_character->set_principal_orientation({});
 
     App::ScenarioRuntime untouched_runtime;
     REQUIRE(
@@ -631,14 +631,14 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
     REQUIRE(character != nullptr);
     // Ordinary SelectBodyAnimation must ignore this pre-existing actor XYZ.
     character->transform.translation = {.x = 7000.0F, .y = -120.0F, .z = 3040.0F};
-    character->transform.matrix = App::Runtime::rotation_y(std::numbers::pi_v<float> * 0.25F);
+    character->set_principal_orientation({.x = 0.0F, .y = 45.0F, .z = 0.0F});
 
     App::Script::BodyAnimationRequest request{.character_id = 310,
         .object_binding = "RootBody",
         .animation_index = 0,
         .previous_progress = 0.0F,
         .current_progress = 1.0F,
-        .body_animation_vector = {0.0F, 45.0F, 0.0F},
+        .body_animation_vector = {0.0F, 90.0F, 0.0F},
         .authored_offset = {0.0F, 0.0F, 0.0F},
         .first_tick = true,
         .execution_count = 0,
@@ -646,11 +646,10 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
 
     // sample[0] is the absolute seed. sample[1] is +X local motion. Runtime
     // integrates this interval through the *previously persisted* live +0x9C
-    // orientation before storing this invocation's args 4/5/6. The initial
-    // persistent offset is zero, so base yaw 45° turns +X into equal +X/+Z.
-    // Only after integration does the authored +45° become the presentation
-    // orientation used by subsequent intervals. The frame-1 3DA quaternion is
-    // still deliberately excluded from this root-motion basis.
+    // orientation before storing this invocation's args 4/5/6. The previous
+    // principal yaw is 45°, so +X becomes equal +X/+Z. Only after integration
+    // do this invocation's args overwrite the principal orientation with 90°.
+    // The frame-1 3DA quaternion remains excluded from the root-motion basis.
     REQUIRE(runtime.select_body_animation(request).has_value());
     character = runtime.character_runtime().find(310);
     REQUIRE(character != nullptr);
@@ -667,7 +666,9 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
     CHECK_EQ(character->transform.translation.z, doctest::Approx(32.071068F).epsilon(0.0001F));
     CHECK_EQ(character->body_animation.accumulated_root_translation.z,
         doctest::Approx(7.0710678F).epsilon(0.0001F));
-    CHECK_EQ(character->body_orientation_offset_degrees.y, doctest::Approx(45.0F));
+    CHECK_EQ(character->principal_orientation_degrees.x, doctest::Approx(0.0F));
+    CHECK_EQ(character->principal_orientation_degrees.y, doctest::Approx(90.0F));
+    CHECK_EQ(character->principal_orientation_degrees.z, doctest::Approx(0.0F));
     const App::Runtime::Vec3 presentation_x{App::Runtime::transform_vector(
         App::Runtime::Vec3{.x = 1.0F}, character->presentation_transform().matrix)};
     CHECK_EQ(presentation_x.x, doctest::Approx(0.0F).epsilon(0.0001));
@@ -675,9 +676,9 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
 
     // Simulate the scheduler's next command execution. first_tick is
     // deliberately false: previous_progress==0 is itself the authoritative
-    // execution-boundary signal. The pass must reseed to sample[0], and now
-    // integrates through the +45° offset persisted by the prior invocation,
-    // producing the full +90° live root orientation.
+    // execution-boundary signal. The pass must reseed to sample[0], then
+    // integrate through the 90° principal orientation persisted by the prior
+    // invocation. The same args overwrite the same principal state afterward.
     App::Script::BodyAnimationRequest repeated{request};
     repeated.first_tick = false;
     repeated.execution_count = 1;
@@ -731,7 +732,7 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
             .has_value());
     App::Character::RuntimeCharacter* character{runtime.character_runtime().find(310)};
     REQUIRE(character != nullptr);
-    character->transform.matrix = App::Runtime::Matrix3::identity();
+    character->set_principal_orientation({});
 
     const App::Script::BodyAnimationRequest request{.character_id = 310,
         .object_binding = "RootBody",
@@ -780,7 +781,7 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
     // binding. The dedicated regression immediately above covers non-zero
     // sample-zero anchors and live root orientation.
     before->transform.translation = {};
-    before->transform.matrix = App::Runtime::Matrix3::identity();
+    before->set_principal_orientation({});
 
     const App::Script::BodyAnimationRequest root_request{.character_id = 310,
         .object_binding = "RootBody",

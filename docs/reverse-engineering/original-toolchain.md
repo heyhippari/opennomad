@@ -2193,7 +2193,7 @@ RAM = <invented phrase>
 even when a plausible English backronym fits.
 
 For IAM, historical material supplies “Intelligent Adventurer Manager” /
-“Intelligent Adventure Manager” variants, but even there source wording varies.
+“gio” variants, but even there source wording varies.
 
 The internal short name:
 

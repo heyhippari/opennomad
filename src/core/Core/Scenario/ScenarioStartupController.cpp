@@ -233,6 +233,7 @@ void ScenarioStartupController::reset_session() {
   m_area_script_owner_slot = 0;
   m_area_transition.reset();
   m_next_area_transition_generation = 1;
+  m_next_camera_operation_generation = 1;
   m_area_script.reset();
   m_active_zones.clear();
   m_zone_contacts.clear();
@@ -647,7 +648,7 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
       });
 
   area_script.set_camera_sink([this](const Script::AreaCameraRequest& request) {
-    enqueue_compact_camera(m_area_script_owner_slot, false, request);
+    return enqueue_compact_camera(m_area_script_owner_slot, false, request);
   });
 
   area_script.set_interface_sink([this](const InterfaceOpenRequest& request)
@@ -842,14 +843,15 @@ std::optional<std::size_t> ScenarioStartupController::resident_area_slot(
   return std::nullopt;
 }
 
-void ScenarioStartupController::enqueue_compact_camera(const std::size_t owner_slot,
+std::expected<Script::AreaCameraOperationHandle, std::string>
+ScenarioStartupController::enqueue_compact_camera(const std::size_t owner_slot,
     const bool prefer_scene_definition,
     const Script::AreaCameraRequest& request) {
   if (m_manager == nullptr || owner_slot >= m_area_slots.size()) {
-    App::Log::warn(LogCategory::Scenario,
-        "compact camera {} requested without a resident owner",
-        request.camera_id);
-    return;
+    const std::string error{
+        fmt::format("compact camera {} requested without a resident owner", request.camera_id)};
+    App::Log::warn(LogCategory::Scenario, "{}", error);
+    return std::expected<Script::AreaCameraOperationHandle, std::string>{std::unexpect, error};
   }
   const RuntimeAreaSlot& slot{m_area_slots.at(owner_slot)};
   const std::int16_t camera_id{static_cast<std::int16_t>(request.camera_id)};
@@ -867,17 +869,30 @@ void ScenarioStartupController::enqueue_compact_camera(const std::size_t owner_s
   }
   const WorldSceneContext* context{m_manager->active_world_context()};
   if (!camera.has_value() || context == nullptr) {
-    App::Log::warn(LogCategory::Scenario,
-        "compact camera {} has no owner-resident definition or active world",
-        request.camera_id);
-    return;
+    const std::string error{fmt::format(
+        "compact camera {} has no owner-resident definition or active world", request.camera_id)};
+    App::Log::warn(LogCategory::Scenario, "{}", error);
+    return std::expected<Script::AreaCameraOperationHandle, std::string>{std::unexpect, error};
   }
+  if (request.wait_for_completion && camera->camera_type != 12U) {
+    return std::expected<Script::AreaCameraOperationHandle, std::string>{std::unexpect,
+        fmt::format("tracked camera {} uses unsupported controller mode {}",
+            request.camera_id,
+            camera->camera_type)};
+  }
+
+  const std::optional<std::uint64_t> operation_generation{
+      request.wait_for_completion
+          ? std::optional<std::uint64_t>{m_next_camera_operation_generation++}
+          : std::nullopt};
 
   // Preserve serialized vectors/selectors. WorldCameraSystem obtains the
   // current actor pose through its narrow provider on every update.
   m_manager->world_presentation().enqueue_camera(WorldCameraCommand{.scene_id = context->scene_id,
       .scene_generation = context->generation,
       .camera_id = request.camera_id,
+      .source_area_id = slot.primary_area_id,
+      .operation_generation = operation_generation,
       .serialized_eye = camera->serialized_eye,
       .serialized_target = camera->serialized_target,
       .runtime_eye = Runtime::iam_camera_vector_to_runtime(camera->serialized_eye),
@@ -894,12 +909,15 @@ void ScenarioStartupController::enqueue_compact_camera(const std::size_t owner_s
       .eye_attachment_selector = camera->eye_attachment_selector,
       .tail_fields = camera->tail_fields});
   record("AreaScript.CameraRequested",
-      fmt::format("id={} duration={} flags={} type={} hFov={}deg",
+      fmt::format("id={} duration={} flags={} type={} hFov={}deg operation={}",
           request.camera_id,
           request.duration_units,
           request.flags,
           camera->camera_type,
-          Runtime::area_angle_to_degrees(camera->horizontal_fov_units)));
+          Runtime::area_angle_to_degrees(camera->horizontal_fov_units),
+          operation_generation.has_value() ? fmt::format("{}", operation_generation.value())
+                                           : std::string{"none"}));
+  return Script::AreaCameraOperationHandle{.generation = operation_generation.value_or(0U)};
 }
 
 void ScenarioStartupController::bind_compact_state_services(Script::AreaScriptRuntime& runtime,
@@ -1111,7 +1129,7 @@ void ScenarioStartupController::bind_scene_compact_services(Script::AreaScriptRu
   });
   runtime.set_camera_sink(
       [this, owner_slot, prefer_scene_definition](const Script::AreaCameraRequest& request) {
-        enqueue_compact_camera(owner_slot, prefer_scene_definition, request);
+        return enqueue_compact_camera(owner_slot, prefer_scene_definition, request);
       });
   runtime.set_presentation_sink([this](const Script::AreaPresentationRequest& request) {
     if (m_manager == nullptr) {
@@ -1783,6 +1801,12 @@ std::expected<void, std::string> ScenarioStartupController::present_compact_obje
   if (m_manager == nullptr) {
     return std::expected<void, std::string>{std::unexpect, "scenario manager is not available"};
   }
+  if (m_area_slots.at(m_active_area_slot).primary_area_id == 222 &&
+      (request.object_id == 405 || request.object_id == 406)) {
+    App::Log::info(LogCategory::Scenario, "AREA 222 sequence: object{}", request.object_id);
+    record("Area222.CameraSequence", fmt::format("object{}", request.object_id));
+  }
+
 
   if (!m_object_archive.has_value()) {
     auto bytes{read_file(std::string{K_IAM_OBJECT_PATH})};
@@ -2287,6 +2311,55 @@ std::expected<void, std::string> ScenarioStartupController::service_character_sc
   return {};
 }
 
+std::expected<void, std::string> ScenarioStartupController::service_camera_completions() {
+  if (m_manager == nullptr) {
+    return {};
+  }
+
+  while (std::optional<WorldCameraOperationCompletion> completed{
+      m_manager->world_presentation().take_camera_completion()}) {
+    const Script::AreaCameraOperationHandle handle{
+        .generation = completed->operation_generation};
+    Script::AreaScriptRuntime* target{nullptr};
+    const auto consider = [&target, handle](Script::AreaScriptRuntime* runtime) {
+      if (target != nullptr || runtime == nullptr ||
+          runtime->state() != Script::AreaScriptState::k_waiting ||
+          runtime->wait_info().kind != Script::AreaWaitKind::k_camera ||
+          !runtime->wait_info().camera_operation.has_value() ||
+          runtime->wait_info().camera_operation.value() != handle) {
+        return;
+      }
+      target = runtime;
+    };
+
+    consider(m_area_script.has_value() ? &m_area_script.value() : nullptr);
+    for (RuntimeAreaSlot& slot : m_area_slots) {
+      consider(slot.scene_script.has_value() ? &slot.scene_script.value() : nullptr);
+    }
+    for (const std::unique_ptr<ZoneContactContext>& contact : m_zone_contacts) {
+      consider(contact != nullptr && contact->script != nullptr ? contact->script.get() : nullptr);
+    }
+
+    if (target == nullptr) {
+      App::Log::debug(LogCategory::Scenario,
+          "stale camera completion ignored — generation={} camera={} scene={} worldGeneration={}",
+          completed->operation_generation,
+          completed->camera_id,
+          completed->scene_id,
+          completed->scene_generation);
+      continue;
+    }
+    if (auto resumed{target->complete_camera_wait(handle)}; !resumed) {
+      return resumed;
+    }
+    if (completed->source_area_id == 222 &&
+        (completed->camera_id == 4291U || completed->camera_id == 4292U)) {
+      record("Area222.CameraSequence", fmt::format("{} completed", completed->camera_id));
+    }
+  }
+  return {};
+}
+
 void ScenarioStartupController::service_scene_scripts(const float delta_seconds) {
   for (std::size_t index{0}; index < m_area_slots.size(); ++index) {
     RuntimeAreaSlot& slot{m_area_slots.at(index)};
@@ -2522,6 +2595,10 @@ std::expected<void, std::string> ScenarioStartupController::tick(const float del
 
   Script::AreaScriptRuntime& area_script{*m_area_script};
   m_ticked = true;
+  if (auto cameras{service_camera_completions()}; !cameras) {
+    m_last_error = cameras.error();
+    return std::expected<void, std::string>{std::unexpect, m_last_error};
+  }
 
   // AREA opcode 0x3D leaves its context running at the advanced IP. Runtime's
   // dialog mode is a global scheduling takeover, so suppress only normal AREA
