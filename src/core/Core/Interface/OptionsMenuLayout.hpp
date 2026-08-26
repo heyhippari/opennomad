@@ -22,16 +22,28 @@ enum class OptionsRowKind : std::uint8_t {
   k_back = 6,
 };
 
-/// One declarative OPTIONS row.
+/// One Runtime choice belonging to a type-0 option descriptor.
+struct OptionsChoiceDefinition {
+  std::int16_t runtime_string_index{-1};
+  std::int32_t raw_value{0};
+  std::string_view literal_label;
+};
+
+/// One declarative OPTIONS row, preserving both descriptor provenance and the
+/// actual IAM string index used for its visible label.
 ///
-/// runtime_string_index >= 0 resolves through IAM/Options. A negative index is
-/// reserved for OpenNomad-only settings and uses literal_label instead. This
-/// keeps recovered Runtime provenance separate from future enhancement rows.
+/// This distinction fixes an ambiguity in Phase 1: Runtime page builders pass
+/// an *option descriptor index* to 0x00490F90, while the descriptor's +0x18
+/// field supplies a separate IAM/Options string index.
 struct OptionsRowDefinition {
   std::string_view stable_id;
-  std::int16_t runtime_string_index{-1};
+  std::int16_t runtime_option_index{-1};
+  std::int16_t runtime_label_string_index{-1};
   OptionsRowKind kind{OptionsRowKind::k_submenu};
+  std::span<const OptionsChoiceDefinition> choices;
+  std::size_t default_choice{0};
   std::string_view literal_label;
+  bool accent{false};
 };
 
 /// A page is just a stable ID plus an ordered row span. Runtime used a fixed
@@ -45,7 +57,9 @@ struct OptionsPageDefinition {
 
 inline constexpr std::uint16_t k_options_interface_id{35};
 inline constexpr char k_options_root_font_key{'S'};
+inline constexpr char k_options_value_font_key{'J'};
 inline constexpr std::uint32_t k_options_text_flags{0x80000010U};
+inline constexpr std::uint32_t k_options_value_text_flags{0x80000008U};
 inline constexpr int k_options_row_x{0};
 inline constexpr int k_options_row_width{640};
 inline constexpr int k_options_row_height{40};
@@ -82,9 +96,8 @@ enum class OptionsInvocationMode : std::uint8_t {
 /// Effective Y coordinate for one active row after 0x004910B0 has laid out the
 /// page. OpenNomad stores only active rows, so row_index is the active ordinal
 /// rather than an index into Runtime's fixed 16-row scratch pool.
-[[nodiscard]] constexpr int runtime_options_row_y(const std::size_t row_index,
-    const std::size_t active_count,
-    const OptionsInvocationMode mode) {
+[[nodiscard]] constexpr int runtime_options_row_y(
+    const std::size_t row_index, const std::size_t active_count, const OptionsInvocationMode mode) {
   return runtime_options_row_start_y(mode) +
          (static_cast<int>(row_index) * runtime_options_row_step(active_count));
 }
@@ -96,18 +109,169 @@ enum class OptionsInvocationMode : std::uint8_t {
 ///   IAM/Options[19] -> state 0x004DD5D8 (Controls)
 ///   IAM/Options[72] -> Back (present on the START MENU invocation path)
 ///
-/// stable_id is OpenNomad metadata and is deliberately independent of the IAM
-/// string index. Later pages/settings can therefore use stable configuration
-/// keys even when they are OpenNomad-only.
+/// The numbers above are Runtime option-descriptor indices, not the visible
+/// IAM string indices. Descriptor +0x18 yields 0/16/21/28/80 respectively.
 inline constexpr std::array<OptionsRowDefinition, 5> k_options_root_rows{{
-    {"video", 1, OptionsRowKind::k_submenu, {}},
-    {"audio", 9, OptionsRowKind::k_submenu, {}},
-    {"game", 14, OptionsRowKind::k_submenu, {}},
-    {"controls", 19, OptionsRowKind::k_submenu, {}},
-    {"back", 72, OptionsRowKind::k_back, {}},
+    {.stable_id = "video",
+        .runtime_option_index = 1,
+        .runtime_label_string_index = 0,
+        .kind = OptionsRowKind::k_submenu,
+        .choices = {},
+        .default_choice = 0,
+        .literal_label = {},
+        .accent = false},
+    {.stable_id = "audio",
+        .runtime_option_index = 9,
+        .runtime_label_string_index = 16,
+        .kind = OptionsRowKind::k_submenu,
+        .choices = {},
+        .default_choice = 0,
+        .literal_label = {},
+        .accent = false},
+    {.stable_id = "game",
+        .runtime_option_index = 14,
+        .runtime_label_string_index = 21,
+        .kind = OptionsRowKind::k_submenu,
+        .choices = {},
+        .default_choice = 0,
+        .literal_label = {},
+        .accent = false},
+    {.stable_id = "controls",
+        .runtime_option_index = 19,
+        .runtime_label_string_index = 28,
+        .kind = OptionsRowKind::k_submenu,
+        .choices = {},
+        .default_choice = 0,
+        .literal_label = {},
+        .accent = false},
+    {.stable_id = "back",
+        .runtime_option_index = 72,
+        .runtime_label_string_index = 80,
+        .kind = OptionsRowKind::k_back,
+        .choices = {},
+        .default_choice = 0,
+        .literal_label = {},
+        .accent = false},
 }};
 inline constexpr OptionsPageDefinition k_options_root_page{
     .stable_id = "root", .rows = std::span<const OptionsRowDefinition>{k_options_root_rows}};
+
+// Runtime type-0 value tables recovered from the descriptor records beginning
+// at 0x004DA574. Labels remain in IAM/Options; raw values are what the original
+// callbacks write into OMK_SAVE/runtime state.
+inline constexpr std::array<OptionsChoiceDefinition, 5> k_options_clipping_choices{{
+    {.runtime_string_index = 7, .raw_value = 25, .literal_label = {}},
+    {.runtime_string_index = 6, .raw_value = 50, .literal_label = {}},
+    {.runtime_string_index = 5, .raw_value = 100, .literal_label = {}},
+    {.runtime_string_index = 4, .raw_value = 150, .literal_label = {}},
+    {.runtime_string_index = 3, .raw_value = 200, .literal_label = {}},
+}};
+inline constexpr std::array<OptionsChoiceDefinition, 2> k_options_yes_no_choices{{
+    {.runtime_string_index = 60, .raw_value = 0, .literal_label = {}},
+    {.runtime_string_index = 61, .raw_value = 1, .literal_label = {}},
+}};
+inline constexpr std::array<OptionsChoiceDefinition, 5> k_options_street_activity_choices{{
+    {.runtime_string_index = 15, .raw_value = 0, .literal_label = {}},
+    {.runtime_string_index = 14, .raw_value = 1, .literal_label = {}},
+    {.runtime_string_index = 13, .raw_value = 2, .literal_label = {}},
+    {.runtime_string_index = 12, .raw_value = 3, .literal_label = {}},
+    {.runtime_string_index = 11, .raw_value = 4, .literal_label = {}},
+}};
+inline constexpr std::array<OptionsChoiceDefinition, 3> k_options_detail_choices{{
+    {.runtime_string_index = 73, .raw_value = 0, .literal_label = {}},
+    {.runtime_string_index = 65, .raw_value = 1, .literal_label = {}},
+    {.runtime_string_index = 75, .raw_value = 2, .literal_label = {}},
+}};
+
+/// Runtime Video page builder @ 0x004913F0 activates descriptors
+/// 1,2,3,4,5,6,7,8 and 72 in this exact order.
+///
+/// Defaults mirror Runtime's initialization:
+///   clipping = raw 50          (OMK_SAVE +0x14)
+///   display sky = 1            (OMK_SAVE +0x10)
+///   display shadow = 1         (OMK_SAVE +0x11)
+///   street activity = 3        (0x0090E726)
+///   detail level = 1           (0x0090E727)
+///
+/// Resolution and renderer are Runtime type-4 dynamic values. OpenNomad seeds
+/// those from the live window/OpenGL environment rather than inventing legacy
+/// DirectDraw device choices.
+inline constexpr std::array<OptionsRowDefinition, 9> k_options_video_rows{{
+    {.stable_id = "video.title",
+        .runtime_option_index = 1,
+        .runtime_label_string_index = 0,
+        .kind = OptionsRowKind::k_submenu,
+        .choices = {},
+        .default_choice = 0,
+        .literal_label = {},
+        .accent = true},
+    {.stable_id = "video.resolution",
+        .runtime_option_index = 2,
+        .runtime_label_string_index = 1,
+        .kind = OptionsRowKind::k_dynamic,
+        .choices = {},
+        .default_choice = 0,
+        .literal_label = {},
+        .accent = false},
+    {.stable_id = "video.clipping_distance",
+        .runtime_option_index = 3,
+        .runtime_label_string_index = 2,
+        .kind = OptionsRowKind::k_enum,
+        .choices = std::span<const OptionsChoiceDefinition>{k_options_clipping_choices},
+        .default_choice = 1,
+        .literal_label = {},
+        .accent = false},
+    {.stable_id = "video.display_sky",
+        .runtime_option_index = 4,
+        .runtime_label_string_index = 8,
+        .kind = OptionsRowKind::k_enum,
+        .choices = std::span<const OptionsChoiceDefinition>{k_options_yes_no_choices},
+        .default_choice = 1,
+        .literal_label = {},
+        .accent = false},
+    {.stable_id = "video.display_shadow",
+        .runtime_option_index = 5,
+        .runtime_label_string_index = 9,
+        .kind = OptionsRowKind::k_enum,
+        .choices = std::span<const OptionsChoiceDefinition>{k_options_yes_no_choices},
+        .default_choice = 1,
+        .literal_label = {},
+        .accent = false},
+    {.stable_id = "video.street_activity",
+        .runtime_option_index = 6,
+        .runtime_label_string_index = 10,
+        .kind = OptionsRowKind::k_enum,
+        .choices = std::span<const OptionsChoiceDefinition>{k_options_street_activity_choices},
+        .default_choice = 3,
+        .literal_label = {},
+        .accent = false},
+    {.stable_id = "video.detail_level",
+        .runtime_option_index = 7,
+        .runtime_label_string_index = 72,
+        .kind = OptionsRowKind::k_enum,
+        .choices = std::span<const OptionsChoiceDefinition>{k_options_detail_choices},
+        .default_choice = 1,
+        .literal_label = {},
+        .accent = false},
+    {.stable_id = "video.renderer",
+        .runtime_option_index = 8,
+        .runtime_label_string_index = 67,
+        .kind = OptionsRowKind::k_dynamic,
+        .choices = {},
+        .default_choice = 0,
+        .literal_label = {},
+        .accent = false},
+    {.stable_id = "video.back",
+        .runtime_option_index = 72,
+        .runtime_label_string_index = 80,
+        .kind = OptionsRowKind::k_back,
+        .choices = {},
+        .default_choice = 0,
+        .literal_label = {},
+        .accent = false},
+}};
+inline constexpr OptionsPageDefinition k_options_video_page{
+    .stable_id = "video", .rows = std::span<const OptionsRowDefinition>{k_options_video_rows}};
 
 // The five-entry START MENU root page is the easiest sanity check of the
 // recovered layout helper: 120 + N*65.
@@ -122,5 +286,12 @@ static_assert(runtime_options_row_y(
                   3, k_options_root_rows.size(), OptionsInvocationMode::k_start_menu) == 315);
 static_assert(runtime_options_row_y(
                   4, k_options_root_rows.size(), OptionsInvocationMode::k_start_menu) == 380);
+
+// Nine Video rows use Runtime's 280-unit branch: start 120, step 32.
+static_assert(runtime_options_row_step(k_options_video_rows.size()) == 32);
+static_assert(runtime_options_row_y(
+                  0, k_options_video_rows.size(), OptionsInvocationMode::k_start_menu) == 120);
+static_assert(runtime_options_row_y(
+                  8, k_options_video_rows.size(), OptionsInvocationMode::k_start_menu) == 376);
 
 }  // namespace App::Interface

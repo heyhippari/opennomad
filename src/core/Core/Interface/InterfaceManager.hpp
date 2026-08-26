@@ -18,6 +18,7 @@
 #include "Core/Interface/InterfacePresentation.hpp"
 #include "Core/Omikron/IamStringTable.hpp"
 #include "Core/Texture.hpp"
+#include "Settings/GameSettings.hpp"
 
 namespace App::Input {
 class InputManager;
@@ -186,6 +187,15 @@ class InterfaceManager {
     return m_fonts;
   }
 
+  /// Runtime-independent settings backend used by OPTIONS rows and, later, by
+  /// gameplay/rendering consumers and persistence.
+  [[nodiscard]] App::Settings::GameSettings& game_settings() {
+    return m_game_settings;
+  }
+  [[nodiscard]] const App::Settings::GameSettings& game_settings() const {
+    return m_game_settings;
+  }
+
   /// Sets the animated background's presentation mode (stepped or
   /// interpolated) for every resident instance. Debug/inspection helper.
   void set_background_interpolated(bool interpolated);
@@ -217,6 +227,7 @@ class InterfaceManager {
 
   std::unique_ptr<I2DRenderer> m_renderer;
   FontManager m_fonts;
+  App::Settings::GameSettings m_game_settings;
   /// Resident interfaces in opening order (presentation order).
   std::vector<std::unique_ptr<InterfaceInstance>> m_instances;
   /// Focused (input-receiving) instance; nullopt when none resident.

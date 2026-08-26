@@ -45,6 +45,21 @@ using I2DStateCancelCallback =
 using I2DAdjustCallback =
     std::function<void(InterfaceManager&, InterfaceInstance&, std::int32_t delta)>;
 
+/// Runtime value rows draw the label to the left of the canvas centre and the
+/// current value to the right. Ordinary menu text remains centred.
+enum class I2DTextLayout : std::uint8_t { k_centered, k_option_pair, k_option_slider };
+
+/// Lazily resolves the current value of a text row. The callback points at the
+/// settings backend rather than storing a second copy inside the UI.
+using I2DValueTextCallback = std::function<std::string()>;
+using I2DValueScalarCallback = std::function<float()>;
+
+/// Runtime option renderer 0x00493380 places value widgets around x=320 with
+/// a 20-reference-unit half-gap (label ends at 300, value begins at 340).
+inline constexpr float k_i2d_option_pair_half_gap{20.0F};
+inline constexpr float k_i2d_option_slider_width{200.0F};
+inline constexpr float k_i2d_option_slider_height{10.0F};
+
 /// The two generic element kinds implemented by this milestone. More element
 /// kinds (animations, hotspots, ...) are expected from later RE work.
 enum class I2DElementKind : std::uint8_t { k_bitmap, k_text };
@@ -132,7 +147,10 @@ struct I2DTextElement {
   I2DState* target_state{nullptr};
   I2DAdjustCallback on_adjust;
   std::string literal_text;
-
+  I2DTextLayout layout{I2DTextLayout::k_centered};
+  I2DValueTextCallback value_text;
+  I2DValueScalarCallback value_scalar;
+ 
   [[nodiscard]] bool selectable() const {
     return target_state != nullptr || static_cast<bool>(on_adjust);
   }

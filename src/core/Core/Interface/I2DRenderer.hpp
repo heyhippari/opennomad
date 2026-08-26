@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <expected>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -120,6 +121,9 @@ class I2DRenderer {
   std::unique_ptr<VertexArray> m_vertex_array;
   std::unique_ptr<VertexBuffer> m_vertex_buffer;
   std::unique_ptr<IndexBuffer> m_index_buffer;
+  /// Generated green->yellow->red strip used by Runtime-style slider rows.
+  /// Phase 2 installs the generic widget; Audio becomes its first consumer.
+  std::optional<Texture2D> m_option_slider_texture;
   bool m_initialized{false};
 
   /// Reused per-frame storage (never released between frames).

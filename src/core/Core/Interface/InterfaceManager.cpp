@@ -2,7 +2,9 @@
 
 #include <SDL3/SDL_error.h>
 #include <SDL3/SDL_events.h>
+#include <SDL3/SDL_video.h>
 #include <fmt/format.h>
+#include <glad/glad.h>
 
 #include <algorithm>
 #include <array>
@@ -37,6 +39,7 @@
 #include "Core/Omikron/BmpImage.hpp"
 #include "Core/Omikron/IamStringTable.hpp"
 #include "Core/Texture.hpp"
+#include "Settings/GameSettings.hpp"
 
 namespace App::Interface {
 
@@ -740,23 +743,121 @@ void close_options_to_host(InterfaceManager& manager, InterfaceInstance& options
   }
 }
 
-I2DTextElement make_options_text(const OptionsRowDefinition& definition,
+std::string current_options_resolution_label() {
+  int width{800};
+  int height{600};
+  if (SDL_Window* window{SDL_GetKeyboardFocus()}; window != nullptr) {
+    int live_width{0};
+    int live_height{0};
+    if (SDL_GetWindowSize(window, &live_width, &live_height) && live_width > 0 && live_height > 0) {
+      width = live_width;
+      height = live_height;
+    }
+  }
+  // OpenNomad requests an RGBA8 OpenGL framebuffer rather than Runtime's
+  // selectable 16-bit DirectDraw mode, so report the real modern depth.
+  return fmt::format("{} x {} x 32 bpp", width, height);
+}
+
+std::string current_options_renderer_label() {
+  const GLubyte* renderer{glGetString(GL_RENDERER)};
+  if (renderer == nullptr) {
+    return "OpenGL";
+  }
+  // OpenGL exposes the renderer string as GLubyte*. It is NUL-terminated text.
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+  return std::string{reinterpret_cast<const char*>(renderer)};
+}
+
+std::vector<App::Settings::SettingChoice> copy_runtime_choices(
+    const InterfaceInstance& instance, const OptionsRowDefinition& definition) {
+  std::vector<App::Settings::SettingChoice> choices;
+  choices.reserve(definition.choices.size());
+  for (const OptionsChoiceDefinition& choice : definition.choices) {
+    std::string label;
+    if (!choice.literal_label.empty()) {
+      label = choice.literal_label;
+    } else if (choice.runtime_string_index >= 0) {
+      label =
+          std::string{instance.strings.at(static_cast<std::size_t>(choice.runtime_string_index))};
+    }
+    choices.push_back(
+        App::Settings::SettingChoice{.label = std::move(label), .raw_value = choice.raw_value});
+  }
+  return choices;
+}
+
+void seed_video_settings(InterfaceManager& manager, const InterfaceInstance& instance) {
+  for (const OptionsRowDefinition& row : k_options_video_page.rows) {
+    if (row.kind == OptionsRowKind::k_enum) {
+      manager.game_settings().ensure_choice(
+          std::string{row.stable_id}, copy_runtime_choices(instance, row), row.default_choice);
+    }
+  }
+
+  manager.game_settings().replace_choice("video.resolution",
+      std::vector<App::Settings::SettingChoice>{App::Settings::SettingChoice{
+          .label = current_options_resolution_label(), .raw_value = 0}},
+      0U);
+  manager.game_settings().replace_choice("video.renderer",
+      std::vector<App::Settings::SettingChoice>{
+          App::Settings::SettingChoice{.label = current_options_renderer_label(), .raw_value = 0}},
+      0U);
+}
+
+I2DTextElement make_options_text(InterfaceManager& manager,
+    const OptionsRowDefinition& definition,
     const std::size_t row_index,
     const std::size_t active_count,
     I2DState* target_state) {
   I2DTextElement text;
-  if (definition.runtime_string_index >= 0) {
-    text.string_index = static_cast<std::uint16_t>(definition.runtime_string_index);
+  if (definition.runtime_label_string_index >= 0) {
+    text.string_index = static_cast<std::uint16_t>(definition.runtime_label_string_index);
   } else {
     text.literal_text = std::string{definition.literal_label};
   }
-  text.font_key = k_options_root_font_key;
+  const bool choice_row{
+      definition.kind == OptionsRowKind::k_enum || definition.kind == OptionsRowKind::k_dynamic};
+  const bool slider_row{definition.kind == OptionsRowKind::k_slider};
+  const bool value_row{choice_row || slider_row};
+  text.font_key = value_row ? k_options_value_font_key : k_options_root_font_key;
   text.bounds = I2DRect{.x = k_options_row_x,
       .y = runtime_options_row_y(row_index, active_count, OptionsInvocationMode::k_start_menu),
       .width = k_options_row_width,
       .height = k_options_row_height};
-  text.runtime_flags = k_options_text_flags;
+  text.runtime_flags = value_row ? k_options_value_text_flags : k_options_text_flags;
   text.target_state = target_state;
+  if (definition.accent) {
+    // Runtime uses its warm active/accent colour for OPTIONS page headings.
+    text.red = 255;
+    text.green = 101;
+    text.blue = 66;
+  }
+  if (slider_row) {
+    // Audio is the first Runtime page that consumes this. The renderer support
+    // lands in Phase 2 so Phase 3 only has to bind a numeric backend value.
+    text.layout = I2DTextLayout::k_option_slider;
+  }
+  if (choice_row) {
+    text.layout = I2DTextLayout::k_option_pair;
+    const std::string setting_id{definition.stable_id};
+    App::Settings::GameSettings* settings{&manager.game_settings()};
+    text.value_text = [settings, setting_id]() {
+      return settings->choice_label(setting_id);
+    };
+    text.on_adjust =
+        [setting_id](InterfaceManager& manager_ref, InterfaceInstance&, const std::int32_t delta) {
+          if (!manager_ref.game_settings().adjust_choice(setting_id, delta)) {
+            return;
+          }
+          const auto raw{manager_ref.game_settings().choice_raw_value(setting_id)};
+          App::Log::debug(LogCategory::Interface,
+              "setting {} -> \"{}\" raw={}",
+              setting_id,
+              manager_ref.game_settings().choice_label(setting_id),
+              raw.has_value() ? raw.value() : 0);
+        };
+  }
   return text;
 }
 
@@ -919,7 +1020,10 @@ void initialize_start_menu(InterfaceManager& manager, InterfaceInstance& instanc
                        .blue = 255,
                        .target_state = child_states.at(index),
                        .on_adjust = {},
-                       .literal_text = {}},
+                       .literal_text = {},
+                       .layout = I2DTextLayout::k_centered,
+                       .value_text = {},
+                       .value_scalar = {}},
             .presentation = I2DPresentationHints{}});
   }
   root->groups.push_back(std::move(text_group));
@@ -940,7 +1044,10 @@ void initialize_start_menu(InterfaceManager& manager, InterfaceInstance& instanc
                      .blue = 255,
                      .target_state = nullptr,
                      .on_adjust = {},
-                     .literal_text = {}},
+                     .literal_text = {},
+                     .layout = I2DTextLayout::k_centered,
+                     .value_text = {},
+                     .value_scalar = {}},
           .presentation = I2DPresentationHints{}});
   quit->groups.push_back(std::move(quit_title_group));
 
@@ -967,7 +1074,10 @@ void initialize_start_menu(InterfaceManager& manager, InterfaceInstance& instanc
             .blue = 255,
             .target_state = quit_targets.at(index),
             .on_adjust = {},
-            .literal_text = {}},
+            .literal_text = {},
+            .layout = I2DTextLayout::k_centered,
+            .value_text = {},
+            .value_scalar = {}},
         .presentation = I2DPresentationHints{}});
   }
   quit->groups.push_back(std::move(quit_choice_group));
@@ -1000,28 +1110,28 @@ void initialize_options(InterfaceManager& manager, InterfaceInstance& instance) 
   App::Log::debug(LogCategory::I2D, "initializing OPTIONS root state");
 
   I2DState* root{manager.create_state(instance)};
-  I2DState* video_action{manager.create_state(instance)};
+  I2DState* video{manager.create_state(instance)};
   I2DState* audio_action{manager.create_state(instance)};
   I2DState* game_action{manager.create_state(instance)};
   I2DState* controls_action{manager.create_state(instance)};
   I2DState* back_action{manager.create_state(instance)};
 
-  if (root == nullptr || video_action == nullptr || audio_action == nullptr ||
-      game_action == nullptr || controls_action == nullptr || back_action == nullptr) {
+  if (root == nullptr || video == nullptr || audio_action == nullptr || game_action == nullptr ||
+      controls_action == nullptr || back_action == nullptr) {
     App::Log::error(LogCategory::I2D, "failed to allocate the OPTIONS state graph");
     return;
   }
 
   const std::array<I2DState*, 5> targets{
-      video_action, audio_action, game_action, controls_action, back_action};
+      video, audio_action, game_action, controls_action, back_action};
   for (I2DState* target : targets) {
     target->parent = root;
   }
 
-  const std::array<std::string_view, 4> deferred_pages{"video", "audio", "game", "controls"};
+  const std::array<std::string_view, 3> deferred_pages{"audio", "game", "controls"};
   for (std::size_t index{0}; index < deferred_pages.size(); ++index) {
     const std::string_view page_id{deferred_pages.at(index)};
-    targets.at(index)->on_enter = [page_id](InterfaceManager&, InterfaceInstance&, I2DState&) {
+    targets.at(index + 1U)->on_enter = [page_id](InterfaceManager&, InterfaceInstance&, I2DState&) {
       App::Log::info(LogCategory::Interface,
           "OPTIONS page \"{}\" is deferred to a later implementation phase",
           page_id);
@@ -1036,25 +1146,52 @@ void initialize_options(InterfaceManager& manager, InterfaceInstance& instance) 
     close_options_to_host(manager_ref, instance_ref);
   };
 
-  // Root submenu/back rows are Runtime type 2/type 6 and use SNEAK.FNT.
+  // Runtime type 2/6 rows use SNEAK.FNT; enum/dynamic Video rows use
+  // JOURNAL.FNT.
   if (auto result{manager.load_font(k_options_root_font_key)}; !result) {
     App::Log::warn(LogCategory::I2D,
         "font '{}' unavailable for OPTIONS: {}",
         k_options_root_font_key,
         result.error());
   }
+  if (auto result{manager.load_font(k_options_value_font_key)}; !result) {
+    App::Log::warn(LogCategory::I2D,
+        "font '{}' unavailable for OPTIONS values: {}",
+        k_options_value_font_key,
+        result.error());
+  }
+
+  seed_video_settings(manager, instance);
 
   I2DGroup root_rows;
   root_rows.runtime_flags = k_options_text_flags;
   std::size_t index{0};
   for (const OptionsRowDefinition& row : k_options_root_page.rows) {
-    root_rows.elements.push_back(I2DElement{
-        .data = make_options_text(row, index, k_options_root_page.rows.size(), targets.at(index)),
-        .presentation = I2DPresentationHints{}});
+    root_rows.elements.push_back(
+        I2DElement{.data = make_options_text(
+                       manager, row, index, k_options_root_page.rows.size(), targets.at(index)),
+            .presentation = I2DPresentationHints{}});
     ++index;
   }
   root->groups.push_back(std::move(root_rows));
   root->selected_element = 0U;
+
+  // Video page: title + seven Runtime value rows + Back. The title is static,
+  // so selected_element 0 addresses Resolution, matching Runtime's first
+  // adjustable row. Back links to the OPTIONS root and Escape follows parent.
+  I2DGroup video_rows;
+  video_rows.runtime_flags = k_options_text_flags;
+  std::size_t video_index{0};
+  for (const OptionsRowDefinition& row : k_options_video_page.rows) {
+    I2DState* target{row.kind == OptionsRowKind::k_back ? root : nullptr};
+    video_rows.elements.push_back(
+        I2DElement{.data = make_options_text(
+                       manager, row, video_index, k_options_video_page.rows.size(), target),
+            .presentation = I2DPresentationHints{}});
+    ++video_index;
+  }
+  video->groups.push_back(std::move(video_rows));
+  video->selected_element = 0U;
 
   instance.root_state = root;
   instance.current_state = root;
@@ -1063,7 +1200,7 @@ void initialize_options(InterfaceManager& manager, InterfaceInstance& instance) 
       "OPTIONS root: {} selectable rows; active=\"{}\"",
       k_options_root_page.rows.size(),
       instance.strings.at(
-          static_cast<std::uint16_t>(k_options_root_page.rows.front().runtime_string_index)));
+          static_cast<std::uint16_t>(k_options_root_page.rows.front().runtime_label_string_index)));
 }
 
 // Runtime OPTIONS destroy callback: 0x00490F30. Resource release remains RAII.
