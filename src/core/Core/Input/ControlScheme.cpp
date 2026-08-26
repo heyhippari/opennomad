@@ -85,6 +85,14 @@ ControlScheme ControlScheme::make_keyboard_mouse_default() {
           .source = InputSource{.type = SourceType::k_key,
               .index = static_cast<std::uint32_t>(SDL_SCANCODE_DOWN)},
           .scale = 1.0F})
+      .add_binding({.action = Action::k_menu_left,
+          .source = InputSource{.type = SourceType::k_key,
+              .index = static_cast<std::uint32_t>(SDL_SCANCODE_LEFT)},
+          .scale = 1.0F})
+      .add_binding({.action = Action::k_menu_right,
+          .source = InputSource{.type = SourceType::k_key,
+              .index = static_cast<std::uint32_t>(SDL_SCANCODE_RIGHT)},
+          .scale = 1.0F})
       .add_binding({.action = Action::k_menu_confirm,
           .source = InputSource{.type = SourceType::k_key,
               .index = static_cast<std::uint32_t>(SDL_SCANCODE_RETURN)},

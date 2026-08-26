@@ -349,7 +349,9 @@ void I2DRenderer::render(const InterfaceInstance& instance,
           ++selectable_ordinal;
         }
 
-        const std::string_view label{instance.strings.at(text->string_index)};
+        const std::string_view label{text->literal_text.empty()
+                ? instance.strings.at(text->string_index)
+                : std::string_view{text->literal_text}};
         if (label.empty()) {
           continue;
         }

@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <string>
 #include <variant>
 #include <vector>
 
@@ -31,6 +32,18 @@ struct InterfaceInstance;
 /// completion) without inspecting the label text or string-table index.
 using I2DStateEnterCallback =
     std::function<void(InterfaceManager&, InterfaceInstance&, I2DState&)>;
+
+/// Optional state-level cancel action. This is needed for root states that
+/// logically return to another resident interface rather than to an I2D
+/// parent state (OPTIONS hosted by START MENU is the first recovered case).
+using I2DStateCancelCallback =
+    std::function<void(InterfaceManager&, InterfaceInstance&, I2DState&)>;
+
+/// Optional left/right adjustment action for a selectable text row. Keeping
+/// this on the generic row lets future options bind enum/slider/settings
+/// behavior without teaching InterfaceManager about individual setting names.
+using I2DAdjustCallback =
+    std::function<void(InterfaceManager&, InterfaceInstance&, std::int32_t delta)>;
 
 /// The two generic element kinds implemented by this milestone. More element
 /// kinds (animations, hotspots, ...) are expected from later RE work.
@@ -100,7 +113,10 @@ inline I2DBlitOptions resolve_bitmap_blit_options(const I2DBitmapElement& elemen
 /// its label, and resolves its font through a font key (see FontManager).
 ///
 /// target_state links the element to its child interface state; a non-null
-/// target marks the element as selectable.
+/// target marks the element as selectable. Rows with an on_adjust callback are
+/// also selectable even when confirmation itself has no target (e.g. a
+/// slider). literal_text is an OpenNomad extension for settings that do not
+/// have a corresponding IAM string-table entry.
 struct I2DTextElement {
   std::uint16_t string_index{0};
   char font_key{'I'};
@@ -114,9 +130,11 @@ struct I2DTextElement {
   std::uint32_t runtime_flags{0};
 
   I2DState* target_state{nullptr};
+  I2DAdjustCallback on_adjust;
+  std::string literal_text;
 
   [[nodiscard]] bool selectable() const {
-    return target_state != nullptr;
+    return target_state != nullptr || static_cast<bool>(on_adjust);
   }
 };
 
@@ -192,6 +210,9 @@ struct I2DState {
   /// selection (notably Quit confirmation defaults to "No").
   std::size_t selected_element{0};
   I2DStateEnterCallback on_enter;
+  /// Optional override for cancel/back. When empty, generic parent-state
+  /// traversal is used.
+  I2DStateCancelCallback on_cancel;
 };
 
 /// Collects the selectable text elements of `state` in iteration order

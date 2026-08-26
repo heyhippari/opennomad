@@ -56,6 +56,11 @@ struct InterfaceInstance {
   InterfaceHandle handle;
   /// The full open request that produced this instance (operands preserved).
   InterfaceOpenRequest open_request;
+  /// Optional resident interface that visually/semantically hosts this one.
+  /// Runtime keeps START MENU resident while OPTIONS is active; this explicit
+  /// relationship lets the child close back to the host without pretending
+  /// that states from two different interface instances share ownership.
+  std::optional<InterfaceHandle> parent_interface;
   Omikron::IamStringTable strings;
   /// The interface-level bitmap loaded from I2D/bitmaps/<bitmap_name>; null
   /// for interfaces without one.
@@ -192,6 +197,7 @@ class InterfaceManager {
   // --- Generic navigation (focused interface) ---
   void select_previous();
   void select_next();
+  void adjust_selected(std::int32_t delta);
   void confirm();
   void cancel();
 

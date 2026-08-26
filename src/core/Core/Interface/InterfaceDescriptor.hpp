@@ -39,8 +39,9 @@ struct InterfaceDescriptor {
   std::string_view string_table_name;
 
   /// Interface preloaded/pre-registered during this interface's lifetime
-  /// (interface 29 owns interface 35 "OPTIONS" in Runtime). Deferred; the
-  /// field documents the relationship for the next milestone.
+  /// (interface 29 owns interface 35 "OPTIONS" in Runtime). OpenNomad keeps
+  /// the descriptor relationship and may also keep both interface instances
+  /// resident while the companion is focused.
   std::optional<std::int32_t> companion_interface;
 
   InterfaceInitFn init{nullptr};

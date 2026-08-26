@@ -32,6 +32,10 @@ enum class Action : std::uint8_t {
   k_menu_up,
   /// Interface navigation: move the selection down (next entry).
   k_menu_down,
+  /// Interface navigation: decrease/previous value for the selected entry.
+  k_menu_left,
+  /// Interface navigation: increase/next value for the selected entry.
+  k_menu_right,
   /// Interface navigation: activate the selected entry.
   k_menu_confirm,
   /// Interface navigation: return to the parent state / cancel.
@@ -40,7 +44,7 @@ enum class Action : std::uint8_t {
 
 /// Number of entries in Action. Keep in sync with the enum above — the
 /// static_assert turns a forgotten update into a compile error.
-inline constexpr std::size_t k_action_count{11};
+inline constexpr std::size_t k_action_count{13};
 static_assert(k_action_count == std::to_underlying(Action::k_menu_cancel) + 1U);
 
 }  // namespace App::Input

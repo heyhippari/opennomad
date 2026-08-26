@@ -30,6 +30,7 @@
 #include "Core/Interface/InterfaceDescriptor.hpp"
 #include "Core/Interface/InterfaceDispatcher.hpp"
 #include "Core/Interface/InterfacePresentation.hpp"
+#include "Core/Interface/OptionsMenuLayout.hpp"
 #include "Core/Interface/StartMenuLayout.hpp"
 #include "Core/Log.hpp"
 #include "Core/LogCategory.hpp"
@@ -63,6 +64,8 @@ constexpr std::array<InterfaceCompletionPresentationHint, 1> K_START_MENU_COMPLE
 
 void initialize_start_menu(InterfaceManager& manager, InterfaceInstance& instance);
 void destroy_start_menu(InterfaceManager& manager, InterfaceInstance& instance);
+void initialize_options(InterfaceManager& manager, InterfaceInstance& instance);
+void destroy_options(InterfaceManager& manager, InterfaceInstance& instance);
 
 /// Builds the Runtime-formatted resource path for a descriptor field.
 std::string bitmap_path(const std::string_view name) {
@@ -109,13 +112,18 @@ bool presentation_input_locked(const InterfaceInstance& instance) {
   return instance.presentation.phase == InterfacePresentationPhase::k_completion ||
          instance.presentation.phase == InterfacePresentationPhase::k_completion_queued;
 }
+
+std::string_view text_label(const InterfaceInstance& instance, const I2DTextElement& text) {
+  if (!text.literal_text.empty()) {
+    return std::string_view{text.literal_text};
+  }
+  return instance.strings.at(text.string_index);
+}
 }  // namespace
 
 const InterfaceDescriptor* descriptor_for_id(const std::int32_t id) {
-  // Static registry mirroring Runtime's interface-descriptor table. Only
-  // interface 29 is implemented; neighbours (28 DIVERS, 30 SAVE GAME,
-  // 31 PAUSE GAME, 35 OPTIONS, 36 HIGH-SCORE) are documented for the next
-  // milestone. Descriptor #29 metadata recovered from Runtime @ 0x004CC0AC.
+  // Static registry mirroring Runtime's interface-descriptor table.
+  // Descriptor #29 is at 0x004CC0AC; descriptor #35 is at 0x004CC2D4.
   static const std::vector<InterfaceDescriptor> k_descriptors{
       InterfaceDescriptor{.id = 29,
           .name = "OMK START MENU",
@@ -129,6 +137,15 @@ const InterfaceDescriptor* descriptor_for_id(const std::int32_t id) {
               .completion_transitions =
                   std::span<const InterfaceCompletionPresentationHint>{
                       K_START_MENU_COMPLETION_TRANSITIONS}}},
+      InterfaceDescriptor{.id = 35,
+          .name = "OPTIONS",
+          .bitmap_name = "",
+          .string_table_name = "Options",
+          .companion_interface = std::nullopt,
+          .init = initialize_options,
+          .destroy = destroy_options,
+          .runtime_flags = 0x00000000U,
+          .presentation_hints = InterfacePresentationHints{}},
   };
   for (const InterfaceDescriptor& descriptor : k_descriptors) {
     if (descriptor.id == id) {
@@ -590,10 +607,8 @@ void InterfaceManager::select_previous() {
   } else {
     --selected;
   }
-  App::Log::debug(LogCategory::I2D,
-      "active element: string[{}] \"{}\"",
-      selectable.at(selected)->string_index,
-      instance->strings.at(selectable.at(selected)->string_index));
+  const I2DTextElement& active{*selectable.at(selected)};
+  App::Log::debug(LogCategory::I2D, "active element: \"{}\"", text_label(*instance, active));
 }
 
 void InterfaceManager::select_next() {
@@ -608,10 +623,28 @@ void InterfaceManager::select_next() {
   }
   std::size_t& selected{instance->current_state->selected_element};
   selected = (selected + 1U) % selectable.size();
-  App::Log::debug(LogCategory::I2D,
-      "active element: string[{}] \"{}\"",
-      selectable.at(selected)->string_index,
-      instance->strings.at(selectable.at(selected)->string_index));
+  const I2DTextElement& active{*selectable.at(selected)};
+  App::Log::debug(LogCategory::I2D, "active element: \"{}\"", text_label(*instance, active));
+}
+
+void InterfaceManager::adjust_selected(const std::int32_t delta) {
+  InterfaceInstance* instance{focused_instance_mut()};
+  if (delta == 0 || instance == nullptr || instance->current_state == nullptr ||
+      presentation_input_locked(*instance)) {
+    return;
+  }
+  std::vector<I2DTextElement*> selectable{selectable_text_elements(*instance->current_state)};
+  if (selectable.empty()) {
+    return;
+  }
+  const I2DTextElement* selected{selectable.at(instance->current_state->selected_element)};
+  if (!selected->on_adjust) {
+    return;
+  }
+  // Copy before invocation: an adjustment callback is allowed to rebuild or
+  // close its owning interface in later options phases.
+  const I2DAdjustCallback adjust{selected->on_adjust};
+  adjust(*this, *instance, delta);
 }
 
 void InterfaceManager::confirm() {
@@ -623,19 +656,19 @@ void InterfaceManager::confirm() {
   if (selectable.empty()) {
     return;
   }
-  I2DTextElement* selected{selectable.at(instance->current_state->selected_element)};
+  const I2DTextElement* selected{selectable.at(instance->current_state->selected_element)};
   I2DState* target{selected->target_state};
   if (target == nullptr) {
-    return;  // Not selectable (should not happen for a selectable element).
+    return;  // Adjustable rows may intentionally have no confirm target.
   }
-  App::Log::debug(LogCategory::I2D,
-      "activate: string[{}] \"{}\" -> child state",
-      selected->string_index,
-      instance->strings.at(selected->string_index));
+  App::Log::debug(
+      LogCategory::I2D, "activate: \"{}\" -> child state", text_label(*instance, *selected));
   if (target->on_enter) {
     // A state-specific enter action (e.g. queueing an interface completion)
     // owns the transition; the generic path must not also switch states.
-    target->on_enter(*this, *instance, *target);
+    // Copy first so an action may safely close the interface that owns target.
+    const I2DStateEnterCallback on_enter{target->on_enter};
+    on_enter(*this, *instance, *target);
     return;
   }
   // Generic child-state transition (no enter action).
@@ -646,6 +679,13 @@ void InterfaceManager::cancel() {
   InterfaceInstance* instance{focused_instance_mut()};
   if (instance == nullptr || instance->current_state == nullptr ||
       presentation_input_locked(*instance)) {
+    return;
+  }
+  if (instance->current_state->on_cancel) {
+    // As with on_enter, keep a local copy so the callback may close the
+    // interface that owns the state as its final operation.
+    const I2DStateCancelCallback on_cancel{instance->current_state->on_cancel};
+    on_cancel(*this, *instance, *instance->current_state);
     return;
   }
   if (instance->current_state->parent == nullptr) {
@@ -663,6 +703,12 @@ void InterfaceManager::handle_navigation(const Input::InputManager& input) {
   if (input.is_action_pressed(Input::Action::k_menu_down)) {
     select_next();
   }
+  if (input.is_action_pressed(Input::Action::k_menu_left)) {
+    adjust_selected(-1);
+  }
+  if (input.is_action_pressed(Input::Action::k_menu_right)) {
+    adjust_selected(1);
+  }
   if (input.is_action_pressed(Input::Action::k_menu_confirm)) {
     confirm();
   }
@@ -672,6 +718,47 @@ void InterfaceManager::handle_navigation(const Input::InputManager& input) {
 }
 
 namespace {
+
+/// Returns from interface 35 to the resident interface that opened it. The
+/// host state is restored before closing the child; close() then re-focuses the
+/// most recently opened remaining instance.
+void close_options_to_host(InterfaceManager& manager, InterfaceInstance& options_instance) {
+  const InterfaceHandle options_handle{options_instance.handle};
+  const std::optional<InterfaceHandle> host_handle{options_instance.parent_interface};
+
+  if (host_handle.has_value()) {
+    if (InterfaceInstance* host{manager.find(host_handle.value())}; host != nullptr) {
+      host->current_state = host->root_state;
+    }
+  }
+
+  // Must be the final operation that touches options_instance: close destroys
+  // the state graph containing the callback currently being executed.
+  manager.close(options_handle);
+  if (host_handle.has_value()) {
+    manager.set_focused(host_handle.value());
+  }
+}
+
+I2DTextElement make_options_text(const OptionsRowDefinition& definition,
+    const std::size_t row_index,
+    const std::size_t active_count,
+    I2DState* target_state) {
+  I2DTextElement text;
+  if (definition.runtime_string_index >= 0) {
+    text.string_index = static_cast<std::uint16_t>(definition.runtime_string_index);
+  } else {
+    text.literal_text = std::string{definition.literal_label};
+  }
+  text.font_key = k_options_root_font_key;
+  text.bounds = I2DRect{.x = k_options_row_x,
+      .y = runtime_options_row_y(row_index, active_count, OptionsInvocationMode::k_start_menu),
+      .width = k_options_row_width,
+      .height = k_options_row_height};
+  text.runtime_flags = k_options_text_flags;
+  text.target_state = target_state;
+  return text;
+}
 
 // Runtime StartMenu initializer: 0x00479D10.
 // Recovered root state: 0x004CF218.
@@ -740,10 +827,34 @@ void initialize_start_menu(InterfaceManager& manager, InterfaceInstance& instanc
         manager_ref.request_completion(instance_ref.handle, 3);
       };
 
+  // Runtime keeps interface 29 resident while interface 35 OPTIONS is active.
+  // The parent switches to a presentation-only host state containing the
+  // existing CLOUD background and logo; interface 35 then draws its own rows
+  // over that resident parent. This matches descriptor 35 having no bitmap.
+  options->on_enter =
+      [](InterfaceManager& manager_ref, InterfaceInstance& instance_ref, I2DState& state_ref) {
+        const InterfaceHandle host_handle{instance_ref.handle};
+        instance_ref.current_state = &state_ref;
+
+        auto opened{manager_ref.open(InterfaceOpenRequest{
+            .interface_id = k_options_interface_id, .operand_b = -1, .operand_c = -1})};
+        if (!opened) {
+          App::Log::error(LogCategory::Interface, "failed to open OPTIONS: {}", opened.error());
+          instance_ref.current_state = instance_ref.root_state;
+          manager_ref.set_focused(host_handle);
+          return;
+        }
+
+        if (InterfaceInstance* child{manager_ref.find(opened.value())}; child != nullptr) {
+          child->parent_interface = host_handle;
+        }
+      };
+
   // Animated background: IMAGES/CLOUD.BMP. Missing source degrades to no
   // background (the canvas stays clear) rather than an invented asset.
   if (auto background{I2DBumpBackground::create()}) {
     root->background = background->get();
+    options->background = background->get();
     quit->background = background->get();
     instance.background = std::move(background).value();
   } else {
@@ -779,6 +890,10 @@ void initialize_start_menu(InterfaceManager& manager, InterfaceInstance& instanc
               .top_margin_reference = k_start_menu_logo_top_margin,
               .top_center_scale = k_start_menu_logo_scale,
               .clamp_width_to_viewport = true}});
+  // OPTIONS is a separate resident interface with no descriptor bitmap. Keep
+  // the START MENU logo in its host state so interface 35 can overlay only the
+  // option rows, just as Runtime's residency model implies.
+  options->groups.push_back(bitmap_group);
   root->groups.push_back(std::move(bitmap_group));
 
   // Runtime text group raw flags: 0x80000010. The 640 px wide rectangles and
@@ -802,7 +917,9 @@ void initialize_start_menu(InterfaceManager& manager, InterfaceInstance& instanc
                        .red = 255,
                        .green = 255,
                        .blue = 255,
-                       .target_state = child_states.at(index)},
+                       .target_state = child_states.at(index),
+                       .on_adjust = {},
+                       .literal_text = {}},
             .presentation = I2DPresentationHints{}});
   }
   root->groups.push_back(std::move(text_group));
@@ -821,7 +938,9 @@ void initialize_start_menu(InterfaceManager& manager, InterfaceInstance& instanc
                      .red = 255,
                      .green = 255,
                      .blue = 255,
-                     .target_state = nullptr},
+                     .target_state = nullptr,
+                     .on_adjust = {},
+                     .literal_text = {}},
           .presentation = I2DPresentationHints{}});
   quit->groups.push_back(std::move(quit_title_group));
 
@@ -846,7 +965,9 @@ void initialize_start_menu(InterfaceManager& manager, InterfaceInstance& instanc
             .red = 255,
             .green = 255,
             .blue = 255,
-            .target_state = quit_targets.at(index)},
+            .target_state = quit_targets.at(index),
+            .on_adjust = {},
+            .literal_text = {}},
         .presentation = I2DPresentationHints{}});
   }
   quit->groups.push_back(std::move(quit_choice_group));
@@ -865,6 +986,90 @@ void initialize_start_menu(InterfaceManager& manager, InterfaceInstance& instanc
 void destroy_start_menu(
     [[maybe_unused]] InterfaceManager& manager, [[maybe_unused]] InterfaceInstance& instance) {
   App::Log::debug(LogCategory::I2D, "destroying START MENU state");
+}
+
+// Runtime OPTIONS initializer: 0x00490D50.
+// Recovered root state: 0x004DD438.
+// Root page builder: 0x00491200.
+//
+// Phase 1 implements the real interface-35 lifecycle, resident START MENU
+// hosting, dynamic Runtime row layout, root-page navigation and extensible row
+// metadata. The four submenu bodies intentionally remain deferred to the
+// subsequent phases rather than showing guessed controls.
+void initialize_options(InterfaceManager& manager, InterfaceInstance& instance) {
+  App::Log::debug(LogCategory::I2D, "initializing OPTIONS root state");
+
+  I2DState* root{manager.create_state(instance)};
+  I2DState* video_action{manager.create_state(instance)};
+  I2DState* audio_action{manager.create_state(instance)};
+  I2DState* game_action{manager.create_state(instance)};
+  I2DState* controls_action{manager.create_state(instance)};
+  I2DState* back_action{manager.create_state(instance)};
+
+  if (root == nullptr || video_action == nullptr || audio_action == nullptr ||
+      game_action == nullptr || controls_action == nullptr || back_action == nullptr) {
+    App::Log::error(LogCategory::I2D, "failed to allocate the OPTIONS state graph");
+    return;
+  }
+
+  const std::array<I2DState*, 5> targets{
+      video_action, audio_action, game_action, controls_action, back_action};
+  for (I2DState* target : targets) {
+    target->parent = root;
+  }
+
+  const std::array<std::string_view, 4> deferred_pages{"video", "audio", "game", "controls"};
+  for (std::size_t index{0}; index < deferred_pages.size(); ++index) {
+    const std::string_view page_id{deferred_pages.at(index)};
+    targets.at(index)->on_enter = [page_id](InterfaceManager&, InterfaceInstance&, I2DState&) {
+      App::Log::info(LogCategory::Interface,
+          "OPTIONS page \"{}\" is deferred to a later implementation phase",
+          page_id);
+    };
+  }
+
+  back_action->on_enter =
+      [](InterfaceManager& manager_ref, InterfaceInstance& instance_ref, I2DState&) {
+        close_options_to_host(manager_ref, instance_ref);
+      };
+  root->on_cancel = [](InterfaceManager& manager_ref, InterfaceInstance& instance_ref, I2DState&) {
+    close_options_to_host(manager_ref, instance_ref);
+  };
+
+  // Root submenu/back rows are Runtime type 2/type 6 and use SNEAK.FNT.
+  if (auto result{manager.load_font(k_options_root_font_key)}; !result) {
+    App::Log::warn(LogCategory::I2D,
+        "font '{}' unavailable for OPTIONS: {}",
+        k_options_root_font_key,
+        result.error());
+  }
+
+  I2DGroup root_rows;
+  root_rows.runtime_flags = k_options_text_flags;
+  std::size_t index{0};
+  for (const OptionsRowDefinition& row : k_options_root_page.rows) {
+    root_rows.elements.push_back(I2DElement{
+        .data = make_options_text(row, index, k_options_root_page.rows.size(), targets.at(index)),
+        .presentation = I2DPresentationHints{}});
+    ++index;
+  }
+  root->groups.push_back(std::move(root_rows));
+  root->selected_element = 0U;
+
+  instance.root_state = root;
+  instance.current_state = root;
+
+  App::Log::debug(LogCategory::I2D,
+      "OPTIONS root: {} selectable rows; active=\"{}\"",
+      k_options_root_page.rows.size(),
+      instance.strings.at(
+          static_cast<std::uint16_t>(k_options_root_page.rows.front().runtime_string_index)));
+}
+
+// Runtime OPTIONS destroy callback: 0x00490F30. Resource release remains RAII.
+void destroy_options(
+    [[maybe_unused]] InterfaceManager& manager, [[maybe_unused]] InterfaceInstance& instance) {
+  App::Log::debug(LogCategory::I2D, "destroying OPTIONS state");
 }
 
 }  // namespace
