@@ -228,13 +228,16 @@ void ScenarioStartupController::reset_session() {
     slot.secondary_area_id = -1;
     slot.scene_id = -1;
     slot.world_scene_id = static_cast<std::uint32_t>(index);
+    m_area_scripts.at(index).reset();
+    m_area_script_sequences.at(index) = 0;
+    m_area_event_started_recorded.at(index) = false;
+    m_area_waiting_recorded.at(index) = false;
   }
   m_active_area_slot = 0;
-  m_area_script_owner_slot = 0;
   m_area_transition.reset();
+  m_next_area_script_sequence = 1;
   m_next_area_transition_generation = 1;
   m_next_camera_operation_generation = 1;
-  m_area_script.reset();
   m_active_zones.clear();
   m_zone_contacts.clear();
   m_start_bytes.clear();
@@ -254,8 +257,6 @@ void ScenarioStartupController::reset_session() {
   m_dialog_takeover_active = false;
   m_dialog_takeover_id.reset();
   m_ticked = false;
-  m_event_started = false;
-  m_waiting_recorded = false;
 }
 
 std::expected<void, std::string> ScenarioStartupController::initialize_new_session(
@@ -397,53 +398,17 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
 
   // 4. Area script context: create, queue event/state 1, activate. The
   // first interpreter tick runs in tick().
-  m_area_script.emplace(area_record_view.script_bytes());
-  Script::AreaScriptRuntime& area_script{*m_area_script};
-  // This main AREA context continues to own its initial resident slot even
-  // after a later compact handoff changes presentation to the alternate slot.
   const std::size_t area_script_owner_slot{m_active_area_slot};
-  m_area_script_owner_slot = area_script_owner_slot;
+  Script::AreaScriptRuntime& area_script{
+      m_area_scripts.at(area_script_owner_slot).emplace(area_record_view.script_bytes())};
+  m_area_script_sequences.at(area_script_owner_slot) = m_next_area_script_sequence++;
+  m_area_event_started_recorded.at(area_script_owner_slot) = false;
+  m_area_waiting_recorded.at(area_script_owner_slot) = false;
   bind_compact_state_services(area_script, area_script_owner_slot, false);
 
   area_script.set_area_transition_sink(
-      [this](const Script::AreaTransitionRequest& request)
-          -> std::expected<Script::AreaTransitionHandle, std::string> {
-        if (m_manager == nullptr || !m_area_archive.has_value()) {
-          return std::expected<Script::AreaTransitionHandle, std::string>{
-              std::unexpect, "AREA transition coordinator is not initialized"};
-        }
-        if (m_area_transition.has_value()) {
-          return std::expected<Script::AreaTransitionHandle, std::string>{
-              std::unexpect, "AREA transition coordinator is busy"};
-        }
-        if (request.target_area_id < 0) {
-          return std::expected<Script::AreaTransitionHandle, std::string>{
-              std::unexpect, fmt::format("target AREA ID {} is negative", request.target_area_id)};
-        }
-        if (!m_area_slots.at(m_active_area_slot).primary.has_value()) {
-          return std::expected<Script::AreaTransitionHandle, std::string>{
-              std::unexpect, "active resident AREA slot is empty"};
-        }
-
-        const std::size_t destination_slot{m_active_area_slot == 0U ? 1U : 0U};
-        const Script::AreaTransitionHandle handle{
-            .generation = m_next_area_transition_generation++};
-        m_area_transition.emplace(PendingAreaTransition{.handle = handle,
-            .request = request,
-            .source_slot = m_active_area_slot,
-            .destination_slot = destination_slot,
-            .error = {}});
-        record("AreaTransition.Accepted",
-            fmt::format("generation={} sourceSlot={} destinationSlot={} target={}",
-                handle.generation,
-                m_active_area_slot,
-                destination_slot,
-                request.target_area_id));
-        App::Log::info(LogCategory::Scenario,
-            "AREA opcode 0x2F — accepted transition to AREA {} as generation {}",
-            request.target_area_id,
-            handle.generation);
-        return handle;
+      [this, area_script_owner_slot](const Script::AreaTransitionRequest& request) {
+        return begin_area_transition(area_script_owner_slot, request);
       });
 
   area_script.set_area_release_sink([this](const Script::AreaReleaseRequest& request) {
@@ -498,100 +463,20 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
     }
   });
 
-  area_script.set_scx_script_sink([this](const Script::AreaScxScriptRequest& request)
-                                      -> std::expected<std::size_t, std::string> {
-    if (m_manager == nullptr) {
-      return std::expected<std::size_t, std::string>{
-          std::unexpect, "scenario manager is not available"};
-    }
-    WorldSceneContext* context{m_manager->active_world_context()};
-    if (context == nullptr || !context->scx_data.has_value() || context->runtime == nullptr) {
-      return std::expected<std::size_t, std::string>{std::unexpect, "no active world SCX runtime"};
-    }
-
-    const auto& scripts{context->scx_data->scripts};
-    for (std::size_t index{0}; index < scripts.size(); ++index) {
-      if (scripts.at(index).script_id != request.script_id) {
-        continue;
-      }
-      auto created{context->runtime->spawn_script_instance(index)};
-      if (!created) {
-        return created;
-      }
-      record("AreaScript.ScxScriptStarted",
-          fmt::format("id={} name='{}' instance={} args=({}, {})",
-              request.script_id,
-              scripts.at(index).name,
-              created.value(),
-              request.operand_b,
-              request.operand_c));
-      App::Log::debug(LogCategory::Script,
-          "AREA generic SCX launch — started world script {} '{}' from '{}' as instance {}",
-          request.script_id,
-          scripts.at(index).name,
-          context->scenario_path,
-          created.value());
-      return created;
-    }
-    return std::expected<std::size_t, std::string>{std::unexpect,
-        fmt::format("SCX script ID {} not found in active world", request.script_id)};
-  });
+  area_script.set_scx_script_sink(
+      [this, area_script_owner_slot](const Script::AreaScxScriptRequest& request) {
+        return launch_scx_script(area_script_owner_slot, request);
+      });
 
   area_script.set_character_script_sink(
       [this, area_script_owner_slot](const Script::AreaCharacterScriptRequest& request) {
         return launch_character_script(area_script_owner_slot, request);
       });
 
-  area_script.set_character_activation_sink([this, area_script_owner_slot](
-                                                const Script::AreaCharacterActivationRequest&
-                                                    request) -> std::expected<void, std::string> {
-    if (request.character_id == -1) {
-      return set_current_character_presentation(true);
-    }
-    const RuntimeAreaSlot& owner_slot{m_area_slots.at(area_script_owner_slot)};
-    if (m_manager == nullptr || !owner_slot.primary.has_value()) {
-      return std::expected<void, std::string>{
-          std::unexpect, "main AREA owner has no character runtime"};
-    }
-    ScenarioRuntime* const scenario_runtime{m_manager->world_runtime(owner_slot.world_scene_id)};
-    if (scenario_runtime == nullptr) {
-      return std::expected<void, std::string>{
-          std::unexpect, "main AREA owner has no loaded world character runtime"};
-    }
-
-    std::expected<void, std::string> activated;
-    if (owner_slot.scene.has_value() &&
-        owner_slot.scene->character_by_id(request.character_id).has_value()) {
-      activated = scenario_runtime->character_runtime().ensure_scene_character(
-          owner_slot.primary_area_id, owner_slot.scene_id, *owner_slot.scene, request.character_id);
-      if (activated) {
-        activated = scenario_runtime->character_runtime().set_presentation_enabled(
-            request.character_id, true);
-      }
-    } else {
-      activated = scenario_runtime->activate_character(
-          owner_slot.primary_area_id, *owner_slot.primary, request);
-    }
-    if (!activated) {
-      return activated;
-    }
-
-    const Character::RuntimeCharacter* character{
-        scenario_runtime->character_runtime().find(request.character_id)};
-    if (character != nullptr) {
-      record("AreaScript.CharacterActivated",
-          fmt::format("character={} model={} area={}",
-              character->character_id,
-              character->model_resource_name,
-              character->area_id));
-      App::Log::info(LogCategory::Scenario,
-          "character activated — id={} model={} area={}",
-          character->character_id,
-          character->model_resource_name,
-          character->area_id);
-    }
-    return {};
-  });
+  area_script.set_character_activation_sink(
+      [this, area_script_owner_slot](const Script::AreaCharacterActivationRequest& request) {
+        return activate_primary_character(area_script_owner_slot, request);
+      });
 
   area_script.set_presentation_sink([this](const Script::AreaPresentationRequest& request) {
     if (m_manager == nullptr) {
@@ -647,9 +532,10 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
             LogCategory::Scenario, "cinematic letterbox requested — enabled={}", request.enabled);
       });
 
-  area_script.set_camera_sink([this](const Script::AreaCameraRequest& request) {
-    return enqueue_compact_camera(m_area_script_owner_slot, false, request);
-  });
+  area_script.set_camera_sink(
+      [this, area_script_owner_slot](const Script::AreaCameraRequest& request) {
+        return enqueue_compact_camera(area_script_owner_slot, false, request);
+      });
 
   area_script.set_interface_sink([this](const InterfaceOpenRequest& request)
                                      -> std::expected<InterfaceHandle, std::string> {
@@ -728,6 +614,250 @@ std::expected<void, std::string> ScenarioStartupController::initialize(ScenarioM
   return initialize_new_session(manager);
 }
 
+std::expected<Script::AreaTransitionHandle, std::string>
+ScenarioStartupController::begin_area_transition(
+    const std::size_t owner_slot, const Script::AreaTransitionRequest& request) {
+  if (m_manager == nullptr || !m_area_archive.has_value()) {
+    return std::expected<Script::AreaTransitionHandle, std::string>{
+        std::unexpect, "AREA transition coordinator is not initialized"};
+  }
+  if (owner_slot >= m_area_slots.size() || !m_area_slots.at(owner_slot).primary.has_value()) {
+    return std::expected<Script::AreaTransitionHandle, std::string>{
+        std::unexpect, "AREA transition source is not resident"};
+  }
+  if (m_area_transition.has_value()) {
+    return std::expected<Script::AreaTransitionHandle, std::string>{
+        std::unexpect, "AREA transition coordinator is busy"};
+  }
+  if (request.target_area_id < 0) {
+    return std::expected<Script::AreaTransitionHandle, std::string>{
+        std::unexpect, fmt::format("target AREA ID {} is negative", request.target_area_id)};
+  }
+
+  const std::size_t destination_slot{owner_slot == 0U ? 1U : 0U};
+  const Script::AreaTransitionHandle handle{.generation = m_next_area_transition_generation++};
+  m_area_transition.emplace(PendingAreaTransition{.handle = handle,
+      .request = request,
+      .source_slot = owner_slot,
+      .destination_slot = destination_slot,
+      .error = {}});
+  record("AreaTransition.Accepted",
+      fmt::format("generation={} sourceSlot={} destinationSlot={} target={}",
+          handle.generation,
+          owner_slot,
+          destination_slot,
+          request.target_area_id));
+  App::Log::info(LogCategory::Scenario,
+      "AREA opcode 0x2F — accepted transition to AREA {} from resident slot {} as generation {}",
+      request.target_area_id,
+      owner_slot,
+      handle.generation);
+  return handle;
+}
+
+std::expected<std::size_t, std::string> ScenarioStartupController::launch_scx_script(
+    const std::size_t owner_slot, const Script::AreaScxScriptRequest& request) {
+  if (m_manager == nullptr) {
+    return std::expected<std::size_t, std::string>{
+        std::unexpect, "scenario manager is not available"};
+  }
+  if (owner_slot >= m_area_slots.size()) {
+    return std::expected<std::size_t, std::string>{
+        std::unexpect, "generic SCX-script owner slot is out of range"};
+  }
+
+  const RuntimeAreaSlot& slot{m_area_slots.at(owner_slot)};
+  const Omikron::ScxData* const scx{m_manager->world_context_scx(slot.world_scene_id)};
+  ScenarioRuntime* const scenario_runtime{m_manager->world_runtime(slot.world_scene_id)};
+  const WorldSceneContext* const owner_context{m_manager->find_world_context(slot.world_scene_id)};
+  if (scx == nullptr || scenario_runtime == nullptr || owner_context == nullptr) {
+    return std::expected<std::size_t, std::string>{
+        std::unexpect, "generic SCX-script owner has no loaded world SCX runtime"};
+  }
+
+  std::optional<std::size_t> source_script_index;
+  for (std::size_t index{0}; index < scx->scripts.size(); ++index) {
+    if (scx->scripts.at(index).script_id == request.script_id) {
+      source_script_index = index;
+      break;
+    }
+  }
+  if (!source_script_index.has_value()) {
+    return std::expected<std::size_t, std::string>{std::unexpect,
+        fmt::format("SCX script ID {} not found in owner world {}",
+            request.script_id,
+            slot.world_scene_id)};
+  }
+
+  auto created{scenario_runtime->spawn_script_instance(source_script_index.value())};
+  if (!created) {
+    return created;
+  }
+
+  // Runtime's generic 0x39/0x3A launch path performs the same post-launch
+  // presentation handoff recovered for the character-script launch family:
+  // clamp operand B at zero, preserve the current camera state, then select
+  // controller mode 13. Mode 13 consumes the live named .3DO camera selected
+  // by the structured child.
+  const std::int16_t camera_duration_units{
+      std::max<std::int16_t>(std::int16_t{0}, request.operand_b)};
+  m_manager->world_presentation().enqueue_camera(
+      WorldCameraCommand{.kind = WorldCameraCommandKind::k_controller_mode,
+          .scene_id = owner_context->scene_id,
+          .scene_generation = owner_context->generation,
+          .controller_mode = 13U,
+          .duration_units = camera_duration_units});
+
+  const Omikron::ScxScript& script{scx->scripts.at(source_script_index.value())};
+  record("AreaScript.ScxScriptStarted",
+      fmt::format("ownerSlot={} id={} name='{}' instance={} args=({}, {}) cameraMode=13",
+          owner_slot,
+          request.script_id,
+          script.name,
+          created.value(),
+          request.operand_b,
+          request.operand_c));
+  App::Log::debug(LogCategory::Script,
+      "AREA generic SCX launch — owner slot={} script {} '{}' instance={} cameraMode=13 "
+      "duration={}",
+      owner_slot,
+      request.script_id,
+      script.name,
+      created.value(),
+      camera_duration_units);
+  return created;
+}
+
+std::expected<void, std::string> ScenarioStartupController::activate_primary_character(
+    const std::size_t owner_slot, const Script::AreaCharacterActivationRequest& request) {
+  if (request.character_id == -1) {
+    return set_current_character_presentation(true);
+  }
+  if (m_manager == nullptr || owner_slot >= m_area_slots.size()) {
+    return std::expected<void, std::string>{
+        std::unexpect, "primary AREA character activation has no resident owner"};
+  }
+  const RuntimeAreaSlot& slot{m_area_slots.at(owner_slot)};
+  if (!slot.primary.has_value()) {
+    return std::expected<void, std::string>{
+        std::unexpect, "primary AREA character activation owner has no parsed AREA"};
+  }
+  ScenarioRuntime* const scenario_runtime{m_manager->world_runtime(slot.world_scene_id)};
+  if (scenario_runtime == nullptr) {
+    return std::expected<void, std::string>{
+        std::unexpect, "primary AREA character activation owner has no world runtime"};
+  }
+
+  std::expected<void, std::string> activated;
+  if (slot.scene.has_value() && slot.scene->character_by_id(request.character_id).has_value()) {
+    activated = scenario_runtime->character_runtime().ensure_scene_character(
+        slot.primary_area_id, slot.scene_id, *slot.scene, request.character_id);
+    if (activated) {
+      activated = scenario_runtime->character_runtime().set_presentation_enabled(
+          request.character_id, true);
+    }
+  } else {
+    activated = scenario_runtime->activate_character(slot.primary_area_id, *slot.primary, request);
+  }
+  if (!activated) {
+    return activated;
+  }
+
+  if (const Character::RuntimeCharacter* const character{
+          scenario_runtime->character_runtime().find(request.character_id)};
+      character != nullptr) {
+    record("AreaScript.CharacterActivated",
+        fmt::format("character={} model={} area={}",
+            character->character_id,
+            character->model_resource_name,
+            character->area_id));
+    App::Log::info(LogCategory::Scenario,
+        "character activated — id={} model={} area={}",
+        character->character_id,
+        character->model_resource_name,
+        character->area_id);
+  }
+  return {};
+}
+
+std::expected<void, std::string> ScenarioStartupController::install_primary_area_script(
+    const std::size_t owner_slot) {
+  if (m_manager == nullptr || owner_slot >= m_area_slots.size()) {
+    return std::expected<void, std::string>{
+        std::unexpect, "cannot install primary AREA script without a resident owner"};
+  }
+  RuntimeAreaSlot& slot{m_area_slots.at(owner_slot)};
+  if (!slot.primary.has_value()) {
+    return std::expected<void, std::string>{
+        std::unexpect, "cannot install primary AREA script without a parsed AREA record"};
+  }
+
+  m_area_scripts.at(owner_slot).reset();
+  m_area_script_sequences.at(owner_slot) = 0;
+  m_area_event_started_recorded.at(owner_slot) = false;
+  m_area_waiting_recorded.at(owner_slot) = false;
+
+  // A zero primary-event pointer is a legitimate resident AREA with no event-1
+  // bytecode. Do not point AreaScriptRuntime at the beginning of the AREA header.
+  if (slot.primary->script_offset() == 0U) {
+    return {};
+  }
+
+  Script::AreaScriptRuntime& script{
+      m_area_scripts.at(owner_slot).emplace(slot.primary->script_bytes())};
+  m_area_script_sequences.at(owner_slot) = m_next_area_script_sequence++;
+  bind_scene_compact_services(script, owner_slot, false);
+  script.set_area_transition_sink([this, owner_slot](const Script::AreaTransitionRequest& request) {
+    return begin_area_transition(owner_slot, request);
+  });
+  script.set_character_activation_sink(
+      [this, owner_slot](const Script::AreaCharacterActivationRequest& request) {
+        return activate_primary_character(owner_slot, request);
+      });
+  script.set_instruction_sink(
+      [this, owner_slot](const std::uint32_t opcode, const std::vector<std::int32_t>& operands) {
+        if (opcode == 0x0D) {
+          const std::int32_t index{operands.empty() ? 0 : operands.front()};
+          record("AreaScript.VariableSet",
+              fmt::format("area={} slot={} index={} value=1",
+                  m_area_slots.at(owner_slot).primary_area_id,
+                  owner_slot,
+                  index));
+        } else if (opcode == 0x0E) {
+          const std::int32_t index{operands.empty() ? 0 : operands.at(0)};
+          const std::int32_t value{operands.size() >= 2 ? operands.at(1) : 0};
+          record("AreaScript.VariableSet",
+              fmt::format("area={} slot={} index={} value={}",
+                  m_area_slots.at(owner_slot).primary_area_id,
+                  owner_slot,
+                  index,
+                  value));
+        } else if (is_provisional_trace_opcode(opcode)) {
+          record("AreaScript.BootstrapOpcode",
+              fmt::format("area={} slot={} opcode={:#x}",
+                  m_area_slots.at(owner_slot).primary_area_id,
+                  owner_slot,
+                  opcode));
+        }
+      });
+
+  script.queue_event(1);
+  script.activate();
+  record("AreaContext.Created",
+      fmt::format("area={} slot={} sequence={}",
+          slot.primary_area_id,
+          owner_slot,
+          m_area_script_sequences.at(owner_slot)));
+  record("AreaContext.EventQueued",
+      fmt::format("area={} slot={} event=1", slot.primary_area_id, owner_slot));
+  App::Log::info(LogCategory::Script,
+      "AREA {} resident primary event 1 queued — slot={} sequence={}",
+      slot.primary_area_id,
+      owner_slot,
+      m_area_script_sequences.at(owner_slot));
+  return {};
+}
+
 std::expected<void, std::string> ScenarioStartupController::service_area_transition() {
   if (!m_area_transition.has_value()) {
     return {};
@@ -748,14 +878,22 @@ std::expected<void, std::string> ScenarioStartupController::service_area_transit
     return std::expected<void, std::string>{std::unexpect, transition.error};
   };
 
-  if (m_manager == nullptr || !m_area_archive.has_value() || !m_area_script.has_value()) {
+  if (m_manager == nullptr || !m_area_archive.has_value()) {
     return fail_transition("coordinator ownership is unavailable");
+  }
+  if (transition.source_slot >= m_area_slots.size()) {
+    return fail_transition("requesting resident AREA context has an invalid owner slot");
+  }
+  std::optional<Script::AreaScriptRuntime>& source_script{
+      m_area_scripts.at(transition.source_slot)};
+  if (!source_script.has_value()) {
+    return fail_transition("requesting resident AREA context no longer exists");
   }
   if (transition.source_slot != m_active_area_slot) {
     return fail_transition("active resident AREA slot changed before commit");
   }
 
-  Script::AreaScriptRuntime& area_script{m_area_script.value()};
+  Script::AreaScriptRuntime& area_script{source_script.value()};
   if (area_script.state() != Script::AreaScriptState::k_waiting ||
       area_script.wait_info().kind != Script::AreaWaitKind::k_area_transition ||
       !area_script.wait_info().area_transition_handle.has_value() ||
@@ -801,6 +939,16 @@ std::expected<void, std::string> ScenarioStartupController::service_area_transit
   destination_slot.scene.reset();
   destination_slot.scene_id = -1;
   destination_slot.scene_script.reset();
+
+  // Runtime creates the destination AREA's compact context as part of loading
+  // the resident AREA and queues event 1 immediately. It does not replace the
+  // source context: both remain registered until the source explicitly runs
+  // 0x30. The scheduler below services the older source registration first,
+  // so the concrete AREA118 -> AREA222 path performs 0x47 before AREA222's
+  // event 1 launches IMPASSE script 20 and switches the camera to mode 13.
+  if (auto installed{install_primary_area_script(transition.destination_slot)}; !installed) {
+    return fail_transition(fmt::format("destination primary context: {}", installed.error()));
+  }
   if (auto refreshed{refresh_active_zones()}; !refreshed) {
     return fail_transition(fmt::format("resident zone refresh: {}", refreshed.error()));
   }
@@ -819,7 +967,7 @@ std::expected<void, std::string> ScenarioStartupController::service_area_transit
           target_area_id,
           area_script.instruction_pointer()));
   App::Log::info(LogCategory::Scenario,
-      "AREA {} prepared in resident slot {} — world remains inactive, resume ip={:#x}",
+      "AREA {} prepared in resident slot {} with primary context — source resumes at ip={:#x}",
       target_area_id,
       transition.destination_slot,
       area_script.instruction_pointer());
@@ -867,10 +1015,10 @@ ScenarioStartupController::enqueue_compact_camera(const std::size_t owner_slot,
   } else {
     camera = area_camera.has_value() ? area_camera : scene_camera;
   }
-  const WorldSceneContext* context{m_manager->active_world_context()};
+  const WorldSceneContext* context{m_manager->find_world_context(slot.world_scene_id)};
   if (!camera.has_value() || context == nullptr) {
     const std::string error{fmt::format(
-        "compact camera {} has no owner-resident definition or active world", request.camera_id)};
+        "compact camera {} has no owner-resident definition or owner world", request.camera_id)};
     App::Log::warn(LogCategory::Scenario, "{}", error);
     return std::expected<Script::AreaCameraOperationHandle, std::string>{std::unexpect, error};
   }
@@ -1158,28 +1306,9 @@ void ScenarioStartupController::bind_scene_compact_services(Script::AreaScriptRu
                   .enabled = request.enabled});
         }
       });
-  runtime.set_scx_script_sink(
-      [this, owner_slot](
-          const Script::AreaScxScriptRequest& request) -> std::expected<std::size_t, std::string> {
-        if (m_manager == nullptr) {
-          return std::expected<std::size_t, std::string>{
-              std::unexpect, "scenario manager is not available"};
-        }
-        const RuntimeAreaSlot& slot{m_area_slots.at(owner_slot)};
-        const Omikron::ScxData* scx{m_manager->world_context_scx(slot.world_scene_id)};
-        ScenarioRuntime* scenario_runtime{m_manager->world_runtime(slot.world_scene_id)};
-        if (scx == nullptr || scenario_runtime == nullptr) {
-          return std::expected<std::size_t, std::string>{
-              std::unexpect, "SCENE owner has no loaded SCX runtime"};
-        }
-        for (std::size_t index{0}; index < scx->scripts.size(); ++index) {
-          if (scx->scripts.at(index).script_id == request.script_id) {
-            return scenario_runtime->spawn_script_instance(index);
-          }
-        }
-        return std::expected<std::size_t, std::string>{std::unexpect,
-            fmt::format("SCENE owner SCX script ID {} was not found", request.script_id)};
-      });
+  runtime.set_scx_script_sink([this, owner_slot](const Script::AreaScxScriptRequest& request) {
+    return launch_scx_script(owner_slot, request);
+  });
   runtime.set_character_script_sink(
       [this, owner_slot](const Script::AreaCharacterScriptRequest& request)
           -> std::expected<std::size_t, std::string> {
@@ -1807,7 +1936,6 @@ std::expected<void, std::string> ScenarioStartupController::present_compact_obje
     record("Area222.CameraSequence", fmt::format("object{}", request.object_id));
   }
 
-
   if (!m_object_archive.has_value()) {
     auto bytes{read_file(std::string{K_IAM_OBJECT_PATH})};
     if (!bytes) {
@@ -2248,6 +2376,52 @@ std::expected<void, std::string> ScenarioStartupController::set_zone_activation(
   return {};
 }
 
+std::expected<void, std::string> ScenarioStartupController::service_scx_script_wait(
+    Script::AreaScriptRuntime& area_script, const std::size_t owner_slot) {
+  if (area_script.state() != Script::AreaScriptState::k_waiting ||
+      area_script.wait_info().kind != Script::AreaWaitKind::k_scx_script) {
+    return {};
+  }
+  if (m_manager == nullptr || owner_slot >= m_area_slots.size() ||
+      !area_script.wait_info().scx_script_instance.has_value()) {
+    return std::expected<void, std::string>{
+        std::unexpect, "AREA SCX-script wait has no resident owner or instance ID"};
+  }
+
+  const RuntimeAreaSlot& slot{m_area_slots.at(owner_slot)};
+  ScenarioRuntime* const scenario_runtime{m_manager->world_runtime(slot.world_scene_id)};
+  if (scenario_runtime == nullptr || scenario_runtime->script_runtime() == nullptr) {
+    return std::expected<void, std::string>{std::unexpect,
+        "AREA is waiting on an SCX script but its owner world runtime does not exist"};
+  }
+
+  const std::size_t instance_id{area_script.wait_info().scx_script_instance.value()};
+  const Script::ScriptInstance* const instance{
+      scenario_runtime->script_runtime()->instance(instance_id)};
+  if (instance == nullptr) {
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format("AREA is waiting on missing SCX-script instance {} in owner world {}",
+            instance_id,
+            slot.world_scene_id)};
+  }
+  if (instance->paused) {
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format("SCX script instance {} '{}' paused: {}",
+            instance_id,
+            instance->script_name,
+            instance->pause_info.reason_text)};
+  }
+  if (!instance->completed) {
+    return {};
+  }
+  if (auto completed{area_script.complete_scx_script_wait(instance_id)}; !completed) {
+    return completed;
+  }
+  record("AreaScript.ScxScriptCompleted",
+      fmt::format("ownerSlot={} instance={}", owner_slot, instance_id));
+  return {};
+}
+
 std::expected<void, std::string> ScenarioStartupController::service_character_script_wait(
     Script::AreaScriptRuntime& area_script, const std::size_t owner_slot) {
   if (area_script.state() != Script::AreaScriptState::k_waiting ||
@@ -2318,8 +2492,7 @@ std::expected<void, std::string> ScenarioStartupController::service_camera_compl
 
   while (std::optional<WorldCameraOperationCompletion> completed{
       m_manager->world_presentation().take_camera_completion()}) {
-    const Script::AreaCameraOperationHandle handle{
-        .generation = completed->operation_generation};
+    const Script::AreaCameraOperationHandle handle{.generation = completed->operation_generation};
     Script::AreaScriptRuntime* target{nullptr};
     const auto consider = [&target, handle](Script::AreaScriptRuntime* runtime) {
       if (target != nullptr || runtime == nullptr ||
@@ -2332,9 +2505,15 @@ std::expected<void, std::string> ScenarioStartupController::service_camera_compl
       target = runtime;
     };
 
-    consider(m_area_script.has_value() ? &m_area_script.value() : nullptr);
-    for (RuntimeAreaSlot& slot : m_area_slots) {
-      consider(slot.scene_script.has_value() ? &slot.scene_script.value() : nullptr);
+    for (std::size_t index{0}; index < m_area_slots.size(); ++index) {
+      std::optional<Script::AreaScriptRuntime>& primary_script{m_area_scripts.at(index)};
+      if (primary_script.has_value()) {
+        consider(&primary_script.value());
+      }
+      RuntimeAreaSlot& slot{m_area_slots.at(index)};
+      if (slot.scene_script.has_value()) {
+        consider(&slot.scene_script.value());
+      }
     }
     for (const std::unique_ptr<ZoneContactContext>& contact : m_zone_contacts) {
       consider(contact != nullptr && contact->script != nullptr ? contact->script.get() : nullptr);
@@ -2360,6 +2539,108 @@ std::expected<void, std::string> ScenarioStartupController::service_camera_compl
   return {};
 }
 
+std::expected<void, std::string> ScenarioStartupController::service_area_scripts(
+    const float delta_seconds) {
+  std::vector<std::size_t> order;
+  order.reserve(m_area_scripts.size());
+  for (std::size_t index{0}; index < m_area_scripts.size(); ++index) {
+    if (m_area_scripts.at(index).has_value()) {
+      order.push_back(index);
+    }
+  }
+  std::ranges::sort(order, [this](const std::size_t lhs, const std::size_t rhs) {
+    return m_area_script_sequences.at(lhs) < m_area_script_sequences.at(rhs);
+  });
+
+  for (const std::size_t owner_slot : order) {
+    std::optional<Script::AreaScriptRuntime>& primary_script{m_area_scripts.at(owner_slot)};
+    if (!primary_script.has_value()) {
+      continue;
+    }
+    Script::AreaScriptRuntime& script{primary_script.value()};
+
+    if (auto serviced{service_scx_script_wait(script, owner_slot)}; !serviced) {
+      return serviced;
+    }
+    if (auto serviced{service_character_script_wait(script, owner_slot)}; !serviced) {
+      return serviced;
+    }
+
+    if (!m_area_event_started_recorded.at(owner_slot) &&
+        (script.state() == Script::AreaScriptState::k_ready ||
+            script.state() == Script::AreaScriptState::k_running)) {
+      const std::int32_t area_id{m_area_slots.at(owner_slot).primary_area_id};
+      if (m_area_script_sequences.at(owner_slot) == 1U) {
+        // Preserve startup trace compatibility for the initial AREA context.
+        record("AreaScript.EventStarted", "event=1");
+      } else {
+        record(
+            "AreaScript.EventStarted", fmt::format("area={} slot={} event=1", area_id, owner_slot));
+      }
+      App::Log::info(LogCategory::Script,
+          "AREA {} resident primary event 1 started — slot={}",
+          area_id,
+          owner_slot);
+      m_area_event_started_recorded.at(owner_slot) = true;
+    }
+
+    if (script.state() == Script::AreaScriptState::k_ready ||
+        script.state() == Script::AreaScriptState::k_running) {
+      const Script::AreaScriptState state{script.run(delta_seconds)};
+      if (state == Script::AreaScriptState::k_failed) {
+        return std::expected<void, std::string>{std::unexpect,
+            fmt::format("AREA {} primary compact VM failed: {}",
+                m_area_slots.at(owner_slot).primary_area_id,
+                script.pause_info().reason_text)};
+      }
+      if (state == Script::AreaScriptState::k_paused_unsupported) {
+        App::Log::warn(LogCategory::Script,
+            "AREA {} primary compact VM paused — unsupported opcode={:#04x} offset=+{:#x} "
+            "bytes=[{}]",
+            m_area_slots.at(owner_slot).primary_area_id,
+            script.pause_info().opcode,
+            script.pause_info().offset,
+            script.pause_info().nearby_bytes);
+      }
+    } else if (script.state() == Script::AreaScriptState::k_failed) {
+      return std::expected<void, std::string>{std::unexpect,
+          fmt::format("AREA {} primary compact VM failed: {}",
+              m_area_slots.at(owner_slot).primary_area_id,
+              script.pause_info().reason_text)};
+    }
+
+    if (script.state() == Script::AreaScriptState::k_waiting) {
+      if (!m_area_waiting_recorded.at(owner_slot)) {
+        if (m_area_script_sequences.at(owner_slot) == 1U) {
+          record("AreaContext.Waiting", fmt::format("state={}", script.wait_state()));
+        } else {
+          record("AreaContext.Waiting",
+              fmt::format("area={} slot={} state={}",
+                  m_area_slots.at(owner_slot).primary_area_id,
+                  owner_slot,
+                  script.wait_state()));
+        }
+        m_area_waiting_recorded.at(owner_slot) = true;
+      }
+    } else {
+      m_area_waiting_recorded.at(owner_slot) = false;
+    }
+
+    // 0x30 can release the context's backing resident AREA from inside that
+    // same context. AreaScriptRuntime owns its bytecode, so let the instruction
+    // dispatcher return and reach EndEvent before destroying the modern object.
+    if (!m_area_slots.at(owner_slot).primary.has_value() &&
+        (script.state() == Script::AreaScriptState::k_ready ||
+            script.state() == Script::AreaScriptState::k_completed)) {
+      m_area_scripts.at(owner_slot).reset();
+      m_area_script_sequences.at(owner_slot) = 0;
+      m_area_event_started_recorded.at(owner_slot) = false;
+      m_area_waiting_recorded.at(owner_slot) = false;
+    }
+  }
+  return {};
+}
+
 void ScenarioStartupController::service_scene_scripts(const float delta_seconds) {
   for (std::size_t index{0}; index < m_area_slots.size(); ++index) {
     RuntimeAreaSlot& slot{m_area_slots.at(index)};
@@ -2367,6 +2648,13 @@ void ScenarioStartupController::service_scene_scripts(const float delta_seconds)
       continue;
     }
     Script::AreaScriptRuntime& script{slot.scene_script.value()};
+    if (auto serviced{service_scx_script_wait(script, index)}; !serviced) {
+      App::Log::warn(LogCategory::Script,
+          "SCENE {} SCX-script wait failed: {}",
+          slot.scene_id,
+          serviced.error());
+      continue;
+    }
     if (auto serviced{service_character_script_wait(script, index)}; !serviced) {
       App::Log::warn(LogCategory::Script,
           "SCENE {} character-script wait failed: {}",
@@ -2555,6 +2843,12 @@ std::expected<void, std::string> ScenarioStartupController::service_zone_contact
           script.queue_event(3);
           contact->departure_queued = true;
         }
+        if (auto serviced{service_scx_script_wait(script, contact->resident_slot)}; !serviced) {
+          App::Log::warn(LogCategory::Script,
+              "zone {} SCX-script wait failed: {}",
+              contact->zone.zone_id,
+              serviced.error());
+        }
         if (auto serviced{service_character_script_wait(script, contact->resident_slot)};
             !serviced) {
           App::Log::warn(LogCategory::Script,
@@ -2588,21 +2882,16 @@ std::expected<void, std::string> ScenarioStartupController::tick(const float del
     m_last_error = "startup not initialized";
     return std::expected<void, std::string>{std::unexpect, m_last_error};
   }
-  if (!m_area_script.has_value()) {
-    m_last_error = "area script context not initialized";
-    return std::expected<void, std::string>{std::unexpect, m_last_error};
-  }
 
-  Script::AreaScriptRuntime& area_script{*m_area_script};
   m_ticked = true;
   if (auto cameras{service_camera_completions()}; !cameras) {
     m_last_error = cameras.error();
     return std::expected<void, std::string>{std::unexpect, m_last_error};
   }
 
-  // AREA opcode 0x3D leaves its context running at the advanced IP. Runtime's
-  // dialog mode is a global scheduling takeover, so suppress only normal AREA
-  // servicing here; ScenarioEngine continues gameplay/world runtime ticks.
+  // 0x3D is a session-global scheduling takeover. Suppress all resident AREA,
+  // SCENE and contact compact contexts while it owns the dispatcher; structured
+  // world runtimes continue to advance in ScenarioEngine.
   bool resumed_after_dialog{false};
   if (m_dialog_takeover_active) {
     if (m_manager == nullptr) {
@@ -2641,94 +2930,33 @@ std::expected<void, std::string> ScenarioStartupController::tick(const float del
     }
   }
 
-  // Tracked opcode 0x3A yields the AREA VM until its exact concrete
-  // ScriptRuntime instance completes. Fire-and-forget 0x39 never enters here.
-  if (area_script.state() == Script::AreaScriptState::k_waiting &&
-      area_script.wait_info().kind == Script::AreaWaitKind::k_scx_script) {
-    if (m_manager == nullptr || !area_script.wait_info().scx_script_instance.has_value()) {
-      m_last_error = "AREA SCX-script wait has no scenario owner or instance ID";
-      return std::expected<void, std::string>{std::unexpect, m_last_error};
-    }
-    const WorldSceneContext* context{m_manager->active_world_context()};
-    if (context == nullptr || context->runtime == nullptr ||
-        context->runtime->script_runtime() == nullptr) {
-      m_last_error = "AREA is waiting on an SCX script but no active world runtime exists";
-      return std::expected<void, std::string>{std::unexpect, m_last_error};
-    }
-
-    const Script::ScriptRuntime* script_runtime{context->runtime->script_runtime()};
-    const std::size_t instance_id{area_script.wait_info().scx_script_instance.value()};
-    const Script::ScriptInstance* instance{script_runtime->instance(instance_id)};
-    if (instance == nullptr) {
-      m_last_error = fmt::format("AREA is waiting on missing SCX script instance {}", instance_id);
-      return std::expected<void, std::string>{std::unexpect, m_last_error};
-    }
-    if (instance->paused) {
-      m_last_error = fmt::format("SCX script instance {} '{}' paused: {}",
-          instance_id,
-          instance->script_name,
-          instance->pause_info.reason_text);
-      return std::expected<void, std::string>{std::unexpect, m_last_error};
-    }
-    if (instance->completed) {
-      if (auto completed{area_script.complete_scx_script_wait(instance_id)}; !completed) {
-        m_last_error = completed.error();
-        return std::expected<void, std::string>{std::unexpect, m_last_error};
-      }
-      record("AreaScript.ScxScriptCompleted", fmt::format("instance={}", instance_id));
-    }
-  }
-
-  // Opcodes 0x2E and 0x3C wait on the exact character-bound child returned
-  // by their launch bridge. Poll their compact-context owner rather than the
-  // current presentation world. An unsupported child opcode is a debugger
-  // breakpoint, so it intentionally leaves the AREA context in state 4.
-  if (auto serviced{service_character_script_wait(area_script, m_area_script_owner_slot)};
-      !serviced) {
-    m_last_error = serviced.error();
-    return std::expected<void, std::string>{std::unexpect, m_last_error};
-  }
-
-  // Event 1 is recorded as started exactly once; a resumed script continues
-  // from its existing instruction pointer on later frames without re-recording.
-  if (!m_event_started) {
-    record("AreaScript.EventStarted", "event=1");
-    App::Log::info(LogCategory::Script, "AREA {} event 1 started", m_initial_area_id);
-    m_event_started = true;
-  }
-
-  // A completion may have resumed the VM and immediately lead to another
-  // wait kind in this same tick; allow that transition to be recorded.
-  if (area_script.state() != Script::AreaScriptState::k_waiting) {
-    m_waiting_recorded = false;
-  }
-
   if (resumed_after_dialog) {
-    record("AreaScript.ResumedAfterDialog",
-        fmt::format("ip={:#x}", area_script.instruction_pointer()));
-    App::Log::info(LogCategory::Script,
-        "AREA resumed after dialog — ip={:#x}",
-        area_script.instruction_pointer());
+    if (const Script::AreaScriptRuntime* const active{area_script()}; active != nullptr) {
+      if (m_area_script_sequences.at(m_active_area_slot) == 1U) {
+        record("AreaScript.ResumedAfterDialog",
+            fmt::format("ip={:#x}", active->instruction_pointer()));
+      } else {
+        record("AreaScript.ResumedAfterDialog",
+            fmt::format("area={} slot={} ip={:#x}",
+                active_area_id(),
+                m_active_area_slot,
+                active->instruction_pointer()));
+      }
+      App::Log::info(LogCategory::Script,
+          "AREA {} resumed after dialog — slot={} ip={:#x}",
+          active_area_id(),
+          m_active_area_slot,
+          active->instruction_pointer());
+    }
   }
 
-  const Script::AreaScriptState state{area_script.run(delta_seconds)};
-
-  if (state == Script::AreaScriptState::k_failed) {
-    m_last_error = area_script.pause_info().reason_text;
+  if (auto areas{service_area_scripts(delta_seconds)}; !areas) {
+    m_last_error = areas.error();
     return std::expected<void, std::string>{std::unexpect, m_last_error};
   }
-  // A waiting script is a harmless no-op across frames; record the transition
-  // into waiting only once so per-frame ticks stay quiet.
-  if (state != Script::AreaScriptState::k_waiting) {
-    m_waiting_recorded = false;
-  }
-  if (state == Script::AreaScriptState::k_waiting && !m_waiting_recorded) {
-    record("AreaContext.Waiting", fmt::format("state={}", area_script.wait_state()));
-    m_waiting_recorded = true;
-  }
-  // Attached SCENE contexts are independent compact VM owners. They are
-  // serviced after the parent AREA dispatch returns, never recursively from
-  // opcode 0x47; a paused SCENE therefore cannot freeze its AREA parent.
+
+  // Attached SCENE contexts are separate registrations created after their
+  // owning AREA context. Service them after resident primary AREA contexts.
   service_scene_scripts(delta_seconds);
   if (auto zones{service_zone_contacts(delta_seconds)}; !zones) {
     m_last_error = zones.error();
@@ -2741,17 +2969,18 @@ std::expected<void, std::string> ScenarioStartupController::complete_interface(
     const InterfaceCompletion& completion) {
   APP_PROFILE_FUNCTION();
 
-  if (m_area_script.has_value()) {
-    if (auto completed{m_area_script->complete_interface_wait(completion)}; completed) {
-      return completed;
+  for (std::size_t index{0}; index < m_area_slots.size(); ++index) {
+    std::optional<Script::AreaScriptRuntime>& primary_script{m_area_scripts.at(index)};
+    if (primary_script.has_value()) {
+      if (auto completed{primary_script->complete_interface_wait(completion)}; completed) {
+        return completed;
+      }
     }
-  }
-  for (RuntimeAreaSlot& slot : m_area_slots) {
-    if (!slot.scene_script.has_value()) {
-      continue;
-    }
-    if (auto completed{slot.scene_script->complete_interface_wait(completion)}; completed) {
-      return completed;
+    RuntimeAreaSlot& slot{m_area_slots.at(index)};
+    if (slot.scene_script.has_value()) {
+      if (auto completed{slot.scene_script->complete_interface_wait(completion)}; completed) {
+        return completed;
+      }
     }
   }
   for (const std::unique_ptr<ZoneContactContext>& contact : m_zone_contacts) {
@@ -2825,7 +3054,19 @@ std::span<const std::int16_t> ScenarioStartupController::area_mapping_entries() 
 }
 
 const Script::AreaScriptRuntime* ScenarioStartupController::area_script() const {
-  return m_area_script.has_value() ? &*m_area_script : nullptr;
+  return area_script(m_active_area_slot);
+}
+
+const Script::AreaScriptRuntime* ScenarioStartupController::area_script(
+    const std::size_t resident_slot) const {
+  if (resident_slot >= m_area_scripts.size()) {
+    return nullptr;
+  }
+  const std::optional<Script::AreaScriptRuntime>& script{m_area_scripts.at(resident_slot)};
+  if (!script.has_value()) {
+    return nullptr;
+  }
+  return &script.value();
 }
 
 std::optional<std::int16_t> ScenarioStartupController::current_controlled_character() const {

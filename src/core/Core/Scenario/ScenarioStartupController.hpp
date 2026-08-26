@@ -196,7 +196,12 @@ class ScenarioStartupController {
   [[nodiscard]] bool area_transition_pending() const {
     return m_area_transition.has_value();
   }
+  /// Primary compact context for the currently presented resident AREA.
   [[nodiscard]] const Script::AreaScriptRuntime* area_script() const;
+  /// Primary compact context owned by one resident AREA slot. This diagnostic
+  /// accessor exposes the Phase-1 two-resident architecture without transferring
+  /// ownership or manufacturing a Runtime.exe registry slot.
+  [[nodiscard]] const Script::AreaScriptRuntime* area_script(std::size_t resident_slot) const;
   /// Authored character ID selected by compact IAM for this session, if any.
   /// The durable owner is ScenarioManager, not this transient AREA context.
   [[nodiscard]] std::optional<std::int16_t> current_controlled_character() const;
@@ -235,8 +240,18 @@ class ScenarioStartupController {
   /// Records one fine-grained startup trace event (no-op without a recorder).
   void record(std::string name, std::string detail = {});
 
+  /// Accepts one 0x2F transition on behalf of the exact resident AREA context
+  /// that executed it. The source owner must remain stable while the alternate
+  /// resident slot is prepared.
+  [[nodiscard]] std::expected<Script::AreaTransitionHandle, std::string> begin_area_transition(
+      std::size_t owner_slot, const Script::AreaTransitionRequest& request);
+  /// Creates and activates the primary compact context owned by a resident AREA.
+  /// Runtime registers event 1 when the AREA is loaded, before any later 0x47
+  /// presentation handoff makes that resident slot active.
+  [[nodiscard]] std::expected<void, std::string> install_primary_area_script(
+      std::size_t owner_slot);
   /// Advances one accepted native AREA transition through target preparation,
-  /// transactional residency commit, and exact VM completion.
+  /// resident primary-context creation, and exact requesting-VM completion.
   [[nodiscard]] std::expected<void, std::string> service_area_transition();
   [[nodiscard]] std::expected<void, std::string> attach_area_scene(
       const Script::AreaSceneAttachRequest& request);
@@ -287,13 +302,30 @@ class ScenarioStartupController {
       const Script::AreaObjectActivationRequest& request);
   [[nodiscard]] std::expected<void, std::string> deactivate_owner_character(
       std::size_t owner_slot, const Script::AreaCharacterDeactivationRequest& request);
+  /// Resolves and starts a generic 0x39/0x3A SCX child in the compact
+  /// context's owner world. Runtime follows a successful launch by switching
+  /// the camera controller to mode 13 using operand B as its duration.
+  [[nodiscard]] std::expected<std::size_t, std::string> launch_scx_script(
+      std::size_t owner_slot, const Script::AreaScxScriptRequest& request);
+  /// Primary AREA character activation differs slightly from attached-SCENE
+  /// activation: an attached SCENE definition may own the requested body.
+  [[nodiscard]] std::expected<void, std::string> activate_primary_character(
+      std::size_t owner_slot, const Script::AreaCharacterActivationRequest& request);
   /// Resolves an owner-world SCX script and starts it on either the authored
   /// target or the session-level current controlled character.
   [[nodiscard]] std::expected<std::size_t, std::string> launch_character_script(
       std::size_t owner_slot, const Script::AreaCharacterScriptRequest& request);
+  /// Polls a generic tracked 0x3A child through the compact context's owner
+  /// world rather than whichever resident world is currently presented.
+  [[nodiscard]] std::expected<void, std::string> service_scx_script_wait(
+      Script::AreaScriptRuntime& area_script, std::size_t owner_slot);
   /// Polls a character-bound child through the compact context's owner world.
   [[nodiscard]] std::expected<void, std::string> service_character_script_wait(
       Script::AreaScriptRuntime& area_script, std::size_t owner_slot);
+  /// Services every resident primary AREA context in creation/registration
+  /// order. The older source context therefore resumes its 0x47 handoff before
+  /// the newly loaded destination executes event 1.
+  [[nodiscard]] std::expected<void, std::string> service_area_scripts(float delta_seconds);
   /// Delivers presentation-owned camera completions to the exact compact
   /// context suspended on their operation generation.
   [[nodiscard]] std::expected<void, std::string> service_camera_completions();
@@ -348,13 +380,18 @@ class ScenarioStartupController {
           .world_scene_id = 1,
           .scene_script = std::nullopt}};
   std::size_t m_active_area_slot{0};
-  /// Resident slot that owns the main AREA compact context, which may differ
-  /// from the currently presented slot after a handoff.
-  std::size_t m_area_script_owner_slot{0};
+  /// Runtime registers one independent primary compact context per resident
+  /// AREA. These are intentionally separate from attached-SCENE contexts.
+  std::array<std::optional<Script::AreaScriptRuntime>, 2> m_area_scripts{};
+  /// Monotonic registration order. Slot indices are reusable, so fixed slot
+  /// order is not equivalent to Runtime's context-list order after a recycle.
+  std::array<std::uint64_t, 2> m_area_script_sequences{};
+  std::array<bool, 2> m_area_event_started_recorded{};
+  std::array<bool, 2> m_area_waiting_recorded{};
   std::optional<PendingAreaTransition> m_area_transition;
+  std::uint64_t m_next_area_script_sequence{1};
   std::uint64_t m_next_area_transition_generation{1};
   std::uint64_t m_next_camera_operation_generation{1};
-  std::optional<Script::AreaScriptRuntime> m_area_script;
   std::vector<ActiveZoneRef> m_active_zones;
   std::vector<std::unique_ptr<ZoneContactContext>> m_zone_contacts;
 
@@ -369,10 +406,6 @@ class ScenarioStartupController {
   std::string m_last_error;
   bool m_initialized{false};
   bool m_ticked{false};
-  /// True once event 1 has been recorded as started (avoids per-frame spam).
-  bool m_event_started{false};
-  /// True once the transition into interface waiting has been recorded.
-  bool m_waiting_recorded{false};
   /// Optional startup trace recorder (fine-grained events).
   Startup::StartupTraceRecorder* m_trace{nullptr};
   /// Application audio system (may be null; music is non-fatal).

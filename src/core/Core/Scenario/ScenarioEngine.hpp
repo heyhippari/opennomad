@@ -128,6 +128,10 @@ class ScenarioEngine {
   [[nodiscard]] const Script::AreaScriptRuntime* area_script() const {
     return m_startup.area_script();
   }
+  [[nodiscard]] const Script::AreaScriptRuntime* area_script(
+      const std::size_t resident_slot) const {
+    return m_startup.area_script(resident_slot);
+  }
   [[nodiscard]] bool ticked() const {
     return m_startup.ticked();
   }

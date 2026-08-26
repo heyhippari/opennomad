@@ -83,9 +83,10 @@ struct AreaVmRegistryDebugState {
 [[nodiscard]] AreaVmContextDebugState build_area_vm_context_debug_state(
     const Script::AreaScriptRuntime& runtime, AreaVmContextSourceDebugState source);
 
-/// Builds the current registry view. Today this returns zero or one actual
-/// startup AREA context; future context providers can append without changing
-/// the inspector's list/detail model.
+/// Builds the current registry view from every real resident primary AREA
+/// context. Resident slot ownership and AREA identity come from the same
+/// ScenarioStartupController state that owns each VM; no retail registry slots
+/// or Runtime.exe pointers are fabricated.
 [[nodiscard]] AreaVmRegistryDebugState build_area_vm_registry_debug_state(
     const ScenarioEngine& engine);
 

@@ -270,12 +270,6 @@ std::expected<void, std::string> Runtime::preload_scene_characters(
             true)};
         !result) {
       return result;
-
-      // SCENE attachment makes the body resident so bound SCX scripts can run,
-      // but it must not make that body visible before compact 0x4E requests it.
-      if (RuntimeCharacter* const preloaded{find(placement.character_id)}; preloaded != nullptr) {
-        preloaded->presentation_enabled = false;
-      }
     }
   }
   return {};

@@ -7,12 +7,12 @@
 #include <limits>
 #include <optional>
 #include <span>
-#include <string>
 #include <utility>
 #include <vector>
 
 #include "Core/Omikron/IamArea.hpp"
 #include "Core/Scenario/ScenarioEngine.hpp"
+#include "Core/Scenario/ScenarioStartupController.hpp"
 #include "Core/Script/AreaScriptOpcode.hpp"
 #include "Core/Script/AreaScriptRuntime.hpp"
 
@@ -27,7 +27,8 @@ std::optional<std::uint16_t> recovered_area_runtime_state(
     case Script::AreaScriptState::k_running:
       return 1;
     case Script::AreaScriptState::k_waiting:
-      if (wait.runtime_state == 4U || wait.runtime_state == 6U || wait.runtime_state == 7U) {
+      if (wait.runtime_state == 4U || wait.runtime_state == 6U || wait.runtime_state == 7U ||
+          wait.runtime_state == 10U) {
         return wait.runtime_state;
       }
       return std::nullopt;
@@ -96,30 +97,42 @@ AreaVmContextDebugState build_area_vm_context_debug_state(
 
 AreaVmRegistryDebugState build_area_vm_registry_debug_state(const ScenarioEngine& engine) {
   AreaVmRegistryDebugState result;
-  const Script::AreaScriptRuntime* const runtime{engine.area_script()};
-  const Omikron::IamAreaRecord* const record{engine.area_record()};
-  if (runtime == nullptr || record == nullptr) {
-    return result;
-  }
+  std::size_t context_index{0};
 
-  const std::int32_t area_id{engine.initial_area_id()};
-  const std::uint64_t identity{
-      static_cast<std::uint64_t>(static_cast<std::uint32_t>(area_id)) << 32U};
-  const std::uint32_t primary_event_offset{record->script_offset()};
-  std::array<std::optional<std::uint32_t>, 3> event_entries{};
-  // The current startup controller queues Event 1 and constructs its runtime
-  // span at the AREA header's primary/default event offset. Event 2/3 source
-  // mappings are not modeled and remain absent.
-  event_entries.at(0) = primary_event_offset;
-  result.contexts.push_back(build_area_vm_context_debug_state(*runtime,
-      AreaVmContextSourceDebugState{.identity = identity,
-          .open_nomad_context_index = 0,
-          .owner_area_slot = std::uint8_t{0},
-          .retail_registry_slot = std::nullopt,
-          .area_id = area_id,
-          .source_primary_event_offset = primary_event_offset,
-          .source_event_entry_offsets = event_entries,
-          .open_nomad_execution_base_offset = primary_event_offset}));
+  // Phase 1 replaced the singleton primary AREA VM with one primary context
+  // per resident AREA slot. Build diagnostics from those exact owners instead
+  // of relabelling whichever context is currently presented as initial AREA 118.
+  for (std::size_t owner_slot{0}; owner_slot < 2U; ++owner_slot) {
+    const RuntimeAreaSlot* const slot{engine.runtime_area_slot(owner_slot)};
+    const Script::AreaScriptRuntime* const runtime{engine.area_script(owner_slot)};
+    if (slot == nullptr || runtime == nullptr || !slot->primary.has_value()) {
+      continue;
+    }
+
+    const Omikron::IamAreaRecord& record{slot->primary.value()};
+    const std::int32_t area_id{slot->primary_area_id};
+    const std::uint32_t primary_event_offset{record.script_offset()};
+    std::array<std::optional<std::uint32_t>, 3> event_entries{};
+    // Primary resident contexts currently model the AREA header's default/event
+    // 1 entry only. Event 2/3 source mappings remain deliberately absent.
+    event_entries.at(0) = primary_event_offset;
+
+    // Stable across active-world switches and distinct for the two resident
+    // owners even if malformed/test data were ever to reuse an AREA ID.
+    const std::uint64_t identity{
+        (static_cast<std::uint64_t>(static_cast<std::uint32_t>(area_id)) << 32U) |
+        static_cast<std::uint64_t>(owner_slot)};
+
+    result.contexts.push_back(build_area_vm_context_debug_state(*runtime,
+        AreaVmContextSourceDebugState{.identity = identity,
+            .open_nomad_context_index = context_index++,
+            .owner_area_slot = static_cast<std::uint8_t>(owner_slot),
+            .retail_registry_slot = std::nullopt,
+            .area_id = area_id,
+            .source_primary_event_offset = primary_event_offset,
+            .source_event_entry_offsets = event_entries,
+            .open_nomad_execution_base_offset = primary_event_offset}));
+  }
   return result;
 }
 
