@@ -829,12 +829,13 @@ void initialize_start_menu(InterfaceManager& manager, InterfaceInstance& instanc
   //   IAM/Menu[6] = "Yes" -> callback 0x0047BC10 -> PostQuitMessage(0)
   //   IAM/Menu[7] = "No"  -> parent/root state 0x004CF218
   //
-  // Both recovered elements intentionally share the same 640x40 rectangle;
-  // the group's selected member is the one presented.
+  // The static Yes/No templates both start at y=330, but Runtime's
+  // StartMenu_Initialize calls group-layout helper 0x00429680 with start
+  // y=260 and step=60, yielding the effective bounds stored above. Both
+  // choices remain visible; selection only controls their active/inactive tint.
   const std::array<I2DState*, 2> quit_targets{quit_yes_action, root};
   I2DGroup quit_choice_group;
   quit_choice_group.runtime_flags = k_start_menu_text_group_flags;
-  quit_choice_group.render_selected_only = true;
   for (std::size_t index{0}; index < k_start_menu_quit_choices.size(); ++index) {
     const RecoveredTextEntry& entry{k_start_menu_quit_choices.at(index)};
     quit_choice_group.elements.push_back(I2DElement{

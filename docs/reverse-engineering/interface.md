@@ -662,7 +662,7 @@ Quit
 
 # 22. Runtime root-menu geometry
 
-Recovered 640×480 logical-canvas rectangles:
+Recovered effective 640×480 logical-canvas rectangles:
 
 ```text
 New Game:
@@ -677,6 +677,21 @@ Options:
 Quit:
     x=0 y=360 w=640 h=40
 ```
+
+The static text templates initially contain Y positions:
+
+```text
+150, 210, 270, 330
+```
+
+`StartMenu_Initialize` at `0x00479D7E` calls `0x00429680` with:
+
+```text
+start y = 120
+step    = 80
+```
+
+`0x00429680` iterates the group's element-pointer array and rewrites each element's Y coordinate, producing the effective positions above.
 
 Font:
 
@@ -930,7 +945,7 @@ font 'I'
 x=0 y=40 w=640 h=40
 ```
 
-Choices:
+Choices use static templates at:
 
 ```text
 IAM/Menu[6] = "Yes"
@@ -940,10 +955,21 @@ font 'S'
 x=0 y=330 w=640 h=40
 ```
 
-Both choice elements occupy the same rectangle.
+However, those are not the final on-screen bounds. `StartMenu_Initialize` at `0x00479E23` calls the same group-layout helper `0x00429680` with:
 
-Runtime behaves as an exclusive selector rather than displaying two side-by-side
-labels.
+```text
+start y = 260
+step    = 60
+```
+
+The helper rewrites the two choice elements to:
+
+```text
+Yes: x=0 y=260 w=640 h=40
+No:  x=0 y=320 w=640 h=40
+```
+
+This matches retail behavior: both choices are visible simultaneously in a vertical list. The selected choice is rendered at full intensity and the inactive choice at half intensity. Because the Quit-state initializer sets the selected index to 1, the initial presentation is grey "Yes" above bright "No".
 
 ---
 

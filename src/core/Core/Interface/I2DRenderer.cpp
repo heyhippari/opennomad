@@ -349,13 +349,6 @@ void I2DRenderer::render(const InterfaceInstance& instance,
           ++selectable_ordinal;
         }
 
-        // Runtime selector groups can contain several alternatives occupying
-        // exactly the same rectangle. Only the selected alternative is
-        // presented (Quit confirmation: Yes/No).
-        if (group.render_selected_only && selectable_text && !selected) {
-          continue;
-        }
-
         const std::string_view label{instance.strings.at(text->string_index)};
         if (label.empty()) {
           continue;
@@ -368,13 +361,16 @@ void I2DRenderer::render(const InterfaceInstance& instance,
         }
 
         // Recovered Runtime text-style behaviour (0x004769A0): inactive
-        // elements divide the RGB components by two.
-        const float red{
-            encoded_from_byte(selected ? text->red : static_cast<std::uint8_t>(text->red / 2U))};
+        // selectable elements divide the RGB components by two. Static text
+        // such as the Quit title is not an inactive choice and stays at its
+        // authored intensity.
+        const bool full_intensity{!selectable_text || selected};
+        const float red{encoded_from_byte(
+            full_intensity ? text->red : static_cast<std::uint8_t>(text->red / 2U))};
         const float green{encoded_from_byte(
-            selected ? text->green : static_cast<std::uint8_t>(text->green / 2U))};
-        const float blue{
-            encoded_from_byte(selected ? text->blue : static_cast<std::uint8_t>(text->blue / 2U))};
+            full_intensity ? text->green : static_cast<std::uint8_t>(text->green / 2U))};
+        const float blue{encoded_from_byte(
+            full_intensity ? text->blue : static_cast<std::uint8_t>(text->blue / 2U))};
         const std::array<float, 4> tint{red, green, blue, 1.0F};
 
         const float text_width{font->measure(label)};

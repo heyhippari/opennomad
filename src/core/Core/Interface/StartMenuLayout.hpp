@@ -8,10 +8,9 @@
 
 namespace App::Interface {
 
-/// One recovered root-menu text entry: the IAM string index, the font key and
-/// the 640x480 virtual-canvas bounds. Recovered from Runtime's static I2D
-/// structures (text elements @ 0x004CE6F0 / 0x004CE738 / 0x004CE780 /
-/// 0x004CE7C8); IAM/Menu holds only the strings, not these coordinates.
+/// One recovered START MENU text entry: the IAM string index, font key and
+/// effective 640x480 virtual-canvas bounds after Runtime's initializer-time
+/// layout mutations. IAM/Menu holds only the strings, not these coordinates.
 struct RecoveredTextEntry {
   std::uint16_t string_index;
   char font_key;
@@ -22,6 +21,10 @@ struct RecoveredTextEntry {
 };
 
 /// The four recovered root-menu entries, in selection order.
+///
+/// Their static templates start at y=150/210/270/330, but StartMenu_Initialize
+/// @ 0x00479D7E calls the group-layout helper @ 0x00429680 with start y=120
+/// and step=80, producing the effective Runtime bounds below.
 inline constexpr std::array<RecoveredTextEntry, 4> k_start_menu_root_entries{{
     {0, 'I', 0, 120, 640, 40},
     {1, 'I', 0, 200, 640, 40},
@@ -29,7 +32,7 @@ inline constexpr std::array<RecoveredTextEntry, 4> k_start_menu_root_entries{{
     {5, 'I', 0, 360, 640, 40},
 }};
 
-/// Quit confirmation recovered from Runtime's static I2D structures.
+/// Quit confirmation recovered from Runtime's I2D structures.
 ///
 /// The title element is mutated to IAM/Menu index 5 ("Quit") by
 /// Runtime @ 0x0047BBB0.
@@ -38,11 +41,14 @@ inline constexpr RecoveredTextEntry k_start_menu_quit_title{
 
 /// Runtime choice elements @ 0x004CEE78 / 0x004CEEC0.
 ///
-/// Both deliberately occupy the same rectangle. Runtime treats this as an
-/// exclusive selector rather than drawing the two labels simultaneously.
+/// Both static templates initially contain y=330. StartMenu_Initialize
+/// @ 0x00479E23 then calls the same group-layout helper @ 0x00429680 with
+/// start y=260 and step=60, which rewrites them to y=260 (Yes) and y=320 (No).
+/// Runtime presents both labels simultaneously; the selected choice is bright
+/// and the other choice is rendered at half intensity.
 inline constexpr std::array<RecoveredTextEntry, 2> k_start_menu_quit_choices{{
-    {6, 'S', 0, 330, 640, 40},  // Yes
-    {7, 'S', 0, 330, 640, 40},  // No
+    {6, 'S', 0, 260, 640, 40},  // Yes
+    {7, 'S', 0, 320, 640, 40},  // No
 }};
 
 /// Runtime @ 0x0047BBC6 writes 1 to the choice group's selected index before
