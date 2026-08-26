@@ -22,8 +22,9 @@ struct IamCameraRecord {
   std::uint16_t camera_type{0};
   std::int16_t roll_units{0};
   std::int16_t horizontal_fov_units{0};
-  /// +0x20. -1 is absolute; 0 attaches using body-offset orientation only;
-  /// 1 attaches using actor-base + body-offset orientation.
+  /// +0x20. -1 is absolute; 0 uses one participant's principal orientation;
+  /// 6 uses a two-participant midpoint/relationship yaw. Selectors 1..5 and
+  /// 7..9 have distinct native resolvers with unsupported transform semantics.
   std::int16_t target_attachment_selector{0};
   /// +0x22. Same attachment-mode encoding as target_attachment_selector.
   std::int16_t eye_attachment_selector{0};

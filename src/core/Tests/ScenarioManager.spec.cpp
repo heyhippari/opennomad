@@ -6,6 +6,7 @@
 
 #include <SDL3/SDL_stdinc.h>
 
+#include <array>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
@@ -182,6 +183,47 @@ Buffer make_dialog_archive() {
   return archive;
 }
 
+/// Minimal indexed IAM/DIALOG archive with two selector-6 cameras and explicit
+/// main/response pairs at ID 0.
+Buffer make_dialog_camera_archive(const std::array<std::int16_t, 2>& line_cameras,
+    const std::array<std::int16_t, 2>& response_cameras) {
+  Buffer record;
+  record.u16(57).u16(1).u16(2).u16(2);
+  record.zeros(0x20U);  // Four condition and four action offsets.
+  record.u32(0xA0U);    // Six-string block follows the node and two cameras.
+  record.u16(0xFFFFU).u16(0xFFFFU).u16(0xFFFFU).u16(0xFFFFU);
+  record.u16(0).chars("FACE", 10);
+  record.u16(static_cast<std::uint16_t>(response_cameras.at(0)))
+      .u16(static_cast<std::uint16_t>(response_cameras.at(1)))
+      .u16(static_cast<std::uint16_t>(line_cameras.at(0)))
+      .u16(static_cast<std::uint16_t>(line_cameras.at(1)));
+
+  const auto append_camera = [&record](const std::int16_t camera_id) {
+    record.i32(256).i32(0).i32(0);  // Serialized eye.
+    record.i32(0).i32(0).i32(256);  // Serialized target.
+    record.u16(static_cast<std::uint16_t>(camera_id))
+        .u16(12)
+        .u16(0)
+        .u16(853)
+        .u16(6)
+        .u16(6)
+        .u16(0)
+        .u16(0)
+        .u16(0)
+        .u16(0);
+  };
+  append_camera(4);
+  append_camera(5);
+  record.chars("Session dialog", 15).chars("Response", 9).zeros(4U);
+
+  Buffer archive;
+  archive.u32(0x800U).u32(static_cast<std::uint32_t>(record.data().size())).zeros(0x7F8U);
+  for (const std::byte byte : record.data()) {
+    archive.u8(std::to_integer<std::uint8_t>(byte));
+  }
+  return archive;
+}
+
 /// Scratch directory wiped on construction and destruction.
 class TempDirectory {
  public:
@@ -263,6 +305,61 @@ TEST_SUITE("Core::Scenario::ScenarioManager") {
     CHECK_FALSE(manager.dialog_runtime().active());
     CHECK_EQ(manager.world_presentation().reset_generation(),
         presentation_reset_generation + 1U);
+  }
+
+  TEST_CASE("Dialog camera pairs retain participants, state mapping, and 160-unit timing") {
+    const TempDirectory temp;
+    write_boot_fixtures(temp);
+    write_bytes(temp.root() / "IAM" / "DIALOG", make_dialog_camera_archive({4, 5}, {5, 4}));
+    const ScopedGameDataRoot root{temp.root()};
+
+    App::ScenarioManager manager;
+    initialize_grid_fixture(manager);
+    manager.set_controlled_character(
+        App::ControlledCharacterRef{.character_id = 41, .world_scene_id = 0});
+    REQUIRE(manager.start_dialog(0).has_value());
+    manager.service_dialog_performance(0.0F);
+
+    const auto line_a{manager.world_presentation().take_camera()};
+    const auto line_b{manager.world_presentation().take_camera()};
+    REQUIRE(line_a.has_value());
+    REQUIRE(line_b.has_value());
+    CHECK_EQ(line_a->camera_id, 4U);
+    CHECK_EQ(line_a->duration_units, 0);
+    CHECK_EQ(line_b->camera_id, 5U);
+    CHECK_EQ(line_b->duration_units, 160);
+    for (const App::WorldCameraCommand* command : {&line_a.value(), &line_b.value()}) {
+      CHECK_EQ(command->attachment_participants.participant_a_character_id, 41);
+      CHECK_EQ(command->attachment_participants.participant_b_character_id, 57);
+    }
+
+    REQUIRE(manager.dialog_runtime().acknowledge_line().has_value());
+    CHECK(manager.dialog_runtime().state() == App::Dialog::DialogState::k_waiting_for_choice);
+    manager.service_dialog_performance(0.0F);
+    const auto response_a{manager.world_presentation().take_camera()};
+    const auto response_b{manager.world_presentation().take_camera()};
+    REQUIRE(response_a.has_value());
+    REQUIRE(response_b.has_value());
+    CHECK_EQ(response_a->camera_id, 5U);
+    CHECK_EQ(response_a->duration_units, 0);
+    CHECK_EQ(response_b->camera_id, 4U);
+    CHECK_EQ(response_b->duration_units, 160);
+    CHECK_FALSE(manager.world_presentation().take_camera().has_value());
+  }
+
+  TEST_CASE("Dialog camera B is not submitted when camera A is absent") {
+    const TempDirectory temp;
+    write_boot_fixtures(temp);
+    write_bytes(temp.root() / "IAM" / "DIALOG", make_dialog_camera_archive({-1, 5}, {-1, -1}));
+    const ScopedGameDataRoot root{temp.root()};
+
+    App::ScenarioManager manager;
+    initialize_grid_fixture(manager);
+    manager.set_controlled_character(
+        App::ControlledCharacterRef{.character_id = 41, .world_scene_id = 0});
+    REQUIRE(manager.start_dialog(0).has_value());
+    manager.service_dialog_performance(0.0F);
+    CHECK_FALSE(manager.world_presentation().take_camera().has_value());
   }
 
   TEST_CASE("Exposes one mode slot plus exactly two world contexts after boot") {

@@ -63,8 +63,10 @@ std::uint32_t append_string(std::vector<std::byte>& data, const std::string_view
   return offset;
 }
 
-std::vector<std::byte> make_dialog(
-    const std::vector<NodeFixture>& nodes, const bool include_camera = false) {
+std::vector<std::byte> make_dialog(const std::vector<NodeFixture>& nodes,
+    const bool include_camera = false,
+    const std::int16_t camera_id = 2159,
+    const std::int16_t attachment_selector = 0) {
   const std::size_t camera_count{include_camera ? 1U : 0U};
   const std::size_t fixed_end{IamDialogRecord::k_header_size +
                               (nodes.size() * IamDialogNode::k_serialized_size) +
@@ -80,9 +82,11 @@ std::vector<std::byte> make_dialog(
         IamDialogRecord::k_header_size + (nodes.size() * IamDialogNode::k_serialized_size)};
     write_i32(data, camera_offset + 0x00U, -3206);
     write_i32(data, camera_offset + 0x0CU, -3165);
-    write_i16(data, camera_offset + 0x18U, 2159);
+    write_i16(data, camera_offset + 0x18U, camera_id);
     write_u16(data, camera_offset + 0x1AU, 12);
     write_i16(data, camera_offset + 0x1EU, 853);
+    write_i16(data, camera_offset + 0x20U, attachment_selector);
+    write_i16(data, camera_offset + 0x22U, attachment_selector);
   }
 
   for (std::size_t index{0}; index < nodes.size(); ++index) {
@@ -229,6 +233,25 @@ TEST_SUITE("Core::Dialog::DialogRuntime") {
     CHECK_FALSE(presentation->line_cameras.cameras.at(1).has_value());
     CHECK_EQ(presentation->response_cameras.authored_ids.at(1), 2159);
     CHECK(presentation->response_cameras.cameras.at(1).has_value());
+  }
+
+  TEST_CASE("Main presentation preserves the line pair instead of borrowing a response camera") {
+    NodeFixture node;
+    node.main_line = "I've been waiting for you...";
+    node.response_cameras = {4, -1};
+    node.line_cameras = {-1, -1};
+    DialogRuntime runtime;
+    REQUIRE(runtime.start(parse(make_dialog({node}, true, 4, 6))).has_value());
+    const auto presentation{runtime.presentation()};
+    REQUIRE(presentation.has_value());
+    CHECK(presentation->state == DialogState::k_presenting_line);
+    CHECK_EQ(presentation->line_cameras.authored_ids.at(0), -1);
+    CHECK_EQ(presentation->line_cameras.authored_ids.at(1), -1);
+    CHECK_EQ(presentation->response_cameras.authored_ids.at(0), 4);
+    CHECK_EQ(presentation->response_cameras.authored_ids.at(1), -1);
+    REQUIRE(presentation->response_cameras.cameras.at(0).has_value());
+    CHECK_EQ(presentation->response_cameras.cameras.at(0)->target_attachment_selector, 6);
+    CHECK_EQ(presentation->response_cameras.cameras.at(0)->eye_attachment_selector, 6);
   }
 
   TEST_CASE("Filters conditions and exposes only visible available responses") {

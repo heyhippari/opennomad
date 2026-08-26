@@ -735,11 +735,19 @@ void ScenarioManager::service_dialog_camera() {
     return;
   }
 
-  const auto enqueue = [this, context](const Omikron::IamCameraRecord& camera,
+  const std::optional<ControlledCharacterRef> controlled{controlled_character()};
+  const std::int16_t participant_a_character_id{
+      static_cast<std::int16_t>(controlled.has_value() ? controlled->character_id : -1)};
+  const WorldCameraAttachmentParticipants participants{
+      .participant_a_character_id = participant_a_character_id,
+      .participant_b_character_id = presentation->character_id};
+
+  const auto enqueue = [this, context, participants](const Omikron::IamCameraRecord& camera,
                            const std::int16_t duration_units) {
     m_world_presentation.enqueue_camera(WorldCameraCommand{.scene_id = context->scene_id,
         .scene_generation = context->generation,
         .camera_id = static_cast<std::uint16_t>(camera.camera_id),
+        .attachment_participants = participants,
 
         .serialized_eye = camera.serialized_eye,
         .serialized_target = camera.serialized_target,
@@ -783,11 +791,13 @@ void ScenarioManager::service_dialog_camera() {
   }
 
   App::Log::debug(LogCategory::Scenario,
-      "Dialog camera pair — generation={} state={} {} -> {}",
+      "Dialog camera pair — generation={} state={} {} -> {} participants=({}, {})",
       generation,
       static_cast<int>(presentation->state),
       pair->authored_ids.at(0),
-      pair->authored_ids.at(1));
+      pair->authored_ids.at(1),
+      participants.participant_a_character_id,
+      participants.participant_b_character_id);
 
   m_dialog_camera_generation = generation;
 }

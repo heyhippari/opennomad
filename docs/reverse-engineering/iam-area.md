@@ -1705,11 +1705,27 @@ struct AreaCameraRecord {
 ```
 
 Runtime camera-selection handlers copy the first two position vectors and use
-the recovered roll/FOV fields. Selector `-1` makes the corresponding vector
-absolute. Selector `0` anchors that vector to the current actor and is solved
-live during camera update as `actorAnchor - transform_vector(relative,
-actorOrientation)`. Selectors `1..9` have separate unresolved resolvers and
-must not be treated as selector `0`.
+the recovered roll/FOV fields. Camera controller state retains authored
+participant character IDs and resolves their live entity transforms during
+camera updates.
+
+- Selector `-1` uses the normalized vector as an absolute endpoint.
+- Selector `0` resolves participant A and uses
+  `A.position - transform_vector(relative, A.principalOrientation)`.
+- Selector `6` resolves participants A and B. Let
+  `M = (A.position + B.position) * 0.5`, normalize the full XYZ vector
+  `N = (A.position - B.position) / length(A.position - B.position)`, and derive
+  `yaw = atan2(N.z, N.x) * 180/pi + 90`. The endpoint is
+  `M - transform_vector(relative, euler_rotation_degrees({0,yaw,0}))`.
+
+Target and eye each transform their own authored vector but share the same
+live selector-6 midpoint and yaw. Selector 6 does not use either participant's
+principal orientation. OpenNomad uses the absolute endpoint as a modern safe
+fallback when either participant is missing or their positions coincide.
+
+Selectors `1..5` and `7..9` dispatch to distinct Runtime resolver functions;
+their transform semantics remain unsupported and deliberately use the safe
+absolute fallback rather than being treated as selector `0` or `6`.
 
 ---
 

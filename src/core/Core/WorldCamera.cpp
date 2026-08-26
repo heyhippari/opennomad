@@ -98,12 +98,12 @@ void WorldCameraSystem::apply_command(const WorldCameraCommand& command) {
   m_active_operation.reset();
   if (command.camera_type == 12U && command.wait_for_completion &&
       command.operation_generation.has_value()) {
-    m_active_operation = WorldCameraOperationCompletion{
-        .operation_generation = command.operation_generation.value(),
-        .scene_id = command.scene_id,
-        .scene_generation = command.scene_generation,
-        .source_area_id = command.source_area_id,
-        .camera_id = command.camera_id};
+    m_active_operation =
+        WorldCameraOperationCompletion{.operation_generation = command.operation_generation.value(),
+            .scene_id = command.scene_id,
+            .scene_generation = command.scene_generation,
+            .source_area_id = command.source_area_id,
+            .camera_id = command.camera_id};
   }
   m_has_scripted_pose = true;
 
@@ -225,35 +225,80 @@ void WorldCameraSystem::update(const float delta_seconds) {
 WorldCameraPose WorldCameraSystem::resolve_command_pose(const WorldCameraCommand& command) const {
   return WorldCameraPose{
       .eye = resolve_attachment_point(
-          command.serialized_eye, command.eye_attachment_selector, command.runtime_eye),
-      .target = resolve_attachment_point(
-          command.serialized_target, command.target_attachment_selector, command.runtime_target),
+          command, command.serialized_eye, command.eye_attachment_selector, command.runtime_eye),
+      .target = resolve_attachment_point(command,
+          command.serialized_target,
+          command.target_attachment_selector,
+          command.runtime_target),
       .roll_degrees = static_cast<float>(command.roll_degrees),
       .horizontal_fov_degrees = static_cast<float>(command.horizontal_fov_degrees)};
 }
 
-Runtime::Vec3 WorldCameraSystem::resolve_attachment_point(
+Runtime::Vec3 WorldCameraSystem::resolve_attachment_point(const WorldCameraCommand& command,
     const std::array<std::int32_t, 3>& serialized,
     const std::int16_t selector,
     const Runtime::Vec3& absolute_fallback) const {
-  if (selector == -1) {
+  if (selector == -1 || !m_attachment_pose_provider) {
     return absolute_fallback;
   }
-  // Runtime's selector-0 resolver consumes the actor's principal orientation.
-  // Selectors 1..9 follow separate native paths that remain unrecovered.
-  if (selector != 0 || !m_attachment_pose_provider) {
+  if (selector != 0 && selector != 6) {
+    // Selectors 1..5 and 7..9 have distinct native resolvers whose transform
+    // semantics remain unrecovered.
     return absolute_fallback;
   }
-  const std::optional<WorldCameraAttachmentPose> attachment{m_attachment_pose_provider()};
-  if (!attachment.has_value()) {
+
+  const std::int16_t participant_a_id{command.attachment_participants.participant_a_character_id};
+  if (participant_a_id < 0) {
     return absolute_fallback;
   }
+  const std::optional<WorldCameraAttachmentPose> participant_a{
+      m_attachment_pose_provider(participant_a_id)};
+  if (!participant_a.has_value()) {
+    return absolute_fallback;
+  }
+
   const Runtime::Vec3 relative{Runtime::iam_camera_vector_to_runtime(serialized)};
-  const Runtime::Vec3 rotated{
-      Runtime::transform_vector(relative, attachment->principal_orientation)};
-  return Runtime::Vec3{.x = attachment->translation.x - rotated.x,
-      .y = attachment->translation.y - rotated.y,
-      .z = attachment->translation.z - rotated.z};
+  if (selector == 0) {
+    const Runtime::Vec3 rotated{
+        Runtime::transform_vector(relative, participant_a->principal_orientation)};
+    return Runtime::Vec3{.x = participant_a->translation.x - rotated.x,
+        .y = participant_a->translation.y - rotated.y,
+        .z = participant_a->translation.z - rotated.z};
+  }
+
+  // Runtime selector 6 derives one shared orientation solely from the live
+  // A/B relationship. It does not compose either actor's orientation.
+  const std::int16_t participant_b_id{command.attachment_participants.participant_b_character_id};
+  if (participant_b_id < 0) {
+    return absolute_fallback;
+  }
+  const std::optional<WorldCameraAttachmentPose> participant_b{
+      m_attachment_pose_provider(participant_b_id)};
+  if (!participant_b.has_value()) {
+    return absolute_fallback;
+  }
+
+  const Runtime::Vec3 delta{.x = participant_a->translation.x - participant_b->translation.x,
+      .y = participant_a->translation.y - participant_b->translation.y,
+      .z = participant_a->translation.z - participant_b->translation.z};
+  const float length{std::sqrt((delta.x * delta.x) + (delta.y * delta.y) + (delta.z * delta.z))};
+  constexpr float k_minimum_participant_separation_inches{0.0001F};
+  if (!std::isfinite(length) || length <= k_minimum_participant_separation_inches) {
+    return absolute_fallback;
+  }
+
+  const Runtime::Vec3 normal{.x = delta.x / length, .y = delta.y / length, .z = delta.z / length};
+  constexpr float k_radians_to_degrees{180.0F / std::numbers::pi_v<float>};
+  const float yaw_degrees{(std::atan2(normal.z, normal.x) * k_radians_to_degrees) + 90.0F};
+  const Runtime::Matrix3 orientation{
+      Runtime::euler_rotation_degrees(Runtime::Vec3{.x = 0.0F, .y = yaw_degrees, .z = 0.0F})};
+  const Runtime::Vec3 midpoint{
+      .x = (participant_a->translation.x + participant_b->translation.x) * 0.5F,
+      .y = (participant_a->translation.y + participant_b->translation.y) * 0.5F,
+      .z = (participant_a->translation.z + participant_b->translation.z) * 0.5F};
+  const Runtime::Vec3 rotated{Runtime::transform_vector(relative, orientation)};
+  return Runtime::Vec3{
+      .x = midpoint.x - rotated.x, .y = midpoint.y - rotated.y, .z = midpoint.z - rotated.z};
 }
 
 WorldCameraPose WorldCameraSystem::interpolate(

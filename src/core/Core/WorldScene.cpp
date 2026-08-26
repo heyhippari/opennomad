@@ -278,23 +278,22 @@ std::expected<std::unique_ptr<WorldScene>, std::string> WorldScene::create(
 WorldScene::WorldScene(ScenarioManager& scenarios, Interface::InterfaceManager& interfaces)
     : m_scenarios(&scenarios),
       m_interfaces(interfaces) {
-  m_camera.set_attachment_pose_provider([this]() -> std::optional<WorldCameraAttachmentPose> {
-    if (m_scenarios == nullptr) {
-      return std::nullopt;
-    }
-    const std::optional<ControlledCharacterRef> current{m_scenarios->controlled_character()};
-    if (!current.has_value()) {
-      return std::nullopt;
-    }
-    ScenarioRuntime* const runtime{m_scenarios->world_runtime(current->world_scene_id)};
-    const Character::RuntimeCharacter* const character{
-        runtime == nullptr ? nullptr : runtime->character_runtime().find(current->character_id)};
-    if (character == nullptr) {
-      return std::nullopt;
-    }
-    return WorldCameraAttachmentPose{.translation = character->transform.translation,
-        .principal_orientation = character->principal_orientation()};
-  });
+  m_camera.set_attachment_pose_provider(
+      [this](const std::int16_t character_id) -> std::optional<WorldCameraAttachmentPose> {
+        if (m_scenarios == nullptr) {
+          return std::nullopt;
+        }
+        const WorldSceneContext* const context{m_scenarios->active_world_context()};
+        ScenarioRuntime* const runtime{
+            context == nullptr || context->runtime == nullptr ? nullptr : context->runtime.get()};
+        const Character::RuntimeCharacter* const character{
+            runtime == nullptr ? nullptr : runtime->character_runtime().find(character_id)};
+        if (character == nullptr) {
+          return std::nullopt;
+        }
+        return WorldCameraAttachmentPose{.translation = character->transform.translation,
+            .principal_orientation = character->principal_orientation()};
+      });
 
   // Runtime publishes the scene's currently selected named 3DO camera through
   // global 0x009103D4 after structured script execution. Controller mode 13
@@ -848,12 +847,17 @@ void WorldScene::update(const float delta_time, const Input::InputManager& input
         }
       }
       App::Log::debug(LogCategory::Renderer,
-          "World camera {} — duration={} flags={} roll={}deg hFov={}deg",
+          "World camera {} — duration={} flags={} roll={}deg hFov={}deg selectors=({}, {}) "
+          "participants=({}, {})",
           command->camera_id,
           command->duration_units,
           command->flags,
           command->roll_degrees,
-          command->horizontal_fov_degrees);
+          command->horizontal_fov_degrees,
+          command->target_attachment_selector,
+          command->eye_attachment_selector,
+          command->attachment_participants.participant_a_character_id,
+          command->attachment_participants.participant_b_character_id);
     }
   }
 

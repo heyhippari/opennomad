@@ -1014,14 +1014,21 @@ ScenarioStartupController::enqueue_compact_camera(const std::size_t owner_slot,
       request.wait_for_completion
           ? std::optional<std::uint64_t>{m_next_camera_operation_generation++}
           : std::nullopt};
+  const std::optional<ControlledCharacterRef> controlled{m_manager->controlled_character()};
+  const std::int16_t participant_a_character_id{
+      static_cast<std::int16_t>(controlled.has_value() ? controlled->character_id : -1)};
+  const WorldCameraAttachmentParticipants participants{
+      .participant_a_character_id = participant_a_character_id, .participant_b_character_id = -1};
 
-  // Preserve serialized vectors/selectors. WorldCameraSystem obtains the
-  // current actor pose through its narrow provider on every update.
+  // Preserve serialized vectors/selectors and the controlled participant ID
+  // captured by Runtime's camera controller at submission. WorldCameraSystem
+  // resolves that stable identity to a live pose on every update.
   m_manager->world_presentation().enqueue_camera(WorldCameraCommand{.scene_id = context->scene_id,
       .scene_generation = context->generation,
       .camera_id = request.camera_id,
       .source_area_id = slot.primary_area_id,
       .operation_generation = operation_generation,
+      .attachment_participants = participants,
       .serialized_eye = camera->serialized_eye,
       .serialized_target = camera->serialized_target,
       .runtime_eye = Runtime::iam_camera_vector_to_runtime(camera->serialized_eye),

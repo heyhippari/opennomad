@@ -46,13 +46,20 @@ class WorldUvPhaseState {
   double m_v_phase{0.0};
 };
 
-/// One live Runtime actor attachment pose supplied across the narrow
-/// gameplay-to-presentation capability boundary.
+/// One requested live Runtime character attachment pose supplied across the
+/// narrow gameplay-to-presentation capability boundary.
 struct WorldCameraAttachmentPose {
   Runtime::Vec3 translation{};
   /// Native +0x1A0/+0x1A4/+0x1A8 principal actor orientation. AREA 222
   /// cameras 4290/4291/4292 use selector 0 for both eye and target.
   Runtime::Matrix3 principal_orientation{};
+};
+
+/// Stable authored character IDs retained by an attached camera command.
+/// Presentation resolves these identities to live poses on every update.
+struct WorldCameraAttachmentParticipants {
+  std::int16_t participant_a_character_id{-1};
+  std::int16_t participant_b_character_id{-1};
 };
 
 enum class WorldCameraCommandKind : std::uint8_t {
@@ -78,6 +85,7 @@ struct WorldCameraCommand {
   std::int32_t source_area_id{-1};
   /// Unique compact-VM operation generation for tracked 0x60 requests.
   std::optional<std::uint64_t> operation_generation{};
+  WorldCameraAttachmentParticipants attachment_participants{};
 
   std::array<std::int32_t, 3> serialized_eye{};
   std::array<std::int32_t, 3> serialized_target{};
@@ -98,9 +106,9 @@ struct WorldCameraCommand {
   std::int16_t horizontal_fov_units{0};
   std::int32_t roll_degrees{0};
   std::int32_t horizontal_fov_degrees{0};
-  /// IAM +0x20 / +0x22. -1 is absolute; 0 resolves through the current
-  /// actor's principal native orientation. Selectors 1..9 remain unresolved
-  /// and deliberately use the safe absolute fallback.
+  /// IAM +0x20 / +0x22. -1 is absolute; 0 uses participant A's principal
+  /// orientation; 6 uses the participant A/B midpoint and relationship yaw.
+  /// Selectors 1..5 and 7..9 deliberately retain the safe absolute fallback.
   std::int16_t target_attachment_selector{-1};
   std::int16_t eye_attachment_selector{-1};
   std::array<std::uint16_t, 4> tail_fields{};
@@ -379,9 +387,8 @@ class WorldLetterboxState {
 /// session-global fade or cinematic mask.
 class WorldPresentationResetObserver {
  public:
-  [[nodiscard]] bool synchronize(const std::uint64_t reset_generation,
-      WorldFadeState& fade,
-      WorldLetterboxState& letterbox) {
+  [[nodiscard]] bool synchronize(
+      const std::uint64_t reset_generation, WorldFadeState& fade, WorldLetterboxState& letterbox) {
     if (reset_generation == m_observed_generation) {
       return false;
     }

@@ -86,23 +86,92 @@ automatic line, if present) has been acknowledged.
 
 ## Embedded cameras
 
-The `0x2c` camera ABI is shared with IAM/AREA table 6: two raw signed position vectors, camera ID/type, roll and horizontal-FOV Runtime units, two signed attachment-related fields, and four unresolved tail words.
+The `0x2c` camera ABI is shared with IAM/AREA table 6: two raw signed position
+vectors, camera ID/type, roll and horizontal-FOV Runtime units, target/eye
+attachment selectors, and four unresolved tail words.
+
+The recovered node accessors are:
+
+```text
+0x00401150 -> node +0x38   response camera A
+0x00401190 -> node +0x3a   response camera B
+0x004010D0 -> node +0x3c   main-line camera A
+0x00401110 -> node +0x3e   main-line camera B
+```
+
+High-level dialogue presentation at `0x0046A200` uses `+0x3c/+0x3e` for the
+main/NPC line and `+0x38/+0x3a` for player-response presentation. These roles
+must not be swapped.
 
 Runtime applies a dialog camera pair as a progression, not as two alternatives:
 
 ```text
-camera A
+camera A == -1
+    return; camera B is not independently applied
+
+camera A present
     snap immediately
 
-camera B
+camera B present
     transition from A over 160 Runtime camera units
 ```
 
-The complete camera record is submitted in both operations, so eye, target,
-roll and horizontal FOV all participate. Under OpenNomad's recovered 30 Hz camera timing, the second leg lasts approximately 5.333 seconds while being sampled smoothly at display refresh rate.
+This is native pair routine `0x004013B0`. The complete camera record and the
+same participant pair are submitted in both operations, so eye, target, roll
+and horizontal FOV all participate. Camera A is not awaited before camera B is
+scheduled. Under OpenNomad's recovered 30 Hz camera timing, the second leg
+lasts approximately 5.333 seconds while being sampled smoothly at display
+refresh rate.
 
 Main/NPC presentation uses the node's `+0x3c/+0x3e` line-camera pair.
 Response-side presentation uses `+0x38/+0x3a`.
+
+### Dialogue camera participants and selectors
+
+The pair routine receives stable authored character IDs:
+
+```text
+participant A = current controlled/possessed character
+participant B = IAM/DIALOG record character_id (the interlocutor)
+```
+
+Its recovered selector-to-participant binding is the same for target and eye:
+
+| Selector | Primary | Secondary |
+| ---: | --- | --- |
+| 0, 1 | participant A | none |
+| 2, 3 | participant B | none |
+| 4, 5 | none | none |
+| 6 | participant A | participant B |
+| greater than 6 in this submission path | none | none |
+
+Participant binding does not imply recovered transform semantics. The native
+selector dispatcher is `0x00415A10`, with distinct resolver functions for each
+selector. OpenNomad implements only absolute selector `-1`, participant-A
+selector `0`, and two-participant selector `6`. Selectors `1..5` and `7..9`
+remain on the absolute fallback path.
+
+Selector 6 resolves through `0x00415540`: it anchors at the participants'
+midpoint, derives Runtime-native yaw from
+`atan2(normalize(A-B).z, normalize(A-B).x) * 180/pi + 90`, and subtracts the
+rotated authored endpoint vector. Target and eye application at `0x00415D10`
+and `0x00415E60` use the same anchor-minus-relative convention. The detailed
+formula is also recorded in [`iam-area.md`](iam-area.md).
+
+### IMPASSE dialogue evidence correction
+
+Retail DIALOG 392 (character 57, `Démon/Impasse`) has the main line
+`I've been waiting for you...`, response pair `{4,-1}`, and main-line pair
+`{-1,-1}`. Camera 4 uses selector 6 for both target and eye, but the ordinary
+main-line path does not select it. It must not be forced onto that line or used
+as a reason to swap the pair fields.
+
+DIALOG 393 contains the same demon line but no cameras. DIALOG 90 contains the
+Mechagarde cooperation line but also has no cameras. Consequently the observed
+demon and Mechagarde editorial closeups have an external scenario, scene, or
+script camera source rather than the ordinary IAM/DIALOG main-line pair. This
+evidence does not identify which external authored command supplies either
+shot, and OpenNomad does not fabricate one.
 
 ## Worked example: dialog 272
 

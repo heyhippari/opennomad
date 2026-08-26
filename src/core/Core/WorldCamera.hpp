@@ -26,13 +26,14 @@ struct WorldCameraPose {
 /// forcing visible camera motion to 30 Hz.
 class WorldCameraSystem {
  public:
-  using AttachmentPoseProvider = std::function<std::optional<WorldCameraAttachmentPose>()>;
+  using AttachmentPoseProvider =
+      std::function<std::optional<WorldCameraAttachmentPose>(std::int16_t character_id)>;
   using ControllerPoseProvider = std::function<std::optional<WorldCameraPose>()>;
   WorldCameraSystem() = default;
 
   void set_aspect_ratio(float aspect_ratio);
-  /// Supplies the live current-actor attachment pose without coupling this
-  /// presentation class to ScenarioManager or a gameplay runtime.
+  /// Supplies one requested live character attachment pose without coupling
+  /// this presentation class to ScenarioManager or a gameplay runtime.
   void set_attachment_pose_provider(AttachmentPoseProvider provider);
   /// Supplies Runtime's live controller source (global 0x009103D4 equivalent).
   /// Controller mode 13 copies this pose every presentation update.
@@ -79,7 +80,7 @@ class WorldCameraSystem {
   }
   [[nodiscard]] bool controller_transitioning() const {
     return m_controller_transition_duration > 0.0F &&
-          m_controller_transition_elapsed < m_controller_transition_duration;
+           m_controller_transition_elapsed < m_controller_transition_duration;
   }
   [[nodiscard]] float controller_transition_duration_seconds() const {
     return m_controller_transition_duration;
@@ -102,7 +103,7 @@ class WorldCameraSystem {
   void complete_active_operation();
   void commit_pose();
   [[nodiscard]] WorldCameraPose resolve_command_pose(const WorldCameraCommand& command) const;
-  [[nodiscard]] Runtime::Vec3 resolve_attachment_point(
+  [[nodiscard]] Runtime::Vec3 resolve_attachment_point(const WorldCameraCommand& command,
       const std::array<std::int32_t, 3>& serialized,
       std::int16_t selector,
       const Runtime::Vec3& absolute_fallback) const;
