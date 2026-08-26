@@ -67,8 +67,9 @@ class WorldScene final : public Scene, public Debug::SceneDebugView {
  private:
   WorldScene(ScenarioManager& scenarios, Interface::InterfaceManager& interfaces);
 
-  void consume_fade_commands(const WorldSceneContext* context);
-  void consume_letterbox_commands(const WorldSceneContext* context);
+  void synchronize_presentation_reset();
+  void consume_fade_commands();
+  void consume_letterbox_commands();
   void consume_object_presentation_commands(const WorldSceneContext* context);
   [[nodiscard]] bool update_dialog_input(float delta_time, const Input::InputManager& input);
 
@@ -79,8 +80,11 @@ class WorldScene final : public Scene, public Debug::SceneDebugView {
   std::unique_ptr<WorldLetterboxRenderer> m_letterbox_renderer;
   std::unique_ptr<WorldColorPipeline> m_color_pipeline;
   WorldCameraSystem m_camera;
+  /// Session-global overlays. World-context changes must not reset these;
+  /// only m_presentation_reset_observer may apply the explicit session epoch.
   WorldFadeState m_fade;
   WorldLetterboxState m_letterbox;
+  WorldPresentationResetObserver m_presentation_reset_observer;
   WorldSubtitleState m_subtitle;
   WorldUvPhaseState m_uv_phases;
   int m_width{640};

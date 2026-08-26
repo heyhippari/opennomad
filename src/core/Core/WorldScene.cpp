@@ -608,54 +608,48 @@ void WorldScene::set_geometry_wireframe_enabled(const bool enabled) {
   }
 }
 
-void WorldScene::consume_fade_commands(const WorldSceneContext* const context) {
+void WorldScene::synchronize_presentation_reset() {
+  if (m_scenarios == nullptr) {
+    return;
+  }
+  if (m_presentation_reset_observer.synchronize(
+          m_scenarios->world_presentation().reset_generation(), m_fade, m_letterbox)) {
+    App::Log::debug(LogCategory::Renderer,
+        "WorldScene: reset session-global fade and letterbox presentation for epoch {}",
+        m_presentation_reset_observer.observed_generation());
+  }
+}
+
+void WorldScene::consume_fade_commands() {
   if (m_scenarios == nullptr) {
     return;
   }
 
   while (std::optional<WorldFadeCommand> command{m_scenarios->world_presentation().take_fade()}) {
-    if (context == nullptr || command->scene_id != context->scene_id ||
-        command->scene_generation != context->generation) {
+    if (!m_fade.apply_command(command.value())) {
       App::Log::debug(LogCategory::Renderer,
-          "WorldScene: discarded stale presentation fade for scene={} generation={}",
-          command->scene_id,
-          command->scene_generation);
-      continue;
-    }
-
-    if (!m_fade.apply_command(command.value(), context->scene_id, context->generation)) {
-      App::Log::debug(LogCategory::Renderer,
-          "WorldScene: presentation mode {} remains unsupported",
-          command->mode);
+          "WorldScene: ignored presentation fade mode {} while mode {} is active",
+          command->mode,
+          m_fade.mode());
       continue;
     }
     App::Log::debug(LogCategory::Renderer,
-        "presentation fade-{} color=#{:06X} duration={} arg={}",
+        "presentation fade-{} color=#{:06X} duration={} delay={}",
         command->mode == 1U ? "in" : "out",
         command->color & 0x00FFFFFFU,
         command->duration_units,
-        command->operand_c);
+        command->delay_units);
   }
 }
 
-void WorldScene::consume_letterbox_commands(const WorldSceneContext* const context) {
-  // If the world changed after update(), leave commands queued until the next
-  // update resets presentation state and observes the new generation. This
-  // avoids accepting a valid new-world command and then erasing it one frame
-  // later during lifecycle synchronization.
-  if (m_scenarios == nullptr || context == nullptr || !m_world_observed ||
-      context->scene_id != m_observed_scene_id || context->generation != m_observed_generation) {
+void WorldScene::consume_letterbox_commands() {
+  if (m_scenarios == nullptr) {
     return;
   }
 
   while (std::optional<WorldLetterboxCommand> command{
       m_scenarios->world_presentation().take_letterbox()}) {
-    if (!m_letterbox.apply_command(*command, context->scene_id, context->generation)) {
-      App::Log::debug(LogCategory::Renderer,
-          "WorldScene: discarded stale cinematic letterbox for scene={} generation={}",
-          command->scene_id,
-          command->scene_generation);
-    }
+    static_cast<void>(m_letterbox.apply_command(*command));
   }
 }
 
@@ -769,6 +763,10 @@ bool WorldScene::update_dialog_input(const float delta_time, const Input::InputM
 void WorldScene::update(const float delta_time, const Input::InputManager& input) {
   APP_PROFILE_FUNCTION();
 
+  // Session reset is observed before any freshly queued commands are drained.
+  // Active-world changes below intentionally do not touch these global states.
+  synchronize_presentation_reset();
+
   WorldSceneContext* context{nullptr};
   if (m_scenarios != nullptr) {
     context = m_scenarios->active_world_context();
@@ -781,8 +779,6 @@ void WorldScene::update(const float delta_time, const Input::InputManager& input
             context->generation);
 
         m_camera.reset();
-        m_fade.reset();
-        m_letterbox.reset();
         m_subtitle.reset();
         auto renderer{WorldRenderer::create(*context)};
         if (!renderer) {
@@ -809,16 +805,12 @@ void WorldScene::update(const float delta_time, const Input::InputManager& input
     } else if (m_world_observed) {
       m_world_renderer.reset();
       m_camera.reset();
-      m_fade.reset();
-      m_letterbox.reset();
       m_subtitle.reset();
       m_world_observed = false;
     }
   }
 
-  // Drain every command, but only consume commands belonging to the exact
-  // active world generation. This makes stale commands harmless if a context
-  // is recycled between AREA execution and presentation.
+  // Camera commands remain scoped to the exact active world generation.
   if (m_scenarios != nullptr) {
     while (std::optional<WorldCameraCommand> command{
         m_scenarios->world_presentation().take_camera()}) {
@@ -865,8 +857,8 @@ void WorldScene::update(const float delta_time, const Input::InputManager& input
     }
   }
 
-  consume_fade_commands(context);
-  consume_letterbox_commands(context);
+  consume_fade_commands();
+  consume_letterbox_commands();
   consume_object_presentation_commands(context);
   m_fade.update(delta_time);
   m_letterbox.update(delta_time);
@@ -935,10 +927,11 @@ void WorldScene::render() {
   // consume newly-emitted presentation commands again here. This lets opcode
   // 0x77 cover the first world frame and 0x84/0x85 reverse without an extra
   // display-frame delay. Render never advances either transition clock.
+  synchronize_presentation_reset();
   const WorldSceneContext* context{
       m_scenarios != nullptr ? m_scenarios->active_world_context() : nullptr};
-  consume_fade_commands(context);
-  consume_letterbox_commands(context);
+  consume_fade_commands();
+  consume_letterbox_commands();
   consume_object_presentation_commands(context);
 
   // A world context may be replaced between update and render; never

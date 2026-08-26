@@ -486,27 +486,17 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
       return;
     }
 
-    const WorldSceneContext* context{m_manager->active_world_context()};
-    if (context == nullptr) {
-      App::Log::warn(LogCategory::Scenario,
-          "AREA presentation mode {} requested without an active world context",
-          request.mode);
-      return;
-    }
-
-    m_manager->world_presentation().enqueue_fade(WorldFadeCommand{.scene_id = context->scene_id,
-        .scene_generation = context->generation,
-        .mode = request.mode,
+    m_manager->world_presentation().enqueue_fade(WorldFadeCommand{.mode = request.mode,
         .color = request.color,
-        .duration_units = request.operand_b,
-        .operand_c = request.operand_c});
+        .duration_units = request.duration_units,
+        .delay_units = request.delay_units});
 
     record("AreaScript.PresentationRequested",
-        fmt::format("mode={} color={:#010x} duration={} arg={}",
+        fmt::format("mode={} color={:#010x} duration={} delay={}",
             request.mode,
             request.color,
-            request.operand_b,
-            request.operand_c));
+            request.duration_units,
+            request.delay_units));
   });
 
   area_script.set_cinematic_letterbox_sink(
@@ -517,17 +507,8 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
           return;
         }
 
-        const WorldSceneContext* context{m_manager->active_world_context()};
-        if (context == nullptr) {
-          App::Log::warn(LogCategory::Scenario,
-              "AREA cinematic letterbox requested without an active world context");
-          return;
-        }
-
         m_manager->world_presentation().enqueue_letterbox(
-            WorldLetterboxCommand{.scene_id = context->scene_id,
-                .scene_generation = context->generation,
-                .enabled = request.enabled});
+            WorldLetterboxCommand{.enabled = request.enabled});
         App::Log::debug(
             LogCategory::Scenario, "cinematic letterbox requested — enabled={}", request.enabled);
       });
@@ -1283,28 +1264,18 @@ void ScenarioStartupController::bind_scene_compact_services(Script::AreaScriptRu
     if (m_manager == nullptr) {
       return;
     }
-    const WorldSceneContext* context{m_manager->active_world_context()};
-    if (context != nullptr) {
-      m_manager->world_presentation().enqueue_fade(WorldFadeCommand{.scene_id = context->scene_id,
-          .scene_generation = context->generation,
-          .mode = request.mode,
-          .color = request.color,
-          .duration_units = request.operand_b,
-          .operand_c = request.operand_c});
-    }
+    m_manager->world_presentation().enqueue_fade(WorldFadeCommand{.mode = request.mode,
+        .color = request.color,
+        .duration_units = request.duration_units,
+        .delay_units = request.delay_units});
   });
   runtime.set_cinematic_letterbox_sink(
       [this](const Script::AreaCinematicLetterboxRequest& request) {
         if (m_manager == nullptr) {
           return;
         }
-        const WorldSceneContext* context{m_manager->active_world_context()};
-        if (context != nullptr) {
-          m_manager->world_presentation().enqueue_letterbox(
-              WorldLetterboxCommand{.scene_id = context->scene_id,
-                  .scene_generation = context->generation,
-                  .enabled = request.enabled});
-        }
+        m_manager->world_presentation().enqueue_letterbox(
+            WorldLetterboxCommand{.enabled = request.enabled});
       });
   runtime.set_scx_script_sink([this, owner_slot](const Script::AreaScxScriptRequest& request) {
     return launch_scx_script(owner_slot, request);

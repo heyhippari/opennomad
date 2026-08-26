@@ -116,18 +116,16 @@ struct WorldCameraOperationCompletion {
   std::uint16_t camera_id{0};
 };
 
-/// One AREA 0x76/0x77 presentation command resolved against the active world.
+/// One session-global AREA 0x76/0x77 presentation command.
 ///
 /// Mode 1 (0x76) fades into the authored RGB colour; mode 2 (0x77) fades out
-/// of it. Durations use the 30 Hz AREA clock while interpolation is sampled at
-/// display rate.
+/// of it. Duration and delay use the 30 Hz AREA clock while interpolation is
+/// sampled at display rate.
 struct WorldFadeCommand {
-  std::uint32_t scene_id{0};
-  std::uint32_t scene_generation{0};
   std::uint8_t mode{0};
   std::uint32_t color{0};
   std::int16_t duration_units{0};
-  std::int16_t operand_c{0};
+  std::int16_t delay_units{0};
 };
 
 /// CPU-only state for asynchronous AREA 0x76/0x77 presentation fades.
@@ -135,11 +133,11 @@ class WorldFadeState {
  public:
   static constexpr float k_frames_per_second{30.0F};
 
-  /// Applies only a supported command belonging to the presented world.
-  [[nodiscard]] bool apply_command(
-      const WorldFadeCommand& command, std::uint32_t scene_id, std::uint32_t generation) {
-    if (command.scene_id != scene_id || command.scene_generation != generation ||
-        (command.mode != 1U && command.mode != 2U)) {
+  /// Applies only a supported command accepted by Runtime's global fade
+  /// arbitration rules. Rejected commands leave all active state unchanged.
+  [[nodiscard]] bool apply_command(const WorldFadeCommand& command) {
+    if ((command.mode != 1U && command.mode != 2U) ||
+        (m_mode != 0U && !(m_mode == 1U && command.mode == 2U))) {
       return false;
     }
 
@@ -147,20 +145,41 @@ class WorldFadeState {
     m_color = command.color & 0x00FFFFFFU;
     m_duration_seconds = std::abs(static_cast<float>(command.duration_units)) / k_frames_per_second;
     m_elapsed_seconds = 0.0F;
+    m_remaining_delay_seconds =
+        std::max(static_cast<float>(command.delay_units), 0.0F) / k_frames_per_second;
     m_alpha = command.mode == 1U ? 0.0F : 1.0F;
-    if (m_duration_seconds <= 0.0F) {
-      m_alpha = command.mode == 1U ? 1.0F : 0.0F;
+    if (m_remaining_delay_seconds <= 0.0F && m_duration_seconds <= 0.0F) {
+      complete_active_fade();
     }
     return true;
   }
 
   void update(const float delta_time) {
-    if (m_duration_seconds <= 0.0F || m_elapsed_seconds >= m_duration_seconds) {
+    float remaining_delta{std::max(delta_time, 0.0F)};
+    if (m_remaining_delay_seconds > 0.0F) {
+      const float consumed_delay{std::min(remaining_delta, m_remaining_delay_seconds)};
+      m_remaining_delay_seconds -= consumed_delay;
+      remaining_delta -= consumed_delay;
+      if (m_remaining_delay_seconds > 0.0F || remaining_delta <= 0.0F) {
+        return;
+      }
+    }
+    if (m_mode == 0U) {
       return;
     }
-    m_elapsed_seconds += std::max(delta_time, 0.0F);
+    if (m_duration_seconds <= 0.0F) {
+      complete_active_fade();
+      return;
+    }
+    if (m_elapsed_seconds >= m_duration_seconds) {
+      return;
+    }
+    m_elapsed_seconds += remaining_delta;
     const float progress{std::clamp(m_elapsed_seconds / m_duration_seconds, 0.0F, 1.0F)};
     m_alpha = m_mode == 1U ? progress : 1.0F - progress;
+    if (progress >= 1.0F) {
+      complete_active_fade();
+    }
   }
 
   void reset() {
@@ -169,6 +188,7 @@ class WorldFadeState {
     m_alpha = 0.0F;
     m_elapsed_seconds = 0.0F;
     m_duration_seconds = 0.0F;
+    m_remaining_delay_seconds = 0.0F;
   }
 
   [[nodiscard]] std::uint8_t mode() const {
@@ -186,22 +206,34 @@ class WorldFadeState {
   [[nodiscard]] float duration_seconds() const {
     return m_duration_seconds;
   }
+  [[nodiscard]] float remaining_delay_seconds() const {
+    return m_remaining_delay_seconds;
+  }
   [[nodiscard]] bool transitioning() const {
-    return m_duration_seconds > 0.0F && m_elapsed_seconds < m_duration_seconds;
+    return m_remaining_delay_seconds > 0.0F ||
+           (m_duration_seconds > 0.0F && m_elapsed_seconds < m_duration_seconds);
   }
 
  private:
+  void complete_active_fade() {
+    m_elapsed_seconds = m_duration_seconds;
+    m_remaining_delay_seconds = 0.0F;
+    m_alpha = m_mode == 1U ? 1.0F : 0.0F;
+    if (m_mode == 2U) {
+      m_mode = 0U;
+    }
+  }
+
   std::uint8_t m_mode{0};
   std::uint32_t m_color{0};
   float m_alpha{0.0F};
   float m_elapsed_seconds{0.0F};
   float m_duration_seconds{0.0F};
+  float m_remaining_delay_seconds{0.0F};
 };
 
-/// One AREA 0x84/0x85 cinematic-mask request resolved against the active world.
+/// One session-global AREA 0x84/0x85 cinematic-mask request.
 struct WorldLetterboxCommand {
-  std::uint32_t scene_id{0};
-  std::uint32_t scene_generation{0};
   bool enabled{false};
 };
 
@@ -265,9 +297,9 @@ class WorldSubtitleState {
 
 /// CPU-only state for OpenNomad's cinematic top/bottom presentation mask.
 ///
-/// Runtime confirms the transition endpoints and its 60-unit duration. The
-/// linear interpolation below is provisional until Runtime's exact curve is
-/// recovered. Native geometry is height-relative: 64 pixels at 480 lines.
+/// Runtime confirms the global state machine, 60-unit duration, and 64/480
+/// geometry. OpenNomad currently approximates the native two-tone intensity
+/// ramp by interpolating visible bar height; exact raster fidelity is deferred.
 class WorldLetterboxState {
  public:
   static constexpr float k_retail_bar_fraction{2.0F / 15.0F};
@@ -287,17 +319,16 @@ class WorldLetterboxState {
     return target_bar_height(width, height) * m_amount;
   }
 
-  /// Applies only a command belonging to the currently presented world.
-  [[nodiscard]] bool apply_command(
-      const WorldLetterboxCommand& command, std::uint32_t scene_id, std::uint32_t generation) {
-    if (command.scene_id != scene_id || command.scene_generation != generation) {
-      return false;
-    }
+  /// Applies a session-global cinematic-mask command.
+  [[nodiscard]] bool apply_command(const WorldLetterboxCommand& command) {
     set_enabled(command.enabled);
     return true;
   }
 
   void set_enabled(bool enabled) {
+    if (!enabled && !m_requested) {
+      return;
+    }
     m_requested = enabled;
     m_start_amount = m_amount;
     m_target_amount = enabled ? 1.0F : 0.0F;
@@ -310,7 +341,8 @@ class WorldLetterboxState {
     }
     m_elapsed += std::max(delta_time, 0.0F);
     const float progress{std::clamp(m_elapsed / k_transition_duration_seconds, 0.0F, 1.0F)};
-    // Provisional linear curve; Runtime duration and endpoints are confirmed.
+    // Modern approximation: Runtime animates a two-tone intensity ramp over
+    // fixed geometry rather than interpolating the geometry itself.
     m_amount = m_start_amount + ((m_target_amount - m_start_amount) * progress);
   }
 
@@ -340,6 +372,31 @@ class WorldLetterboxState {
   float m_target_amount{0.0F};
   float m_elapsed{0.0F};
   bool m_requested{false};
+};
+
+/// Observes the explicit session-level presentation reset epoch. Active-world
+/// identity changes never reach this helper and therefore cannot reset the
+/// session-global fade or cinematic mask.
+class WorldPresentationResetObserver {
+ public:
+  [[nodiscard]] bool synchronize(const std::uint64_t reset_generation,
+      WorldFadeState& fade,
+      WorldLetterboxState& letterbox) {
+    if (reset_generation == m_observed_generation) {
+      return false;
+    }
+    fade.reset();
+    letterbox.reset();
+    m_observed_generation = reset_generation;
+    return true;
+  }
+
+  [[nodiscard]] std::uint64_t observed_generation() const {
+    return m_observed_generation;
+  }
+
+ private:
+  std::uint64_t m_observed_generation{0};
 };
 
 /// CPU-only mailbox from scenario execution to WorldScene.
@@ -450,6 +507,12 @@ class WorldPresentationState {
     return m_subtitle_commands.size();
   }
 
+  /// Monotonic epoch incremented only at the global presentation/session
+  /// reset boundary, never by world-context changes or ordinary queue use.
+  [[nodiscard]] std::uint64_t reset_generation() const {
+    return m_reset_generation;
+  }
+
   void clear() {
     m_camera_commands.clear();
     m_camera_completions.clear();
@@ -457,6 +520,7 @@ class WorldPresentationState {
     m_letterbox_commands.clear();
     m_voice_over_commands.clear();
     m_subtitle_commands.clear();
+    ++m_reset_generation;
   }
 
  private:
@@ -466,6 +530,7 @@ class WorldPresentationState {
   std::deque<WorldLetterboxCommand> m_letterbox_commands;
   std::deque<WorldVoiceOverCommand> m_voice_over_commands;
   std::deque<WorldSubtitleCommand> m_subtitle_commands;
+  std::uint64_t m_reset_generation{0};
 };
 
 }  // namespace App

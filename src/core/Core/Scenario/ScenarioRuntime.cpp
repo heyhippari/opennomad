@@ -1181,20 +1181,50 @@ ScenarioRuntime::move_object_on_path_max_parameter(
                 (*path)->subpaths.size()))};
   }
   return Script::MoveObjectOnPathResult{
-      .max_parameter = (*path)->subpaths.at(subpath_index).max_parameter};
+      .max_parameter = (*path)->subpaths.at(subpath_index).max_parameter,
+      .captured_rebase_translation = std::nullopt};
 }
 
 std::expected<Script::MoveObjectOnPathResult, Script::MoveObjectOnPathFailure>
 ScenarioRuntime::move_object_on_path(const Script::MoveObjectOnPathRequest& request) {
-  if (request.interpolation_mode != 1U || request.transform_rebase_mode != 0U ||
-      (request.direction != 0U && request.direction != 1U) ||
-      std::ranges::any_of(request.unresolved_transform_values, [](const float value) {
+  if (request.interpolation_mode != 1U) {
+    return std::expected<Script::MoveObjectOnPathResult, Script::MoveObjectOnPathFailure>{
+        std::unexpect,
+        move_object_on_path_failure(Script::MoveObjectOnPathApplyError::k_unsupported_variant,
+            fmt::format("MoveObjectOnPath interpolation mode {} is unsupported",
+                request.interpolation_mode))};
+  }
+  if (request.direction != 0U && request.direction != 1U) {
+    return std::expected<Script::MoveObjectOnPathResult, Script::MoveObjectOnPathFailure>{
+        std::unexpect,
+        move_object_on_path_failure(Script::MoveObjectOnPathApplyError::k_unsupported_variant,
+            fmt::format("MoveObjectOnPath direction {} is unsupported", request.direction))};
+  }
+  if (request.transform_rebase_mode > 1U ||
+      (request.transform_rebase_mode == 0U && request.capture_rebase_translation)) {
+    return std::expected<Script::MoveObjectOnPathResult, Script::MoveObjectOnPathFailure>{
+        std::unexpect,
+        move_object_on_path_failure(Script::MoveObjectOnPathApplyError::k_unsupported_variant,
+            fmt::format("MoveObjectOnPath transform/rebase mode {} is unsupported",
+                request.transform_rebase_mode))};
+  }
+  if (std::ranges::any_of(request.rotation_offset, [](const float value) {
         return value != 0.0F;
       })) {
     return std::expected<Script::MoveObjectOnPathResult, Script::MoveObjectOnPathFailure>{
         std::unexpect,
         move_object_on_path_failure(Script::MoveObjectOnPathApplyError::k_unsupported_variant,
-            "unrecovered MoveObjectOnPath transform/rebase variant")};
+            "MoveObjectOnPath nonzero rotation offsets (args 12-14) are unsupported")};
+  }
+  if (request.transform_rebase_mode == 0U &&
+      std::ranges::any_of(request.rebase_translation, [](const float value) {
+        return value != 0.0F;
+      })) {
+    return std::expected<Script::MoveObjectOnPathResult, Script::MoveObjectOnPathFailure>{
+        std::unexpect,
+        move_object_on_path_failure(Script::MoveObjectOnPathApplyError::k_unsupported_variant,
+            "MoveObjectOnPath nonzero rebase values (args 9-11) are unsupported in absolute "
+            "mode")};
   }
   if (m_decor_model == nullptr || m_decor_runtime_objects.size() != m_decor_model->meshes.size()) {
     return std::expected<Script::MoveObjectOnPathResult, Script::MoveObjectOnPathFailure>{
@@ -1248,10 +1278,32 @@ ScenarioRuntime::move_object_on_path(const Script::MoveObjectOnPathRequest& requ
   const std::size_t object_index{
       static_cast<std::size_t>(std::distance(m_decor_model->meshes.begin(), selected))};
   Omikron::Model3DOData::RuntimeObjectState& object{m_decor_runtime_objects.at(object_index)};
+  std::optional<std::array<float, 3>> captured_rebase_translation;
+  Runtime::Vec3 desired_world_translation{sampled->position};
+  if (request.transform_rebase_mode == 1U) {
+    auto reference_sampled{subpath.sample_mode_1(
+        request.direction == 0U ? 0.0F : static_cast<float>(subpath.max_parameter))};
+    if (!reference_sampled) {
+      return std::expected<Script::MoveObjectOnPathResult, Script::MoveObjectOnPathFailure>{
+          std::unexpect,
+          move_object_on_path_failure(Script::MoveObjectOnPathApplyError::k_out_of_range_index,
+              std::move(reference_sampled).error())};
+    }
+    std::array<float, 3> base_translation{request.rebase_translation};
+    if (request.capture_rebase_translation) {
+      base_translation = {
+          object.world_translation.x, object.world_translation.y, object.world_translation.z};
+      captured_rebase_translation = base_translation;
+    }
+    desired_world_translation = {
+        .x = base_translation.at(0) + sampled->position.x - reference_sampled->position.x,
+        .y = base_translation.at(1) + sampled->position.y - reference_sampled->position.y,
+        .z = base_translation.at(2) + sampled->position.z - reference_sampled->position.z};
+  }
   const Runtime::Matrix3 desired_world_matrix{Runtime::quaternion_matrix(sampled->quaternion)};
   const std::int32_t parent_index{m_decor_model->hierarchy_parent_index.at(object_index)};
   if (parent_index < 0) {
-    object.local_offset = sampled->position;
+    object.local_offset = desired_world_translation;
     object.local_matrix = desired_world_matrix;
   } else {
     if (static_cast<std::size_t>(parent_index) >= m_decor_runtime_objects.size()) {
@@ -1269,9 +1321,9 @@ ScenarioRuntime::move_object_on_path(const Script::MoveObjectOnPathRequest& requ
           move_object_on_path_failure(Script::MoveObjectOnPathApplyError::k_resource_resolution,
               std::move(inverse).error())};
     }
-    const Runtime::Vec3 world_delta{.x = sampled->position.x - parent.world_translation.x,
-        .y = sampled->position.y - parent.world_translation.y,
-        .z = sampled->position.z - parent.world_translation.z};
+    const Runtime::Vec3 world_delta{.x = desired_world_translation.x - parent.world_translation.x,
+        .y = desired_world_translation.y - parent.world_translation.y,
+        .z = desired_world_translation.z - parent.world_translation.z};
     // 3DP positions and quaternions are desired world poses. The resolver
     // composes child values as local * parent, so derive both local components
     // with the parent's inverse rather than assigning world data directly.
@@ -1288,7 +1340,8 @@ ScenarioRuntime::move_object_on_path(const Script::MoveObjectOnPathRequest& requ
             std::move(resolved).error())};
   }
   ++m_decor_pose_revision;
-  return Script::MoveObjectOnPathResult{.max_parameter = subpath.max_parameter};
+  return Script::MoveObjectOnPathResult{.max_parameter = subpath.max_parameter,
+      .captured_rebase_translation = captured_rebase_translation};
 }
 
 void ScenarioRuntime::set_audio_system(Audio::AudioSystem* const audio) {

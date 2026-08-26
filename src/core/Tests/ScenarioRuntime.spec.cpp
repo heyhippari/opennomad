@@ -250,6 +250,25 @@ void append_world_pose_path(BodyResourcesFixture& fixture) {
       .payload_offset = payload_offset, .payload_size = path.data().size()});
 }
 
+void append_rebase_path(BodyResourcesFixture& fixture) {
+  Buffer path;
+  path.u32(1).chars("Rebase", 20).u32(1).u32(2);
+  path.u32(0).f32(10.0F).f32(20.0F).f32(30.0F).f32(1.0F).f32(0.0F).f32(0.0F).f32(0.0F);
+  path.u32(1)
+      .f32(12.0F)
+      .f32(24.0F)
+      .f32(36.0F)
+      .f32(0.70710677F)
+      .f32(0.0F)
+      .f32(0.0F)
+      .f32(0.70710677F);
+  const std::size_t payload_offset{fixture.bytes.size()};
+  fixture.bytes.insert(fixture.bytes.end(), path.data().begin(), path.data().end());
+  fixture.scx.section0_records.push_back(App::Omikron::ScxSection0Record{.name = "Rebase.3dp"});
+  fixture.scx.section0_resources.push_back(App::Omikron::ScxEmbeddedResource{
+      .payload_offset = payload_offset, .payload_size = path.data().size()});
+}
+
 App::Omikron::Model3DOData make_parented_movable_decor() {
   App::Omikron::Model3DOData decor;
   decor.meshes.push_back(App::Omikron::MeshDescriptor{.mesh_id = 10U,
@@ -970,6 +989,65 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
     CHECK_EQ(decor.meshes.at(1).name, immutable_child.name);
     CHECK_EQ(decor.meshes.at(1).parent_id, immutable_child.parent_id);
     CHECK_EQ(decor.meshes.at(1).mesh_id, immutable_child.mesh_id);
+  }
+
+  TEST_CASE("MoveObjectOnPath rebases a child world pose without cumulative drift") {
+    BodyResourcesFixture resources{make_body_resources()};
+    append_rebase_path(resources);
+    App::ScenarioRuntime runtime;
+    REQUIRE(runtime.initialize(resources.scx, resources.bytes, "rebased-child", nullptr, false)
+            .has_value());
+
+    App::Omikron::Model3DOData decor{make_parented_movable_decor()};
+    REQUIRE(App::Omikron::Model3DO::resolve_runtime_transforms(decor, decor.runtime_objects)
+            .has_value());
+    const App::Runtime::Vec3 initial_world{decor.runtime_objects.at(1).world_translation};
+    runtime.bind_decor_model(&decor);
+
+    App::Script::MoveObjectOnPathRequest request{.object_binding = "Movable",
+        .path_descriptor_index = 1U,
+        .subpath_index = 0U,
+        .interpolation_mode = 1U,
+        .direction = 0U,
+        .transform_rebase_mode = 1U,
+        .duration_frames = 1.0F,
+        .previous_parameter = 0.0F,
+        .current_parameter = 0.0F,
+        .capture_rebase_translation = true};
+    const auto captured{runtime.move_object_on_path(request)};
+    REQUIRE(captured.has_value());
+    REQUIRE(captured->captured_rebase_translation.has_value());
+    const std::array<float, 3> base{captured->captured_rebase_translation.value()};
+    CHECK_EQ(base.at(0), doctest::Approx(initial_world.x));
+    CHECK_EQ(base.at(1), doctest::Approx(initial_world.y));
+    CHECK_EQ(base.at(2), doctest::Approx(initial_world.z));
+    CHECK_EQ(
+        runtime.decor_runtime_objects()[1].world_translation.x, doctest::Approx(initial_world.x));
+    CHECK_EQ(
+        runtime.decor_runtime_objects()[1].world_translation.y, doctest::Approx(initial_world.y));
+    CHECK_EQ(
+        runtime.decor_runtime_objects()[1].world_translation.z, doctest::Approx(initial_world.z));
+
+    request.current_parameter = 1.0F;
+    request.rebase_translation = base;
+    request.capture_rebase_translation = false;
+    REQUIRE(runtime.move_object_on_path(request).has_value());
+    const auto moved{runtime.decor_runtime_objects()[1]};
+    CHECK_EQ(moved.world_translation.x, doctest::Approx(initial_world.x + 2.0F));
+    CHECK_EQ(moved.world_translation.y, doctest::Approx(initial_world.y + 4.0F));
+    CHECK_EQ(moved.world_translation.z, doctest::Approx(initial_world.z + 6.0F));
+    const App::Runtime::Matrix3 expected_world{
+        App::Runtime::quaternion_matrix({.w = 0.70710677F, .z = 0.70710677F})};
+    for (std::size_t index{0}; index < expected_world.values.size(); ++index) {
+      CHECK_EQ(moved.world_matrix.values.at(index),
+          doctest::Approx(expected_world.values.at(index)).epsilon(0.0001));
+    }
+
+    REQUIRE(runtime.move_object_on_path(request).has_value());
+    const auto repeated{runtime.decor_runtime_objects()[1]};
+    CHECK_EQ(repeated.world_translation.x, doctest::Approx(initial_world.x + 2.0F));
+    CHECK_EQ(repeated.world_translation.y, doctest::Approx(initial_world.y + 4.0F));
+    CHECK_EQ(repeated.world_translation.z, doctest::Approx(initial_world.z + 6.0F));
   }
 }
 

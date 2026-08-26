@@ -76,6 +76,7 @@ class FakeWorld final : public App::Script::ScriptWorld {
       App::Script::BodyAnimationApplyError::k_missing_animation};
   std::vector<App::Script::MoveObjectOnPathRequest> move_object_on_path_requests;
   std::uint32_t move_object_on_path_maximum{10};
+  std::optional<std::array<float, 3>> move_object_on_path_captured_rebase_translation;
   std::optional<App::Script::MoveObjectOnPathFailure> move_object_on_path_failure;
 
   std::expected<App::Sprite::SpriteHandle, std::string> ensure_sprite(
@@ -206,7 +207,8 @@ class FakeWorld final : public App::Script::ScriptWorld {
       return std::expected<App::Script::MoveObjectOnPathResult,
           App::Script::MoveObjectOnPathFailure>{std::unexpect, move_object_on_path_failure.value()};
     }
-    return App::Script::MoveObjectOnPathResult{.max_parameter = move_object_on_path_maximum};
+    return App::Script::MoveObjectOnPathResult{
+        .max_parameter = move_object_on_path_maximum, .captured_rebase_translation = std::nullopt};
   }
   std::expected<App::Script::MoveObjectOnPathResult, App::Script::MoveObjectOnPathFailure>
   move_object_on_path(const App::Script::MoveObjectOnPathRequest& request) override {
@@ -215,7 +217,10 @@ class FakeWorld final : public App::Script::ScriptWorld {
       return std::expected<App::Script::MoveObjectOnPathResult,
           App::Script::MoveObjectOnPathFailure>{std::unexpect, move_object_on_path_failure.value()};
     }
-    return App::Script::MoveObjectOnPathResult{.max_parameter = move_object_on_path_maximum};
+    return App::Script::MoveObjectOnPathResult{.max_parameter = move_object_on_path_maximum,
+        .captured_rebase_translation = request.capture_rebase_translation
+                                           ? move_object_on_path_captured_rebase_translation
+                                           : std::optional<std::array<float, 3>>{std::nullopt}};
   }
   std::string_view scenario_name() const override {
     return "test";
@@ -299,14 +304,15 @@ App::Omikron::ScxScript move_object_on_path_script(const std::uint32_t execution
   return script;
 }
 
-std::vector<App::Omikron::ScriptValue> move_object_on_path_values(const std::uint32_t direction) {
+std::vector<App::Omikron::ScriptValue> move_object_on_path_values(
+    const std::uint32_t direction, const std::uint32_t transform_rebase_mode = 0U) {
   std::vector<App::Omikron::ScriptValue> values(15);
   values.at(0).set_unsigned(0);
   values.at(1).set_unsigned(1);
   values.at(2).set_unsigned(2);
   values.at(3).set_unsigned(1);
   values.at(4).set_unsigned(direction);
-  values.at(5).set_unsigned(0);
+  values.at(5).set_unsigned(transform_rebase_mode);
   values.at(6).set_float(20.0F);
   const float authored_progress{direction == 0U ? 99.0F : 0.0F};
   values.at(7).set_float(authored_progress);
@@ -662,6 +668,9 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
     CHECK_EQ(first.transform_rebase_mode, 0U);
     CHECK_EQ(first.duration_frames, doctest::Approx(20.0F));
     CHECK_EQ(first.current_parameter, doctest::Approx(0.0F));
+    CHECK_FALSE(first.capture_rebase_translation);
+    CHECK_EQ(first.rebase_translation.at(0), doctest::Approx(0.0F));
+    CHECK_EQ(first.rotation_offset.at(0), doctest::Approx(0.0F));
     CHECK_EQ(fixture.runtime->instance(id)->value_pool.at(8).as_float(), doctest::Approx(0.0F));
     CHECK_EQ(fixture.runtime->instance(id)->value_pool.at(7).as_float(), doctest::Approx(0.5F));
 
@@ -673,21 +682,56 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
     CHECK_EQ(fixture.runtime->instances().at(0).root_commands.at(0).execution_count, 1U);
   }
 
-  TEST_CASE("MoveObjectOnPath direction one starts at the recovered maximum") {
-    RuntimeFixture fixture{{move_object_on_path_script()}, move_object_on_path_values(1)};
+  TEST_CASE("MoveObjectOnPath captures and persists a forward rebase translation") {
+    RuntimeFixture fixture{{move_object_on_path_script()}, move_object_on_path_values(0, 1)};
+    fixture.world.move_object_on_path_captured_rebase_translation =
+        std::array<float, 3>{100.0F, 200.0F, 300.0F};
+    const std::size_t id{fixture.runtime->create_instance(0).value()};
+
+    fixture.runtime->step_tick(1.0F);
+    REQUIRE_EQ(fixture.world.move_object_on_path_requests.size(), 1U);
+    const auto& first{fixture.world.move_object_on_path_requests.at(0)};
+    CHECK_EQ(fixture.runtime->run_state(), App::Script::ScriptRunState::k_running);
+    CHECK_EQ(first.transform_rebase_mode, 1U);
+    CHECK(first.capture_rebase_translation);
+    CHECK_EQ(fixture.runtime->instance(id)->value_pool.at(9).as_float(), doctest::Approx(100.0F));
+    CHECK_EQ(fixture.runtime->instance(id)->value_pool.at(10).as_float(), doctest::Approx(200.0F));
+    CHECK_EQ(fixture.runtime->instance(id)->value_pool.at(11).as_float(), doctest::Approx(300.0F));
+
+    fixture.runtime->step_tick(1.0F);
+    REQUIRE_EQ(fixture.world.move_object_on_path_requests.size(), 2U);
+    const auto& second{fixture.world.move_object_on_path_requests.at(1)};
+    CHECK_FALSE(second.capture_rebase_translation);
+    CHECK_EQ(second.rebase_translation.at(0), doctest::Approx(100.0F));
+    CHECK_EQ(second.rebase_translation.at(1), doctest::Approx(200.0F));
+    CHECK_EQ(second.rebase_translation.at(2), doctest::Approx(300.0F));
+  }
+
+  TEST_CASE("MoveObjectOnPath reverse rebase starts at maximum and captures there") {
+    RuntimeFixture fixture{{move_object_on_path_script()}, move_object_on_path_values(1, 1)};
+    fixture.world.move_object_on_path_captured_rebase_translation =
+        std::array<float, 3>{10.0F, 20.0F, 30.0F};
     REQUIRE(fixture.runtime->create_instance(0).has_value());
     fixture.runtime->step_tick(1.0F);
     REQUIRE_EQ(fixture.world.move_object_on_path_requests.size(), 1U);
     const auto& first{fixture.world.move_object_on_path_requests.at(0)};
     CHECK_EQ(first.current_parameter, doctest::Approx(10.0F));
+    CHECK(first.capture_rebase_translation);
     CHECK_EQ(
         fixture.runtime->instances().at(0).value_pool.at(8).as_float(), doctest::Approx(10.0F));
+    CHECK_EQ(
+        fixture.runtime->instances().at(0).value_pool.at(9).as_float(), doctest::Approx(10.0F));
     CHECK_EQ(fixture.runtime->instances().at(0).value_pool.at(7).as_float(), doctest::Approx(9.5F));
   }
 
-  TEST_CASE("MoveObjectOnPath reports unrecovered variants structurally") {
+  TEST_CASE("MoveObjectOnPath reports unsupported transform fields structurally") {
     RuntimeFixture fixture{{move_object_on_path_script()}, move_object_on_path_values(0)};
-    fixture.scx.shared_values.at(5).set_unsigned(1);
+    SUBCASE("nonzero rotation offset") {
+      fixture.scx.shared_values.at(12).set_float(1.0F);
+    }
+    SUBCASE("unknown transform/rebase mode") {
+      fixture.scx.shared_values.at(5).set_unsigned(2U);
+    }
     REQUIRE(fixture.runtime->create_instance(0).has_value());
     fixture.runtime->step_tick(1.0F);
     CHECK_EQ(fixture.runtime->run_state(), App::Script::ScriptRunState::k_paused_on_error);

@@ -255,9 +255,9 @@ struct BodyAnimationFailure {
 using RelativeBodyAnimationResult = BodyAnimationResult;
 using RelativeBodyAnimationFailure = BodyAnimationFailure;
 
-/// Typed base-case request for Script_MoveObjectOnPath. The unresolved
-/// transform/rebase arguments are retained so nonzero variants can fail
-/// structurally rather than being silently guessed.
+/// Typed request for the recovered Script_MoveObjectOnPath variants. Runtime
+/// stores a captured base world translation in args 9-11 for rebase mode 1;
+/// the additional rotation in args 12-14 remains unsupported when nonzero.
 struct MoveObjectOnPathRequest {
   std::string_view object_binding;
   std::uint32_t path_descriptor_index{0};
@@ -268,11 +268,14 @@ struct MoveObjectOnPathRequest {
   float duration_frames{0.0F};
   float previous_parameter{0.0F};
   float current_parameter{0.0F};
-  std::array<float, 6> unresolved_transform_values{};
+  std::array<float, 3> rebase_translation{};
+  std::array<float, 3> rotation_offset{};
+  bool capture_rebase_translation{false};
 };
 
 struct MoveObjectOnPathResult {
   std::uint32_t max_parameter{0};
+  std::optional<std::array<float, 3>> captured_rebase_translation;
 };
 
 enum class MoveObjectOnPathApplyError : std::uint8_t {

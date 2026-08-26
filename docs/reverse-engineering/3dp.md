@@ -1329,7 +1329,31 @@ Current recovered behavior includes:
 - obtaining its `maxParameter`;
 - managing script progress;
 - passing a caller/script-supplied interpolation mode to `0x004B0C70`;
-- applying sampled position and orientation to an object.
+- applying sampled position and orientation to an object;
+- supporting absolute placement (`arg5 == 0`) and relative/rebased translation
+  (`arg5 == 1`).
+
+The 15-slot ABI uses args 7 and 8 as mutable path progress. In rebase mode,
+args 9-11 are mutable captured base world XYZ. At the direction-specific
+reference endpoint, Runtime captures the selected object's current world
+translation `B` and then computes every translation without accumulation:
+
+```text
+forward reference: P(0)
+reverse reference: P(maxParameter)
+
+desiredWorldTranslation = B + P(current) - P(reference)
+```
+
+Absolute mode continues to use `P(current)` directly. Both variants apply the
+quaternion-derived matrix sampled at the current parameter and convert the
+desired world pose back through the parent inverse before writing object-local
+state.
+
+Args 12-14 participate in an additional Runtime rotation transform. Their
+designer-facing names and nonzero semantics are not yet recovered, so
+OpenNomad keeps nonzero values structured as an unsupported variant rather
+than guessing.
 
 This is the clearest proof that interpolation mode belongs to the Script
 operation rather than to the 3DP bytes.

@@ -248,12 +248,13 @@ struct AreaCameraRequest {
   bool wait_for_completion{false};
 };
 
-/// Shared presentation request used by 0x76 (mode 1) and 0x77 (mode 2).
+/// Shared session-global fade request used by 0x76 (mode 1) and 0x77 (mode 2).
+/// Duration and delay are authored Scalar16 values in native 30 Hz units.
 struct AreaPresentationRequest {
   std::uint8_t mode{0};
   std::uint32_t color{0};
-  std::int16_t operand_b{0};
-  std::int16_t operand_c{0};
+  std::int16_t duration_units{0};
+  std::int16_t delay_units{0};
 };
 
 /// Presentation intent emitted by operand-less AREA opcodes 0x84/0x85.

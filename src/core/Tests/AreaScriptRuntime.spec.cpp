@@ -1145,15 +1145,26 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     CHECK_EQ(music->track_id, 109);
   }
 
-  TEST_CASE("0x76 consumes eight operand bytes") {
+  TEST_CASE("0x76 consumes eight operand bytes and decodes duration and delay") {
     Buffer bytes;
-    bytes.u8(0x76).u32(0).u16(0).u16(0).u8(0x00);  // unknown opcode next.
+    bytes.u8(0x76).u32(0x00123456U).u16(30).u16(2).u8(0x00);  // unknown opcode next.
     AreaScriptRuntime runtime{bytes.data()};
+    std::optional<AreaPresentationRequest> presentation;
+    runtime.set_presentation_sink(
+        [&presentation](const AreaPresentationRequest& request) { presentation = request; });
     runtime.queue_event(1);
     runtime.activate();
-    const AreaScriptState state{runtime.run()};
+    const AreaScriptState yielded{runtime.run()};
 
-    CHECK(state == AreaScriptState::k_paused_unsupported);
+    CHECK(yielded == AreaScriptState::k_running);
+    CHECK_EQ(runtime.instruction_pointer(), 9U);
+    REQUIRE(presentation.has_value());
+    CHECK_EQ(presentation->mode, 1U);
+    CHECK_EQ(presentation->color, 0x00123456U);
+    CHECK_EQ(presentation->duration_units, 30);
+    CHECK_EQ(presentation->delay_units, 2);
+
+    CHECK(runtime.run() == AreaScriptState::k_paused_unsupported);
     CHECK_EQ(runtime.pause_info().offset, 9U);
     CHECK_EQ(runtime.pause_info().opcode, 0x00U);
   }

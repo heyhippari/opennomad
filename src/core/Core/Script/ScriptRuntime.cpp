@@ -158,8 +158,8 @@ constexpr std::array<OpcodeInfo, 17> K_OPCODE_TABLE{
         .semantic_param_count = 0,
         .owns_sprite = false,
         .support = OpcodeSupport::k_supported,
-        .notes = "Moves a bound mutable decor object along a 3DP path; only the recovered base "
-                 "variant is supported."},
+        .notes = "Moves a bound mutable decor object along a 3DP path using absolute or "
+                 "relative/rebased translation."},
     OpcodeInfo{.opcode = K_SET_SPRITE_TYPE,
         .name = "SetSpriteType",
         .expected_argument_count = 2,
@@ -1065,35 +1065,45 @@ HandlerResult ScriptRuntime::handle_move_object_on_path(
   const std::uint32_t interpolation_mode{instance.value_pool.at(base + 3U).as_unsigned()};
   const std::uint32_t direction{instance.value_pool.at(base + 4U).as_unsigned()};
   const std::uint32_t transform_rebase_mode{instance.value_pool.at(base + 5U).as_unsigned()};
-  std::array<float, 6> unresolved{};
-  for (std::size_t index{0}; index < unresolved.size(); ++index) {
-    unresolved.at(index) = instance.value_pool.at(base + 9U + index).as_float();
+  std::array<float, 3> rebase_translation{};
+  std::array<float, 3> rotation_offset{};
+  for (std::size_t index{0}; index < rebase_translation.size(); ++index) {
+    rebase_translation.at(index) = instance.value_pool.at(base + 9U + index).as_float();
+    rotation_offset.at(index) = instance.value_pool.at(base + 12U + index).as_float();
   }
-  if (interpolation_mode != 1U || (direction != 0U && direction != 1U) ||
-      transform_rebase_mode != 0U || std::ranges::any_of(unresolved, [](const float value) {
-        return value != 0.0F;
-      })) {
+  const auto unsupported = [](std::string reason_text) {
     return HandlerResult{.status = ScriptCommandStatus::k_error,
         .pause_reason = ScriptPauseReason::k_unsupported_variant,
-        .reason_text =
-            "Script_MoveObjectOnPath uses an unrecovered interpolation/direction/transform "
-            "variant"};
+        .reason_text = std::move(reason_text)};
+  };
+  if (interpolation_mode != 1U) {
+    return unsupported(fmt::format(
+        "Script_MoveObjectOnPath interpolation mode {} is unsupported", interpolation_mode));
+  }
+  if (direction != 0U && direction != 1U) {
+    return unsupported(
+        fmt::format("Script_MoveObjectOnPath direction {} is unsupported", direction));
+  }
+  if (transform_rebase_mode > 1U) {
+    return unsupported(fmt::format(
+        "Script_MoveObjectOnPath transform/rebase mode {} is unsupported", transform_rebase_mode));
+  }
+  if (std::ranges::any_of(rotation_offset, [](const float value) {
+        return value != 0.0F;
+      })) {
+    return unsupported(
+        "Script_MoveObjectOnPath nonzero rotation offsets (args 12-14) are "
+        "unsupported");
+  }
+  if (transform_rebase_mode == 0U && std::ranges::any_of(rebase_translation, [](const float value) {
+        return value != 0.0F;
+      })) {
+    return unsupported(
+        "Script_MoveObjectOnPath nonzero rebase values (args 9-11) are unsupported "
+        "in absolute mode");
   }
 
   float current{instance.value_pool.at(base + 7U).as_float()};
-  const auto make_request = [&]() {
-    return MoveObjectOnPathRequest{
-        .object_binding = source.binding_table_a.entries.at(binding_index).name,
-        .path_descriptor_index = instance.value_pool.at(base + 1U).as_unsigned(),
-        .subpath_index = instance.value_pool.at(base + 2U).as_unsigned(),
-        .interpolation_mode = interpolation_mode,
-        .direction = direction,
-        .transform_rebase_mode = transform_rebase_mode,
-        .duration_frames = instance.value_pool.at(base + 6U).as_float(),
-        .previous_parameter = instance.value_pool.at(base + 8U).as_float(),
-        .current_parameter = current,
-        .unresolved_transform_values = unresolved};
-  };
   const auto failure_result = [](const MoveObjectOnPathFailure& failure) {
     ScriptPauseReason reason{ScriptPauseReason::k_missing_resource};
     if (failure.error == MoveObjectOnPathApplyError::k_out_of_range_index ||
@@ -1106,21 +1116,50 @@ HandlerResult ScriptRuntime::handle_move_object_on_path(
         .pause_reason = reason,
         .reason_text = fmt::format("Script_MoveObjectOnPath: {}", failure.reason_text)};
   };
-  if (direction == 1U && current == 0.0F && instance.value_pool.at(base + 8U).as_float() == 0.0F &&
-      command.execution_count == command.initial_execution_count) {
-    auto maximum{
+  const bool initialize_reverse{direction == 1U && current == 0.0F &&
+      instance.value_pool.at(base + 8U).as_float() == 0.0F &&
+      command.execution_count == command.initial_execution_count};
+  std::optional<std::uint32_t> reverse_maximum;
+  if (initialize_reverse || (direction == 1U && transform_rebase_mode == 1U)) {
+    auto resolved{
         m_world->move_object_on_path_max_parameter(instance.value_pool.at(base + 1U).as_unsigned(),
             instance.value_pool.at(base + 2U).as_unsigned())};
-    if (!maximum) {
-      return failure_result(maximum.error());
+    if (!resolved) {
+      return failure_result(resolved.error());
     }
-    current = static_cast<float>(maximum->max_parameter);
+    reverse_maximum = resolved->max_parameter;
+  }
+  if (initialize_reverse) {
+    current = static_cast<float>(reverse_maximum.value_or(0U));
     instance.value_pool.at(base + 7U).set_float(current);
     instance.value_pool.at(base + 8U).set_float(current);
   }
-  auto applied{m_world->move_object_on_path(make_request())};
+  const bool capture_rebase_translation{transform_rebase_mode == 1U &&
+      ((direction == 0U && current == 0.0F) ||
+          (direction == 1U && reverse_maximum.has_value() &&
+              current == static_cast<float>(reverse_maximum.value_or(0U))))};
+  const MoveObjectOnPathRequest request{
+      .object_binding = source.binding_table_a.entries.at(binding_index).name,
+      .path_descriptor_index = instance.value_pool.at(base + 1U).as_unsigned(),
+      .subpath_index = instance.value_pool.at(base + 2U).as_unsigned(),
+      .interpolation_mode = interpolation_mode,
+      .direction = direction,
+      .transform_rebase_mode = transform_rebase_mode,
+      .duration_frames = instance.value_pool.at(base + 6U).as_float(),
+      .previous_parameter = instance.value_pool.at(base + 8U).as_float(),
+      .current_parameter = current,
+      .rebase_translation = rebase_translation,
+      .rotation_offset = rotation_offset,
+      .capture_rebase_translation = capture_rebase_translation};
+  auto applied{m_world->move_object_on_path(request)};
   if (!applied) {
     return failure_result(applied.error());
+  }
+  if (applied->captured_rebase_translation.has_value()) {
+    rebase_translation = applied->captured_rebase_translation.value();
+    for (std::size_t index{0}; index < rebase_translation.size(); ++index) {
+      instance.value_pool.at(base + 9U + index).set_float(rebase_translation.at(index));
+    }
   }
   const float maximum{static_cast<float>(applied->max_parameter)};
   if (current < 0.0F || current > maximum) {

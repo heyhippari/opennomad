@@ -2662,19 +2662,38 @@ Recovered high-level semantics:
 0x85 EndCinematicLetterbox
 ```
 
-They drive native presentation state around:
+They drive one global native presentation state through:
 
 ```text
-0x0041E1B0
+0x84 -> 0x0041E1B0(1) -> 0x00451E10
+0x85 -> 0x0041E1B0(0) -> 0x00451E30
 ```
 
-and use a 60-scenario-unit transition.
+`0x84` calls the enable path and unconditionally sets:
+
+```text
+letterboxState    = 3
+letterboxProgress = 0
+letterboxDuration = 60
+```
+
+State 3 remains enabled after reaching its endpoint. A repeated `0x84`
+restarts the transition. `0x85` is effective only while state 3 is active; it
+changes the state to 4 and resets progress/duration to `0/60`. State 4 clears
+to state 0 at its endpoint. No AREA, SCENE, resident-slot, or world identity is
+stored with this mask.
 
 At 30 Hz:
 
 ```text
 60 / 30 = 2 seconds
 ```
+
+Native mask geometry is 64 pixels at a 480-line viewport (`height * 2/15`).
+Runtime animates two grayscale/intensity ramps over that fixed geometry.
+OpenNomad currently retains a modern approximation that interpolates visible
+bar height over the confirmed two-second interval; exact native raster
+transition fidelity is deferred.
 
 ---
 
@@ -2685,6 +2704,13 @@ Handlers:
 ```text
 0x76 -> 0x00405180
 0x77 -> 0x00405240
+```
+
+Their wrappers and shared native setup are:
+
+```text
+0x76 -> 0x0041E000 -> 0x00451DC0(mode=1, colour, duration, delay)
+0x77 -> 0x0041E020 -> 0x00451DC0(mode=2, colour, duration, delay)
 ```
 
 The native descriptor auxiliary word is:
@@ -2709,7 +2735,33 @@ OpenNomad presentation behavior is:
 0x77 / mode 2: fade out of authored RGB colour, alpha 1 -> 0
 ```
 
-The signed duration magnitude is converted from 30 Hz AREA units to seconds.
+Both commands operate on one global fade state. Their operands are a 32-bit
+colour, Scalar16 duration, and Scalar16 delay. The signed duration magnitude
+is converted from 30 Hz AREA units to seconds. Non-positive delay means no
+wait; positive delay is likewise converted from 30 Hz units and consumed
+before progress advances. Any display-frame time remaining after the delay
+expires advances the fade in the same update.
+
+Recovered native modes and command arbitration are:
+
+```text
+mode 0: inactive
+mode 1: fade into colour / persistent opaque endpoint
+mode 2: fade out of colour / clears to mode 0 at endpoint
+
+current  requested  accepted
+0        1          yes
+0        2          yes
+1        1          no
+1        2          yes
+2        1          no
+2        2          no
+```
+
+A completed mode-1 fade remains active and opaque until a valid mode-2 command
+replaces it. Rejected overlapping commands leave colour, timing, delay,
+progress, and alpha unchanged.
+
 Both operations are asynchronous relative to AREA; their existing dispatcher
 yield does not create a typed wait. A zero-duration mode 1 ends opaque and a
 zero-duration mode 2 ends transparent.
@@ -2717,6 +2769,12 @@ zero-duration mode 2 ends transparent.
 OpenNomad preserves the authored low 24-bit RGB value (`0x00RRGGBB`) and does
 not infer alpha from the high byte. Presentation interpolation remains sampled
 at display rate; AREA duration values remain 30 Hz units.
+
+Fade and letterbox share the native global reset routine at `0x00451DA0`,
+which clears both states. Its only call is in the broad global reset sequence
+around `0x00419547`; AREA/SCENE loading, world switches, camera changes, and
+resident-slot recycling do not call it. OpenNomad mirrors this at
+`ScenarioManager::reset_for_new_session()` through a presentation reset epoch.
 
 ---
 
@@ -3397,8 +3455,8 @@ High-confidence or useful current names:
 | `0x67` | music operation | track ID firm |
 | `0x68` | `SetCurrentCharacterControllerEnabled` | implemented; zero-operand current-actor controller boolean `true`, nonblocking |
 | `0x69` | `SetCurrentCharacterControllerDisabled` | implemented; zero-operand current-actor controller boolean `false`, nonblocking |
-| `0x76` | presentation effect | provisional |
-| `0x77` | alternate presentation effect | provisional |
+| `0x76` | global fade into colour | implemented; colour + duration + delay |
+| `0x77` | global fade out of colour | implemented; colour + duration + delay |
 | `0x83` | subsystem operation | provisional |
 | `0x84` | `BeginCinematicLetterbox` | strongly recovered |
 | `0x85` | `EndCinematicLetterbox` | strongly recovered |
@@ -4293,8 +4351,8 @@ Core context/runtime:
 | `0x5F` | `0x00404940` | camera operation |
 | `0x60` | `0x00404AF0` | camera wait operation |
 | `0x67` | `0x00404FB0` | music |
-| `0x76` | `0x00405180` | presentation effect |
-| `0x77` | `0x00405240` | alternate presentation effect |
+| `0x76` | `0x00405180` | global fade mode 1 |
+| `0x77` | `0x00405240` | global fade mode 2 |
 | `0x83` | `0x00405A10` | subsystem operation |
 | `0x84` | `0x00405A90` | begin cinematic letterbox |
 | `0x85` | `0x00405AB0` | end cinematic letterbox |

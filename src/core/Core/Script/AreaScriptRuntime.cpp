@@ -2135,23 +2135,23 @@ void AreaScriptRuntime::execute_instruction() {
           opcode == K_OP_PRESENTATION_EFFECT ? std::uint8_t{1} : std::uint8_t{2}};
       m_last_presentation_request = AreaPresentationRequest{.mode = mode,
           .color = static_cast<std::uint32_t>(operands.at(0)),
-          .operand_b = static_cast<std::int16_t>(operands.at(1)),
-          .operand_c = static_cast<std::int16_t>(operands.at(2))};
+          .duration_units = static_cast<std::int16_t>(operands.at(1)),
+          .delay_units = static_cast<std::int16_t>(operands.at(2))};
       if (m_presentation_sink) {
         m_presentation_sink(m_last_presentation_request.value());
       }
       entry.effect = fmt::format("presentation mode={} color={:#010x} args=({}, {})",
           mode,
           m_last_presentation_request->color,
-          m_last_presentation_request->operand_b,
-          m_last_presentation_request->operand_c);
+          m_last_presentation_request->duration_units,
+          m_last_presentation_request->delay_units);
       // Runtime's all-zero mode-1 bootstrap command is a no-op and continues
       // immediately. Mode 2 and non-empty mode-1 effects set the central
       // dispatcher-yield flag.
       m_yield_requested = opcode == K_OP_PRESENTATION_EFFECT_ALT ||
                           m_last_presentation_request->color != 0U ||
-                          m_last_presentation_request->operand_b != 0 ||
-                          m_last_presentation_request->operand_c != 0;
+                          m_last_presentation_request->duration_units != 0 ||
+                          m_last_presentation_request->delay_units != 0;
       break;
     }
     case K_OP_BEGIN_CINEMATIC_LETTERBOX:

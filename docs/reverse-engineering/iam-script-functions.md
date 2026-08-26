@@ -1074,14 +1074,25 @@ Script_Reinit_MoveObjectOnPath(): Can't find object "%s" in current scene.
 The function is one of the strongest links between IAM actions and world/path
 resources authored by Quantic Dream's tooling.
 
-The recovered supported base case has 15 positional values. Binding-table-A
-object index, 3DP descriptor index, subpath index, interpolation mode,
-direction, transform/rebase mode, duration, mutable current parameter, mutable
-previous parameter, and six unresolved transform values retain their authored
-slots. For mode `1`, direction `0`, transform/rebase `0`, and all six
-unresolved values zero, Runtime samples the current parameter, writes sampled
-XYZ plus the quaternion-derived matrix to the named mutable decor object,
-resolves its hierarchy, then advances by:
+The recovered command has 15 positional values: binding-table-A object index,
+3DP descriptor index, subpath index, interpolation mode, direction,
+transform/rebase mode, duration, mutable current parameter, mutable previous
+parameter, mutable rebase/base world XYZ in args 9-11, and three additional
+rotation components in args 12-14.
+
+Transform/rebase mode `0` places the object at sampled path position `P(t)`.
+Mode `1` captures the object's current world translation `B` at the
+direction-specific reference endpoint and uses:
+
+```text
+forward: desiredWorldTranslation = B + P(t) - P(0)
+reverse: desiredWorldTranslation = B + P(t) - P(maxParameter)
+```
+
+The captured base is retained in mutable args 9-11, so later ticks recompute
+from the same base rather than accumulating deltas. Both transform modes use
+the quaternion-derived matrix sampled at `t`, convert the desired world pose
+back to parent-local state, resolve the hierarchy, then advance by:
 
 ```text
 maxParameter * scriptDeltaFrames / duration
@@ -1091,9 +1102,9 @@ maxParameter * scriptDeltaFrames / duration
 synchronized group until the endpoint and increments `execution_count` there.
 Direction zero reinitializes mutable progress to `0/0`; direction one uses the
 validated subpath maximum. Repeating traversals reseed near `1/0` forward and
-`max/max` backward. Nonzero transform/rebase data is intentionally diagnosed
-as an unsupported variant rather than guessed. Mode 2 and the remaining
-transform semantics remain deferred.
+`max/max` backward. Interpolation mode 2 remains deferred. Args 12-14 take part
+in an additional Runtime rotation transform, but their exact designer-facing
+names and nonzero behavior remain intentionally unsupported in OpenNomad.
 
 ### `0x0300001A` — `AnimationFromExternalScene`
 

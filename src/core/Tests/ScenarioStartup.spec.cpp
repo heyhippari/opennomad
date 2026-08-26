@@ -1208,9 +1208,14 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE_EQ(manager.world_presentation().pending_letterbox_count(), 1U);
     const auto letterbox{manager.world_presentation().take_letterbox()};
     REQUIRE(letterbox.has_value());
-    CHECK_EQ(letterbox->scene_id, context->scene_id);
-    CHECK_EQ(letterbox->scene_generation, context->generation);
     CHECK(letterbox->enabled);
+    REQUIRE_EQ(manager.world_presentation().pending_fade_count(), 1U);
+    const auto fade{manager.world_presentation().take_fade()};
+    REQUIRE(fade.has_value());
+    CHECK_EQ(fade->mode, 2U);
+    CHECK_EQ(fade->color, 0x00FFFFFFU);
+    CHECK_EQ(fade->duration_units, 30);
+    CHECK_EQ(fade->delay_units, 20);
     REQUIRE(controller.tick().has_value());  // Camera 2172 yield.
     REQUIRE(controller.tick().has_value());  // Camera 2148 yield.
     const auto launched{controller.tick()};  // 0x4E then tracked 0x3C.

@@ -257,8 +257,12 @@ TEST_SUITE("Core::Scenario::ScenarioManager") {
 
     REQUIRE(std::filesystem::remove(dialog_path));
     REQUIRE(manager.start_dialog(0).has_value());  // Served from the session cache.
+    const std::uint64_t presentation_reset_generation{
+        manager.world_presentation().reset_generation()};
     REQUIRE(manager.reset_for_new_session().has_value());
     CHECK_FALSE(manager.dialog_runtime().active());
+    CHECK_EQ(manager.world_presentation().reset_generation(),
+        presentation_reset_generation + 1U);
   }
 
   TEST_CASE("Exposes one mode slot plus exactly two world contexts after boot") {
