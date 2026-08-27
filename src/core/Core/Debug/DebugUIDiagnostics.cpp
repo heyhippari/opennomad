@@ -291,15 +291,12 @@ void DebugUI::show_profiler() {
       return left.second.total_time > right.second.total_time;
     });
 
-    // Limit to top 15 entries.
-    const std::ptrdiff_t display_max{
-        std::min(static_cast<std::ptrdiff_t>(sorted.size()), std::ptrdiff_t{15})};
-
     // Table header
     ImGui::Text("%-6s %-50s %12s %8s", "Rank", "Scope", "Total (us)", "Calls");
     ImGui::Separator();
 
-    for (const auto& [rank, entry] : std::views::enumerate(std::views::take(sorted, display_max))) {
+    std::size_t rank{1};
+    for (const auto& entry : std::views::take(sorted, 15)) {
       const auto& [scope_name, scope_stats] = entry;
 
       // Truncate very long scope names for display.
@@ -309,10 +306,11 @@ void DebugUI::show_profiler() {
       }
 
       ImGui::Text("%-6zu %-50s %12lld %8zu",
-          static_cast<std::size_t>(rank) + 1,
+          rank,
           display_name.c_str(),
           static_cast<long long>(scope_stats.total_time.count()),
           scope_stats.call_count);
+        ++rank;
     }
 
     ImGui::Separator();
