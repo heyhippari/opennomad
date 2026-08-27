@@ -271,9 +271,14 @@ std::vector<std::byte> make_object_archive(const std::uint16_t object_id,
 /// a move, toggles the controller, self-disables, waits on a camera, then
 /// toggles the controller off and ends.
 std::vector<std::byte> make_zone_contact_area_archive(
-    const bool starts_dialog = false, const bool self_disables = true) {
+    const bool starts_dialog = false,
+    const bool self_disables = true,
+    const bool enable_controller = true) {
   Buffer top_level;
   top_level.u8(0x38).u16(136);
+  if (enable_controller) {
+    top_level.u8(0x68);
+  }
   top_level.u8(0x40).u16(3795);
   top_level.u8(0x03);
 
@@ -282,10 +287,14 @@ std::vector<std::byte> make_zone_contact_area_archive(
     zone_event.u8(0x3D).u16(272);
   } else {
     zone_event.u8(0x3F).u16(100);
-    zone_event.u8(0x68);
-    zone_event.u8(0x41).u16(3795);
-    zone_event.u8(0x60).u16(0).u16(1).u16(3);
-    zone_event.u8(0x69);
+    if (self_disables) {
+      zone_event.u8(0x68);
+      zone_event.u8(0x41).u16(3795);
+    }
+    zone_event.u8(0x60).u16(42).u16(1).u16(3);
+    if (self_disables) {
+      zone_event.u8(0x69);
+    }
   }
   zone_event.u8(0x03);
 
@@ -817,17 +826,17 @@ void write_boot_fixtures(const TempDirectory& temp) {
   write_bytes(temp.root() / "MESHES" / "DECORS" / "GRID.3DO", make_minimal_3do());
 }
 
-void write_zone_contact_fixtures(const TempDirectory& temp) {
+void write_zone_contact_fixtures(const TempDirectory& temp, const bool enable_controller = true) {
   write_bytes(temp.root() / "IAM" / "START", make_start());
-  write_bytes(temp.root() / "IAM" / "GLOBAL", App::Tests::make_empty_iam_global());
-  write_bytes(temp.root() / "IAM" / "AREA", make_zone_contact_area_archive());
+  write_bytes(temp.root() / "IAM" / "GLOBAL", make_camera_namespace_global(true));
+  write_bytes(temp.root() / "IAM" / "AREA", make_zone_contact_area_archive(false, true, enable_controller));
   write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
   write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_minimal_scx());
 }
 
 void write_live_zone_contact_fixtures(const TempDirectory& temp) {
   write_bytes(temp.root() / "IAM" / "START", make_start());
-  write_bytes(temp.root() / "IAM" / "GLOBAL", App::Tests::make_empty_iam_global());
+  write_bytes(temp.root() / "IAM" / "GLOBAL", make_camera_namespace_global(true));
   write_bytes(temp.root() / "IAM" / "AREA", make_zone_contact_area_archive(false, false));
   write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
   write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_minimal_scx());
@@ -835,7 +844,7 @@ void write_live_zone_contact_fixtures(const TempDirectory& temp) {
 
 void write_zone_dialog_fixtures(const TempDirectory& temp) {
   write_bytes(temp.root() / "IAM" / "START", make_start());
-  write_bytes(temp.root() / "IAM" / "GLOBAL", App::Tests::make_empty_iam_global());
+  write_bytes(temp.root() / "IAM" / "GLOBAL", make_camera_namespace_global(true));
   write_bytes(temp.root() / "IAM" / "AREA", make_zone_contact_area_archive(true));
   write_bytes(temp.root() / "IAM" / "DIALOG", make_dialog_archive(272));
   write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
@@ -1106,13 +1115,60 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
 
     // 0x41 refreshed the persistent zone table, but the context must remain
     // alive long enough to complete its state-7 camera wait and EndEvent.
+    const auto camera{manager.world_presentation().take_camera()};
+    REQUIRE(camera.has_value());
+    REQUIRE(camera->operation_generation.has_value());
+    manager.world_presentation().enqueue_camera_completion(
+      App::WorldCameraOperationCompletion{.operation_generation =
+                          camera->operation_generation.value(),
+        .scene_id = camera->scene_id,
+        .scene_generation = camera->scene_generation,
+        .source_area_id = camera->source_area_id,
+        .camera_id = camera->camera_id});
     REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+          REQUIRE(controller.tick(1.0F / 30.0F).has_value());
     CHECK_EQ(controller.zone_contact_count(), 0U);
     CHECK_FALSE(character->controller_enabled);
 
     // The disabled zone is not recreated while the actor remains inside it.
     REQUIRE(controller.tick(1.0F / 30.0F).has_value());
     CHECK_EQ(controller.zone_contact_count(), 0U);
+  }
+
+  TEST_CASE("current character controller gate suppresses fresh zone contact while inside") {
+    const TempDirectory temp;
+    write_zone_contact_fixtures(temp, false);
+    const ScopedGameDataRoot root{temp.root()};
+
+    App::ScenarioManager manager;
+    App::ScenarioStartupController controller;
+    REQUIRE(controller.initialize(manager).has_value());
+    App::ScenarioRuntime* runtime{manager.world_runtime(0)};
+    REQUIRE(runtime != nullptr);
+    runtime->character_runtime().set_model_loader(
+        [](const std::string_view name)
+            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
+          auto resource{std::make_shared<App::Character::ModelResource>()};
+          resource->name = name;
+          resource->groups.push_back(App::Omikron::MaterialGroup{});
+          return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
+        });
+
+    REQUIRE(controller.tick().has_value());
+    App::Character::RuntimeCharacter* character{runtime->character_runtime().find(136)};
+    REQUIRE(character != nullptr);
+    character->controller_enabled = false;
+
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+    CHECK_EQ(controller.zone_contact_count(), 0U);
+    CHECK_FALSE(character->current_move_id.has_value());
+    CHECK_FALSE(character->controller_enabled);
+
+    character->controller_enabled = true;
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+    CHECK_EQ(controller.zone_contact_count(), 1U);
+    CHECK_EQ(character->current_move_id, std::optional<std::int16_t>{100});
+    CHECK(character->controller_enabled);
   }
 
   TEST_CASE("zone contact follows live runtime position instead of the AREA placement snapshot") {
@@ -1144,11 +1200,23 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK_EQ(character->serialized_area_position.at(0), 50);
     CHECK_EQ(character->serialized_area_position.at(2), 50);
 
+    const auto camera{manager.world_presentation().take_camera()};
+    REQUIRE(camera.has_value());
+    REQUIRE(camera->operation_generation.has_value());
+    manager.world_presentation().enqueue_camera_completion(
+      App::WorldCameraOperationCompletion{.operation_generation =
+                          camera->operation_generation.value(),
+        .scene_id = camera->scene_id,
+        .scene_generation = camera->scene_generation,
+        .source_area_id = camera->source_area_id,
+        .camera_id = camera->camera_id});
+
     // Leave the immutable AREA snapshot inside the zone but move the live actor
     // far outside. The existing contact must become ineligible and finish.
     character->transform.translation.x = 1000.0F;
     character->transform.translation.z = 1000.0F;
     REQUIRE(controller.tick(1.0F).has_value());
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
     CHECK_EQ(controller.zone_contact_count(), 0U);
     CHECK(manager.game_state()->zone_flag(3795).value());
 

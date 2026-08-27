@@ -2779,7 +2779,8 @@ bool ScenarioStartupController::zone_contact_backing_resident(
   });
 }
 
-bool ScenarioStartupController::zone_contact_eligible(const ZoneContactContext& contact) const {
+bool ScenarioStartupController::zone_contact_spatially_matches(
+    const ZoneContactContext& contact) const {
   if (m_manager == nullptr || contact.resident_slot >= m_area_slots.size()) {
     return false;
   }
@@ -2794,28 +2795,67 @@ bool ScenarioStartupController::zone_contact_eligible(const ZoneContactContext& 
   if (character == nullptr || !character->active || !character->area_present) {
     return false;
   }
-  const bool still_enabled{
-      std::ranges::any_of(m_active_zones, [&contact](const ActiveZoneRef& active) {
-        return active.resident_slot == contact.resident_slot && active.source == contact.source &&
-               active.area_id == contact.area_id && active.scene_id == contact.scene_id &&
-               active.zone.zone_id == contact.zone.zone_id &&
-               active.zone.event_offsets == contact.zone.event_offsets;
-      })};
-  return still_enabled &&
-         zone_contains_runtime_xz(contact.zone, character->transform.translation) &&
+  return zone_contains_runtime_xz(contact.zone, character->transform.translation) &&
          contact.zone.accepts_orientation(character->serialized_orientation_units);
+}
+
+bool ScenarioStartupController::zone_contact_reporting_enabled(
+    const ZoneContactContext& contact) const {
+  if (m_manager == nullptr || contact.resident_slot >= m_area_slots.size()) {
+    return false;
+  }
+  const RuntimeAreaSlot& slot{m_area_slots.at(contact.resident_slot)};
+  const std::optional<ControlledCharacterRef> current{m_manager->controlled_character()};
+  if (!current.has_value() || current->world_scene_id != slot.world_scene_id) {
+    return false;
+  }
+  ScenarioRuntime* const runtime{m_manager->world_runtime(slot.world_scene_id)};
+  const Character::RuntimeCharacter* const character{
+      runtime == nullptr ? nullptr : runtime->character_runtime().find(current->character_id)};
+  if (character == nullptr || !character->active || !character->area_present ||
+      !character->controller_enabled) {
+    return false;
+  }
+  return std::ranges::any_of(m_active_zones, [&contact](const ActiveZoneRef& active) {
+    return active.resident_slot == contact.resident_slot && active.source == contact.source &&
+           active.area_id == contact.area_id && active.scene_id == contact.scene_id &&
+           active.zone.zone_id == contact.zone.zone_id &&
+           active.zone.event_offsets == contact.zone.event_offsets;
+  }) &&
+         zone_contact_spatially_matches(contact);
+}
+
+bool ScenarioStartupController::zone_contact_reporting_enabled(
+    const ActiveZoneRef& active_zone) const {
+  if (m_manager == nullptr || active_zone.resident_slot >= m_area_slots.size()) {
+    return false;
+  }
+  const RuntimeAreaSlot& slot{m_area_slots.at(active_zone.resident_slot)};
+  const std::optional<ControlledCharacterRef> current{m_manager->controlled_character()};
+  if (!current.has_value() || current->world_scene_id != slot.world_scene_id) {
+    return false;
+  }
+  ScenarioRuntime* const runtime{m_manager->world_runtime(slot.world_scene_id)};
+  const Character::RuntimeCharacter* const character{
+      runtime == nullptr ? nullptr : runtime->character_runtime().find(current->character_id)};
+  if (character == nullptr || !character->active || !character->area_present ||
+      !character->controller_enabled) {
+    return false;
+  }
+  return zone_contains_runtime_xz(active_zone.zone, character->transform.translation) &&
+         active_zone.zone.accepts_orientation(character->serialized_orientation_units);
 }
 
 std::expected<void, std::string> ScenarioStartupController::create_zone_contact(
     const ActiveZoneRef& active_zone) {
-  const bool exists{std::ranges::any_of(
-      m_zone_contacts, [&active_zone](const std::unique_ptr<ZoneContactContext>& existing) {
-        return existing != nullptr && existing->resident_slot == active_zone.resident_slot &&
-               existing->source == active_zone.source && existing->area_id == active_zone.area_id &&
-               existing->scene_id == active_zone.scene_id &&
-               existing->zone.zone_id == active_zone.zone.zone_id &&
-               existing->zone.event_offsets == active_zone.zone.event_offsets;
-      })};
+  const bool exists{std::ranges::any_of(m_zone_contacts, [&active_zone](
+                       const std::unique_ptr<ZoneContactContext>& existing) {
+    return existing != nullptr && existing->resident_slot == active_zone.resident_slot &&
+           existing->source == active_zone.source && existing->area_id == active_zone.area_id &&
+           existing->scene_id == active_zone.scene_id &&
+           existing->zone.zone_id == active_zone.zone.zone_id &&
+           existing->zone.event_offsets == active_zone.zone.event_offsets;
+  })};
   if (exists) {
     return {};
   }
@@ -2890,14 +2930,15 @@ std::expected<void, std::string> ScenarioStartupController::service_zone_contact
   });
 
   for (const ActiveZoneRef& active_zone : m_active_zones) {
-    const ZoneContactContext candidate{.resident_slot = active_zone.resident_slot,
-        .source = active_zone.source,
-        .area_id = active_zone.area_id,
-        .scene_id = active_zone.scene_id,
-        .zone = active_zone.zone,
-        .script = nullptr,
-        .departure_queued = false};
-    if (zone_contact_eligible(candidate)) {
+    const bool already_reported{std::ranges::any_of(m_zone_contacts, [&active_zone](
+        const std::unique_ptr<ZoneContactContext>& existing) {
+      return existing != nullptr && existing->resident_slot == active_zone.resident_slot &&
+             existing->source == active_zone.source && existing->area_id == active_zone.area_id &&
+             existing->scene_id == active_zone.scene_id &&
+             existing->zone.zone_id == active_zone.zone.zone_id &&
+             existing->zone.event_offsets == active_zone.zone.event_offsets;
+    })};
+    if (!already_reported && zone_contact_reporting_enabled(active_zone)) {
       if (auto created{create_zone_contact(active_zone)}; !created) {
         return created;
       }
@@ -2910,8 +2951,16 @@ std::expected<void, std::string> ScenarioStartupController::service_zone_contact
           return true;
         }
         Script::AreaScriptRuntime& script{*contact->script};
-        const bool eligible{zone_contact_eligible(*contact)};
-        if (!eligible && !contact->departure_queued && script.event_entries().event3.has_value()) {
+        const bool spatial_match{zone_contact_spatially_matches(*contact)};
+        const bool active_zone{std::ranges::any_of(m_active_zones, [contact_ptr = contact.get()](const ActiveZoneRef& active) {
+          return active.resident_slot == contact_ptr->resident_slot &&
+                 active.source == contact_ptr->source && active.area_id == contact_ptr->area_id &&
+                 active.scene_id == contact_ptr->scene_id &&
+                 active.zone.zone_id == contact_ptr->zone.zone_id &&
+                 active.zone.event_offsets == contact_ptr->zone.event_offsets;
+        })};
+        if (!spatial_match && !contact->departure_queued &&
+            script.event_entries().event3.has_value()) {
           script.queue_event(3);
           contact->departure_queued = true;
         }
@@ -2938,7 +2987,7 @@ std::expected<void, std::string> ScenarioStartupController::service_zone_contact
               script.pause_info().reason_text);
         }
         const bool idle{script.state() == Script::AreaScriptState::k_ready};
-        if (!eligible && idle) {
+        if ((!spatial_match || !active_zone || !zone_contact_backing_resident(*contact)) && idle) {
           App::Log::debug(LogCategory::Scenario, "zone {} event completed", contact->zone.zone_id);
           return true;
         }

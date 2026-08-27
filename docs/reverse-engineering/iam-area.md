@@ -1231,6 +1231,15 @@ Y is ignored. Runtime uses an ordinary even/odd ray-crossing test. A zero
 orientation span accepts every heading; otherwise the heading must lie within
 the wrapped center ± half-span interval.
 
+The persistent ZONE bit controls whether the record is available to the
+transient contact producer; geometric overlap alone does not create a contact.
+Fresh reporting is restricted to the current controlled character while its
+body is resident and its controller is enabled. Disabling the controller while
+inside a zone therefore suppresses a new contact, while re-enabling it allows
+the next contact-production pass to report the still-matching zone. An already
+reported contact keeps its compact context while its event runs, including
+after the zone disables itself, and is released once that event becomes idle.
+
 ---
 
 # 36. Table 2 event entrypoint

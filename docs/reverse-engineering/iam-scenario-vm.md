@@ -1253,11 +1253,16 @@ AREA release, initial residency, and successful alternate-slot preparation.
 On first qualifying X/Z-and-orientation contact of the session current
 controlled character, it creates one zone-owned compact context over the
 complete owner record, installs the three record-relative entries, and queues
-event 1 once when present. Contexts are capped at 16 and receive the ordinary
-SCENE/AREA compact services, including state-7 camera waits. Event 2 is
-deduplicated by the VM but has no recovered generic spatial trigger. A zone
-that disables itself remains alive until its active event becomes idle; only
-physical loss of the backing AREA/SCENE record tears it down immediately.
+event 1 once when present. Fresh creation is gated by the current controlled
+character still being alive in the matching resident world and reporting
+enabled; a disabled controller must not manufacture a new contact while the
+actor remains inside the zone, but the same actor can produce a fresh contact
+the next tick once the controller is re-enabled while still spatially inside.
+Contexts are capped at 16 and receive the ordinary SCENE/AREA compact
+services, including state-7 camera waits. Event 2 is deduplicated by the VM
+but has no recovered generic spatial trigger. A zone that disables itself
+remains alive until its active event becomes idle; only physical loss of the
+backing AREA/SCENE record tears it down immediately.
 
 ## `0x0C` — `SetGlobalVariableZero`
 

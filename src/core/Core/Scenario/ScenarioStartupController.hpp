@@ -361,7 +361,9 @@ class ScenarioStartupController {
   void service_scene_scripts(float delta_seconds);
   [[nodiscard]] std::expected<void, std::string> service_zone_contacts(float delta_seconds);
   [[nodiscard]] bool zone_contact_backing_resident(const ZoneContactContext& contact) const;
-  [[nodiscard]] bool zone_contact_eligible(const ZoneContactContext& contact) const;
+  [[nodiscard]] bool zone_contact_spatially_matches(const ZoneContactContext& contact) const;
+  [[nodiscard]] bool zone_contact_reporting_enabled(const ZoneContactContext& contact) const;
+  [[nodiscard]] bool zone_contact_reporting_enabled(const ActiveZoneRef& active_zone) const;
   [[nodiscard]] std::expected<void, std::string> create_zone_contact(
       const ActiveZoneRef& active_zone);
   [[nodiscard]] std::optional<std::size_t> resident_area_slot(std::int32_t area_id) const;
