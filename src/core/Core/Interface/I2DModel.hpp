@@ -9,6 +9,8 @@
 #include <variant>
 #include <vector>
 
+#include "Core/Interface/I2DStateTransition.hpp"
+
 namespace App::Interface {
 
 /// Axis-aligned rectangle in the 640x480 virtual interface canvas.
@@ -30,8 +32,7 @@ struct InterfaceInstance;
 /// path when the selected element's target state has one. The callback must
 /// perform the state-specific enter behavior (e.g. queue an interface
 /// completion) without inspecting the label text or string-table index.
-using I2DStateEnterCallback =
-    std::function<void(InterfaceManager&, InterfaceInstance&, I2DState&)>;
+using I2DStateEnterCallback = std::function<void(InterfaceManager&, InterfaceInstance&, I2DState&)>;
 
 /// Optional state-level cancel action. This is needed for root states that
 /// logically return to another resident interface rather than to an I2D
@@ -43,12 +44,11 @@ using I2DStateCancelCallback =
 /// this on the generic row lets future options bind enum/slider/settings
 /// behavior without teaching InterfaceManager about individual setting names.
 using I2DAdjustCallback =
-    std::function<void(InterfaceManager&, InterfaceInstance&, std::int32_t delta)>;
+    std::function<bool(InterfaceManager&, InterfaceInstance&, std::int32_t delta)>;
 
 /// Generic activation action for selectable rows which perform work without
 /// entering another I2D state (binding capture and command rows).
-using I2DActivateCallback =
-    std::function<void(InterfaceManager&, InterfaceInstance&)>;
+using I2DActivateCallback = std::function<void(InterfaceManager&, InterfaceInstance&)>;
 
 /// Runtime value rows draw the label to the left of the canvas centre and the
 /// current value to the right. Ordinary menu text remains centred.
@@ -156,7 +156,7 @@ struct I2DTextElement {
   I2DTextLayout layout{I2DTextLayout::k_centered};
   I2DValueTextCallback value_text;
   I2DValueScalarCallback value_scalar;
- 
+
   [[nodiscard]] bool selectable() const {
     return target_state != nullptr || static_cast<bool>(on_activate) ||
            static_cast<bool>(on_adjust);
@@ -240,6 +240,26 @@ struct I2DState {
   I2DStateCancelCallback on_cancel;
 };
 
+/// Resolves the semantic direction implied by a state graph transition.
+/// - parent -> child: forward
+/// - child -> parent: back
+/// - unrelated states: replace
+[[nodiscard]] inline I2DStateTransitionDirection determine_transition_direction(
+    const I2DState* from, const I2DState* to) {
+  if (from == nullptr || to == nullptr || from == to) {
+    return I2DStateTransitionDirection::k_replace;
+  }
+
+  if (to->parent == from) {
+    return I2DStateTransitionDirection::k_forward;
+  }
+  if (from->parent == to) {
+    return I2DStateTransitionDirection::k_back;
+  }
+
+  return I2DStateTransitionDirection::k_replace;
+}
+
 /// Collects the selectable text elements of `state` in iteration order
 /// (groups then elements). Selection indices used by navigation and rendering
 /// refer to this order.
@@ -248,6 +268,19 @@ inline std::vector<I2DTextElement*> selectable_text_elements(I2DState& state) {
   for (I2DGroup& group : state.groups) {
     for (I2DElement& element : group.elements) {
       auto* text{std::get_if<I2DTextElement>(&element.data)};
+      if (text != nullptr && text->selectable()) {
+        result.push_back(text);
+      }
+    }
+  }
+  return result;
+}
+
+inline std::vector<const I2DTextElement*> selectable_text_elements(const I2DState& state) {
+  std::vector<const I2DTextElement*> result;
+  for (const I2DGroup& group : state.groups) {
+    for (const I2DElement& element : group.elements) {
+      const auto* text{std::get_if<I2DTextElement>(&element.data)};
       if (text != nullptr && text->selectable()) {
         result.push_back(text);
       }

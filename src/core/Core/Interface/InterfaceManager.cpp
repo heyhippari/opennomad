@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <expected>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <ranges>
@@ -24,6 +25,8 @@
 #include <utility>
 #include <vector>
 
+#include "Core/Audio/AudioSystem.hpp"
+#include "Core/Audio/AudioTypes.hpp"
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Debug/Metrics.hpp"
 #include "Core/Dialog/DialogRuntime.hpp"
@@ -34,6 +37,7 @@
 #include "Core/Interface/I2DBumpBackground.hpp"
 #include "Core/Interface/I2DModel.hpp"
 #include "Core/Interface/I2DRenderer.hpp"
+#include "Core/Interface/I2DStateTransition.hpp"
 #include "Core/Interface/InterfaceDescriptor.hpp"
 #include "Core/Interface/InterfaceDispatcher.hpp"
 #include "Core/Interface/InterfacePresentation.hpp"
@@ -139,6 +143,9 @@ const InterfaceDescriptor* descriptor_for_id(const std::int32_t id) {
           .bitmap_name = "gfxint.bmp",
           .string_table_name = "Menu",
           .companion_interface = 35,
+          .sounds = InterfaceSoundSet{.navigate = "I2D/SOUNDS/men001.wav",
+              .confirm = "I2D/SOUNDS/men002.wav",
+              .cancel = "I2D/SOUNDS/men003.wav"},
           .init = initialize_start_menu,
           .destroy = destroy_start_menu,
           .runtime_flags = 0x20000400,
@@ -151,6 +158,9 @@ const InterfaceDescriptor* descriptor_for_id(const std::int32_t id) {
           .bitmap_name = "",
           .string_table_name = "Options",
           .companion_interface = std::nullopt,
+          .sounds = InterfaceSoundSet{.navigate = "I2D/SOUNDS/SNK001.wav",
+              .confirm = "I2D/SOUNDS/SNK002.wav",
+              .cancel = "I2D/SOUNDS/SNK003.wav"},
           .init = initialize_options,
           .destroy = destroy_options,
           .runtime_flags = 0x00000000U,
@@ -166,22 +176,28 @@ const InterfaceDescriptor* descriptor_for_id(const std::int32_t id) {
 
 InterfaceManager::InterfaceManager()
     : m_settings_path(Resources::get_user_config_path() / "settings.cfg") {
-    m_game_settings.ensure_choice("enhancements.menu_interpolation",
+  m_game_settings.ensure_choice("enhancements.menu_interpolation",
       {App::Settings::SettingChoice{.label = "Off", .raw_value = 0},
-        App::Settings::SettingChoice{.label = "On", .raw_value = 1}},
+          App::Settings::SettingChoice{.label = "On", .raw_value = 1}},
       1U);
+  m_game_settings.ensure_choice("enhancements.menu_transition_style",
+      {App::Settings::SettingChoice{.label = "Modern", .raw_value = 0},
+          App::Settings::SettingChoice{.label = "Classic", .raw_value = 1},
+          App::Settings::SettingChoice{.label = "Reduced Motion", .raw_value = 2}},
+      0U);
   if (auto result{m_game_settings.load(m_settings_path)}; !result) {
     std::error_code error;
     if (std::filesystem::exists(m_settings_path, error) && !error) {
       m_settings_persistence_enabled = false;
-      App::Log::warn(LogCategory::Interface,
-          "native settings disabled for this session: {}",
-          result.error());
+      App::Log::warn(
+          LogCategory::Interface, "native settings disabled for this session: {}", result.error());
     }
   }
-  m_game_settings.set_change_callback(
-      [this](const std::string_view stable_id) { apply_game_setting(stable_id); });
+  m_game_settings.set_change_callback([this](const std::string_view stable_id) {
+    apply_game_setting(stable_id);
+  });
   apply_game_setting("enhancements.menu_interpolation");
+  apply_game_setting("enhancements.menu_transition_style");
 }
 
 InterfaceManager::~InterfaceManager() {
@@ -307,6 +323,7 @@ std::expected<InterfaceHandle, std::string> InterfaceManager::open(
 void InterfaceManager::close() {
   APP_PROFILE_FUNCTION();
 
+  m_active_transition.reset();
   while (!m_instances.empty()) {
     auto instance{std::move(m_instances.back())};
     m_instances.pop_back();
@@ -330,6 +347,16 @@ void InterfaceManager::close(const InterfaceHandle handle) {
 
   for (auto it{m_instances.begin()}; it != m_instances.end(); ++it) {
     if ((*it)->handle == handle) {
+      if (m_active_transition.has_value()) {
+        const auto participates = [handle](const TransitionLayer& layer) {
+          return layer.interface_handle == handle;
+        };
+        const bool involved{std::ranges::any_of(m_active_transition->outgoing, participates) ||
+                            std::ranges::any_of(m_active_transition->incoming, participates)};
+        if (involved) {
+          m_active_transition.reset();
+        }
+      }
       destroy_instance(**it);
       m_instances.erase(it);
 
@@ -558,6 +585,7 @@ void InterfaceManager::update_without_input(const float delta_time) {
     }
     update_presentation(*instance, delta_time);
   }
+  update_state_transition(delta_time);
 }
 
 void InterfaceManager::render(const int pixel_width, const int pixel_height) {
@@ -567,8 +595,56 @@ void InterfaceManager::render(const int pixel_width, const int pixel_height) {
     return;
   }
   Debug::I2DCounters counters;
-  for (const auto& instance : m_instances) {
-    m_renderer->render(*instance, m_fonts, pixel_width, pixel_height, counters);
+  if (m_active_transition.has_value()) {
+    const ActiveStateTransition& transition{m_active_transition.value()};
+    const float progress{
+        std::clamp(transition.elapsed_seconds / transition.duration_seconds, 0.0F, 1.0F)};
+    const I2DTransitionSample sample{
+        sample_transition(transition.style, transition.direction, transition.context, progress)};
+    bool background_rendered{false};
+    for (const TransitionLayer& layer : transition.outgoing) {
+      if (const InterfaceInstance* instance{find(layer.interface_handle)};
+          instance != nullptr && layer.state != nullptr) {
+        m_renderer->render_state(*instance,
+            *layer.state,
+            sample.outgoing,
+            m_fonts,
+            pixel_width,
+            pixel_height,
+            counters,
+            !background_rendered);
+        background_rendered = true;
+      }
+    }
+    for (const TransitionLayer& layer : transition.incoming) {
+      if (const InterfaceInstance* instance{find(layer.interface_handle)};
+          instance != nullptr && layer.state != nullptr) {
+        m_renderer->render_state(*instance,
+            *layer.state,
+            sample.incoming,
+            m_fonts,
+            pixel_width,
+            pixel_height,
+            counters,
+            false);
+      }
+    }
+    const auto is_participant = [&transition](const InterfaceHandle handle) {
+      const auto matches = [handle](const TransitionLayer& layer) {
+        return layer.interface_handle == handle;
+      };
+      return std::ranges::any_of(transition.outgoing, matches) ||
+             std::ranges::any_of(transition.incoming, matches);
+    };
+    for (const auto& instance : m_instances) {
+      if (!is_participant(instance->handle)) {
+        m_renderer->render(*instance, m_fonts, pixel_width, pixel_height, counters);
+      }
+    }
+  } else {
+    for (const auto& instance : m_instances) {
+      m_renderer->render(*instance, m_fonts, pixel_width, pixel_height, counters);
+    }
   }
   if (const auto overlay{presentation_overlay()}; overlay.has_value() && overlay->alpha > 0.0F) {
     m_renderer->render_overlay(overlay->color, overlay->alpha, pixel_width, pixel_height);
@@ -607,12 +683,41 @@ void InterfaceManager::set_background_interpolated(const bool interpolated) {
   }
 }
 
-void InterfaceManager::apply_game_setting(const std::string_view stable_id) {
-  if (stable_id != "enhancements.menu_interpolation") {
+void InterfaceManager::set_audio_system(Audio::AudioSystem* audio) {
+  m_audio_system = audio;
+}
+
+void InterfaceManager::play_ui_sound(
+    const InterfaceDescriptor& descriptor, const Audio::UIMenuSoundEvent event) {
+  if (m_audio_system == nullptr || !descriptor.sounds.has_value()) {
     return;
   }
-  const auto raw{m_game_settings.choice_raw_value(stable_id)};
-  set_background_interpolated(raw.value_or(1) != 0);
+  const InterfaceSoundSet& sounds{descriptor.sounds.value()};
+  std::string_view path;
+  switch (event) {
+    case Audio::UIMenuSoundEvent::k_navigate:
+      path = sounds.navigate;
+      break;
+    case Audio::UIMenuSoundEvent::k_confirm:
+      path = sounds.confirm;
+      break;
+    case Audio::UIMenuSoundEvent::k_cancel:
+      path = sounds.cancel;
+      break;
+  }
+  static_cast<void>(m_audio_system->play_ui_sound(path, event));
+}
+
+void InterfaceManager::apply_game_setting(const std::string_view stable_id) {
+  if (stable_id == "enhancements.menu_interpolation") {
+    const auto raw{m_game_settings.choice_raw_value(stable_id)};
+    set_background_interpolated(raw.value_or(1) != 0);
+    return;
+  }
+
+  if (stable_id != "enhancements.menu_transition_style") {
+    return;
+  }
 }
 
 bool InterfaceManager::background_interpolated() const {
@@ -622,6 +727,93 @@ bool InterfaceManager::background_interpolated() const {
     }
   }
   return true;
+}
+
+bool InterfaceManager::transition_active() const {
+  return m_active_transition.has_value();
+}
+
+void InterfaceManager::transition_to(InterfaceInstance& instance, I2DState& target) {
+  begin_state_transition(instance, target);
+}
+
+void InterfaceManager::begin_state_transition(InterfaceInstance& instance, I2DState& target) {
+  if (m_active_transition.has_value() || instance.current_state == nullptr ||
+      instance.current_state == &target) {
+    return;
+  }
+  const auto raw{m_game_settings.choice_raw_value("enhancements.menu_transition_style")};
+  const I2DMenuTransitionStyle style{menu_transition_style_from_raw(raw.value_or(0))};
+  const I2DTransitionContext context{instance.descriptor != nullptr && instance.descriptor->id == 29
+                                         ? I2DTransitionContext::k_start_menu
+                                         : I2DTransitionContext::k_options};
+  const float duration{transition_duration(style, context)};
+  if (duration <= 0.0F) {
+    instance.current_state = &target;
+    return;
+  }
+  m_active_transition =
+      ActiveStateTransition{.outgoing = {TransitionLayer{.interface_handle = instance.handle,
+                                .state = instance.current_state}},
+          .incoming = {TransitionLayer{.interface_handle = instance.handle, .state = &target}},
+          .direction = determine_transition_direction(instance.current_state, &target),
+          .style = style,
+          .context = context,
+          .elapsed_seconds = 0.0F,
+          .duration_seconds = duration,
+          .commit = {}};
+}
+
+void InterfaceManager::transition_cross_interface(std::vector<TransitionLayer> outgoing,
+    std::vector<TransitionLayer> incoming,
+    const I2DStateTransitionDirection direction,
+    const I2DTransitionContext context,
+    std::function<void(InterfaceManager&)> commit) {
+  if (m_active_transition.has_value() || outgoing.empty() || incoming.empty()) {
+    return;
+  }
+  const auto raw{m_game_settings.choice_raw_value("enhancements.menu_transition_style")};
+  const I2DMenuTransitionStyle style{menu_transition_style_from_raw(raw.value_or(0))};
+  const float duration{transition_duration(style, context)};
+  if (duration <= 0.0F) {
+    if (commit) {
+      commit(*this);
+    }
+    return;
+  }
+  m_active_transition = ActiveStateTransition{.outgoing = std::move(outgoing),
+      .incoming = std::move(incoming),
+      .direction = direction,
+      .style = style,
+      .context = context,
+      .elapsed_seconds = 0.0F,
+      .duration_seconds = duration,
+      .commit = std::move(commit)};
+}
+
+void InterfaceManager::update_state_transition(const float delta_time) {
+  if (!m_active_transition.has_value()) {
+    return;
+  }
+  ActiveStateTransition& transition{m_active_transition.value()};
+  transition.elapsed_seconds += std::max(delta_time, 0.0F);
+  if (transition.elapsed_seconds < transition.duration_seconds) {
+    return;
+  }
+  const std::vector<TransitionLayer> incoming{transition.incoming};
+  const std::function<void(InterfaceManager&)> commit{std::move(transition.commit)};
+  m_active_transition.reset();
+  if (commit) {
+    commit(*this);
+  } else {
+    for (const TransitionLayer& layer : incoming) {
+      InterfaceInstance* instance{find(layer.interface_handle)};
+      if (instance == nullptr || layer.state == nullptr) {
+        continue;
+      }
+      instance->current_state = layer.state;
+    }
+  }
 }
 
 // NOLINTNEXTLINE(readability-convert-member-functions-to-static) — descriptor API parity
@@ -652,9 +844,9 @@ bool InterfaceManager::physical_input_capture_active(const std::string_view toke
 }
 
 void InterfaceManager::select_previous() {
-  const InterfaceInstance* instance{focused_instance_mut()};
+  const InterfaceInstance* instance{focused_instance()};
   if (instance == nullptr || instance->current_state == nullptr ||
-      presentation_input_locked(*instance)) {
+      presentation_input_locked(*instance) || transition_active()) {
     return;
   }
   std::vector<I2DTextElement*> selectable{selectable_text_elements(*instance->current_state)};
@@ -662,19 +854,23 @@ void InterfaceManager::select_previous() {
     return;
   }
   std::size_t& selected{instance->current_state->selected_element};
+  const std::size_t previous{selected};
   if (selected == 0U) {
     selected = selectable.size() - 1U;
   } else {
     --selected;
   }
   const I2DTextElement& active{*selectable.at(selected)};
+  if (selected != previous && instance->descriptor != nullptr) {
+    play_ui_sound(*instance->descriptor, Audio::UIMenuSoundEvent::k_navigate);
+  }
   App::Log::debug(LogCategory::I2D, "active element: \"{}\"", text_label(*instance, active));
 }
 
 void InterfaceManager::select_next() {
   const InterfaceInstance* instance{focused_instance_mut()};
   if (instance == nullptr || instance->current_state == nullptr ||
-      presentation_input_locked(*instance)) {
+      presentation_input_locked(*instance) || transition_active()) {
     return;
   }
   std::vector<I2DTextElement*> selectable{selectable_text_elements(*instance->current_state)};
@@ -682,15 +878,19 @@ void InterfaceManager::select_next() {
     return;
   }
   std::size_t& selected{instance->current_state->selected_element};
+  const std::size_t previous{selected};
   selected = (selected + 1U) % selectable.size();
   const I2DTextElement& active{*selectable.at(selected)};
+  if (selected != previous && instance->descriptor != nullptr) {
+    play_ui_sound(*instance->descriptor, Audio::UIMenuSoundEvent::k_navigate);
+  }
   App::Log::debug(LogCategory::I2D, "active element: \"{}\"", text_label(*instance, active));
 }
 
 void InterfaceManager::adjust_selected(const std::int32_t delta) {
   InterfaceInstance* instance{focused_instance_mut()};
   if (delta == 0 || instance == nullptr || instance->current_state == nullptr ||
-      presentation_input_locked(*instance)) {
+      presentation_input_locked(*instance) || transition_active()) {
     return;
   }
   std::vector<I2DTextElement*> selectable{selectable_text_elements(*instance->current_state)};
@@ -704,12 +904,16 @@ void InterfaceManager::adjust_selected(const std::int32_t delta) {
   // Copy before invocation: an adjustment callback is allowed to rebuild or
   // close its owning interface in later options phases.
   const I2DAdjustCallback adjust{selected->on_adjust};
-  adjust(*this, *instance, delta);
+  const InterfaceDescriptor* descriptor{instance->descriptor};
+  const bool changed{adjust(*this, *instance, delta)};
+  if (changed && descriptor != nullptr) {
+    play_ui_sound(*descriptor, Audio::UIMenuSoundEvent::k_navigate);
+  }
 }
 
 void InterfaceManager::confirm() {
   InterfaceInstance* instance{focused_instance_mut()};
-  if (instance == nullptr || instance->current_state == nullptr) {
+  if (instance == nullptr || instance->current_state == nullptr || transition_active()) {
     return;
   }
   std::vector<I2DTextElement*> selectable{selectable_text_elements(*instance->current_state)};
@@ -717,8 +921,12 @@ void InterfaceManager::confirm() {
     return;
   }
   const I2DTextElement* selected{selectable.at(instance->current_state->selected_element)};
+  const InterfaceDescriptor* descriptor{instance->descriptor};
   if (selected->on_activate) {
     App::Log::debug(LogCategory::I2D, "activate action: \"{}\"", text_label(*instance, *selected));
+    if (descriptor != nullptr) {
+      play_ui_sound(*descriptor, Audio::UIMenuSoundEvent::k_confirm);
+    }
     const I2DActivateCallback on_activate{selected->on_activate};
     on_activate(*this, *instance);
     return;
@@ -730,6 +938,9 @@ void InterfaceManager::confirm() {
   }
   App::Log::debug(
       LogCategory::I2D, "activate: \"{}\" -> child state", text_label(*instance, *selected));
+  if (descriptor != nullptr) {
+    play_ui_sound(*descriptor, Audio::UIMenuSoundEvent::k_confirm);
+  }
   if (target->on_enter) {
     // A state-specific enter action (e.g. queueing an interface completion)
     // owns the transition; the generic path must not also switch states.
@@ -739,18 +950,22 @@ void InterfaceManager::confirm() {
     return;
   }
   // Generic child-state transition (no enter action).
-  instance->current_state = target;
+  begin_state_transition(*instance, *target);
 }
 
 void InterfaceManager::cancel() {
   InterfaceInstance* instance{focused_instance_mut()};
   if (instance == nullptr || instance->current_state == nullptr ||
-      presentation_input_locked(*instance)) {
+      presentation_input_locked(*instance) || transition_active()) {
     return;
   }
   if (instance->current_state->on_cancel) {
     // As with on_enter, keep a local copy so the callback may close the
     // interface that owns the state as its final operation.
+    const InterfaceDescriptor* descriptor{instance->descriptor};
+    if (descriptor != nullptr) {
+      play_ui_sound(*descriptor, Audio::UIMenuSoundEvent::k_cancel);
+    }
     const I2DStateCancelCallback on_cancel{instance->current_state->on_cancel};
     on_cancel(*this, *instance, *instance->current_state);
     return;
@@ -759,11 +974,55 @@ void InterfaceManager::cancel() {
     App::Log::debug(LogCategory::I2D, "cancel: already at the root state");
     return;
   }
-  instance->current_state = instance->current_state->parent;
+  const InterfaceDescriptor* descriptor{instance->descriptor};
+  if (descriptor != nullptr) {
+    play_ui_sound(*descriptor, Audio::UIMenuSoundEvent::k_cancel);
+  }
+  begin_state_transition(*instance, *instance->current_state->parent);
   App::Log::debug(LogCategory::I2D, "returned to parent state");
 }
 
 void InterfaceManager::handle_navigation(const Input::InputManager& input) {
+  if (transition_active()) {
+    return;
+  }
+  if (m_pending_physical_input_capture.has_value()) {
+    const std::optional<Input::InputSource> pressed{input.last_physical_press()};
+    if (!pressed.has_value()) {
+      return;
+    }
+    if (pressed->type == Input::SourceType::k_key &&
+        pressed->index == static_cast<std::uint32_t>(SDL_SCANCODE_ESCAPE)) {
+      App::Log::debug(LogCategory::Interface, "physical input capture cancelled");
+      cancel_physical_input_capture();
+      return;
+    }
+    const PhysicalInputCaptureCallback callback{
+        std::move(m_pending_physical_input_capture->callback)};
+    cancel_physical_input_capture();
+    if (callback) {
+      callback(pressed.value());
+    }
+    return;
+  }
+  if (input.is_action_pressed(Input::Action::k_menu_up)) {
+    select_previous();
+  }
+  if (input.is_action_pressed(Input::Action::k_menu_down)) {
+    select_next();
+  }
+  if (input.is_action_pressed(Input::Action::k_menu_left)) {
+    adjust_selected(-1);
+  }
+  if (input.is_action_pressed(Input::Action::k_menu_right)) {
+    adjust_selected(1);
+  }
+  if (input.is_action_pressed(Input::Action::k_menu_confirm)) {
+    confirm();
+  }
+  if (input.is_action_pressed(Input::Action::k_menu_cancel)) {
+    cancel();
+  }
   if (m_pending_physical_input_capture.has_value()) {
     const std::optional<Input::InputSource> pressed{input.last_physical_press()};
     if (!pressed.has_value()) {
@@ -811,9 +1070,9 @@ struct RuntimeKeyMapping {
   SDL_Scancode scancode;
   std::uint32_t dik;
 
-  constexpr RuntimeKeyMapping(
-      const SDL_Scancode scancode_value, const std::uint32_t dik_value)
-      : scancode(scancode_value), dik(dik_value) {}
+  constexpr RuntimeKeyMapping(const SDL_Scancode scancode_value, const std::uint32_t dik_value)
+      : scancode(scancode_value),
+        dik(dik_value) {}
 };
 
 constexpr std::array<RuntimeKeyMapping, 104> K_RUNTIME_KEY_MAPPINGS{{
@@ -1003,8 +1262,23 @@ void close_options_to_host(InterfaceManager& manager, InterfaceInstance& options
   const std::optional<InterfaceHandle> host_handle{options_instance.parent_interface};
 
   if (host_handle.has_value()) {
-    if (InterfaceInstance* host{manager.find(host_handle.value())}; host != nullptr) {
-      host->current_state = host->root_state;
+    if (const InterfaceInstance* host{manager.find(host_handle.value())}; host != nullptr) {
+      const InterfaceHandle host_id{host->handle};
+      manager.transition_cross_interface(
+          {InterfaceManager::TransitionLayer{
+               .interface_handle = host_id, .state = host->current_state},
+              InterfaceManager::TransitionLayer{
+                  .interface_handle = options_handle, .state = options_instance.current_state}},
+          {InterfaceManager::TransitionLayer{
+              .interface_handle = host_id, .state = host->root_state}},
+          I2DStateTransitionDirection::k_back,
+          I2DTransitionContext::k_cross_interface,
+          [options_handle, host_id](InterfaceManager& manager_ref) {
+            manager_ref.persist_game_settings();
+            manager_ref.close(options_handle);
+            manager_ref.set_focused(host_id);
+          });
+      return;
     }
   }
 
@@ -1136,13 +1410,15 @@ I2DTextElement make_options_text(InterfaceManager& manager,
     };
     text.on_adjust =
         [setting_id](InterfaceManager& manager_ref, InterfaceInstance&, const std::int32_t delta) {
-          if (!manager_ref.game_settings().adjust_number(setting_id, delta)) {
-            return;
+          const bool changed{manager_ref.game_settings().adjust_number(setting_id, delta)};
+          if (!changed) {
+            return false;
           }
           App::Log::debug(LogCategory::Interface,
               "setting {} -> {}",
               setting_id,
               manager_ref.game_settings().number_value(setting_id).value_or(0));
+          return true;
         };
   }
   if (choice_row) {
@@ -1154,8 +1430,9 @@ I2DTextElement make_options_text(InterfaceManager& manager,
     };
     text.on_adjust =
         [setting_id](InterfaceManager& manager_ref, InterfaceInstance&, const std::int32_t delta) {
-          if (!manager_ref.game_settings().adjust_choice(setting_id, delta)) {
-            return;
+          const bool changed{manager_ref.game_settings().adjust_choice(setting_id, delta)};
+          if (!changed) {
+            return false;
           }
           const auto raw{manager_ref.game_settings().choice_raw_value(setting_id)};
           App::Log::debug(LogCategory::Interface,
@@ -1163,6 +1440,7 @@ I2DTextElement make_options_text(InterfaceManager& manager,
               setting_id,
               manager_ref.game_settings().choice_label(setting_id),
               raw.has_value() ? raw.value() : 0);
+          return true;
         };
   }
   return text;
@@ -1345,10 +1623,11 @@ void initialize_start_menu(InterfaceManager& manager, InterfaceInstance& instanc
   //
   // on_enter owns this transition because it must also establish the
   // Runtime-authored initial selection.
-  quit->on_enter = [](InterfaceManager&, InterfaceInstance& instance_ref, I2DState& state_ref) {
-    state_ref.selected_element = k_start_menu_quit_default_choice;
-    instance_ref.current_state = &state_ref;
-  };
+  quit->on_enter =
+      [](InterfaceManager& manager_ref, InterfaceInstance& instance_ref, I2DState& state_ref) {
+        state_ref.selected_element = k_start_menu_quit_default_choice;
+        manager_ref.transition_to(instance_ref, state_ref);
+      };
 
   // Runtime Yes callback @ 0x0047BC10 ultimately executes
   // PostQuitMessage(0). SDL_EVENT_QUIT is the direct SDL equivalent: enqueue
@@ -1377,24 +1656,35 @@ void initialize_start_menu(InterfaceManager& manager, InterfaceInstance& instanc
   // The parent switches to a presentation-only host state containing the
   // existing CLOUD background and logo; interface 35 then draws its own rows
   // over that resident parent. This matches descriptor 35 having no bitmap.
-  options->on_enter =
-      [](InterfaceManager& manager_ref, InterfaceInstance& instance_ref, I2DState& state_ref) {
-        const InterfaceHandle host_handle{instance_ref.handle};
-        instance_ref.current_state = &state_ref;
+  options->on_enter = [](InterfaceManager& manager_ref,
+                          InterfaceInstance& instance_ref,
+                          I2DState& state_ref) {
+    const InterfaceHandle host_handle{instance_ref.handle};
 
-        auto opened{manager_ref.open(InterfaceOpenRequest{
-            .interface_id = k_options_interface_id, .operand_b = -1, .operand_c = -1})};
-        if (!opened) {
-          App::Log::error(LogCategory::Interface, "failed to open OPTIONS: {}", opened.error());
-          instance_ref.current_state = instance_ref.root_state;
-          manager_ref.set_focused(host_handle);
-          return;
-        }
+    auto opened{manager_ref.open(InterfaceOpenRequest{
+        .interface_id = k_options_interface_id, .operand_b = -1, .operand_c = -1})};
+    if (!opened) {
+      App::Log::error(LogCategory::Interface, "failed to open OPTIONS: {}", opened.error());
+      instance_ref.current_state = instance_ref.root_state;
+      manager_ref.set_focused(host_handle);
+      return;
+    }
 
-        if (InterfaceInstance* child{manager_ref.find(opened.value())}; child != nullptr) {
-          child->parent_interface = host_handle;
-        }
-      };
+    if (InterfaceInstance* child{manager_ref.find(opened.value())}; child != nullptr) {
+      child->parent_interface = host_handle;
+      manager_ref.transition_cross_interface(
+          {InterfaceManager::TransitionLayer{
+              .interface_handle = host_handle, .state = instance_ref.current_state}},
+          {InterfaceManager::TransitionLayer{.interface_handle = host_handle, .state = &state_ref},
+              InterfaceManager::TransitionLayer{
+                  .interface_handle = child->handle, .state = child->current_state}},
+          I2DStateTransitionDirection::k_forward,
+          I2DTransitionContext::k_cross_interface,
+          [child_handle = child->handle](InterfaceManager& completion_manager) {
+            completion_manager.set_focused(child_handle);
+          });
+    }
+  };
 
   // Animated background: IMAGES/CLOUD.BMP. Missing source degrades to no
   // background (the canvas stays clear) rather than an invented asset.
@@ -1575,8 +1865,7 @@ void initialize_options(InterfaceManager& manager, InterfaceInstance& instance) 
 
   if (root == nullptr || video == nullptr || audio == nullptr || game == nullptr ||
       controls == nullptr || enhancements == nullptr || keyboard_categories == nullptr ||
-      gamepad_action == nullptr ||
-      mouse_settings_action == nullptr || keyboard_group0 == nullptr ||
+      gamepad_action == nullptr || mouse_settings_action == nullptr || keyboard_group0 == nullptr ||
       keyboard_group1 == nullptr || keyboard_group2 == nullptr || keyboard_group3 == nullptr ||
       back_action == nullptr) {
     App::Log::error(LogCategory::I2D, "failed to allocate the OPTIONS state graph");
@@ -1598,8 +1887,7 @@ void initialize_options(InterfaceManager& manager, InterfaceInstance& instance) 
   keyboard_group3->parent = keyboard_categories;
 
   gamepad_action->on_enter = [](InterfaceManager&, InterfaceInstance&, I2DState&) {
-    App::Log::info(
-        LogCategory::Interface,
+    App::Log::info(LogCategory::Interface,
         "Gamepad controls are deferred to the modern SDL gamepad controls phase");
   };
   mouse_settings_action->on_enter = [](InterfaceManager&, InterfaceInstance&, I2DState&) {
@@ -1634,9 +1922,9 @@ void initialize_options(InterfaceManager& manager, InterfaceInstance& instance) 
   seed_video_settings(manager, instance);
   seed_audio_settings(manager, instance);
   seed_game_settings(manager, instance);
-    manager.game_settings().ensure_choice("enhancements.menu_interpolation",
+  manager.game_settings().ensure_choice("enhancements.menu_interpolation",
       {App::Settings::SettingChoice{.label = "Off", .raw_value = 0},
-        App::Settings::SettingChoice{.label = "On", .raw_value = 1}},
+          App::Settings::SettingChoice{.label = "On", .raw_value = 1}},
       1U);
 
   I2DGroup root_rows;
@@ -1659,9 +1947,9 @@ void initialize_options(InterfaceManager& manager, InterfaceInstance& instance) 
   populate_options_page(manager, *game, k_options_game_page, *root);
   populate_options_page(manager, *enhancements, k_options_enhancements_page, *root);
 
-    // Controls root. Runtime's title is static; the four following entries are
-    // Keyboard/Mouse, Gamepad, Mouse Settings and Back.
-    const std::array<I2DState*, 5> controls_targets{
+  // Controls root. Runtime's title is static; the four following entries are
+  // Keyboard/Mouse, Gamepad, Mouse Settings and Back.
+  const std::array<I2DState*, 5> controls_targets{
       nullptr, keyboard_categories, gamepad_action, mouse_settings_action, root};
   I2DGroup controls_rows;
   controls_rows.runtime_flags = k_options_text_flags;

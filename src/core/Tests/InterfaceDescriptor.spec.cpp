@@ -22,8 +22,20 @@ TEST_SUITE("Core::Interface::InterfaceDescriptor") {
     CHECK(descriptor->init != nullptr);
     CHECK(descriptor->destroy != nullptr);
     CHECK_EQ(descriptor->runtime_flags, 0x20000400U);
+    REQUIRE(descriptor->sounds.has_value());
+    CHECK(descriptor->sounds->navigate == "I2D/SOUNDS/men001.wav");
+    CHECK(descriptor->sounds->confirm == "I2D/SOUNDS/men002.wav");
+    CHECK(descriptor->sounds->cancel == "I2D/SOUNDS/men003.wav");
   }
 
+  TEST_CASE("interface 35 uses the recovered options sound slots") {
+    const App::Interface::InterfaceDescriptor* descriptor{descriptor_for_id(35)};
+    REQUIRE(descriptor != nullptr);
+    REQUIRE(descriptor->sounds.has_value());
+    CHECK(descriptor->sounds->navigate == "I2D/SOUNDS/SNK001.wav");
+    CHECK(descriptor->sounds->confirm == "I2D/SOUNDS/SNK002.wav");
+    CHECK(descriptor->sounds->cancel == "I2D/SOUNDS/SNK003.wav");
+  }
 
   TEST_CASE("interface 29 opts into OpenNomad lifecycle presentation hints") {
     const App::Interface::InterfaceDescriptor* descriptor{descriptor_for_id(29)};

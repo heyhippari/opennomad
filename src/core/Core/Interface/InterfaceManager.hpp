@@ -12,9 +12,11 @@
 #include <string_view>
 #include <vector>
 
+#include "Core/Audio/AudioTypes.hpp"
 #include "Core/Dialog/DialogRuntime.hpp"
 #include "Core/Interface/FontManager.hpp"
 #include "Core/Interface/I2DModel.hpp"
+#include "Core/Interface/I2DStateTransition.hpp"
 #include "Core/Interface/InterfaceDescriptor.hpp"
 #include "Core/Interface/InterfaceDispatcher.hpp"
 #include "Core/Interface/InterfacePresentation.hpp"
@@ -25,14 +27,17 @@
 namespace App::Input {
 class InputManager;
 struct InputSource;
+}  // namespace App::Input
+
+namespace App::Audio {
+class AudioSystem;
 }
 
 namespace App::Interface {
 
 class I2DRenderer;
 
-using PhysicalInputCaptureCallback =
-    std::function<void(const Input::InputSource&)>;
+using PhysicalInputCaptureCallback = std::function<void(const Input::InputSource&)>;
 
 enum class InterfacePresentationPhase : std::uint8_t {
   k_idle,
@@ -208,10 +213,24 @@ class InterfaceManager {
   /// Sets the animated background's presentation mode (stepped or
   /// interpolated) for every resident instance. Debug/inspection helper.
   void set_background_interpolated(bool interpolated);
+  void set_audio_system(Audio::AudioSystem* audio);
 
   /// Reads the background presentation mode from the first resident instance
   /// (interpolated when none). Debug/inspection helper.
   [[nodiscard]] bool background_interpolated() const;
+  [[nodiscard]] bool transition_active() const;
+  void transition_to(InterfaceInstance& instance, I2DState& target);
+
+  struct TransitionLayer {
+    InterfaceHandle interface_handle;
+    I2DState* state{nullptr};
+  };
+
+  void transition_cross_interface(std::vector<TransitionLayer> outgoing,
+      std::vector<TransitionLayer> incoming,
+      I2DStateTransitionDirection direction,
+      I2DTransitionContext context,
+      std::function<void(InterfaceManager&)> commit);
 
   // --- Generic navigation (focused interface) ---
   void select_previous();
@@ -223,11 +242,9 @@ class InterfaceManager {
   /// Temporarily routes the next raw key/button edge to a binding editor.
   /// Normal menu navigation is suppressed until the capture completes or
   /// Escape cancels it.
-  void capture_next_physical_input(
-      std::string token, PhysicalInputCaptureCallback callback);
+  void capture_next_physical_input(std::string token, PhysicalInputCaptureCallback callback);
   void cancel_physical_input_capture();
-  [[nodiscard]] bool physical_input_capture_active(
-      std::string_view token) const;
+  [[nodiscard]] bool physical_input_capture_active(std::string_view token) const;
 
  private:
   struct PendingPhysicalInputCapture {
@@ -248,8 +265,24 @@ class InterfaceManager {
 
   void handle_navigation(const Input::InputManager& input);
   void apply_game_setting(std::string_view stable_id);
+  void play_ui_sound(const InterfaceDescriptor& descriptor, Audio::UIMenuSoundEvent event);
+
+  struct ActiveStateTransition {
+    std::vector<TransitionLayer> outgoing;
+    std::vector<TransitionLayer> incoming;
+    I2DStateTransitionDirection direction{I2DStateTransitionDirection::k_replace};
+    I2DMenuTransitionStyle style{I2DMenuTransitionStyle::k_modern};
+    I2DTransitionContext context{I2DTransitionContext::k_options};
+    float elapsed_seconds{0.0F};
+    float duration_seconds{0.0F};
+    std::function<void(InterfaceManager&)> commit;
+  };
+
+  void begin_state_transition(InterfaceInstance& instance, I2DState& target);
+  void update_state_transition(float delta_time);
 
   std::unique_ptr<I2DRenderer> m_renderer;
+  Audio::AudioSystem* m_audio_system{nullptr};
   FontManager m_fonts;
   App::Settings::GameSettings m_game_settings;
   std::filesystem::path m_settings_path;
@@ -266,6 +299,7 @@ class InterfaceManager {
   /// Keeps the final opaque completion colour alive until this frame renders,
   /// even though Application closes completed interfaces before render().
   std::optional<InterfacePresentationOverlay> m_completion_overlay_latch;
+  std::optional<ActiveStateTransition> m_active_transition;
 };
 
 /// Looks up a descriptor in the static interface registry.

@@ -73,6 +73,26 @@ enum class AudioOrigin : std::uint8_t {
   k_debug_audition,
 };
 
+/// Semantic UI menu events. The interface layer expresses intents only; the
+/// audio subsystem decides the concrete menu theme sounds to play.
+enum class UIMenuSoundEvent : std::uint8_t {
+  k_navigate,
+  k_confirm,
+  k_cancel,
+};
+
+[[nodiscard]] constexpr std::string_view ui_menu_sound_name(const UIMenuSoundEvent event) {
+  switch (event) {
+    case UIMenuSoundEvent::k_navigate:
+      return "navigate";
+    case UIMenuSoundEvent::k_confirm:
+      return "confirm";
+    case UIMenuSoundEvent::k_cancel:
+      return "cancel";
+  }
+  return "unknown";
+}
+
 [[nodiscard]] constexpr std::string_view audio_origin_name(const AudioOrigin origin) {
   switch (origin) {
     case AudioOrigin::k_unknown:

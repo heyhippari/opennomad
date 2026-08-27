@@ -458,6 +458,67 @@ std::optional<VoiceHandle> AudioSystem::audition(const SoundResourceId resource)
       .raw_flags = 0});
 }
 
+std::optional<SoundResourceId> AudioSystem::resolve_ui_sound(
+    const std::string_view relative_path, const UIMenuSoundEvent event) {
+  const std::string path{relative_path};
+  UIResourceState& state{m_ui_resources[path]};
+  if (state.attempted) {
+    return state.resource;
+  }
+
+  state.attempted = true;
+  auto file{read_game_file(path)};
+  if (!file) {
+    App::Log::warn(LogCategory::Audio,
+        "UI {} sound unavailable '{}': {}",
+        ui_menu_sound_name(event),
+        path,
+        file.error());
+    return std::nullopt;
+  }
+
+  const std::string canonical_key{fmt::format("interface:{}", path)};
+  auto loaded{m_cache->load(canonical_key,
+      "I2D/UI",
+      static_cast<std::size_t>(event),
+      path,
+      0U,
+      std::span<const std::byte>{file->data(), file->size()})};
+  if (!loaded) {
+    App::Log::warn(LogCategory::Audio,
+        "UI {} sound unavailable '{}': {}",
+        ui_menu_sound_name(event),
+        path,
+        loaded.error());
+    return std::nullopt;
+  }
+  state.resource = loaded.value();
+  return state.resource;
+}
+
+std::optional<VoiceHandle> AudioSystem::play_ui_sound(
+    const std::string_view relative_path, const UIMenuSoundEvent event) {
+  if (relative_path.empty() || !available()) {
+    return std::nullopt;
+  }
+  const std::optional<SoundResourceId> resource{resolve_ui_sound(relative_path, event)};
+  if (!resource.has_value()) {
+    return std::nullopt;
+  }
+  return play_sound(SoundPlayRequest{.resource = resource.value(),
+      .loop = false,
+      .emitter = std::nullopt,
+      .owner = AudioOwnerToken{},
+      .scenario_sound_index = 0xFFFFU,
+      .sound_name = std::string{relative_path},
+      .provenance = AudioProvenance{.origin = AudioOrigin::k_interface,
+          .scenario_name = "I2D/UI",
+          .source_script_index = std::nullopt,
+          .script_instance_id = std::nullopt,
+          .function_id = std::nullopt},
+      .raw_flags = 0});
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Listener / emitters / update
 // ─────────────────────────────────────────────────────────────────────────────

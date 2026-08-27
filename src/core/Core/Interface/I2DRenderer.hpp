@@ -17,6 +17,7 @@
 #include "Core/Dialog/DialogRuntime.hpp"
 #include "Core/Interface/I2DModel.hpp"
 #include "Core/Interface/I2DPresentation.hpp"
+#include "Core/Interface/I2DStateTransition.hpp"
 #include "Core/Shader.hpp"
 #include "Core/Texture.hpp"
 #include "Core/Vertex.hpp"
@@ -58,6 +59,15 @@ class I2DRenderer {
       int pixel_width,
       int pixel_height,
       Debug::I2DCounters& counters);
+
+  void render_state(const InterfaceInstance& instance,
+      const I2DState& state,
+      const I2DStateVisual& visual,
+      FontManager& fonts,
+      int pixel_width,
+      int pixel_height,
+      Debug::I2DCounters& counters,
+      bool render_background);
 
   /// Draws a presentation-only full-screen colour overlay after all recovered
   /// I2D content. Used only when an interface descriptor explicitly opts in.
@@ -136,6 +146,9 @@ class I2DRenderer {
   bool m_current_keyed{false};
   std::array<float, 3> m_current_key{0.0F, 0.0F, 0.0F};
   std::size_t m_current_first_index{0};
+  float m_visual_offset_x{0.0F};
+  float m_visual_offset_y{0.0F};
+  float m_visual_alpha{1.0F};
 };
 
 }  // namespace App::Interface

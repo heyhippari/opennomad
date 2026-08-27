@@ -427,7 +427,12 @@ inline constexpr std::array<OptionsChoiceDefinition, 2> k_options_interpolation_
     {.runtime_string_index = -1, .raw_value = 0, .literal_label = "Off"},
     {.runtime_string_index = -1, .raw_value = 1, .literal_label = "On"},
 }};
-inline constexpr std::array<OptionsRowDefinition, 3> k_options_enhancements_rows{{
+inline constexpr std::array<OptionsChoiceDefinition, 3> k_options_transition_style_choices{{
+    {.runtime_string_index = -1, .raw_value = 0, .literal_label = "Modern"},
+    {.runtime_string_index = -1, .raw_value = 1, .literal_label = "Classic"},
+    {.runtime_string_index = -1, .raw_value = 2, .literal_label = "Reduced Motion"},
+}};
+inline constexpr std::array<OptionsRowDefinition, 4> k_options_enhancements_rows{{
     {.stable_id = "enhancements.title",
         .runtime_option_index = -1,
         .runtime_label_string_index = -1,
@@ -443,6 +448,14 @@ inline constexpr std::array<OptionsRowDefinition, 3> k_options_enhancements_rows
         .choices = std::span<const OptionsChoiceDefinition>{k_options_interpolation_choices},
         .default_choice = 1,
         .literal_label = "Menu animation interpolation",
+        .accent = false},
+    {.stable_id = "enhancements.menu_transition_style",
+        .runtime_option_index = -1,
+        .runtime_label_string_index = -1,
+        .kind = OptionsRowKind::k_enum,
+        .choices = std::span<const OptionsChoiceDefinition>{k_options_transition_style_choices},
+        .default_choice = 0,
+        .literal_label = "Menu transition style",
         .accent = false},
     {.stable_id = "enhancements.back",
         .runtime_option_index = 72,
@@ -676,7 +689,7 @@ static_assert(runtime_options_row_y(
                   4, k_options_game_rows.size(), OptionsInvocationMode::k_start_menu) == 380);
 
 static_assert(runtime_options_row_step(k_options_controls_rows.size()) == 65);
-static_assert(runtime_options_row_step(k_options_enhancements_rows.size()) == 60);
+static_assert(runtime_options_row_step(k_options_enhancements_rows.size()) == 86);
 static_assert(runtime_options_row_step(k_options_keyboard_categories_rows.size()) == 52);
 
 // Binding pages contain title + binding rows + Restore defaults + Back.

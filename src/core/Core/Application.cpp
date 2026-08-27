@@ -11,10 +11,9 @@
 #include <SDL3/SDL_timer.h>
 #include <SDL3/SDL_video.h>
 #include <fmt/format.h>
+#include <glad/glad.h>
 #include <imgui.h>
 #include <imgui_impl_sdl3.h>
-
-#include <glad/glad.h>
 
 #include <algorithm>
 #include <cstddef>
@@ -73,7 +72,9 @@ void swallow_expected(std::expected<void, std::string> result) {
 class StartupVideoPresenter final : public Video::VideoPresenter {
  public:
   StartupVideoPresenter(Window* window, Video::VideoScene* scene)
-      : m_window(window), m_scene(scene), m_last_ticks{SDL_GetTicks()} {}
+      : m_window(window),
+        m_scene(scene),
+        m_last_ticks{SDL_GetTicks()} {}
 
   void present(const Video::VideoFrame& frame) override {
     const int pixel_width{m_window->get_pixel_width()};
@@ -171,8 +172,8 @@ std::expected<Application, std::string> Application::create(const std::string& t
   auto window{Window::create(Window::Settings{.title = title, .start_fullscreen = true})};
   if (!window) {
     SDL_Quit();
-    return std::expected<Application, std::string>{std::unexpect,
-        fmt::format("Can't initialize Omikron: {}", std::move(window).error())};
+    return std::expected<Application, std::string>{
+        std::unexpect, fmt::format("Can't initialize Omikron: {}", std::move(window).error())};
   }
   App::Log::info(LogCategory::Core,
       "window created — {}x{}, {}",
@@ -205,8 +206,8 @@ std::expected<Application, std::string> Application::create(const std::string& t
     }
     window.value().reset();
     SDL_Quit();
-    return std::expected<Application, std::string>{std::unexpect,
-        fmt::format("Can't initialize Omikron: {}", result.error())};
+    return std::expected<Application, std::string>{
+        std::unexpect, fmt::format("Can't initialize Omikron: {}", result.error())};
   }
   swallow_expected(coordinator->complete(
       Startup::StartupPhase::k_initialize_core_systems, Startup::StartupPhaseStatus::k_complete));
@@ -227,6 +228,9 @@ std::expected<Application, std::string> Application::create(const std::string& t
     app.m_scenario_engine->set_audio_system(app.m_audio.get());
   }
   app.m_interface_manager = std::make_unique<Interface::InterfaceManager>();
+  if (app.m_audio != nullptr) {
+    app.m_interface_manager->set_audio_system(app.m_audio.get());
+  }
   // The skip action must be registered before the videos: the playback loop
   // asks the input manager whether Escape was pressed this frame.
   app.m_input.add_scheme(Input::ControlScheme::make_keyboard_mouse_default());
@@ -257,10 +261,10 @@ std::expected<Application, std::string> Application::create(const std::string& t
           video_sequence.play_slot(slot, presenter, should_stop)};
       swallow_expected(app.m_coordinator->complete(phase, status));
     };
-    play_phase(Startup::StartupPhase::k_play_publisher_video,
-        Startup::StartupVideoSlot::k_publisher);
-    play_phase(Startup::StartupPhase::k_play_developer_video,
-        Startup::StartupVideoSlot::k_developer);
+    play_phase(
+        Startup::StartupPhase::k_play_publisher_video, Startup::StartupVideoSlot::k_publisher);
+    play_phase(
+        Startup::StartupPhase::k_play_developer_video, Startup::StartupVideoSlot::k_developer);
     play_phase(Startup::StartupPhase::k_play_intro_video, Startup::StartupVideoSlot::k_intro);
   }
 
@@ -280,12 +284,12 @@ std::expected<Application, std::string> Application::create(const std::string& t
     app.m_audio.reset();
     app.m_window.reset();
     SDL_Quit();
-    return std::expected<Application, std::string>{std::unexpect,
-        fmt::format("Can't initialize Omikron: {}", result.error())};
+    return std::expected<Application, std::string>{
+        std::unexpect, fmt::format("Can't initialize Omikron: {}", result.error())};
   }
-  swallow_expected(app.m_coordinator->complete(
-      Startup::StartupPhase::k_select_permanent_mode_script,
-      Startup::StartupPhaseStatus::k_complete));
+  swallow_expected(
+      app.m_coordinator->complete(Startup::StartupPhase::k_select_permanent_mode_script,
+          Startup::StartupPhaseStatus::k_complete));
 
   // --- Phase 8: prepare the splash ---
   swallow_expected(app.m_coordinator->begin(Startup::StartupPhase::k_prepare_splash));
@@ -296,8 +300,8 @@ std::expected<Application, std::string> Application::create(const std::string& t
     app.m_audio.reset();
     app.m_window.reset();
     SDL_Quit();
-    return std::expected<Application, std::string>{std::unexpect,
-        fmt::format("Can't initialize Omikron: {}", std::move(splash).error())};
+    return std::expected<Application, std::string>{
+        std::unexpect, fmt::format("Can't initialize Omikron: {}", std::move(splash).error())};
   }
   app.m_scenario_engine->open_preliminary_29();
   app.m_trace->record("Splash.Omikron.Prepared");
@@ -305,8 +309,7 @@ std::expected<Application, std::string> Application::create(const std::string& t
       Startup::StartupPhase::k_prepare_splash, Startup::StartupPhaseStatus::k_complete));
 
   app.m_scene = std::move(splash).value();
-  app.m_window->debug_ui().set_context(Debug::DebugContext{
-      .scene = app.m_scene.get(),
+  app.m_window->debug_ui().set_context(Debug::DebugContext{.scene = app.m_scene.get(),
       .scenario_manager = app.m_scenario_manager.get(),
       .scenario_engine = app.m_scenario_engine.get(),
       .interface_manager = app.m_interface_manager.get(),
@@ -441,8 +444,12 @@ void App::Application::run() {
         m_frame_timing,
         decision.reset_frame_timing,
         m_skip_engine_frame,
-        []() -> std::uint64_t { return SDL_GetTicks(); },
-        [this] { snapshot_input(); },
+        []() -> std::uint64_t {
+          return SDL_GetTicks();
+        },
+        [this] {
+          snapshot_input();
+        },
         [this] {
           m_last_engine_callback.record_callback(m_frame_timing.effective_delta);
           run_engine_frame();
@@ -683,8 +690,7 @@ void Application::wire_interface_dispatch() {
   // is mutated here — the already-installed WorldScene presents whatever the
   // InterfaceManager reports.
   m_scenario_engine->dispatcher().set_interface_open_sink(
-      [this](const InterfaceOpenRequest& request)
-          -> std::expected<InterfaceHandle, std::string> {
+      [this](const InterfaceOpenRequest& request) -> std::expected<InterfaceHandle, std::string> {
         return m_interface_manager->open(request);
       });
 }
@@ -729,8 +735,7 @@ bool Application::advance_startup_past_splash() {
   // not required to exist during the first mode-1 call.
   const auto finish_main_menu_phase = [this]() -> bool {
     if (auto result{m_coordinator->complete(
-            Startup::StartupPhase::k_open_main_menu,
-            Startup::StartupPhaseStatus::k_complete)};
+            Startup::StartupPhase::k_open_main_menu, Startup::StartupPhaseStatus::k_complete)};
         !result) {
       App::Log::error(LogCategory::Startup, "Startup ordering error: {}", result.error());
       m_running = false;
@@ -768,8 +773,8 @@ bool Application::advance_startup_past_splash() {
     return false;
   }
 
-  const auto run_phase = [this](const Startup::StartupPhase phase,
-                               const ScenarioMode mode) -> bool {
+  const auto run_phase = [this](
+                             const Startup::StartupPhase phase, const ScenarioMode mode) -> bool {
     if (auto result{m_coordinator->begin(phase)}; !result) {
       App::Log::error(LogCategory::Startup, "Startup ordering error: {}", result.error());
       m_running = false;
@@ -777,8 +782,8 @@ bool Application::advance_startup_past_splash() {
     }
     if (auto result{m_scenario_engine->enter_mode(mode, 0)}; !result) {
       App::Log::error(LogCategory::Core, "Can't initialize Omikron: {}", result.error());
-      swallow_expected(m_coordinator->complete(
-          phase, Startup::StartupPhaseStatus::k_failed, result.error()));
+      swallow_expected(
+          m_coordinator->complete(phase, Startup::StartupPhaseStatus::k_failed, result.error()));
       m_running = false;
       return false;
     }
@@ -834,7 +839,7 @@ bool Application::advance_startup_past_splash() {
     // Not an error: AREA yielded at a recovered side-effect boundary.
     return false;
   }
-  
+
   // Usually false on retail data because 0x76 yielded immediately before
   // 0x46, but retain the synchronous case for other AREA programs.
   return finish_main_menu_phase();
@@ -946,7 +951,8 @@ void Application::process_event(const SDL_Event& event) {
         // rendered with the cursor freed in between.
         if (m_mouse_captured) {
           App::Log::debug(LogCategory::Input,
-              "Mouse capture: focus gained (flag: {})", m_window->is_relative_mouse_mode());
+              "Mouse capture: focus gained (flag: {})",
+              m_window->is_relative_mouse_mode());
           m_window->set_relative_mouse_mode(false);
           m_window->set_relative_mouse_mode(true);
         }
@@ -962,7 +968,8 @@ void Application::process_event(const SDL_Event& event) {
         m_pending_mouse_delta_x = 0.0F;
         m_pending_mouse_delta_y = 0.0F;
         App::Log::debug(LogCategory::Input,
-            "Mouse capture: focus lost (flag: {})", m_window->is_relative_mouse_mode());
+            "Mouse capture: focus lost (flag: {})",
+            m_window->is_relative_mouse_mode());
         break;
       case SDL_EVENT_WINDOW_MINIMIZED:
         m_activity.on_render_window_active(false);
@@ -984,7 +991,8 @@ void Application::process_event(const SDL_Event& event) {
         // (alt-tab recovery on Wayland).
         if (m_mouse_captured) {
           App::Log::debug(LogCategory::Input,
-              "Mouse capture: mouse entered (flag: {})", m_window->is_relative_mouse_mode());
+              "Mouse capture: mouse entered (flag: {})",
+              m_window->is_relative_mouse_mode());
           m_window->set_relative_mouse_mode(false);
           m_window->set_relative_mouse_mode(true);
         }

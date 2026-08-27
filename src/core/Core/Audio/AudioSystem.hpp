@@ -14,6 +14,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -97,6 +98,10 @@ class AudioSystem {
   /// Nonspatial debug audition through the normal 16-voice pool.
   [[nodiscard]] std::optional<VoiceHandle> audition(SoundResourceId resource);
 
+  /// Lazily resolves, caches, and plays one descriptor-selected interface sound.
+  [[nodiscard]] std::optional<VoiceHandle> play_ui_sound(
+      std::string_view relative_path, UIMenuSoundEvent event);
+
   // --- Listener / emitters ---
 
   void set_listener(const AudioListenerState& listener);
@@ -175,6 +180,14 @@ class AudioSystem {
 
   void append_event(AudioEventSeverity severity, std::string message);
 
+  [[nodiscard]] std::optional<SoundResourceId> resolve_ui_sound(
+      std::string_view relative_path, UIMenuSoundEvent event);
+
+  struct UIResourceState {
+    bool attempted{false};
+    std::optional<SoundResourceId> resource;
+  };
+
   /// Bounded, thread-safe stop-event queue (mixer callback -> main thread).
   struct StopEventQueue {
     static constexpr std::size_t k_capacity{64};
@@ -191,6 +204,7 @@ class AudioSystem {
 
   std::unique_ptr<MIX_Mixer, MixerDeleter> m_mixer;
   std::unique_ptr<SoundResourceCache> m_cache;
+  std::unordered_map<std::string, UIResourceState> m_ui_resources;
   std::array<MIX_Track*, VoicePool::k_voice_count> m_tracks{};
   std::array<SlotContext, VoicePool::k_voice_count> m_contexts{};
   VoicePool m_pool;

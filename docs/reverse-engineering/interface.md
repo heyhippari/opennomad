@@ -242,9 +242,9 @@ struct RuntimeInterfaceDescriptor {
     void (*destroy)(void *instance);// +0x1C
     void *callback20;               // +0x20
 
-    uint32_t field24;               // +0x24
-    uint32_t field28;               // +0x28
-    uint32_t field2C;               // +0x2C
+    uint32_t confirmSoundId;        // +0x24
+    uint32_t cancelSoundId;         // +0x28
+    uint32_t navigateSoundId;       // +0x2C
 
     uint32_t unresolved30[9];       // +0x30..+0x50
 
@@ -253,9 +253,79 @@ struct RuntimeInterfaceDescriptor {
 }; // 0x5C
 ```
 
+The sound fields are now resolved:
+
+```text
+0x004D0990  global I2D sound table
+0x00482FE0  generic I2D sound dispatcher
+
++0x24  Confirm / Activate
++0x28  Cancel / Back
++0x2C  Navigate / directional
+```
+
+The global table constructs sounds from `i2d\sounds\%s.wav`. Relevant entries
+are `men001`, `men002`, `men003` at IDs 0, 1, 2 and `SNK001`, `SNK002`,
+`SNK003` at IDs 5, 6, 7. OpenNomad resolves these as:
+
+```text
+Interface 29 START MENU:
+    Navigate  men001.wav
+    Confirm   men002.wav
+    Cancel    men003.wav
+
+Interface 35 OPTIONS:
+    Navigate  SNK001.wav
+    Confirm   SNK002.wav
+    Cancel    SNK003.wav
+```
+
+Left/Right adjustments in OPTIONS use the Navigate sound when the value really
+changes. The recovered Runtime also has a Confirm-to-increment enum/slider
+quirk; OpenNomad does not reproduce that quirk.
+
 Callback prototypes above are schematic.
 
 Their exact calling conventions/parameters should be taken from each callsite.
+
+---
+
+# 7. State transitions and presentation
+
+Runtime's generic state switcher is at `0x0042A370`. It stores the requested
+destination at interface instance `+0x24`; outgoing callbacks explicitly inspect
+that pending target. Runtime does not generically infer direction from parent
+pointers.
+
+The recovered movement helper is `0x00478BC0` and the tween initializer is
+`0x00478AE0`. Movement types are:
+
+```text
+0  destination (0, 0)
+1  destination (current x, -480)
+2  destination (current x, +480)
+3  destination (+640, current y)
+4  destination (-640, current y)
+```
+
+The common Start Menu tween lasts 15 Runtime ticks at 30 Hz, or 0.500 seconds,
+with linear interpolation. The observed convention is forward/deeper exits
+left and enters from the right; back/parent exits right and enters from the
+left. Runtime's ordinary OPTIONS pages did not universally use this full slide.
+
+OpenNomad keeps this recovered behavior separate from its presentation policy:
+
+```text
+Modern          0.20 s, smoothstep, directional 24-unit motion and crossfade
+Classic         0.50 s linear full-width slide for Start Menu/cross-interface;
+                ordinary OPTIONS subpages are immediate
+Reduced Motion  0.10 s crossfade with no translation
+```
+
+The policy is presentation-only. It does not alter the logical I2D graph,
+Runtime timing, or the animated `CLOUD.BMP` background. CLOUD is rendered once,
+stationary underneath transition foreground layers. OpenNomad locks navigation
+until both states have been composed and the logical destination is committed.
 
 ---
 

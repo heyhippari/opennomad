@@ -10,6 +10,8 @@
 #include <string>
 #include <vector>
 
+#include "Core/Interface/I2DModel.hpp"
+#include "Core/Interface/I2DStateTransition.hpp"
 #include "Settings/GameSettings.hpp"
 
 namespace {
@@ -54,12 +56,91 @@ TEST_SUITE("Settings::GameSettings") {
     App::Settings::GameSettings settings;
     settings.ensure_choice("test.choice", interpolation_choices(), 0U);
     std::string changed_id;
-    settings.set_change_callback(
-        [&changed_id](const std::string_view stable_id) { changed_id = stable_id; });
+    settings.set_change_callback([&changed_id](const std::string_view stable_id) {
+      changed_id = stable_id;
+    });
     CHECK_FALSE(settings.adjust_choice("test.choice", -1));
     CHECK(changed_id.empty());
     CHECK(settings.adjust_choice("test.choice", 1));
     CHECK(changed_id == "test.choice");
+  }
+
+  TEST_CASE("menu transition style defaults to modern and persists") {
+    App::Settings::GameSettings settings;
+    settings.ensure_choice("enhancements.menu_transition_style",
+        {App::Settings::SettingChoice{.label = "Modern", .raw_value = 0},
+            App::Settings::SettingChoice{.label = "Classic", .raw_value = 1},
+            App::Settings::SettingChoice{.label = "Reduced Motion", .raw_value = 2}},
+        0U);
+    CHECK(settings.choice_raw_value("enhancements.menu_transition_style").value() == 0);
+    CHECK(settings.adjust_choice("enhancements.menu_transition_style", 1));
+    CHECK(settings.choice_raw_value("enhancements.menu_transition_style").value() == 1);
+  }
+
+  TEST_CASE("state graph derives semantic transition directions") {
+    App::Interface::I2DState root{};
+    App::Interface::I2DState child{};
+    App::Interface::I2DState grandchild{};
+    root.parent = nullptr;
+    child.parent = &root;
+    grandchild.parent = &child;
+
+    CHECK(App::Interface::determine_transition_direction(&root, &child) ==
+          App::Interface::I2DStateTransitionDirection::k_forward);
+    CHECK(App::Interface::determine_transition_direction(&child, &grandchild) ==
+          App::Interface::I2DStateTransitionDirection::k_forward);
+    CHECK(App::Interface::determine_transition_direction(&child, &root) ==
+          App::Interface::I2DStateTransitionDirection::k_back);
+    CHECK(App::Interface::determine_transition_direction(&grandchild, &child) ==
+          App::Interface::I2DStateTransitionDirection::k_back);
+
+    App::Interface::I2DState sibling{};
+    CHECK(App::Interface::determine_transition_direction(&root, &sibling) ==
+          App::Interface::I2DStateTransitionDirection::k_replace);
+    CHECK(App::Interface::determine_transition_direction(&root, &grandchild) ==
+          App::Interface::I2DStateTransitionDirection::k_replace);
+    CHECK(App::Interface::determine_transition_direction(&grandchild, &root) ==
+          App::Interface::I2DStateTransitionDirection::k_replace);
+  }
+
+  TEST_CASE("menu transition policy samples exact presentation motion") {
+    using namespace App::Interface;
+    const auto modern_start{sample_transition(I2DMenuTransitionStyle::k_modern,
+        I2DStateTransitionDirection::k_forward,
+        I2DTransitionContext::k_start_menu,
+        0.0F)};
+    CHECK(modern_start.outgoing.offset_x == doctest::Approx(0.0F));
+    CHECK(modern_start.incoming.offset_x == doctest::Approx(24.0F));
+    CHECK(modern_start.outgoing.alpha == doctest::Approx(1.0F));
+    CHECK(modern_start.incoming.alpha == doctest::Approx(0.0F));
+
+    const auto modern_end{sample_transition(I2DMenuTransitionStyle::k_modern,
+        I2DStateTransitionDirection::k_forward,
+        I2DTransitionContext::k_start_menu,
+        1.0F)};
+    CHECK(modern_end.outgoing.offset_x == doctest::Approx(-24.0F));
+    CHECK(modern_end.incoming.offset_x == doctest::Approx(0.0F));
+    CHECK(transition_duration(I2DMenuTransitionStyle::k_modern, I2DTransitionContext::k_options) ==
+          doctest::Approx(0.20F));
+
+    const auto classic_mid{sample_transition(I2DMenuTransitionStyle::k_classic,
+        I2DStateTransitionDirection::k_forward,
+        I2DTransitionContext::k_start_menu,
+        0.5F)};
+    CHECK(classic_mid.outgoing.offset_x == doctest::Approx(-320.0F));
+    CHECK(classic_mid.incoming.offset_x == doctest::Approx(320.0F));
+    CHECK(classic_mid.outgoing.alpha == doctest::Approx(1.0F));
+    CHECK(transition_duration(I2DMenuTransitionStyle::k_classic, I2DTransitionContext::k_options) ==
+          doctest::Approx(0.0F));
+
+    const auto reduced_mid{sample_transition(I2DMenuTransitionStyle::k_reduced_motion,
+        I2DStateTransitionDirection::k_back,
+        I2DTransitionContext::k_options,
+        0.5F)};
+    CHECK(reduced_mid.outgoing.offset_x == doctest::Approx(0.0F));
+    CHECK(reduced_mid.incoming.offset_x == doctest::Approx(0.0F));
+    CHECK(transition_duration(I2DMenuTransitionStyle::k_reduced_motion,
+              I2DTransitionContext::k_options) == doctest::Approx(0.10F));
   }
 
   TEST_CASE("validates pending values") {

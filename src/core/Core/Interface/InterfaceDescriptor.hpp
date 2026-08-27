@@ -21,6 +21,12 @@ using InterfaceInitFn = void (*)(InterfaceManager& manager, InterfaceInstance& i
 /// releases the descriptor's resources.
 using InterfaceDestroyFn = void (*)(InterfaceManager& manager, InterfaceInstance& instance);
 
+struct InterfaceSoundSet {
+  std::string_view navigate;
+  std::string_view confirm;
+  std::string_view cancel;
+};
+
 /// Static engine metadata describing one interface. The original Runtime
 /// keeps a static table of these (interface 29's descriptor is at
 /// 0x004CC0AC); OpenNomad models only the fields it currently needs and is
@@ -43,6 +49,8 @@ struct InterfaceDescriptor {
   /// the descriptor relationship and may also keep both interface instances
   /// resident while the companion is focused.
   std::optional<std::int32_t> companion_interface;
+
+  std::optional<InterfaceSoundSet> sounds;
 
   InterfaceInitFn init{nullptr};
   InterfaceDestroyFn destroy{nullptr};

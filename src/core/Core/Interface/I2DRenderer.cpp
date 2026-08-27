@@ -245,8 +245,7 @@ std::expected<void, std::string> I2DRenderer::initialize() {
   constexpr std::size_t k_slider_texel_count{256U};
   std::array<std::uint8_t, k_slider_texel_count * 4U> slider_pixels{};
   for (std::size_t index{0}; index < k_slider_texel_count; ++index) {
-    const float position{
-        static_cast<float>(index) / static_cast<float>(k_slider_texel_count - 1U)};
+    const float position{static_cast<float>(index) / static_cast<float>(k_slider_texel_count - 1U)};
     const float red{std::min(position * 2.0F, 1.0F)};
     const float green{std::min((1.0F - position) * 2.0F, 1.0F)};
     const std::size_t pixel{index * 4U};
@@ -275,11 +274,36 @@ void I2DRenderer::render(const InterfaceInstance& instance,
     const int pixel_width,
     const int pixel_height,
     Debug::I2DCounters& counters) {
-  APP_PROFILE_FUNCTION();
-
-  if (!m_initialized || instance.current_state == nullptr) {
+  if (instance.current_state == nullptr) {
     return;
   }
+  render_state(instance,
+      *instance.current_state,
+      I2DStateVisual{},
+      fonts,
+      pixel_width,
+      pixel_height,
+      counters,
+      true);
+}
+
+void I2DRenderer::render_state(const InterfaceInstance& instance,
+    const I2DState& state,
+    const I2DStateVisual& visual,
+    FontManager& fonts,
+    const int pixel_width,
+    const int pixel_height,
+    Debug::I2DCounters& counters,
+    const bool render_background) {
+  APP_PROFILE_FUNCTION();
+
+  if (!m_initialized) {
+    return;
+  }
+
+  m_visual_offset_x = visual.offset_x;
+  m_visual_offset_y = visual.offset_y;
+  m_visual_alpha = std::clamp(visual.alpha, 0.0F, 1.0F);
 
   const I2DPresentationTransform transform{make_presentation_transform(pixel_width, pixel_height)};
 
@@ -295,8 +319,8 @@ void I2DRenderer::render(const InterfaceInstance& instance,
 
   // 1. Animated background, when the current state has one. It owns its own
   // shader and draws over the full viewport.
-  if (instance.current_state->background != nullptr) {
-    I2DBumpBackground& background{*instance.current_state->background};
+  if (render_background && state.background != nullptr) {
+    I2DBumpBackground& background{*state.background};
     background.render(transform);
     counters.draw_calls += 1;
     counters.background_ticks = background.last_ticks();
@@ -317,10 +341,10 @@ void I2DRenderer::render(const InterfaceInstance& instance,
   reset();
 
   // Selection ordinal over the current state's selectable text elements.
-  const std::vector<I2DTextElement*> selectable{selectable_text_elements(*instance.current_state)};
+  const std::vector<const I2DTextElement*> selectable{selectable_text_elements(state)};
   std::size_t selectable_ordinal{0};
 
-  for (const I2DGroup& group : instance.current_state->groups) {
+  for (const I2DGroup& group : state.groups) {
     for (const I2DElement& element : group.elements) {
       if (const auto* bitmap{std::get_if<I2DBitmapElement>(&element.data)}) {
         if (!instance.bitmap.has_value()) {
@@ -370,8 +394,7 @@ void I2DRenderer::render(const InterfaceInstance& instance,
         counters.quads += 1;
       } else if (const auto* text{std::get_if<I2DTextElement>(&element.data)}) {
         const bool selectable_text{text->selectable()};
-        const bool selected{
-            selectable_text && selectable_ordinal == instance.current_state->selected_element};
+        const bool selected{selectable_text && selectable_ordinal == state.selected_element};
         if (selectable_text) {
           ++selectable_ordinal;
         }
@@ -836,6 +859,12 @@ void I2DRenderer::push_quad(const Texture2D& texture,
     const float v1,
     const std::array<float, 4> tint,
     const I2DBlitOptions& blit_options) {
+  const float presented_x0{x0 + m_visual_offset_x};
+  const float presented_y0{y0 + m_visual_offset_y};
+  const float presented_x1{x1 + m_visual_offset_x};
+  const float presented_y1{y1 + m_visual_offset_y};
+  std::array<float, 4> presented_tint{tint};
+  presented_tint.at(3) *= m_visual_alpha;
   const bool keyed{blit_options.source_colour_key.has_value()};
   const std::array<float, 3> key{
       keyed ? *blit_options.source_colour_key : std::array<float, 3>{0.0F, 0.0F, 0.0F}};
@@ -849,10 +878,14 @@ void I2DRenderer::push_quad(const Texture2D& texture,
   }
 
   const std::uint32_t base{static_cast<std::uint32_t>(m_vertices.size())};
-  m_vertices.push_back(Vertex{.position = {x0, y0, 0.0F}, .uv = {u0, v0}, .color = tint});
-  m_vertices.push_back(Vertex{.position = {x1, y0, 0.0F}, .uv = {u1, v0}, .color = tint});
-  m_vertices.push_back(Vertex{.position = {x1, y1, 0.0F}, .uv = {u1, v1}, .color = tint});
-  m_vertices.push_back(Vertex{.position = {x0, y1, 0.0F}, .uv = {u0, v1}, .color = tint});
+  m_vertices.push_back(Vertex{
+      .position = {presented_x0, presented_y0, 0.0F}, .uv = {u0, v0}, .color = presented_tint});
+  m_vertices.push_back(Vertex{
+      .position = {presented_x1, presented_y0, 0.0F}, .uv = {u1, v0}, .color = presented_tint});
+  m_vertices.push_back(Vertex{
+      .position = {presented_x1, presented_y1, 0.0F}, .uv = {u1, v1}, .color = presented_tint});
+  m_vertices.push_back(Vertex{
+      .position = {presented_x0, presented_y1, 0.0F}, .uv = {u0, v1}, .color = presented_tint});
 
   m_indices.push_back(base + 0U);
   m_indices.push_back(base + 1U);
