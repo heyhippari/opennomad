@@ -133,8 +133,6 @@ class Window {
   Debug::DebugUI m_debug_ui;
 
   const std::filesystem::path m_user_config_path{Resources::get_user_config_path()};
-
-  bool m_show_debug_panel{true};
 };
 
 }  // namespace App
