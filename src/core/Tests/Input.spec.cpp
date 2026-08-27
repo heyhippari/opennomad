@@ -100,6 +100,45 @@ TEST_SUITE("Core::Input") {
     CHECK_EQ(manager.get_action_value(Action::k_move_up), doctest::Approx(1.0F));
   }
 
+  TEST_CASE("Physical key capture reports only a rising raw edge") {
+    InputManager manager{App::Input::make_default_manager()};
+    RawInputState state{};
+
+    manager.update(state);
+    CHECK_FALSE(manager.last_physical_press().has_value());
+
+    state.key_down.at(SDL_SCANCODE_RCTRL) = true;
+    manager.update(state);
+    REQUIRE(manager.last_physical_press().has_value());
+    CHECK_EQ(manager.last_physical_press()->type, SourceType::k_key);
+    CHECK_EQ(manager.last_physical_press()->index,
+        static_cast<std::uint32_t>(SDL_SCANCODE_RCTRL));
+
+    // Holding the key does not repeatedly satisfy a binding capture.
+    manager.update(state);
+    CHECK_FALSE(manager.last_physical_press().has_value());
+
+    state.key_down.at(SDL_SCANCODE_RCTRL) = false;
+    manager.update(state);
+    CHECK_FALSE(manager.last_physical_press().has_value());
+  }
+
+  TEST_CASE("Physical mouse-button capture uses the SDL button id") {
+    InputManager manager{App::Input::make_default_manager()};
+    RawInputState state{};
+    manager.update(state);
+
+    state.mouse_button_down.at(SDL_BUTTON_RIGHT) = true;
+    manager.update(state);
+    REQUIRE(manager.last_physical_press().has_value());
+    CHECK_EQ(manager.last_physical_press()->type, SourceType::k_mouse_button);
+    CHECK_EQ(manager.last_physical_press()->index,
+        static_cast<std::uint32_t>(SDL_BUTTON_RIGHT));
+
+    manager.update(state);
+    CHECK_FALSE(manager.last_physical_press().has_value());
+  }
+
   TEST_CASE("Disabled schemes contribute nothing") {
     InputManager manager{App::Input::make_default_manager()};
     manager.set_scheme_enabled("Keyboard + Mouse", false);

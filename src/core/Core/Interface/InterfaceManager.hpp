@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <deque>
 #include <expected>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -22,11 +23,15 @@
 
 namespace App::Input {
 class InputManager;
+struct InputSource;
 }
 
 namespace App::Interface {
 
 class I2DRenderer;
+
+using PhysicalInputCaptureCallback =
+    std::function<void(const Input::InputSource&)>;
 
 enum class InterfacePresentationPhase : std::uint8_t {
   k_idle,
@@ -211,7 +216,21 @@ class InterfaceManager {
   void confirm();
   void cancel();
 
+  /// Temporarily routes the next raw key/button edge to a binding editor.
+  /// Normal menu navigation is suppressed until the capture completes or
+  /// Escape cancels it.
+  void capture_next_physical_input(
+      std::string token, PhysicalInputCaptureCallback callback);
+  void cancel_physical_input_capture();
+  [[nodiscard]] bool physical_input_capture_active(
+      std::string_view token) const;
+
  private:
+  struct PendingPhysicalInputCapture {
+    std::string token;
+    PhysicalInputCaptureCallback callback;
+  };
+
   /// Mutable focused instance, or nullptr when none.
   [[nodiscard]] InterfaceInstance* focused_instance_mut();
 
@@ -236,6 +255,7 @@ class InterfaceManager {
   std::uint32_t m_generation{0};
   /// Deferred completion requests, drained one at a time by the application.
   std::deque<InterfaceCompletion> m_completions;
+  std::optional<PendingPhysicalInputCapture> m_pending_physical_input_capture;
   /// Keeps the final opaque completion colour alive until this frame renders,
   /// even though Application closes completed interfaces before render().
   std::optional<InterfacePresentationOverlay> m_completion_overlay_latch;

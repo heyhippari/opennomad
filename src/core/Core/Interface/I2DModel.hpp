@@ -45,6 +45,11 @@ using I2DStateCancelCallback =
 using I2DAdjustCallback =
     std::function<void(InterfaceManager&, InterfaceInstance&, std::int32_t delta)>;
 
+/// Generic activation action for selectable rows which perform work without
+/// entering another I2D state (binding capture and command rows).
+using I2DActivateCallback =
+    std::function<void(InterfaceManager&, InterfaceInstance&)>;
+
 /// Runtime value rows draw the label to the left of the canvas centre and the
 /// current value to the right. Ordinary menu text remains centred.
 enum class I2DTextLayout : std::uint8_t { k_centered, k_option_pair, k_option_slider };
@@ -145,6 +150,7 @@ struct I2DTextElement {
   std::uint32_t runtime_flags{0};
 
   I2DState* target_state{nullptr};
+  I2DActivateCallback on_activate;
   I2DAdjustCallback on_adjust;
   std::string literal_text;
   I2DTextLayout layout{I2DTextLayout::k_centered};
@@ -152,7 +158,8 @@ struct I2DTextElement {
   I2DValueScalarCallback value_scalar;
  
   [[nodiscard]] bool selectable() const {
-    return target_state != nullptr || static_cast<bool>(on_adjust);
+    return target_state != nullptr || static_cast<bool>(on_activate) ||
+           static_cast<bool>(on_adjust);
   }
 };
 

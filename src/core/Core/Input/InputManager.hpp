@@ -2,11 +2,13 @@
 
 #include <array>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "Core/Input/ControlScheme.hpp"
 #include "Core/Input/InputAction.hpp"
+#include "Core/Input/InputSource.hpp"
 #include "Core/Input/RawInputState.hpp"
 
 namespace App::Input {
@@ -60,6 +62,12 @@ class InputManager {
   /// Value-edge based, independent of the pressed bitfield above.
   [[nodiscard]] bool is_action_released(Action action) const;
 
+  /// First keyboard key or mouse button that rose from released to held during
+  /// the most recent raw-device snapshot. This deliberately bypasses semantic
+  /// actions so a binding UI can capture the key that is about to *become* an
+  /// action. Keyboard wins when key and mouse edges occur in the same frame.
+  [[nodiscard]] std::optional<InputSource> last_physical_press() const;
+
   /// Clears all values and edge state (e.g. when switching scenes).
   /// Edge-mask configuration is preserved.
   void reset();
@@ -84,6 +92,8 @@ class InputManager {
   std::array<bool, k_action_count> m_action_pressed{};
   /// Previous frame's held state, recovered from `g_previousInputState`.
   std::array<bool, k_action_count> m_previous_held{};
+  RawInputState m_previous_raw_state{};
+  std::optional<InputSource> m_last_physical_press;
   /// Neutral per-frame input field recovered from `DAT_0090e0e0`;
   /// purpose and consumer unresolved (see reset_per_frame_input).
   std::uint32_t m_per_frame_input{0};

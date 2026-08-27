@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <optional>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -55,6 +56,27 @@ float resolve_binding(const Binding& binding, const RawInputState& state) {
   std::unreachable();
 }
 
+std::optional<InputSource> first_physical_press(
+    const RawInputState& state, const RawInputState& previous) {
+  for (std::size_t index{0}; index < state.key_down.size(); ++index) {
+    if (state.key_down.at(index) && !previous.key_down.at(index)) {
+      return InputSource{
+          .type = SourceType::k_key, .index = static_cast<std::uint32_t>(index)};
+    }
+  }
+
+  // Button id 0 is unused by SDL; start at the first real mouse button.
+  for (std::size_t button{1U}; button < state.mouse_button_down.size(); ++button) {
+    if (state.mouse_button_down.at(button) &&
+        !previous.mouse_button_down.at(button)) {
+      return InputSource{.type = SourceType::k_mouse_button,
+          .index = static_cast<std::uint32_t>(button)};
+    }
+  }
+
+  return std::nullopt;
+}
+
 }  // namespace
 
 InputManager::InputManager() {
@@ -77,6 +99,9 @@ void InputManager::set_scheme_enabled(const std::string& name, const bool enable
 }
 
 void InputManager::update(const RawInputState& state) {
+  m_last_physical_press = first_physical_press(state, m_previous_raw_state);
+  m_previous_raw_state = state;
+
   std::ranges::copy(m_action_values, m_previous_action_values.begin());
   std::ranges::fill(m_action_values, 0.0F);
 
@@ -132,11 +157,17 @@ bool InputManager::is_action_released(const Action action) const {
          m_previous_action_values.at(index) >= k_press_threshold;
 }
 
+std::optional<InputSource> InputManager::last_physical_press() const {
+  return m_last_physical_press;
+}
+
 void InputManager::reset() {
   std::ranges::fill(m_action_values, 0.0F);
   std::ranges::fill(m_previous_action_values, 0.0F);
   std::ranges::fill(m_action_pressed, false);
   std::ranges::fill(m_previous_held, false);
+  m_previous_raw_state = RawInputState{};
+  m_last_physical_press.reset();
 }
 
 void InputManager::reset_per_frame_input() {

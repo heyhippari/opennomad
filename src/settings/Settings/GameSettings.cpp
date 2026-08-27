@@ -1,6 +1,7 @@
 #include "Settings/GameSettings.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -11,8 +12,189 @@
 
 namespace App::Settings {
 
-ChoiceSetting::ChoiceSetting(
-    std::vector<SettingChoice> choices, const std::size_t selected_index)
+namespace {
+
+// Exact retail defaults copied by Runtime_InitializeDefaults @ 0x0041F4C0.
+constexpr RuntimeControlBindings::Table K_RUNTIME_KEYBOARD_DEFAULTS{{
+    {{0xCBU,
+        0xCDU,
+        0xC8U,
+        0xD0U,
+        0x1CU,
+        0x39U,
+        0x00U,
+        0x26U,
+        0x00U,
+        0x00U,
+        0x9DU,
+        0x36U,
+        0x00U,
+        0x0FU}},
+    {{0xCBU,
+        0xCDU,
+        0xC8U,
+        0xD0U,
+        0x1CU,
+        0x9DU,
+        0x00U,
+        0x26U,
+        0x00U,
+        0x00U,
+        0x00U,
+        0x36U,
+        0x00U,
+        0x00U}},
+    {{0x4BU,
+        0x4DU,
+        0xC8U,
+        0xD0U,
+        0x36U,
+        0x39U,
+        0x9DU,
+        0x00U,
+        0x1CU,
+        0x48U,
+        0xCBU,
+        0xCDU,
+        0x50U,
+        0x38U}},
+    {{0xCBU,
+        0xCDU,
+        0xC8U,
+        0xD0U,
+        0x10U,
+        0x11U,
+        0x1EU,
+        0x1FU,
+        0x00U,
+        0x00U,
+        0xD3U,
+        0xCFU,
+        0x00U,
+        0x00U}},
+}};
+
+constexpr RuntimeControlBindings::Table K_RUNTIME_MOUSE_DEFAULTS{{
+    {{0x00U,
+        0x00U,
+        0x00U,
+        0x00U,
+        0x00U,
+        0x00U,
+        0x00U,
+        0x0CU,
+        0x00U,
+        0x00U,
+        0x00U,
+        0x00U,
+        0x00U,
+        0x00U}},
+    {{0x00U,
+        0x00U,
+        0x00U,
+        0x00U,
+        0x00U,
+        0x00U,
+        0x00U,
+        0x0CU,
+        0x00U,
+        0x00U,
+        0x00U,
+        0x00U,
+        0x00U,
+        0x00U}},
+    {{0x00U,
+        0x00U,
+        0x00U,
+        0x00U,
+        0x0CU,
+        0x0DU,
+        0x00U,
+        0x00U,
+        0x00U,
+        0x00U,
+        0x00U,
+        0x00U,
+        0x00U,
+        0x00U}},
+    {{0x00U,
+        0x00U,
+        0x00U,
+        0x00U,
+        0x00U,
+        0x00U,
+        0x00U,
+        0x00U,
+        0x00U,
+        0x00U,
+        0x00U,
+        0x00U,
+        0x00U,
+        0x00U}},
+}};
+
+constexpr RuntimeControlBindings::Table K_RUNTIME_JOYSTICK_DEFAULTS{{
+    {{0x00U,
+        0x00U,
+        0x04U,
+        0x04U,
+        0x30U,
+        0x31U,
+        0x32U,
+        0x33U,
+        0x34U,
+        0x35U,
+        0x36U,
+        0x37U,
+        0x38U,
+        0x39U}},
+    {{0x00U,
+        0x00U,
+        0x04U,
+        0x04U,
+        0x30U,
+        0x31U,
+        0x32U,
+        0x33U,
+        0x34U,
+        0x35U,
+        0x36U,
+        0x37U,
+        0x38U,
+        0x39U}},
+    {{0x00U,
+        0x00U,
+        0x04U,
+        0x04U,
+        0x30U,
+        0x31U,
+        0x32U,
+        0x33U,
+        0x34U,
+        0x35U,
+        0x36U,
+        0x37U,
+        0x38U,
+        0x39U}},
+    {{0x00U,
+        0x00U,
+        0x04U,
+        0x04U,
+        0x30U,
+        0x31U,
+        0x32U,
+        0x33U,
+        0x34U,
+        0x35U,
+        0x36U,
+        0x37U,
+        0x38U,
+        0x39U}},
+}};
+
+}  // namespace
+
+ChoiceSetting::ChoiceSetting(std::vector<SettingChoice> choices, const std::size_t selected_index)
     : m_choices(std::move(choices)) {
   if (!m_choices.empty()) {
     m_selected_index = std::min(selected_index, m_choices.size() - 1U);
@@ -75,9 +257,8 @@ bool NumericSetting::adjust(const std::int32_t delta) {
   const std::int64_t signed_step{
       delta < 0 ? -static_cast<std::int64_t>(m_step) : static_cast<std::int64_t>(m_step)};
   const std::int64_t candidate{static_cast<std::int64_t>(m_value) + signed_step};
-  const std::int64_t bounded{std::clamp(candidate,
-      static_cast<std::int64_t>(m_minimum),
-      static_cast<std::int64_t>(m_maximum))};
+  const std::int64_t bounded{std::clamp(
+      candidate, static_cast<std::int64_t>(m_minimum), static_cast<std::int64_t>(m_maximum))};
   m_value = static_cast<std::int32_t>(bounded);
   return previous != m_value;
 }
@@ -90,23 +271,72 @@ float NumericSetting::fraction() const {
   if (m_maximum <= m_minimum) {
     return 0.0F;
   }
-  return static_cast<float>(m_value - m_minimum) /
-         static_cast<float>(m_maximum - m_minimum);
+  return static_cast<float>(m_value - m_minimum) / static_cast<float>(m_maximum - m_minimum);
 }
 
-void GameSettings::ensure_choice(std::string stable_id,
-    std::vector<SettingChoice> choices,
-    const std::size_t selected_index) {
+RuntimeControlBindings::RuntimeControlBindings()
+    : m_keyboard(K_RUNTIME_KEYBOARD_DEFAULTS),
+      m_mouse(K_RUNTIME_MOUSE_DEFAULTS),
+      m_joystick(K_RUNTIME_JOYSTICK_DEFAULTS) {}
+
+std::uint32_t RuntimeControlBindings::value(
+    const RuntimeControlDevice device, const std::size_t group, const std::size_t slot) const {
+  if (group >= k_group_count || slot >= k_slots_per_group) {
+    return 0U;
+  }
+
+  switch (device) {
+    case RuntimeControlDevice::k_keyboard:
+      return m_keyboard.at(group).at(slot);
+    case RuntimeControlDevice::k_mouse:
+      return m_mouse.at(group).at(slot);
+    case RuntimeControlDevice::k_joystick:
+      return m_joystick.at(group).at(slot);
+  }
+  return 0U;
+}
+
+bool RuntimeControlBindings::set_value(const RuntimeControlDevice device,
+    const std::size_t group,
+    const std::size_t slot,
+    const std::uint32_t value) {
+  if (group >= k_group_count || slot >= k_slots_per_group) {
+    return false;
+  }
+
+  switch (device) {
+    case RuntimeControlDevice::k_keyboard:
+      m_keyboard.at(group).at(slot) = value;
+      return true;
+    case RuntimeControlDevice::k_mouse:
+      m_mouse.at(group).at(slot) = value;
+      return true;
+    case RuntimeControlDevice::k_joystick:
+      m_joystick.at(group).at(slot) = value;
+      return true;
+  }
+  return false;
+}
+
+void RuntimeControlBindings::restore_keyboard_mouse_defaults() {
+  m_keyboard = K_RUNTIME_KEYBOARD_DEFAULTS;
+  m_mouse = K_RUNTIME_MOUSE_DEFAULTS;
+}
+
+void RuntimeControlBindings::restore_joystick_defaults() {
+  m_joystick = K_RUNTIME_JOYSTICK_DEFAULTS;
+}
+
+void GameSettings::ensure_choice(
+    std::string stable_id, std::vector<SettingChoice> choices, const std::size_t selected_index) {
   if (m_choices.contains(stable_id)) {
     return;
   }
-  m_choices.emplace(
-      std::move(stable_id), ChoiceSetting{std::move(choices), selected_index});
+  m_choices.emplace(std::move(stable_id), ChoiceSetting{std::move(choices), selected_index});
 }
 
-void GameSettings::replace_choice(std::string stable_id,
-    std::vector<SettingChoice> choices,
-    const std::size_t selected_index) {
+void GameSettings::replace_choice(
+    std::string stable_id, std::vector<SettingChoice> choices, const std::size_t selected_index) {
   m_choices.insert_or_assign(
       std::move(stable_id), ChoiceSetting{std::move(choices), selected_index});
 }
@@ -119,18 +349,15 @@ void GameSettings::ensure_number(std::string stable_id,
   if (m_numbers.contains(stable_id)) {
     return;
   }
-  m_numbers.emplace(
-      std::move(stable_id), NumericSetting{minimum, maximum, step, value});
+  m_numbers.emplace(std::move(stable_id), NumericSetting{minimum, maximum, step, value});
 }
 
-bool GameSettings::adjust_choice(
-    const std::string_view stable_id, const std::int32_t delta) {
+bool GameSettings::adjust_choice(const std::string_view stable_id, const std::int32_t delta) {
   ChoiceSetting* setting{find_choice(stable_id)};
   return setting != nullptr && setting->adjust(delta);
 }
 
-bool GameSettings::adjust_number(
-    const std::string_view stable_id, const std::int32_t delta) {
+bool GameSettings::adjust_number(const std::string_view stable_id, const std::int32_t delta) {
   NumericSetting* setting{find_number(stable_id)};
   return setting != nullptr && setting->adjust(delta);
 }
@@ -140,17 +367,14 @@ std::string GameSettings::choice_label(const std::string_view stable_id) const {
   return setting == nullptr ? std::string{} : std::string{setting->label()};
 }
 
-std::optional<std::int32_t> GameSettings::choice_raw_value(
-    const std::string_view stable_id) const {
+std::optional<std::int32_t> GameSettings::choice_raw_value(const std::string_view stable_id) const {
   const ChoiceSetting* setting{find_choice(stable_id)};
   return setting == nullptr ? std::nullopt : setting->raw_value();
 }
 
-std::optional<std::int32_t> GameSettings::number_value(
-    const std::string_view stable_id) const {
+std::optional<std::int32_t> GameSettings::number_value(const std::string_view stable_id) const {
   const NumericSetting* setting{find_number(stable_id)};
-  return setting == nullptr ? std::nullopt
-                            : std::optional<std::int32_t>{setting->value()};
+  return setting == nullptr ? std::nullopt : std::optional<std::int32_t>{setting->value()};
 }
 
 float GameSettings::number_fraction(const std::string_view stable_id) const {

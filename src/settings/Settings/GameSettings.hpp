@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -52,10 +53,7 @@ class ChoiceSetting {
 /// numeric options without coupling Settings to the I2D renderer.
 class NumericSetting {
  public:
-  NumericSetting(std::int32_t minimum,
-      std::int32_t maximum,
-      std::int32_t step,
-      std::int32_t value);
+  NumericSetting(std::int32_t minimum, std::int32_t maximum, std::int32_t step, std::int32_t value);
 
   /// Moves one step in the sign of `delta`, clamped to [minimum, maximum].
   /// Returns true only when the value changed.
@@ -71,6 +69,47 @@ class NumericSetting {
   std::int32_t m_value{100};
 };
 
+/// Physical-device column in Runtime's persistent 4x14 control tables.
+///
+/// Runtime copies three 0xE0-byte tables into OMK_SAVE at +0x034, +0x114 and
+/// +0x1F4. Type-3 OPTIONS descriptors address them by group and slot. Keeping
+/// the raw values here preserves retail import/export provenance without
+/// forcing the current OpenNomad action vocabulary to impersonate the four
+/// still-partially-understood Runtime control groups.
+enum class RuntimeControlDevice : std::uint8_t {
+  k_keyboard,
+  k_mouse,
+  k_joystick,
+};
+
+class RuntimeControlBindings {
+ public:
+  static constexpr std::size_t k_group_count{4};
+  static constexpr std::size_t k_slots_per_group{14};
+  using Table = std::array<std::array<std::uint32_t, k_slots_per_group>, k_group_count>;
+
+  RuntimeControlBindings();
+
+  [[nodiscard]] std::uint32_t value(
+      RuntimeControlDevice device, std::size_t group, std::size_t slot) const;
+  bool set_value(
+      RuntimeControlDevice device, std::size_t group, std::size_t slot, std::uint32_t value);
+
+  /// Runtime type-5 "Restore default settings" behavior in device mode 1:
+  /// restore the complete keyboard and mouse tables, not merely the visible
+  /// group (0x00493258).
+  void restore_keyboard_mouse_defaults();
+
+  /// Runtime type-5 behavior in device mode 2: restore the complete joystick
+  /// table (0x004931AB).
+  void restore_joystick_defaults();
+
+ private:
+  Table m_keyboard{};
+  Table m_mouse{};
+  Table m_joystick{};
+};
+
 /// Process-lifetime OpenNomad settings registry.
 ///
 /// Choice and numeric values are owned here rather than by interface elements.
@@ -80,15 +119,13 @@ class GameSettings {
  public:
   /// Defines a setting only when the stable ID is not already present.
   /// Reopening OPTIONS therefore preserves changes made earlier in the run.
-  void ensure_choice(std::string stable_id,
-      std::vector<SettingChoice> choices,
-      std::size_t selected_index);
+  void ensure_choice(
+      std::string stable_id, std::vector<SettingChoice> choices, std::size_t selected_index);
 
   /// Replaces a dynamic choice list. Used for values derived from the current
   /// runtime environment (resolution / active renderer in Phase 2).
-  void replace_choice(std::string stable_id,
-      std::vector<SettingChoice> choices,
-      std::size_t selected_index);
+  void replace_choice(
+      std::string stable_id, std::vector<SettingChoice> choices, std::size_t selected_index);
 
   /// Defines a bounded numeric setting only when the stable ID is new.
   void ensure_number(std::string stable_id,
@@ -101,21 +138,27 @@ class GameSettings {
   bool adjust_number(std::string_view stable_id, std::int32_t delta);
 
   [[nodiscard]] std::string choice_label(std::string_view stable_id) const;
-  [[nodiscard]] std::optional<std::int32_t> choice_raw_value(
-      std::string_view stable_id) const;
-  [[nodiscard]] std::optional<std::int32_t> number_value(
-      std::string_view stable_id) const;
+  [[nodiscard]] std::optional<std::int32_t> choice_raw_value(std::string_view stable_id) const;
+  [[nodiscard]] std::optional<std::int32_t> number_value(std::string_view stable_id) const;
   [[nodiscard]] float number_fraction(std::string_view stable_id) const;
- 
+
   [[nodiscard]] ChoiceSetting* find_choice(std::string_view stable_id);
   [[nodiscard]] const ChoiceSetting* find_choice(std::string_view stable_id) const;
   [[nodiscard]] NumericSetting* find_number(std::string_view stable_id);
   [[nodiscard]] const NumericSetting* find_number(std::string_view stable_id) const;
- 
+
+  [[nodiscard]] RuntimeControlBindings& runtime_control_bindings() {
+    return m_runtime_control_bindings;
+  }
+  [[nodiscard]] const RuntimeControlBindings& runtime_control_bindings() const {
+    return m_runtime_control_bindings;
+  }
+
  private:
   // Transparent comparator permits find(string_view) without temporary keys.
   std::map<std::string, ChoiceSetting, std::less<>> m_choices;
   std::map<std::string, NumericSetting, std::less<>> m_numbers;
+  RuntimeControlBindings m_runtime_control_bindings;
 };
 
 }  // namespace App::Settings

@@ -55,6 +55,25 @@ struct OptionsPageDefinition {
   std::span<const OptionsRowDefinition> rows;
 };
 
+/// Runtime type-3 option descriptor. +0x5C selects one of four control groups
+/// and +0x70 selects one of fourteen slots inside that group. The three
+/// physical-device values live in OMK_SAVE's parallel 4x14 tables.
+struct OptionsBindingRowDefinition {
+  std::string_view stable_id;
+  std::int16_t runtime_option_index{-1};
+  std::int16_t runtime_label_string_index{-1};
+  std::uint8_t group{0};
+  std::uint8_t slot{0};
+};
+
+struct OptionsBindingPageDefinition {
+  std::string_view stable_id;
+  std::int16_t runtime_title_option_index{-1};
+  std::int16_t runtime_title_string_index{-1};
+  std::uint8_t group{0};
+  std::span<const OptionsBindingRowDefinition> bindings;
+};
+
 inline constexpr std::uint16_t k_options_interface_id{35};
 inline constexpr char k_options_root_font_key{'S'};
 inline constexpr char k_options_value_font_key{'J'};
@@ -396,6 +415,190 @@ inline constexpr std::array<OptionsRowDefinition, 5> k_options_game_rows{{
 inline constexpr OptionsPageDefinition k_options_game_page{
     .stable_id = "game", .rows = std::span<const OptionsRowDefinition>{k_options_game_rows}};
 
+/// Runtime Controls root @ 0x004919E0. Descriptor 20 enters keyboard/mouse
+/// mode, 21 joystick mode, 22 Mouse Settings and 72 returns to OPTIONS.
+inline constexpr std::array<OptionsRowDefinition, 5> k_options_controls_rows{{
+    {.stable_id = "controls.title",
+        .runtime_option_index = 19,
+        .runtime_label_string_index = 28,
+        .kind = OptionsRowKind::k_submenu,
+        .choices = {},
+        .default_choice = 0,
+        .literal_label = {},
+        .accent = true},
+    {.stable_id = "controls.keyboard_mouse",
+        .runtime_option_index = 20,
+        .runtime_label_string_index = 77,
+        .kind = OptionsRowKind::k_submenu,
+        .choices = {},
+        .default_choice = 0,
+        .literal_label = {},
+        .accent = false},
+    {.stable_id = "controls.joystick",
+        .runtime_option_index = 21,
+        .runtime_label_string_index = 78,
+        .kind = OptionsRowKind::k_submenu,
+        .choices = {},
+        .default_choice = 0,
+        .literal_label = {},
+        .accent = false},
+    {.stable_id = "controls.mouse_settings",
+        .runtime_option_index = 22,
+        .runtime_label_string_index = 69,
+        .kind = OptionsRowKind::k_submenu,
+        .choices = {},
+        .default_choice = 0,
+        .literal_label = {},
+        .accent = false},
+    {.stable_id = "controls.back",
+        .runtime_option_index = 72,
+        .runtime_label_string_index = 80,
+        .kind = OptionsRowKind::k_back,
+        .choices = {},
+        .default_choice = 0,
+        .literal_label = {},
+        .accent = false},
+}};
+inline constexpr OptionsPageDefinition k_options_controls_page{.stable_id = "controls",
+    .rows = std::span<const OptionsRowDefinition>{k_options_controls_rows}};
+
+/// Runtime shared device/category state @ 0x004DD640, builder 0x00491BB0.
+/// In device mode 1 its title is descriptor 20. The four category descriptors
+/// lead to the four type-3 binding pages.
+inline constexpr std::array<OptionsRowDefinition, 6> k_options_keyboard_categories_rows{{
+    {.stable_id = "controls.keyboard.title",
+        .runtime_option_index = 20,
+        .runtime_label_string_index = 77,
+        .kind = OptionsRowKind::k_submenu,
+        .choices = {},
+        .default_choice = 0,
+        .literal_label = {},
+        .accent = true},
+    {.stable_id = "controls.keyboard.group0",
+        .runtime_option_index = 28,
+        .runtime_label_string_index = 35,
+        .kind = OptionsRowKind::k_submenu,
+        .choices = {},
+        .default_choice = 0,
+        .literal_label = {},
+        .accent = false},
+    {.stable_id = "controls.keyboard.group1",
+        .runtime_option_index = 39,
+        .runtime_label_string_index = 47,
+        .kind = OptionsRowKind::k_submenu,
+        .choices = {},
+        .default_choice = 0,
+        .literal_label = {},
+        .accent = false},
+    {.stable_id = "controls.keyboard.group2",
+        .runtime_option_index = 47,
+        .runtime_label_string_index = 50,
+        .kind = OptionsRowKind::k_submenu,
+        .choices = {},
+        .default_choice = 0,
+        .literal_label = {},
+        .accent = false},
+    {.stable_id = "controls.keyboard.group3",
+        .runtime_option_index = 61,
+        .runtime_label_string_index = 55,
+        .kind = OptionsRowKind::k_submenu,
+        .choices = {},
+        .default_choice = 0,
+        .literal_label = {},
+        .accent = false},
+    {.stable_id = "controls.keyboard.back",
+        .runtime_option_index = 72,
+        .runtime_label_string_index = 80,
+        .kind = OptionsRowKind::k_back,
+        .choices = {},
+        .default_choice = 0,
+        .literal_label = {},
+        .accent = false},
+}};
+inline constexpr OptionsPageDefinition k_options_keyboard_categories_page{
+    .stable_id = "controls.keyboard.categories",
+    .rows = std::span<const OptionsRowDefinition>{k_options_keyboard_categories_rows}};
+
+inline constexpr std::array<OptionsBindingRowDefinition, 10> K_CONTROL_GROUP0_BINDINGS{{
+    {"controls.keyboard.group0.slot2", 29, 36, 0, 2},
+    {"controls.keyboard.group0.slot3", 30, 37, 0, 3},
+    {"controls.keyboard.group0.slot0", 31, 38, 0, 0},
+    {"controls.keyboard.group0.slot1", 32, 39, 0, 1},
+    {"controls.keyboard.group0.slot10", 33, 79, 0, 10},
+    {"controls.keyboard.group0.slot4", 34, 42, 0, 4},
+    {"controls.keyboard.group0.slot5", 35, 43, 0, 5},
+    {"controls.keyboard.group0.slot7", 36, 44, 0, 7},
+    {"controls.keyboard.group0.slot11", 37, 45, 0, 11},
+    {"controls.keyboard.group0.slot13", 38, 46, 0, 13},
+}};
+
+inline constexpr std::array<OptionsBindingRowDefinition, 7> K_CONTROL_GROUP1_BINDINGS{{
+    {"controls.keyboard.group1.slot2", 40, 36, 1, 2},
+    {"controls.keyboard.group1.slot3", 41, 37, 1, 3},
+    {"controls.keyboard.group1.slot0", 42, 38, 1, 0},
+    {"controls.keyboard.group1.slot1", 43, 39, 1, 1},
+    {"controls.keyboard.group1.slot4", 44, 42, 1, 4},
+    {"controls.keyboard.group1.slot5", 45, 48, 1, 5},
+    {"controls.keyboard.group1.slot11", 46, 49, 1, 11},
+}};
+
+inline constexpr std::array<OptionsBindingRowDefinition, 13> K_CONTROL_GROUP2_BINDINGS{{
+    {"controls.keyboard.group2.slot2", 48, 36, 2, 2},
+    {"controls.keyboard.group2.slot3", 49, 37, 2, 3},
+    {"controls.keyboard.group2.slot10", 50, 40, 2, 10},
+    {"controls.keyboard.group2.slot11", 51, 41, 2, 11},
+    {"controls.keyboard.group2.slot4", 52, 51, 2, 4},
+    {"controls.keyboard.group2.slot8", 53, 42, 2, 8},
+    {"controls.keyboard.group2.slot5", 54, 52, 2, 5},
+    {"controls.keyboard.group2.slot6", 55, 53, 2, 6},
+    {"controls.keyboard.group2.slot13", 56, 54, 2, 13},
+    {"controls.keyboard.group2.slot0", 57, 38, 2, 0},
+    {"controls.keyboard.group2.slot1", 58, 39, 2, 1},
+    {"controls.keyboard.group2.slot9", 59, 82, 2, 9},
+    {"controls.keyboard.group2.slot12", 60, 83, 2, 12},
+}};
+
+inline constexpr std::array<OptionsBindingRowDefinition, 10> K_CONTROL_GROUP3_BINDINGS{{
+    {"controls.keyboard.group3.slot1", 62, 36, 3, 1},
+    {"controls.keyboard.group3.slot0", 63, 37, 3, 0},
+    {"controls.keyboard.group3.slot10", 64, 40, 3, 10},
+    {"controls.keyboard.group3.slot11", 65, 41, 3, 11},
+    {"controls.keyboard.group3.slot2", 66, 52, 3, 2},
+    {"controls.keyboard.group3.slot3", 67, 53, 3, 3},
+    {"controls.keyboard.group3.slot4", 68, 56, 3, 4},
+    {"controls.keyboard.group3.slot5", 69, 57, 3, 5},
+    {"controls.keyboard.group3.slot6", 70, 58, 3, 6},
+    {"controls.keyboard.group3.slot7", 71, 59, 3, 7},
+}};
+
+inline constexpr OptionsBindingPageDefinition k_options_keyboard_group0_page{
+    .stable_id = "controls.keyboard.group0",
+    .runtime_title_option_index = 28,
+    .runtime_title_string_index = 35,
+    .group = 0,
+    .bindings = std::span<const OptionsBindingRowDefinition>{K_CONTROL_GROUP0_BINDINGS}};
+inline constexpr OptionsBindingPageDefinition k_options_keyboard_group1_page{
+    .stable_id = "controls.keyboard.group1",
+    .runtime_title_option_index = 39,
+    .runtime_title_string_index = 47,
+    .group = 1,
+    .bindings = std::span<const OptionsBindingRowDefinition>{K_CONTROL_GROUP1_BINDINGS}};
+inline constexpr OptionsBindingPageDefinition k_options_keyboard_group2_page{
+    .stable_id = "controls.keyboard.group2",
+    .runtime_title_option_index = 47,
+    .runtime_title_string_index = 50,
+    .group = 2,
+    .bindings = std::span<const OptionsBindingRowDefinition>{K_CONTROL_GROUP2_BINDINGS}};
+inline constexpr OptionsBindingPageDefinition k_options_keyboard_group3_page{
+    .stable_id = "controls.keyboard.group3",
+    .runtime_title_option_index = 61,
+    .runtime_title_string_index = 55,
+    .group = 3,
+    .bindings = std::span<const OptionsBindingRowDefinition>{K_CONTROL_GROUP3_BINDINGS}};
+
+inline constexpr std::int16_t k_options_restore_defaults_option_index{73};
+inline constexpr std::int16_t k_options_restore_defaults_string_index{81};
+
 // The five-entry START MENU root page is the easiest sanity check of the
 // recovered layout helper: 120 + N*65.
 static_assert(runtime_options_row_step(k_options_root_rows.size()) == 65);
@@ -428,5 +631,14 @@ static_assert(runtime_options_row_y(
 static_assert(runtime_options_row_step(k_options_game_rows.size()) == 65);
 static_assert(runtime_options_row_y(
                   4, k_options_game_rows.size(), OptionsInvocationMode::k_start_menu) == 380);
+
+static_assert(runtime_options_row_step(k_options_controls_rows.size()) == 65);
+static_assert(runtime_options_row_step(k_options_keyboard_categories_rows.size()) == 52);
+
+// Binding pages contain title + binding rows + Restore defaults + Back.
+static_assert(runtime_options_row_step(K_CONTROL_GROUP0_BINDINGS.size() + 3U) == 21);
+static_assert(runtime_options_row_step(K_CONTROL_GROUP1_BINDINGS.size() + 3U) == 28);
+static_assert(runtime_options_row_step(K_CONTROL_GROUP2_BINDINGS.size() + 3U) == 18);
+static_assert(runtime_options_row_step(K_CONTROL_GROUP3_BINDINGS.size() + 3U) == 21);
 
 }  // namespace App::Interface

@@ -3,6 +3,7 @@
 #include <SDL3/SDL_error.h>
 #include <SDL3/SDL_events.h>
 #include <SDL3/SDL_keyboard.h>
+#include <SDL3/SDL_scancode.h>
 #include <SDL3/SDL_video.h>
 #include <fmt/format.h>
 #include <glad/glad.h>
@@ -27,6 +28,7 @@
 #include "Core/GameDataLoader.hpp"
 #include "Core/Input/InputAction.hpp"
 #include "Core/Input/InputManager.hpp"
+#include "Core/Input/InputSource.hpp"
 #include "Core/Interface/I2DBumpBackground.hpp"
 #include "Core/Interface/I2DModel.hpp"
 #include "Core/Interface/I2DRenderer.hpp"
@@ -595,6 +597,21 @@ std::expected<void, std::string> InterfaceManager::load_font(const char key) {
   return m_fonts.load_font(key);
 }
 
+void InterfaceManager::capture_next_physical_input(
+    std::string token, PhysicalInputCaptureCallback callback) {
+  m_pending_physical_input_capture =
+      PendingPhysicalInputCapture{.token = std::move(token), .callback = std::move(callback)};
+}
+
+void InterfaceManager::cancel_physical_input_capture() {
+  m_pending_physical_input_capture.reset();
+}
+
+bool InterfaceManager::physical_input_capture_active(const std::string_view token) const {
+  return m_pending_physical_input_capture.has_value() &&
+         m_pending_physical_input_capture->token == token;
+}
+
 void InterfaceManager::select_previous() {
   const InterfaceInstance* instance{focused_instance_mut()};
   if (instance == nullptr || instance->current_state == nullptr ||
@@ -661,6 +678,13 @@ void InterfaceManager::confirm() {
     return;
   }
   const I2DTextElement* selected{selectable.at(instance->current_state->selected_element)};
+  if (selected->on_activate) {
+    App::Log::debug(LogCategory::I2D, "activate action: \"{}\"", text_label(*instance, *selected));
+    const I2DActivateCallback on_activate{selected->on_activate};
+    on_activate(*this, *instance);
+    return;
+  }
+
   I2DState* target{selected->target_state};
   if (target == nullptr) {
     return;  // Adjustable rows may intentionally have no confirm target.
@@ -701,6 +725,27 @@ void InterfaceManager::cancel() {
 }
 
 void InterfaceManager::handle_navigation(const Input::InputManager& input) {
+  if (m_pending_physical_input_capture.has_value()) {
+    const std::optional<Input::InputSource> pressed{input.last_physical_press()};
+    if (!pressed.has_value()) {
+      return;
+    }
+
+    if (pressed->type == Input::SourceType::k_key &&
+        pressed->index == static_cast<std::uint32_t>(SDL_SCANCODE_ESCAPE)) {
+      App::Log::debug(LogCategory::Interface, "physical input capture cancelled");
+      cancel_physical_input_capture();
+      return;
+    }
+
+    const PhysicalInputCaptureCallback callback{
+        std::move(m_pending_physical_input_capture->callback)};
+    cancel_physical_input_capture();
+    if (callback) {
+      callback(pressed.value());
+    }
+    return;
+  }
   if (input.is_action_pressed(Input::Action::k_menu_up)) {
     select_previous();
   }
@@ -722,6 +767,194 @@ void InterfaceManager::handle_navigation(const Input::InputManager& input) {
 }
 
 namespace {
+
+struct RuntimeKeyMapping {
+  SDL_Scancode scancode;
+  std::uint32_t dik;
+
+  constexpr RuntimeKeyMapping(
+      const SDL_Scancode scancode_value, const std::uint32_t dik_value)
+      : scancode(scancode_value), dik(dik_value) {}
+};
+
+constexpr std::array<RuntimeKeyMapping, 104> K_RUNTIME_KEY_MAPPINGS{{
+    {SDL_SCANCODE_ESCAPE, 0x01U},
+    {SDL_SCANCODE_1, 0x02U},
+    {SDL_SCANCODE_2, 0x03U},
+    {SDL_SCANCODE_3, 0x04U},
+    {SDL_SCANCODE_4, 0x05U},
+    {SDL_SCANCODE_5, 0x06U},
+    {SDL_SCANCODE_6, 0x07U},
+    {SDL_SCANCODE_7, 0x08U},
+    {SDL_SCANCODE_8, 0x09U},
+    {SDL_SCANCODE_9, 0x0AU},
+    {SDL_SCANCODE_0, 0x0BU},
+    {SDL_SCANCODE_MINUS, 0x0CU},
+    {SDL_SCANCODE_EQUALS, 0x0DU},
+    {SDL_SCANCODE_BACKSPACE, 0x0EU},
+    {SDL_SCANCODE_TAB, 0x0FU},
+    {SDL_SCANCODE_Q, 0x10U},
+    {SDL_SCANCODE_W, 0x11U},
+    {SDL_SCANCODE_E, 0x12U},
+    {SDL_SCANCODE_R, 0x13U},
+    {SDL_SCANCODE_T, 0x14U},
+    {SDL_SCANCODE_Y, 0x15U},
+    {SDL_SCANCODE_U, 0x16U},
+    {SDL_SCANCODE_I, 0x17U},
+    {SDL_SCANCODE_O, 0x18U},
+    {SDL_SCANCODE_P, 0x19U},
+    {SDL_SCANCODE_LEFTBRACKET, 0x1AU},
+    {SDL_SCANCODE_RIGHTBRACKET, 0x1BU},
+    {SDL_SCANCODE_RETURN, 0x1CU},
+    {SDL_SCANCODE_LCTRL, 0x1DU},
+    {SDL_SCANCODE_A, 0x1EU},
+    {SDL_SCANCODE_S, 0x1FU},
+    {SDL_SCANCODE_D, 0x20U},
+    {SDL_SCANCODE_F, 0x21U},
+    {SDL_SCANCODE_G, 0x22U},
+    {SDL_SCANCODE_H, 0x23U},
+    {SDL_SCANCODE_J, 0x24U},
+    {SDL_SCANCODE_K, 0x25U},
+    {SDL_SCANCODE_L, 0x26U},
+    {SDL_SCANCODE_SEMICOLON, 0x27U},
+    {SDL_SCANCODE_APOSTROPHE, 0x28U},
+    {SDL_SCANCODE_GRAVE, 0x29U},
+    {SDL_SCANCODE_LSHIFT, 0x2AU},
+    {SDL_SCANCODE_BACKSLASH, 0x2BU},
+    {SDL_SCANCODE_Z, 0x2CU},
+    {SDL_SCANCODE_X, 0x2DU},
+    {SDL_SCANCODE_C, 0x2EU},
+    {SDL_SCANCODE_V, 0x2FU},
+    {SDL_SCANCODE_B, 0x30U},
+    {SDL_SCANCODE_N, 0x31U},
+    {SDL_SCANCODE_M, 0x32U},
+    {SDL_SCANCODE_COMMA, 0x33U},
+    {SDL_SCANCODE_PERIOD, 0x34U},
+    {SDL_SCANCODE_SLASH, 0x35U},
+    {SDL_SCANCODE_RSHIFT, 0x36U},
+    {SDL_SCANCODE_KP_MULTIPLY, 0x37U},
+    {SDL_SCANCODE_LALT, 0x38U},
+    {SDL_SCANCODE_SPACE, 0x39U},
+    {SDL_SCANCODE_CAPSLOCK, 0x3AU},
+    {SDL_SCANCODE_F1, 0x3BU},
+    {SDL_SCANCODE_F2, 0x3CU},
+    {SDL_SCANCODE_F3, 0x3DU},
+    {SDL_SCANCODE_F4, 0x3EU},
+    {SDL_SCANCODE_F5, 0x3FU},
+    {SDL_SCANCODE_F6, 0x40U},
+    {SDL_SCANCODE_F7, 0x41U},
+    {SDL_SCANCODE_F8, 0x42U},
+    {SDL_SCANCODE_F9, 0x43U},
+    {SDL_SCANCODE_F10, 0x44U},
+    {SDL_SCANCODE_NUMLOCKCLEAR, 0x45U},
+    {SDL_SCANCODE_SCROLLLOCK, 0x46U},
+    {SDL_SCANCODE_KP_7, 0x47U},
+    {SDL_SCANCODE_KP_8, 0x48U},
+    {SDL_SCANCODE_KP_9, 0x49U},
+    {SDL_SCANCODE_KP_MINUS, 0x4AU},
+    {SDL_SCANCODE_KP_4, 0x4BU},
+    {SDL_SCANCODE_KP_5, 0x4CU},
+    {SDL_SCANCODE_KP_6, 0x4DU},
+    {SDL_SCANCODE_KP_PLUS, 0x4EU},
+    {SDL_SCANCODE_KP_1, 0x4FU},
+    {SDL_SCANCODE_KP_2, 0x50U},
+    {SDL_SCANCODE_KP_3, 0x51U},
+    {SDL_SCANCODE_KP_0, 0x52U},
+    {SDL_SCANCODE_KP_PERIOD, 0x53U},
+    {SDL_SCANCODE_F11, 0x57U},
+    {SDL_SCANCODE_F12, 0x58U},
+    {SDL_SCANCODE_KP_ENTER, 0x9CU},
+    {SDL_SCANCODE_RCTRL, 0x9DU},
+    {SDL_SCANCODE_KP_DIVIDE, 0xB5U},
+    {SDL_SCANCODE_PRINTSCREEN, 0xB7U},
+    {SDL_SCANCODE_RALT, 0xB8U},
+    {SDL_SCANCODE_PAUSE, 0xC5U},
+    {SDL_SCANCODE_HOME, 0xC7U},
+    {SDL_SCANCODE_UP, 0xC8U},
+    {SDL_SCANCODE_PAGEUP, 0xC9U},
+    {SDL_SCANCODE_LEFT, 0xCBU},
+    {SDL_SCANCODE_RIGHT, 0xCDU},
+    {SDL_SCANCODE_END, 0xCFU},
+    {SDL_SCANCODE_DOWN, 0xD0U},
+    {SDL_SCANCODE_PAGEDOWN, 0xD1U},
+    {SDL_SCANCODE_INSERT, 0xD2U},
+    {SDL_SCANCODE_DELETE, 0xD3U},
+    {SDL_SCANCODE_LGUI, 0xDBU},
+    {SDL_SCANCODE_RGUI, 0xDCU},
+    {SDL_SCANCODE_APPLICATION, 0xDDU},
+}};
+
+std::optional<std::uint32_t> runtime_dik_from_sdl(const std::uint32_t index) {
+  const auto scancode{static_cast<SDL_Scancode>(index)};
+  for (const RuntimeKeyMapping& mapping : K_RUNTIME_KEY_MAPPINGS) {
+    if (mapping.scancode == scancode) {
+      return mapping.dik;
+    }
+  }
+  return std::nullopt;
+}
+
+std::string runtime_key_label(const std::uint32_t dik) {
+  for (const RuntimeKeyMapping& mapping : K_RUNTIME_KEY_MAPPINGS) {
+    if (mapping.dik != dik) {
+      continue;
+    }
+    switch (mapping.scancode) {
+      case SDL_SCANCODE_RETURN:
+        return "Enter";
+      case SDL_SCANCODE_UP:
+        return "Up Arrow";
+      case SDL_SCANCODE_DOWN:
+        return "Down Arrow";
+      case SDL_SCANCODE_LEFT:
+        return "Left Arrow";
+      case SDL_SCANCODE_RIGHT:
+        return "Right Arrow";
+      default:
+        break;
+    }
+    const char* name{SDL_GetScancodeName(mapping.scancode)};
+    if (name != nullptr && name[0] != '\0') {
+      return std::string{name};
+    }
+  }
+  return fmt::format("Key 0x{:02X}", dik);
+}
+
+std::optional<std::uint32_t> runtime_mouse_offset_from_sdl_button(const std::uint32_t button) {
+  if (button == 0U || button > 8U) {
+    return std::nullopt;
+  }
+  return 0x0CU + (button - 1U);
+}
+
+std::string runtime_mouse_label(const std::uint32_t offset) {
+  if (offset >= 0x0CU && offset <= 0x13U) {
+    return fmt::format("Button {}", offset - 0x0CU);
+  }
+  return fmt::format("Mouse 0x{:02X}", offset);
+}
+
+std::string keyboard_mouse_binding_label(const App::Settings::RuntimeControlBindings& bindings,
+    const std::size_t group,
+    const std::size_t slot) {
+  const std::uint32_t keyboard{
+      bindings.value(App::Settings::RuntimeControlDevice::k_keyboard, group, slot)};
+  const std::uint32_t mouse{
+      bindings.value(App::Settings::RuntimeControlDevice::k_mouse, group, slot)};
+
+  std::string label;
+  if (keyboard != 0U) {
+    label = runtime_key_label(keyboard);
+  }
+  if (mouse != 0U) {
+    if (!label.empty()) {
+      label += "; ";
+    }
+    label += runtime_mouse_label(mouse);
+  }
+  return label;
+}
 
 /// Returns from interface 35 to the resident interface that opened it. The
 /// host state is restored before closing the child; close() then re-focuses the
@@ -903,12 +1136,131 @@ void populate_options_page(InterfaceManager& manager,
   std::size_t row_index{0};
   for (const OptionsRowDefinition& row : page.rows) {
     I2DState* target_state{row.kind == OptionsRowKind::k_back ? &back_target : nullptr};
+    rows.elements.push_back(I2DElement{
+        .data = make_options_text(manager, row, row_index, page.rows.size(), target_state),
+        .presentation = I2DPresentationHints{}});
+    ++row_index;
+  }
+  state.groups.push_back(std::move(rows));
+  state.selected_element = 0U;
+}
+
+I2DTextElement make_keyboard_binding_text(InterfaceManager& manager,
+    const OptionsBindingRowDefinition& definition,
+    const std::size_t row_index,
+    const std::size_t active_count) {
+  I2DTextElement text;
+  text.string_index = static_cast<std::uint16_t>(definition.runtime_label_string_index);
+  text.font_key = k_options_value_font_key;
+  text.bounds = I2DRect{.x = k_options_row_x,
+      .y = runtime_options_row_y(row_index, active_count, OptionsInvocationMode::k_start_menu),
+      .width = k_options_row_width,
+      .height = k_options_row_height};
+  text.runtime_flags = k_options_value_text_flags;
+  text.layout = I2DTextLayout::k_option_pair;
+
+  const std::size_t group{definition.group};
+  const std::size_t slot{definition.slot};
+  const std::string capture_token{std::string{definition.stable_id}};
+  const InterfaceManager* manager_ptr{&manager};
+  App::Settings::RuntimeControlBindings* bindings{
+      &manager.game_settings().runtime_control_bindings()};
+
+  text.value_text = [manager_ptr, bindings, capture_token, group, slot]() {
+    if (manager_ptr->physical_input_capture_active(capture_token)) {
+      return std::string{"Press a key or mouse button..."};
+    }
+    return keyboard_mouse_binding_label(*bindings, group, slot);
+  };
+
+  text.on_activate = [bindings, capture_token, group, slot](
+                         InterfaceManager& manager_ref, InterfaceInstance&) {
+    App::Log::debug(LogCategory::Interface, "capture binding group={} slot={}", group, slot);
+    manager_ref.capture_next_physical_input(
+        capture_token, [bindings, group, slot](const Input::InputSource& source) {
+          if (source.type == Input::SourceType::k_key) {
+            const std::optional<std::uint32_t> dik{runtime_dik_from_sdl(source.index)};
+            if (!dik.has_value()) {
+              App::Log::warn(LogCategory::Interface,
+                  "key scancode {} has no Runtime DIK mapping",
+                  source.index);
+              return;
+            }
+            bindings->set_value(
+                App::Settings::RuntimeControlDevice::k_keyboard, group, slot, dik.value());
+            return;
+          }
+
+          if (source.type == Input::SourceType::k_mouse_button) {
+            const std::optional<std::uint32_t> offset{
+                runtime_mouse_offset_from_sdl_button(source.index)};
+            if (!offset.has_value()) {
+              return;
+            }
+            bindings->set_value(
+                App::Settings::RuntimeControlDevice::k_mouse, group, slot, offset.value());
+          }
+        });
+  };
+  return text;
+}
+
+void populate_keyboard_binding_page(InterfaceManager& manager,
+    I2DState& state,
+    const OptionsBindingPageDefinition& page,
+    I2DState& back_target) {
+  const std::size_t active_count{page.bindings.size() + 3U};
+  I2DGroup rows;
+  rows.runtime_flags = k_options_text_flags;
+
+  const OptionsRowDefinition title{.stable_id = page.stable_id,
+      .runtime_option_index = page.runtime_title_option_index,
+      .runtime_label_string_index = page.runtime_title_string_index,
+      .kind = OptionsRowKind::k_submenu,
+      .choices = {},
+      .default_choice = 0,
+      .literal_label = {},
+      .accent = true};
+  rows.elements.push_back(
+      I2DElement{.data = make_options_text(manager, title, 0U, active_count, nullptr),
+          .presentation = I2DPresentationHints{}});
+
+  std::size_t row_index{1U};
+  for (const OptionsBindingRowDefinition& binding : page.bindings) {
     rows.elements.push_back(
-        I2DElement{.data = make_options_text(
-                       manager, row, row_index, page.rows.size(), target_state),
+        I2DElement{.data = make_keyboard_binding_text(manager, binding, row_index, active_count),
             .presentation = I2DPresentationHints{}});
     ++row_index;
   }
+
+  I2DTextElement restore;
+  restore.string_index = static_cast<std::uint16_t>(k_options_restore_defaults_string_index);
+  restore.font_key = k_options_value_font_key;
+  restore.bounds = I2DRect{.x = k_options_row_x,
+      .y = runtime_options_row_y(row_index, active_count, OptionsInvocationMode::k_start_menu),
+      .width = k_options_row_width,
+      .height = k_options_row_height};
+  restore.runtime_flags = k_options_value_text_flags;
+  restore.on_activate = [](InterfaceManager& manager_ref, InterfaceInstance&) {
+    manager_ref.game_settings().runtime_control_bindings().restore_keyboard_mouse_defaults();
+    App::Log::info(LogCategory::Interface, "restored Runtime keyboard/mouse control defaults");
+  };
+  rows.elements.push_back(
+      I2DElement{.data = std::move(restore), .presentation = I2DPresentationHints{}});
+  ++row_index;
+
+  const OptionsRowDefinition back{.stable_id = "controls.keyboard.back",
+      .runtime_option_index = 72,
+      .runtime_label_string_index = 80,
+      .kind = OptionsRowKind::k_back,
+      .choices = {},
+      .default_choice = 0,
+      .literal_label = {},
+      .accent = false};
+  rows.elements.push_back(
+      I2DElement{.data = make_options_text(manager, back, row_index, active_count, &back_target),
+          .presentation = I2DPresentationHints{}});
+
   state.groups.push_back(std::move(rows));
   state.selected_element = 0U;
 }
@@ -1071,6 +1423,7 @@ void initialize_start_menu(InterfaceManager& manager, InterfaceInstance& instanc
                        .green = 255,
                        .blue = 255,
                        .target_state = child_states.at(index),
+                       .on_activate = {},
                        .on_adjust = {},
                        .literal_text = {},
                        .layout = I2DTextLayout::k_centered,
@@ -1095,6 +1448,7 @@ void initialize_start_menu(InterfaceManager& manager, InterfaceInstance& instanc
                      .green = 255,
                      .blue = 255,
                      .target_state = nullptr,
+                     .on_activate = {},
                      .on_adjust = {},
                      .literal_text = {},
                      .layout = I2DTextLayout::k_centered,
@@ -1125,6 +1479,7 @@ void initialize_start_menu(InterfaceManager& manager, InterfaceInstance& instanc
             .green = 255,
             .blue = 255,
             .target_state = quit_targets.at(index),
+            .on_activate = {},
             .on_adjust = {},
             .literal_text = {},
             .layout = I2DTextLayout::k_centered,
@@ -1163,24 +1518,46 @@ void initialize_options(InterfaceManager& manager, InterfaceInstance& instance) 
   I2DState* video{manager.create_state(instance)};
   I2DState* audio{manager.create_state(instance)};
   I2DState* game{manager.create_state(instance)};
-  I2DState* controls_action{manager.create_state(instance)};
+  I2DState* controls{manager.create_state(instance)};
+  I2DState* keyboard_categories{manager.create_state(instance)};
+  I2DState* joystick_action{manager.create_state(instance)};
+  I2DState* mouse_settings_action{manager.create_state(instance)};
+  I2DState* keyboard_group0{manager.create_state(instance)};
+  I2DState* keyboard_group1{manager.create_state(instance)};
+  I2DState* keyboard_group2{manager.create_state(instance)};
+  I2DState* keyboard_group3{manager.create_state(instance)};
   I2DState* back_action{manager.create_state(instance)};
 
   if (root == nullptr || video == nullptr || audio == nullptr || game == nullptr ||
-      controls_action == nullptr || back_action == nullptr) {
+      controls == nullptr || keyboard_categories == nullptr || joystick_action == nullptr ||
+      mouse_settings_action == nullptr || keyboard_group0 == nullptr ||
+      keyboard_group1 == nullptr || keyboard_group2 == nullptr || keyboard_group3 == nullptr ||
+      back_action == nullptr) {
     App::Log::error(LogCategory::I2D, "failed to allocate the OPTIONS state graph");
     return;
   }
 
-  const std::array<I2DState*, 5> targets{
-      video, audio, game, controls_action, back_action};
+  const std::array<I2DState*, 5> targets{video, audio, game, controls, back_action};
   for (I2DState* target : targets) {
     target->parent = root;
   }
 
-  controls_action->on_enter = [](InterfaceManager&, InterfaceInstance&, I2DState&) {
+  keyboard_categories->parent = controls;
+  joystick_action->parent = controls;
+  mouse_settings_action->parent = controls;
+  keyboard_group0->parent = keyboard_categories;
+  keyboard_group1->parent = keyboard_categories;
+  keyboard_group2->parent = keyboard_categories;
+  keyboard_group3->parent = keyboard_categories;
+
+  joystick_action->on_enter = [](InterfaceManager&, InterfaceInstance&, I2DState&) {
+    App::Log::info(
+        LogCategory::Interface, "joystick controls require the future SDL gamepad device layer");
+  };
+  mouse_settings_action->on_enter = [](InterfaceManager&, InterfaceInstance&, I2DState&) {
     App::Log::info(LogCategory::Interface,
-        "OPTIONS page \"controls\" is deferred to the input/rebinding phase");
+        "Mouse Settings is deferred until its Runtime type-1 sensitivity "
+        "lookup semantics are fully recovered");
   };
 
   back_action->on_enter =
@@ -1229,6 +1606,52 @@ void initialize_options(InterfaceManager& manager, InterfaceInstance& instance) 
   populate_options_page(manager, *audio, k_options_audio_page, *root);
   populate_options_page(manager, *game, k_options_game_page, *root);
 
+  // Controls root. Runtime's title is static; the four following entries are
+  // Keyboard/Mouse, Joystick, Mouse Settings and Back.
+  const std::array<I2DState*, 5> controls_targets{
+      nullptr, keyboard_categories, joystick_action, mouse_settings_action, root};
+  I2DGroup controls_rows;
+  controls_rows.runtime_flags = k_options_text_flags;
+  std::size_t controls_index{0};
+  for (const OptionsRowDefinition& row : k_options_controls_page.rows) {
+    controls_rows.elements.push_back(I2DElement{.data = make_options_text(manager,
+                                                    row,
+                                                    controls_index,
+                                                    k_options_controls_page.rows.size(),
+                                                    controls_targets.at(controls_index)),
+        .presentation = I2DPresentationHints{}});
+    ++controls_index;
+  }
+  controls->groups.push_back(std::move(controls_rows));
+  controls->selected_element = 0U;
+
+  // Keyboard/mouse category menu, Runtime builder 0x00491BB0 in device mode 1.
+  const std::array<I2DState*, 6> category_targets{
+      nullptr, keyboard_group0, keyboard_group1, keyboard_group2, keyboard_group3, controls};
+  I2DGroup category_rows;
+  category_rows.runtime_flags = k_options_text_flags;
+  std::size_t category_index{0};
+  for (const OptionsRowDefinition& row : k_options_keyboard_categories_page.rows) {
+    category_rows.elements.push_back(I2DElement{.data = make_options_text(manager,
+                                                    row,
+                                                    category_index,
+                                                    k_options_keyboard_categories_page.rows.size(),
+                                                    category_targets.at(category_index)),
+        .presentation = I2DPresentationHints{}});
+    ++category_index;
+  }
+  keyboard_categories->groups.push_back(std::move(category_rows));
+  keyboard_categories->selected_element = 0U;
+
+  populate_keyboard_binding_page(
+      manager, *keyboard_group0, k_options_keyboard_group0_page, *keyboard_categories);
+  populate_keyboard_binding_page(
+      manager, *keyboard_group1, k_options_keyboard_group1_page, *keyboard_categories);
+  populate_keyboard_binding_page(
+      manager, *keyboard_group2, k_options_keyboard_group2_page, *keyboard_categories);
+  populate_keyboard_binding_page(
+      manager, *keyboard_group3, k_options_keyboard_group3_page, *keyboard_categories);
+
   instance.root_state = root;
   instance.current_state = root;
 
@@ -1240,8 +1663,8 @@ void initialize_options(InterfaceManager& manager, InterfaceInstance& instance) 
 }
 
 // Runtime OPTIONS destroy callback: 0x00490F30. Resource release remains RAII.
-void destroy_options(
-    [[maybe_unused]] InterfaceManager& manager, [[maybe_unused]] InterfaceInstance& instance) {
+void destroy_options(InterfaceManager& manager, [[maybe_unused]] InterfaceInstance& instance) {
+  manager.cancel_physical_input_capture();
   App::Log::debug(LogCategory::I2D, "destroying OPTIONS state");
 }
 
