@@ -9,6 +9,9 @@ on:
 env:
   BUILD_TYPE: Release
 
+permissions:
+  contents: read
+
 jobs:
   build:
     strategy:
@@ -27,6 +30,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
+            nasm \
             libx11-dev libxft-dev libxext-dev \
             libwayland-dev libxkbcommon-dev libegl1-mesa-dev \
             libibus-1.0-dev libdecor-0-dev libgl1-mesa-dev
