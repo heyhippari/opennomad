@@ -2,6 +2,7 @@
 
 #include <SDL3/SDL_error.h>
 #include <SDL3/SDL_events.h>
+#include <SDL3/SDL_keyboard.h>
 #include <SDL3/SDL_video.h>
 #include <fmt/format.h>
 #include <glad/glad.h>
@@ -787,14 +788,19 @@ std::vector<App::Settings::SettingChoice> copy_runtime_choices(
   return choices;
 }
 
-void seed_video_settings(InterfaceManager& manager, const InterfaceInstance& instance) {
-  for (const OptionsRowDefinition& row : k_options_video_page.rows) {
+void seed_choice_settings(InterfaceManager& manager,
+    const InterfaceInstance& instance,
+    const OptionsPageDefinition& page) {
+  for (const OptionsRowDefinition& row : page.rows) {
     if (row.kind == OptionsRowKind::k_enum) {
       manager.game_settings().ensure_choice(
           std::string{row.stable_id}, copy_runtime_choices(instance, row), row.default_choice);
     }
   }
+}
 
+void seed_video_settings(InterfaceManager& manager, const InterfaceInstance& instance) {
+  seed_choice_settings(manager, instance, k_options_video_page);
   manager.game_settings().replace_choice("video.resolution",
       std::vector<App::Settings::SettingChoice>{App::Settings::SettingChoice{
           .label = current_options_resolution_label(), .raw_value = 0}},
@@ -803,6 +809,20 @@ void seed_video_settings(InterfaceManager& manager, const InterfaceInstance& ins
       std::vector<App::Settings::SettingChoice>{
           App::Settings::SettingChoice{.label = current_options_renderer_label(), .raw_value = 0}},
       0U);
+}
+
+void seed_audio_settings(InterfaceManager& manager, const InterfaceInstance& instance) {
+  seed_choice_settings(manager, instance, k_options_audio_page);
+
+  // Runtime's three volume controls are UI values 0..100, step 10. The
+  // corresponding saved attenuation defaults are zero, presented as 100%.
+  manager.game_settings().ensure_number("audio.dialogue_volume", 0, 100, 10, 100);
+  manager.game_settings().ensure_number("audio.ambient_volume", 0, 100, 10, 100);
+  manager.game_settings().ensure_number("audio.sfx_volume", 0, 100, 10, 100);
+}
+
+void seed_game_settings(InterfaceManager& manager, const InterfaceInstance& instance) {
+  seed_choice_settings(manager, instance, k_options_game_page);
 }
 
 I2DTextElement make_options_text(InterfaceManager& manager,
@@ -834,14 +854,27 @@ I2DTextElement make_options_text(InterfaceManager& manager,
     text.blue = 66;
   }
   if (slider_row) {
-    // Audio is the first Runtime page that consumes this. The renderer support
-    // lands in Phase 2 so Phase 3 only has to bind a numeric backend value.
     text.layout = I2DTextLayout::k_option_slider;
+    const std::string setting_id{definition.stable_id};
+    const App::Settings::GameSettings* settings{&manager.game_settings()};
+    text.value_scalar = [settings, setting_id]() {
+      return settings->number_fraction(setting_id);
+    };
+    text.on_adjust =
+        [setting_id](InterfaceManager& manager_ref, InterfaceInstance&, const std::int32_t delta) {
+          if (!manager_ref.game_settings().adjust_number(setting_id, delta)) {
+            return;
+          }
+          App::Log::debug(LogCategory::Interface,
+              "setting {} -> {}",
+              setting_id,
+              manager_ref.game_settings().number_value(setting_id).value_or(0));
+        };
   }
   if (choice_row) {
     text.layout = I2DTextLayout::k_option_pair;
     const std::string setting_id{definition.stable_id};
-    App::Settings::GameSettings* settings{&manager.game_settings()};
+    const App::Settings::GameSettings* settings{&manager.game_settings()};
     text.value_text = [settings, setting_id]() {
       return settings->choice_label(setting_id);
     };
@@ -859,6 +892,25 @@ I2DTextElement make_options_text(InterfaceManager& manager,
         };
   }
   return text;
+}
+
+void populate_options_page(InterfaceManager& manager,
+    I2DState& state,
+    const OptionsPageDefinition& page,
+    I2DState& back_target) {
+  I2DGroup rows;
+  rows.runtime_flags = k_options_text_flags;
+  std::size_t row_index{0};
+  for (const OptionsRowDefinition& row : page.rows) {
+    I2DState* target_state{row.kind == OptionsRowKind::k_back ? &back_target : nullptr};
+    rows.elements.push_back(
+        I2DElement{.data = make_options_text(
+                       manager, row, row_index, page.rows.size(), target_state),
+            .presentation = I2DPresentationHints{}});
+    ++row_index;
+  }
+  state.groups.push_back(std::move(rows));
+  state.selected_element = 0U;
 }
 
 // Runtime StartMenu initializer: 0x00479D10.
@@ -1102,41 +1154,34 @@ void destroy_start_menu(
 // Recovered root state: 0x004DD438.
 // Root page builder: 0x00491200.
 //
-// Phase 1 implements the real interface-35 lifecycle, resident START MENU
-// hosting, dynamic Runtime row layout, root-page navigation and extensible row
-// metadata. The four submenu bodies intentionally remain deferred to the
-// subsequent phases rather than showing guessed controls.
+// Video, Audio and Game are declarative Runtime-derived pages. Controls stays
+// deferred because capture/rebinding needs its own input-system phase.
 void initialize_options(InterfaceManager& manager, InterfaceInstance& instance) {
   App::Log::debug(LogCategory::I2D, "initializing OPTIONS root state");
 
   I2DState* root{manager.create_state(instance)};
   I2DState* video{manager.create_state(instance)};
-  I2DState* audio_action{manager.create_state(instance)};
-  I2DState* game_action{manager.create_state(instance)};
+  I2DState* audio{manager.create_state(instance)};
+  I2DState* game{manager.create_state(instance)};
   I2DState* controls_action{manager.create_state(instance)};
   I2DState* back_action{manager.create_state(instance)};
 
-  if (root == nullptr || video == nullptr || audio_action == nullptr || game_action == nullptr ||
+  if (root == nullptr || video == nullptr || audio == nullptr || game == nullptr ||
       controls_action == nullptr || back_action == nullptr) {
     App::Log::error(LogCategory::I2D, "failed to allocate the OPTIONS state graph");
     return;
   }
 
   const std::array<I2DState*, 5> targets{
-      video, audio_action, game_action, controls_action, back_action};
+      video, audio, game, controls_action, back_action};
   for (I2DState* target : targets) {
     target->parent = root;
   }
 
-  const std::array<std::string_view, 3> deferred_pages{"audio", "game", "controls"};
-  for (std::size_t index{0}; index < deferred_pages.size(); ++index) {
-    const std::string_view page_id{deferred_pages.at(index)};
-    targets.at(index + 1U)->on_enter = [page_id](InterfaceManager&, InterfaceInstance&, I2DState&) {
-      App::Log::info(LogCategory::Interface,
-          "OPTIONS page \"{}\" is deferred to a later implementation phase",
-          page_id);
-    };
-  }
+  controls_action->on_enter = [](InterfaceManager&, InterfaceInstance&, I2DState&) {
+    App::Log::info(LogCategory::Interface,
+        "OPTIONS page \"controls\" is deferred to the input/rebinding phase");
+  };
 
   back_action->on_enter =
       [](InterfaceManager& manager_ref, InterfaceInstance& instance_ref, I2DState&) {
@@ -1162,6 +1207,8 @@ void initialize_options(InterfaceManager& manager, InterfaceInstance& instance) 
   }
 
   seed_video_settings(manager, instance);
+  seed_audio_settings(manager, instance);
+  seed_game_settings(manager, instance);
 
   I2DGroup root_rows;
   root_rows.runtime_flags = k_options_text_flags;
@@ -1176,22 +1223,11 @@ void initialize_options(InterfaceManager& manager, InterfaceInstance& instance) 
   root->groups.push_back(std::move(root_rows));
   root->selected_element = 0U;
 
-  // Video page: title + seven Runtime value rows + Back. The title is static,
-  // so selected_element 0 addresses Resolution, matching Runtime's first
-  // adjustable row. Back links to the OPTIONS root and Escape follows parent.
-  I2DGroup video_rows;
-  video_rows.runtime_flags = k_options_text_flags;
-  std::size_t video_index{0};
-  for (const OptionsRowDefinition& row : k_options_video_page.rows) {
-    I2DState* target{row.kind == OptionsRowKind::k_back ? root : nullptr};
-    video_rows.elements.push_back(
-        I2DElement{.data = make_options_text(
-                       manager, row, video_index, k_options_video_page.rows.size(), target),
-            .presentation = I2DPresentationHints{}});
-    ++video_index;
-  }
-  video->groups.push_back(std::move(video_rows));
-  video->selected_element = 0U;
+  // Page population is intentionally generic: adding a future Runtime or
+  // OpenNomad page is data + settings registration, not another renderer path.
+  populate_options_page(manager, *video, k_options_video_page, *root);
+  populate_options_page(manager, *audio, k_options_audio_page, *root);
+  populate_options_page(manager, *game, k_options_game_page, *root);
 
   instance.root_state = root;
   instance.current_state = root;

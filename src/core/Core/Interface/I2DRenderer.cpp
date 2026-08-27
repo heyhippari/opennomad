@@ -245,9 +245,10 @@ std::expected<void, std::string> I2DRenderer::initialize() {
   constexpr std::size_t k_slider_texel_count{256U};
   std::array<std::uint8_t, k_slider_texel_count * 4U> slider_pixels{};
   for (std::size_t index{0}; index < k_slider_texel_count; ++index) {
-    const float t{static_cast<float>(index) / static_cast<float>(k_slider_texel_count - 1U)};
-    const float red{std::min(t * 2.0F, 1.0F)};
-    const float green{std::min((1.0F - t) * 2.0F, 1.0F)};
+    const float position{
+        static_cast<float>(index) / static_cast<float>(k_slider_texel_count - 1U)};
+    const float red{std::min(position * 2.0F, 1.0F)};
+    const float green{std::min((1.0F - position) * 2.0F, 1.0F)};
     const std::size_t pixel{index * 4U};
     slider_pixels.at(pixel) = static_cast<std::uint8_t>(red * 255.0F);
     slider_pixels.at(pixel + 1U) = static_cast<std::uint8_t>(green * 255.0F);
@@ -456,6 +457,7 @@ void I2DRenderer::render(const InterfaceInstance& instance,
 
           if (text->layout == I2DTextLayout::k_option_slider) {
             if (m_option_slider_texture.has_value()) {
+              const auto& slider_texture{*m_option_slider_texture};
               const float fraction{
                   std::clamp(text->value_scalar ? text->value_scalar() : 0.0F, 0.0F, 1.0F)};
               const float slider_x{centre_x + k_i2d_option_pair_half_gap};
@@ -463,7 +465,7 @@ void I2DRenderer::render(const InterfaceInstance& instance,
                   static_cast<float>(text->bounds.y) +
                   ((static_cast<float>(text->bounds.height) - k_i2d_option_slider_height) * 0.5F)};
               const std::array<float, 4> dim_tint{0.25F, 0.25F, 0.25F, 1.0F};
-              push_quad(*m_option_slider_texture,
+              push_quad(slider_texture,
                   slider_x,
                   slider_y,
                   slider_x + k_i2d_option_slider_width,
@@ -476,7 +478,7 @@ void I2DRenderer::render(const InterfaceInstance& instance,
                   I2DBlitOptions{});
               counters.quads += 1U;
               if (fraction > 0.0F) {
-                push_quad(*m_option_slider_texture,
+                push_quad(slider_texture,
                     slider_x,
                     slider_y,
                     slider_x + (k_i2d_option_slider_width * fraction),
@@ -504,400 +506,398 @@ void I2DRenderer::render(const InterfaceInstance& instance,
         }
       }
     }
+  }
 
+  flush();
+  counters.draw_calls += m_commands.size();
+
+  // Restore the GL state modified by the I2D pass.
+  glDisable(GL_BLEND);
+  glEnable(GL_CULL_FACE);
+  glEnable(GL_DEPTH_TEST);
+  Shader::unbind();
+  Texture2D::unbind();
+  VertexArray::unbind();
+}
+
+void I2DRenderer::render_overlay(const std::array<float, 3>& color,
+    const float alpha,
+    const int pixel_width,
+    const int pixel_height) {
+  if (!m_initialized || m_overlay_shader == nullptr || m_vertex_array == nullptr || alpha <= 0.0F) {
+    return;
+  }
+
+  glViewport(0, 0, pixel_width, pixel_height);
+
+  const std::array<GLfloat, 3> gl_color{color.at(0), color.at(1), color.at(2)};
+  m_overlay_shader->bind();
+  m_overlay_shader->set_uniform_vec3(
+      "u_color", std::span<const GLfloat, 3>{gl_color.data(), gl_color.size()});
+  m_overlay_shader->set_uniform_float("u_alpha", std::clamp(alpha, 0.0F, 1.0F));
+
+  glDisable(GL_DEPTH_TEST);
+  glDisable(GL_CULL_FACE);
+  glDepthMask(GL_FALSE);
+  glEnable(GL_BLEND);
+  glBlendEquation(GL_FUNC_ADD);
+  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+  m_vertex_array->bind();
+  glDrawArrays(GL_TRIANGLES, 0, 3);
+  VertexArray::unbind();
+
+  glDisable(GL_BLEND);
+  glDepthMask(GL_TRUE);
+  glEnable(GL_CULL_FACE);
+  glEnable(GL_DEPTH_TEST);
+  Shader::unbind();
+}
+
+float I2DRenderer::render_dialog(const Dialog::DialogPresentation& dialog,
+    const std::size_t selected_choice,
+    const float scroll_offset,
+    FontManager& fonts,
+    const int pixel_width,
+    const int pixel_height,
+    Debug::I2DCounters& counters) {
+  APP_PROFILE_FUNCTION();
+
+  if (!m_initialized || pixel_width <= 0 || pixel_height <= 0) {
+    return 0.0F;
+  }
+
+  const I2DPresentationTransform transform{make_presentation_transform(pixel_width, pixel_height)};
+  const FontResource* dialog_font{
+      fonts.ensure_font(dialog_font_key(), transform.pixels_per_reference_unit)};
+  if (dialog_font == nullptr) {
+    return 0.0F;
+  }
+
+  glViewport(0, 0, pixel_width, pixel_height);
+  glDisable(GL_DEPTH_TEST);
+  glDisable(GL_CULL_FACE);
+  glEnable(GL_BLEND);
+  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+  m_shader->bind();
+  m_shader->set_uniform_mat4(
+      "u_mvp", std::span<const GLfloat, 16>{glm::value_ptr(transform.projection), 16});
+  m_shader->set_uniform_int("u_texture0", 0);
+  reset();
+  float maximum_scroll{0.0F};
+
+  const auto draw_line = [this, &counters](const FontResource& font,
+                             const std::string_view line,
+                             const float origin_x,
+                             const float origin_y,
+                             const std::array<float, 4>& tint) {
+    float cursor_x{origin_x};
+    std::size_t byte_offset{0};
+    while (byte_offset < line.size()) {
+      const auto glyph{font.next_glyph(line, byte_offset)};
+      if (!glyph.has_value()) {
+        continue;
+      }
+      if (glyph->visible) {
+        push_quad(font.texture(),
+            cursor_x + glyph->x0,
+            origin_y + glyph->y0,
+            cursor_x + glyph->x1,
+            origin_y + glyph->y1,
+            glyph->u_left,
+            glyph->v_top,
+            glyph->u_right,
+            glyph->v_bottom,
+            tint,
+            I2DBlitOptions{});
+        counters.glyphs += 1U;
+        counters.quads += 1U;
+      }
+      cursor_x += glyph->advance_x;
+    }
+  };
+
+  if (dialog.state == Dialog::DialogState::k_presenting_line ||
+      dialog.state == Dialog::DialogState::k_presenting_automatic_player_line) {
+    const DialogTextLayout layout{format_dialog_text(dialog.displayed_line,
+        k_dialog_text_width,
+        k_dialog_main_viewport_height,
+        dialog_font->line_height(),
+        [dialog_font](const std::string_view text) {
+          return dialog_font->measure(text);
+        })};
+    maximum_scroll = layout.max_scroll();
+    float origin_y{
+        k_dialog_main_viewport_top - std::clamp(scroll_offset, 0.0F, layout.max_scroll())};
+    for (const DialogTextLine& line : layout.lines) {
+      draw_line(
+          *dialog_font, line.text, k_dialog_text_left, origin_y, dialog_main_tint(dialog.state));
+      origin_y += dialog_font->line_height();
+    }
+
+    std::array<GLint, 4> previous_scissor{};
+    glGetIntegerv(GL_SCISSOR_BOX, previous_scissor.data());
+    const GLboolean scissor_was_enabled{glIsEnabled(GL_SCISSOR_TEST)};
+    const float scale{transform.pixels_per_reference_unit};
+    const int scissor_x{std::clamp(
+        static_cast<int>(std::lround((k_dialog_text_left - transform.logical_left) * scale)),
+        0,
+        pixel_width)};
+    const int scissor_right{std::clamp(
+        static_cast<int>(std::lround(
+            ((k_dialog_text_left + k_dialog_text_width) - transform.logical_left) * scale)),
+        0,
+        pixel_width)};
+    const int scissor_y{std::clamp(
+        static_cast<int>(std::lround(
+            (k_reference_height - (k_dialog_main_viewport_top + k_dialog_main_viewport_height)) *
+            scale)),
+        0,
+        pixel_height)};
+    const int scissor_top{std::clamp(
+        static_cast<int>(std::lround((k_reference_height - k_dialog_main_viewport_top) * scale)),
+        0,
+        pixel_height)};
+    glEnable(GL_SCISSOR_TEST);
+    glScissor(scissor_x,
+        scissor_y,
+        std::max(0, scissor_right - scissor_x),
+        std::max(0, scissor_top - scissor_y));
     flush();
     counters.draw_calls += m_commands.size();
-
-    // Restore the GL state modified by the I2D pass.
-    glDisable(GL_BLEND);
-    glEnable(GL_CULL_FACE);
-    glEnable(GL_DEPTH_TEST);
-    Shader::unbind();
-    Texture2D::unbind();
-    VertexArray::unbind();
-  }
-
-  void I2DRenderer::render_overlay(const std::array<float, 3>& color,
-      const float alpha,
-      const int pixel_width,
-      const int pixel_height) {
-    if (!m_initialized || m_overlay_shader == nullptr || m_vertex_array == nullptr ||
-        alpha <= 0.0F) {
-      return;
-    }
-
-    glViewport(0, 0, pixel_width, pixel_height);
-
-    const std::array<GLfloat, 3> gl_color{color.at(0), color.at(1), color.at(2)};
-    m_overlay_shader->bind();
-    m_overlay_shader->set_uniform_vec3(
-        "u_color", std::span<const GLfloat, 3>{gl_color.data(), gl_color.size()});
-    m_overlay_shader->set_uniform_float("u_alpha", std::clamp(alpha, 0.0F, 1.0F));
-
-    glDisable(GL_DEPTH_TEST);
-    glDisable(GL_CULL_FACE);
-    glDepthMask(GL_FALSE);
-    glEnable(GL_BLEND);
-    glBlendEquation(GL_FUNC_ADD);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-    m_vertex_array->bind();
-    glDrawArrays(GL_TRIANGLES, 0, 3);
-    VertexArray::unbind();
-
-    glDisable(GL_BLEND);
-    glDepthMask(GL_TRUE);
-    glEnable(GL_CULL_FACE);
-    glEnable(GL_DEPTH_TEST);
-    Shader::unbind();
-  }
-
-  float I2DRenderer::render_dialog(const Dialog::DialogPresentation& dialog,
-      const std::size_t selected_choice,
-      const float scroll_offset,
-      FontManager& fonts,
-      const int pixel_width,
-      const int pixel_height,
-      Debug::I2DCounters& counters) {
-    APP_PROFILE_FUNCTION();
-
-    if (!m_initialized || pixel_width <= 0 || pixel_height <= 0) {
-      return 0.0F;
-    }
-
-    const I2DPresentationTransform transform{
-        make_presentation_transform(pixel_width, pixel_height)};
-    const FontResource* dialog_font{
-        fonts.ensure_font(dialog_font_key(), transform.pixels_per_reference_unit)};
-    if (dialog_font == nullptr) {
-      return 0.0F;
-    }
-
-    glViewport(0, 0, pixel_width, pixel_height);
-    glDisable(GL_DEPTH_TEST);
-    glDisable(GL_CULL_FACE);
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-    m_shader->bind();
-    m_shader->set_uniform_mat4(
-        "u_mvp", std::span<const GLfloat, 16>{glm::value_ptr(transform.projection), 16});
-    m_shader->set_uniform_int("u_texture0", 0);
     reset();
-    float maximum_scroll{0.0F};
+    if (scissor_was_enabled == GL_TRUE) {
+      glScissor(previous_scissor.at(0),
+          previous_scissor.at(1),
+          previous_scissor.at(2),
+          previous_scissor.at(3));
+    } else {
+      glDisable(GL_SCISSOR_TEST);
+    }
+  }
 
-    const auto draw_line = [this, &counters](const FontResource& font,
-                               const std::string_view line,
-                               const float origin_x,
-                               const float origin_y,
-                               const std::array<float, 4>& tint) {
-      float cursor_x{origin_x};
-      std::size_t byte_offset{0};
-      while (byte_offset < line.size()) {
-        const auto glyph{font.next_glyph(line, byte_offset)};
-        if (!glyph.has_value()) {
-          continue;
-        }
-        if (glyph->visible) {
-          push_quad(font.texture(),
-              cursor_x + glyph->x0,
-              origin_y + glyph->y0,
-              cursor_x + glyph->x1,
-              origin_y + glyph->y1,
-              glyph->u_left,
-              glyph->v_top,
-              glyph->u_right,
-              glyph->v_bottom,
-              tint,
-              I2DBlitOptions{});
-          counters.glyphs += 1U;
-          counters.quads += 1U;
-        }
-        cursor_x += glyph->advance_x;
-      }
-    };
-
-    if (dialog.state == Dialog::DialogState::k_presenting_line ||
-        dialog.state == Dialog::DialogState::k_presenting_automatic_player_line) {
-      const DialogTextLayout layout{format_dialog_text(dialog.displayed_line,
+  if (dialog.state == Dialog::DialogState::k_waiting_for_choice) {
+    const std::size_t response_count{std::min<std::size_t>(4U, dialog.choices.size())};
+    std::vector<DialogTextLayout> response_layouts;
+    std::vector<float> response_heights;
+    response_layouts.reserve(response_count);
+    response_heights.reserve(response_count);
+    const std::size_t maximum_response_lines{static_cast<std::size_t>(
+        std::floor(k_dialog_response_max_height / dialog_font->line_height()))};
+    for (std::size_t choice_index{0}; choice_index < response_count; ++choice_index) {
+      response_layouts.push_back(format_dialog_text(dialog.choices.at(choice_index).text,
           k_dialog_text_width,
-          k_dialog_main_viewport_height,
+          k_dialog_response_max_height,
           dialog_font->line_height(),
           [dialog_font](const std::string_view text) {
             return dialog_font->measure(text);
-          })};
-      maximum_scroll = layout.max_scroll();
-      float origin_y{
-          k_dialog_main_viewport_top - std::clamp(scroll_offset, 0.0F, layout.max_scroll())};
-      for (const DialogTextLine& line : layout.lines) {
-        draw_line(
-            *dialog_font, line.text, k_dialog_text_left, origin_y, dialog_main_tint(dialog.state));
+          }));
+      const std::size_t visible_line_count{
+          std::min(maximum_response_lines, response_layouts.back().lines.size())};
+      response_heights.push_back(
+          static_cast<float>(visible_line_count) * dialog_font->line_height());
+    }
+    const DialogResponseBlockLayout block{layout_dialog_responses(response_heights)};
+    for (std::size_t choice_index{0}; choice_index < response_count; ++choice_index) {
+      float origin_y{block.response_tops.at(choice_index)};
+      const float response_bottom{origin_y + response_heights.at(choice_index)};
+      for (const DialogTextLine& line : response_layouts.at(choice_index).lines) {
+        if (origin_y + dialog_font->line_height() > response_bottom) {
+          break;
+        }
+        draw_line(*dialog_font,
+            line.text,
+            k_dialog_text_left,
+            origin_y,
+            dialog_response_tint(choice_index == selected_choice));
         origin_y += dialog_font->line_height();
       }
+    }
+  }
 
-      std::array<GLint, 4> previous_scissor{};
-      glGetIntegerv(GL_SCISSOR_BOX, previous_scissor.data());
-      const GLboolean scissor_was_enabled{glIsEnabled(GL_SCISSOR_TEST)};
-      const float scale{transform.pixels_per_reference_unit};
-      const int scissor_x{std::clamp(
-          static_cast<int>(std::lround((k_dialog_text_left - transform.logical_left) * scale)),
-          0,
-          pixel_width)};
-      const int scissor_right{std::clamp(
-          static_cast<int>(std::lround(
-              ((k_dialog_text_left + k_dialog_text_width) - transform.logical_left) * scale)),
-          0,
-          pixel_width)};
-      const int scissor_y{std::clamp(
-          static_cast<int>(std::lround(
-              (k_reference_height - (k_dialog_main_viewport_top + k_dialog_main_viewport_height)) *
-              scale)),
-          0,
-          pixel_height)};
-      const int scissor_top{std::clamp(
-          static_cast<int>(std::lround((k_reference_height - k_dialog_main_viewport_top) * scale)),
-          0,
-          pixel_height)};
-      glEnable(GL_SCISSOR_TEST);
-      glScissor(scissor_x,
-          scissor_y,
-          std::max(0, scissor_right - scissor_x),
-          std::max(0, scissor_top - scissor_y));
-      flush();
-      counters.draw_calls += m_commands.size();
-      reset();
-      if (scissor_was_enabled == GL_TRUE) {
-        glScissor(previous_scissor.at(0),
-            previous_scissor.at(1),
-            previous_scissor.at(2),
-            previous_scissor.at(3));
-      } else {
-        glDisable(GL_SCISSOR_TEST);
+  flush();
+  counters.draw_calls += m_commands.size();
+  glDisable(GL_BLEND);
+  glEnable(GL_CULL_FACE);
+  glEnable(GL_DEPTH_TEST);
+  Shader::unbind();
+  Texture2D::unbind();
+  VertexArray::unbind();
+  return maximum_scroll;
+}
+
+void I2DRenderer::render_world_subtitle(const std::string_view text,
+    FontManager& fonts,
+    const int pixel_width,
+    const int pixel_height,
+    Debug::I2DCounters& counters) {
+  if (!m_initialized || text.empty() || pixel_width <= 0 || pixel_height <= 0) {
+    return;
+  }
+  const I2DPresentationTransform transform{make_presentation_transform(pixel_width, pixel_height)};
+  const FontResource* font{
+      fonts.ensure_font(dialog_font_key(), transform.pixels_per_reference_unit)};
+  if (font == nullptr) {
+    return;
+  }
+  const DialogTextLayout layout{format_dialog_text(text,
+      k_dialog_text_width,
+      k_dialog_main_viewport_height,
+      font->line_height(),
+      [font](const std::string_view value) {
+        return font->measure(value);
+      })};
+  if (layout.lines.empty()) {
+    return;
+  }
+  glViewport(0, 0, pixel_width, pixel_height);
+  glDisable(GL_DEPTH_TEST);
+  glDisable(GL_CULL_FACE);
+  glEnable(GL_BLEND);
+  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+  m_shader->bind();
+  m_shader->set_uniform_mat4(
+      "u_mvp", std::span<const GLfloat, 16>{glm::value_ptr(transform.projection), 16});
+  m_shader->set_uniform_int("u_texture0", 0);
+  reset();
+  float origin_y{k_dialog_main_viewport_top +
+                 ((k_dialog_main_viewport_height - layout.formatted_height) * 0.5F)};
+  for (const DialogTextLine& line : layout.lines) {
+    float cursor_x{(k_reference_width - line.width) * 0.5F};
+    std::size_t byte_offset{0};
+    while (byte_offset < line.text.size()) {
+      const auto glyph{font->next_glyph(line.text, byte_offset)};
+      if (!glyph.has_value()) {
+        continue;
       }
-    }
-
-    if (dialog.state == Dialog::DialogState::k_waiting_for_choice) {
-      const std::size_t response_count{std::min<std::size_t>(4U, dialog.choices.size())};
-      std::vector<DialogTextLayout> response_layouts;
-      std::vector<float> response_heights;
-      response_layouts.reserve(response_count);
-      response_heights.reserve(response_count);
-      const std::size_t maximum_response_lines{static_cast<std::size_t>(
-          std::floor(k_dialog_response_max_height / dialog_font->line_height()))};
-      for (std::size_t choice_index{0}; choice_index < response_count; ++choice_index) {
-        response_layouts.push_back(format_dialog_text(dialog.choices.at(choice_index).text,
-            k_dialog_text_width,
-            k_dialog_response_max_height,
-            dialog_font->line_height(),
-            [dialog_font](const std::string_view text) {
-              return dialog_font->measure(text);
-            }));
-        const std::size_t visible_line_count{
-            std::min(maximum_response_lines, response_layouts.back().lines.size())};
-        response_heights.push_back(
-            static_cast<float>(visible_line_count) * dialog_font->line_height());
+      if (glyph->visible) {
+        push_quad(font->texture(),
+            cursor_x + glyph->x0,
+            origin_y + glyph->y0,
+            cursor_x + glyph->x1,
+            origin_y + glyph->y1,
+            glyph->u_left,
+            glyph->v_top,
+            glyph->u_right,
+            glyph->v_bottom,
+            k_dialog_white,
+            I2DBlitOptions{});
+        counters.glyphs += 1U;
+        counters.quads += 1U;
       }
-      const DialogResponseBlockLayout block{layout_dialog_responses(response_heights)};
-      for (std::size_t choice_index{0}; choice_index < response_count; ++choice_index) {
-        float origin_y{block.response_tops.at(choice_index)};
-        const float response_bottom{origin_y + response_heights.at(choice_index)};
-        for (const DialogTextLine& line : response_layouts.at(choice_index).lines) {
-          if (origin_y + dialog_font->line_height() > response_bottom) {
-            break;
-          }
-          draw_line(*dialog_font,
-              line.text,
-              k_dialog_text_left,
-              origin_y,
-              dialog_response_tint(choice_index == selected_choice));
-          origin_y += dialog_font->line_height();
-        }
-      }
+      cursor_x += glyph->advance_x;
     }
-
-    flush();
-    counters.draw_calls += m_commands.size();
-    glDisable(GL_BLEND);
-    glEnable(GL_CULL_FACE);
-    glEnable(GL_DEPTH_TEST);
-    Shader::unbind();
-    Texture2D::unbind();
-    VertexArray::unbind();
-    return maximum_scroll;
+    origin_y += font->line_height();
   }
+  flush();
+  counters.draw_calls += m_commands.size();
+  glDisable(GL_BLEND);
+  glEnable(GL_CULL_FACE);
+  glEnable(GL_DEPTH_TEST);
+  Shader::unbind();
+  Texture2D::unbind();
+  VertexArray::unbind();
+}
 
-  void I2DRenderer::render_world_subtitle(const std::string_view text,
-      FontManager& fonts,
-      const int pixel_width,
-      const int pixel_height,
-      Debug::I2DCounters& counters) {
-    if (!m_initialized || text.empty() || pixel_width <= 0 || pixel_height <= 0) {
-      return;
-    }
-    const I2DPresentationTransform transform{
-        make_presentation_transform(pixel_width, pixel_height)};
-    const FontResource* font{
-        fonts.ensure_font(dialog_font_key(), transform.pixels_per_reference_unit)};
-    if (font == nullptr) {
-      return;
-    }
-    const DialogTextLayout layout{format_dialog_text(text,
-        k_dialog_text_width,
-        k_dialog_main_viewport_height,
-        font->line_height(),
-        [font](const std::string_view value) {
-          return font->measure(value);
-        })};
-    if (layout.lines.empty()) {
-      return;
-    }
-    glViewport(0, 0, pixel_width, pixel_height);
-    glDisable(GL_DEPTH_TEST);
-    glDisable(GL_CULL_FACE);
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-    m_shader->bind();
-    m_shader->set_uniform_mat4(
-        "u_mvp", std::span<const GLfloat, 16>{glm::value_ptr(transform.projection), 16});
-    m_shader->set_uniform_int("u_texture0", 0);
-    reset();
-    float origin_y{k_dialog_main_viewport_top +
-                   ((k_dialog_main_viewport_height - layout.formatted_height) * 0.5F)};
-    for (const DialogTextLine& line : layout.lines) {
-      float cursor_x{(k_reference_width - line.width) * 0.5F};
-      std::size_t byte_offset{0};
-      while (byte_offset < line.text.size()) {
-        const auto glyph{font->next_glyph(line.text, byte_offset)};
-        if (!glyph.has_value()) {
-          continue;
-        }
-        if (glyph->visible) {
-          push_quad(font->texture(),
-              cursor_x + glyph->x0,
-              origin_y + glyph->y0,
-              cursor_x + glyph->x1,
-              origin_y + glyph->y1,
-              glyph->u_left,
-              glyph->v_top,
-              glyph->u_right,
-              glyph->v_bottom,
-              k_dialog_white,
-              I2DBlitOptions{});
-          counters.glyphs += 1U;
-          counters.quads += 1U;
-        }
-        cursor_x += glyph->advance_x;
-      }
-      origin_y += font->line_height();
-    }
-    flush();
-    counters.draw_calls += m_commands.size();
-    glDisable(GL_BLEND);
-    glEnable(GL_CULL_FACE);
-    glEnable(GL_DEPTH_TEST);
-    Shader::unbind();
-    Texture2D::unbind();
-    VertexArray::unbind();
+void I2DRenderer::reset() {
+  m_vertices.clear();
+  m_indices.clear();
+  m_commands.clear();
+  m_current_texture = nullptr;
+  m_current_keyed = false;
+  m_current_key = std::array<float, 3>{0.0F, 0.0F, 0.0F};
+  m_current_first_index = 0;
+}
+
+void I2DRenderer::flush_command() {
+  if (m_current_texture == nullptr) {
+    return;
   }
-
-  void I2DRenderer::reset() {
-    m_vertices.clear();
-    m_indices.clear();
-    m_commands.clear();
-    m_current_texture = nullptr;
-    m_current_keyed = false;
-    m_current_key = std::array<float, 3>{0.0F, 0.0F, 0.0F};
-    m_current_first_index = 0;
+  const std::size_t index_count{m_indices.size() - m_current_first_index};
+  if (index_count == 0U) {
+    return;
   }
+  m_commands.push_back(DrawCommand{.first_index = m_current_first_index,
+      .index_count = index_count,
+      .texture = m_current_texture,
+      .source_colour_key = m_current_keyed,
+      .key = m_current_key});
+}
 
-  void I2DRenderer::flush_command() {
-    if (m_current_texture == nullptr) {
-      return;
-    }
-    const std::size_t index_count{m_indices.size() - m_current_first_index};
-    if (index_count == 0U) {
-      return;
-    }
-    m_commands.push_back(DrawCommand{.first_index = m_current_first_index,
-        .index_count = index_count,
-        .texture = m_current_texture,
-        .source_colour_key = m_current_keyed,
-        .key = m_current_key});
-  }
+void I2DRenderer::push_quad(const Texture2D& texture,
+    const float x0,
+    const float y0,
+    const float x1,
+    const float y1,
+    const float u0,
+    const float v0,
+    const float u1,
+    const float v1,
+    const std::array<float, 4> tint,
+    const I2DBlitOptions& blit_options) {
+  const bool keyed{blit_options.source_colour_key.has_value()};
+  const std::array<float, 3> key{
+      keyed ? *blit_options.source_colour_key : std::array<float, 3>{0.0F, 0.0F, 0.0F}};
 
-  void I2DRenderer::push_quad(const Texture2D& texture,
-      const float x0,
-      const float y0,
-      const float x1,
-      const float y1,
-      const float u0,
-      const float v0,
-      const float u1,
-      const float v1,
-      const std::array<float, 4> tint,
-      const I2DBlitOptions& blit_options) {
-    const bool keyed{blit_options.source_colour_key.has_value()};
-    const std::array<float, 3> key{
-        keyed ? *blit_options.source_colour_key : std::array<float, 3>{0.0F, 0.0F, 0.0F}};
-
-    if (m_current_texture != &texture || m_current_keyed != keyed || m_current_key != key) {
-      flush_command();
-      m_current_texture = &texture;
-      m_current_keyed = keyed;
-      m_current_key = key;
-      m_current_first_index = m_indices.size();
-    }
-
-    const std::uint32_t base{static_cast<std::uint32_t>(m_vertices.size())};
-    m_vertices.push_back(Vertex{.position = {x0, y0, 0.0F}, .uv = {u0, v0}, .color = tint});
-    m_vertices.push_back(Vertex{.position = {x1, y0, 0.0F}, .uv = {u1, v0}, .color = tint});
-    m_vertices.push_back(Vertex{.position = {x1, y1, 0.0F}, .uv = {u1, v1}, .color = tint});
-    m_vertices.push_back(Vertex{.position = {x0, y1, 0.0F}, .uv = {u0, v1}, .color = tint});
-
-    m_indices.push_back(base + 0U);
-    m_indices.push_back(base + 1U);
-    m_indices.push_back(base + 2U);
-    m_indices.push_back(base + 0U);
-    m_indices.push_back(base + 2U);
-    m_indices.push_back(base + 3U);
-  }
-
-  void I2DRenderer::flush() {
-    APP_PROFILE_SCOPE("I2D.BatchBuild");
-
+  if (m_current_texture != &texture || m_current_keyed != keyed || m_current_key != key) {
     flush_command();
-    if (m_vertices.empty() || m_commands.empty()) {
-      return;
-    }
-
-    {
-      APP_PROFILE_SCOPE("I2D.Draw");
-      m_vertex_buffer->upload(std::as_bytes(std::span<const Vertex>{m_vertices}));
-      m_index_buffer->upload(std::span<const std::uint32_t>{m_indices});
-
-      m_vertex_array->bind();
-      for (const DrawCommand& command : m_commands) {
-        // Every draw explicitly sets the source-colour-key state so a keyed
-        // draw never leaks into the next non-keyed draw.
-        if (command.source_colour_key) {
-          m_shader->set_uniform_int("u_source_colour_key_enabled", 1);
-          m_shader->set_uniform_vec3(
-              "u_source_colour_key", std::span<const GLfloat, 3>{command.key.data(), 3});
-        } else {
-          m_shader->set_uniform_int("u_source_colour_key_enabled", 0);
-        }
-
-        command.texture->bind(0);
-        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast, performance-no-int-to-ptr)
-        const auto* index_offset{reinterpret_cast<const void*>(
-            static_cast<std::uintptr_t>(command.first_index) * sizeof(std::uint32_t))};
-        glDrawElements(
-            GL_TRIANGLES, static_cast<GLsizei>(command.index_count), GL_UNSIGNED_INT, index_offset);
-      }
-      Texture2D::unbind();
-      VertexArray::unbind();
-    }
+    m_current_texture = &texture;
+    m_current_keyed = keyed;
+    m_current_key = key;
+    m_current_first_index = m_indices.size();
   }
+
+  const std::uint32_t base{static_cast<std::uint32_t>(m_vertices.size())};
+  m_vertices.push_back(Vertex{.position = {x0, y0, 0.0F}, .uv = {u0, v0}, .color = tint});
+  m_vertices.push_back(Vertex{.position = {x1, y0, 0.0F}, .uv = {u1, v0}, .color = tint});
+  m_vertices.push_back(Vertex{.position = {x1, y1, 0.0F}, .uv = {u1, v1}, .color = tint});
+  m_vertices.push_back(Vertex{.position = {x0, y1, 0.0F}, .uv = {u0, v1}, .color = tint});
+
+  m_indices.push_back(base + 0U);
+  m_indices.push_back(base + 1U);
+  m_indices.push_back(base + 2U);
+  m_indices.push_back(base + 0U);
+  m_indices.push_back(base + 2U);
+  m_indices.push_back(base + 3U);
+}
+
+void I2DRenderer::flush() {
+  APP_PROFILE_SCOPE("I2D.BatchBuild");
+
+  flush_command();
+  if (m_vertices.empty() || m_commands.empty()) {
+    return;
+  }
+
+  {
+    APP_PROFILE_SCOPE("I2D.Draw");
+    m_vertex_buffer->upload(std::as_bytes(std::span<const Vertex>{m_vertices}));
+    m_index_buffer->upload(std::span<const std::uint32_t>{m_indices});
+
+    m_vertex_array->bind();
+    for (const DrawCommand& command : m_commands) {
+      // Every draw explicitly sets the source-colour-key state so a keyed
+      // draw never leaks into the next non-keyed draw.
+      if (command.source_colour_key) {
+        m_shader->set_uniform_int("u_source_colour_key_enabled", 1);
+        m_shader->set_uniform_vec3(
+            "u_source_colour_key", std::span<const GLfloat, 3>{command.key.data(), 3});
+      } else {
+        m_shader->set_uniform_int("u_source_colour_key_enabled", 0);
+      }
+
+      command.texture->bind(0);
+      // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast, performance-no-int-to-ptr)
+      const auto* index_offset{reinterpret_cast<const void*>(
+          static_cast<std::uintptr_t>(command.first_index) * sizeof(std::uint32_t))};
+      glDrawElements(
+          GL_TRIANGLES, static_cast<GLsizei>(command.index_count), GL_UNSIGNED_INT, index_offset);
+    }
+    Texture2D::unbind();
+    VertexArray::unbind();
+  }
+}
 
 }  // namespace App::Interface
 

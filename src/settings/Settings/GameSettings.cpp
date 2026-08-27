@@ -57,6 +57,43 @@ std::size_t ChoiceSetting::choice_count() const {
   return m_choices.size();
 }
 
+NumericSetting::NumericSetting(const std::int32_t minimum,
+    const std::int32_t maximum,
+    const std::int32_t step,
+    const std::int32_t value)
+    : m_minimum(std::min(minimum, maximum)),
+      m_maximum(std::max(minimum, maximum)),
+      m_step(std::max<std::int32_t>(1, step)),
+      m_value(std::clamp(value, m_minimum, m_maximum)) {}
+
+bool NumericSetting::adjust(const std::int32_t delta) {
+  if (delta == 0) {
+    return false;
+  }
+
+  const std::int32_t previous{m_value};
+  const std::int64_t signed_step{
+      delta < 0 ? -static_cast<std::int64_t>(m_step) : static_cast<std::int64_t>(m_step)};
+  const std::int64_t candidate{static_cast<std::int64_t>(m_value) + signed_step};
+  const std::int64_t bounded{std::clamp(candidate,
+      static_cast<std::int64_t>(m_minimum),
+      static_cast<std::int64_t>(m_maximum))};
+  m_value = static_cast<std::int32_t>(bounded);
+  return previous != m_value;
+}
+
+std::int32_t NumericSetting::value() const {
+  return m_value;
+}
+
+float NumericSetting::fraction() const {
+  if (m_maximum <= m_minimum) {
+    return 0.0F;
+  }
+  return static_cast<float>(m_value - m_minimum) /
+         static_cast<float>(m_maximum - m_minimum);
+}
+
 void GameSettings::ensure_choice(std::string stable_id,
     std::vector<SettingChoice> choices,
     const std::size_t selected_index) {
@@ -74,9 +111,27 @@ void GameSettings::replace_choice(std::string stable_id,
       std::move(stable_id), ChoiceSetting{std::move(choices), selected_index});
 }
 
+void GameSettings::ensure_number(std::string stable_id,
+    const std::int32_t minimum,
+    const std::int32_t maximum,
+    const std::int32_t step,
+    const std::int32_t value) {
+  if (m_numbers.contains(stable_id)) {
+    return;
+  }
+  m_numbers.emplace(
+      std::move(stable_id), NumericSetting{minimum, maximum, step, value});
+}
+
 bool GameSettings::adjust_choice(
     const std::string_view stable_id, const std::int32_t delta) {
   ChoiceSetting* setting{find_choice(stable_id)};
+  return setting != nullptr && setting->adjust(delta);
+}
+
+bool GameSettings::adjust_number(
+    const std::string_view stable_id, const std::int32_t delta) {
+  NumericSetting* setting{find_number(stable_id)};
   return setting != nullptr && setting->adjust(delta);
 }
 
@@ -91,6 +146,18 @@ std::optional<std::int32_t> GameSettings::choice_raw_value(
   return setting == nullptr ? std::nullopt : setting->raw_value();
 }
 
+std::optional<std::int32_t> GameSettings::number_value(
+    const std::string_view stable_id) const {
+  const NumericSetting* setting{find_number(stable_id)};
+  return setting == nullptr ? std::nullopt
+                            : std::optional<std::int32_t>{setting->value()};
+}
+
+float GameSettings::number_fraction(const std::string_view stable_id) const {
+  const NumericSetting* setting{find_number(stable_id)};
+  return setting == nullptr ? 0.0F : setting->fraction();
+}
+
 ChoiceSetting* GameSettings::find_choice(const std::string_view stable_id) {
   const auto found{m_choices.find(stable_id)};
   return found == m_choices.end() ? nullptr : &found->second;
@@ -99,6 +166,16 @@ ChoiceSetting* GameSettings::find_choice(const std::string_view stable_id) {
 const ChoiceSetting* GameSettings::find_choice(const std::string_view stable_id) const {
   const auto found{m_choices.find(stable_id)};
   return found == m_choices.end() ? nullptr : &found->second;
+}
+
+NumericSetting* GameSettings::find_number(const std::string_view stable_id) {
+  const auto found{m_numbers.find(stable_id)};
+  return found == m_numbers.end() ? nullptr : &found->second;
+}
+
+const NumericSetting* GameSettings::find_number(const std::string_view stable_id) const {
+  const auto found{m_numbers.find(stable_id)};
+  return found == m_numbers.end() ? nullptr : &found->second;
 }
 
 }  // namespace App::Settings

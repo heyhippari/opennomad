@@ -183,6 +183,22 @@ inline constexpr std::array<OptionsChoiceDefinition, 3> k_options_detail_choices
     {.runtime_string_index = 75, .raw_value = 2, .literal_label = {}},
 }};
 
+inline constexpr std::array<OptionsChoiceDefinition, 2> k_options_3d_sound_choices{{
+    {.runtime_string_index = 62, .raw_value = 0, .literal_label = {}},
+    {.runtime_string_index = 63, .raw_value = 1, .literal_label = {}},
+}};
+
+inline constexpr std::array<OptionsChoiceDefinition, 3> k_options_difficulty_choices{{
+    {.runtime_string_index = 64, .raw_value = 0, .literal_label = {}},
+    {.runtime_string_index = 65, .raw_value = 1, .literal_label = {}},
+    {.runtime_string_index = 66, .raw_value = 2, .literal_label = {}},
+}};
+
+inline constexpr std::array<OptionsChoiceDefinition, 2> k_options_fight_camera_choices{{
+    {.runtime_string_index = 23, .raw_value = 0, .literal_label = {}},
+    {.runtime_string_index = 24, .raw_value = 1, .literal_label = {}},
+}};
+
 /// Runtime Video page builder @ 0x004913F0 activates descriptors
 /// 1,2,3,4,5,6,7,8 and 72 in this exact order.
 ///
@@ -273,6 +289,113 @@ inline constexpr std::array<OptionsRowDefinition, 9> k_options_video_rows{{
 inline constexpr OptionsPageDefinition k_options_video_page{
     .stable_id = "video", .rows = std::span<const OptionsRowDefinition>{k_options_video_rows}};
 
+/// Runtime Audio page builder @ 0x00491640 activates descriptors
+/// 9,10,11,12,13 and 72.
+///
+/// The three type-1 rows are bounded 0..100 values. Runtime's generic options
+/// input handler changes them by 10 per left/right press and clamps at the
+/// endpoints. OMK_SAVE initializes the corresponding attenuation fields to
+/// zero, which the Runtime callbacks present as UI volume 100.
+inline constexpr std::array<OptionsRowDefinition, 6> k_options_audio_rows{{
+    {.stable_id = "audio.title",
+        .runtime_option_index = 9,
+        .runtime_label_string_index = 16,
+        .kind = OptionsRowKind::k_submenu,
+        .choices = {},
+        .default_choice = 0,
+        .literal_label = {},
+        .accent = true},
+    {.stable_id = "audio.dialogue_volume",
+        .runtime_option_index = 10,
+        .runtime_label_string_index = 17,
+        .kind = OptionsRowKind::k_slider,
+        .choices = {},
+        .default_choice = 0,
+        .literal_label = {},
+        .accent = false},
+    {.stable_id = "audio.ambient_volume",
+        .runtime_option_index = 11,
+        .runtime_label_string_index = 18,
+        .kind = OptionsRowKind::k_slider,
+        .choices = {},
+        .default_choice = 0,
+        .literal_label = {},
+        .accent = false},
+    {.stable_id = "audio.sfx_volume",
+        .runtime_option_index = 12,
+        .runtime_label_string_index = 19,
+        .kind = OptionsRowKind::k_slider,
+        .choices = {},
+        .default_choice = 0,
+        .literal_label = {},
+        .accent = false},
+    {.stable_id = "audio.3d_sound",
+        .runtime_option_index = 13,
+        .runtime_label_string_index = 20,
+        .kind = OptionsRowKind::k_enum,
+        .choices = std::span<const OptionsChoiceDefinition>{k_options_3d_sound_choices},
+        .default_choice = 1,
+        .literal_label = {},
+        .accent = false},
+    {.stable_id = "audio.back",
+        .runtime_option_index = 72,
+        .runtime_label_string_index = 80,
+        .kind = OptionsRowKind::k_back,
+        .choices = {},
+        .default_choice = 0,
+        .literal_label = {},
+        .accent = false},
+}};
+inline constexpr OptionsPageDefinition k_options_audio_page{
+    .stable_id = "audio", .rows = std::span<const OptionsRowDefinition>{k_options_audio_rows}};
+
+/// Runtime Game page builder @ 0x00491810 activates descriptors
+/// 14,16,17,18 and 72. All three values default to raw/index 1.
+inline constexpr std::array<OptionsRowDefinition, 5> k_options_game_rows{{
+    {.stable_id = "game.title",
+        .runtime_option_index = 14,
+        .runtime_label_string_index = 21,
+        .kind = OptionsRowKind::k_submenu,
+        .choices = {},
+        .default_choice = 0,
+        .literal_label = {},
+        .accent = true},
+    {.stable_id = "game.fight_difficulty",
+        .runtime_option_index = 16,
+        .runtime_label_string_index = 26,
+        .kind = OptionsRowKind::k_enum,
+        .choices = std::span<const OptionsChoiceDefinition>{k_options_difficulty_choices},
+        .default_choice = 1,
+        .literal_label = {},
+        .accent = false},
+    {.stable_id = "game.shoot_difficulty",
+        .runtime_option_index = 17,
+        .runtime_label_string_index = 27,
+        .kind = OptionsRowKind::k_enum,
+        .choices = std::span<const OptionsChoiceDefinition>{k_options_difficulty_choices},
+        .default_choice = 1,
+        .literal_label = {},
+        .accent = false},
+    {.stable_id = "game.fight_camera",
+        .runtime_option_index = 18,
+        .runtime_label_string_index = 22,
+        .kind = OptionsRowKind::k_enum,
+        .choices = std::span<const OptionsChoiceDefinition>{k_options_fight_camera_choices},
+        .default_choice = 1,
+        .literal_label = {},
+        .accent = false},
+    {.stable_id = "game.back",
+        .runtime_option_index = 72,
+        .runtime_label_string_index = 80,
+        .kind = OptionsRowKind::k_back,
+        .choices = {},
+        .default_choice = 0,
+        .literal_label = {},
+        .accent = false},
+}};
+inline constexpr OptionsPageDefinition k_options_game_page{
+    .stable_id = "game", .rows = std::span<const OptionsRowDefinition>{k_options_game_rows}};
+
 // The five-entry START MENU root page is the easiest sanity check of the
 // recovered layout helper: 120 + N*65.
 static_assert(runtime_options_row_step(k_options_root_rows.size()) == 65);
@@ -293,5 +416,17 @@ static_assert(runtime_options_row_y(
                   0, k_options_video_rows.size(), OptionsInvocationMode::k_start_menu) == 120);
 static_assert(runtime_options_row_y(
                   8, k_options_video_rows.size(), OptionsInvocationMode::k_start_menu) == 376);
+
+// Six Audio rows use a 52-unit step: 120,172,224,276,328,380.
+static_assert(runtime_options_row_step(k_options_audio_rows.size()) == 52);
+static_assert(runtime_options_row_y(
+                  0, k_options_audio_rows.size(), OptionsInvocationMode::k_start_menu) == 120);
+static_assert(runtime_options_row_y(
+                  5, k_options_audio_rows.size(), OptionsInvocationMode::k_start_menu) == 380);
+
+// Five Game rows share the root page's 65-unit step: 120..380.
+static_assert(runtime_options_row_step(k_options_game_rows.size()) == 65);
+static_assert(runtime_options_row_y(
+                  4, k_options_game_rows.size(), OptionsInvocationMode::k_start_menu) == 380);
 
 }  // namespace App::Interface

@@ -45,11 +45,37 @@ class ChoiceSetting {
   std::size_t m_selected_index{0};
 };
 
+/// Backend state for one bounded numeric setting.
+///
+/// Runtime type-1 OPTIONS rows use this for the three 0..100 volume sliders.
+/// Keeping it generic makes the same storage useful for future OpenNomad
+/// numeric options without coupling Settings to the I2D renderer.
+class NumericSetting {
+ public:
+  NumericSetting(std::int32_t minimum,
+      std::int32_t maximum,
+      std::int32_t step,
+      std::int32_t value);
+
+  /// Moves one step in the sign of `delta`, clamped to [minimum, maximum].
+  /// Returns true only when the value changed.
+  bool adjust(std::int32_t delta);
+
+  [[nodiscard]] std::int32_t value() const;
+  [[nodiscard]] float fraction() const;
+
+ private:
+  std::int32_t m_minimum{0};
+  std::int32_t m_maximum{100};
+  std::int32_t m_step{10};
+  std::int32_t m_value{100};
+};
+
 /// Process-lifetime OpenNomad settings registry.
 ///
-/// Phase 2 needs discrete values for the Runtime Video page. Sliders and
-/// persistence can be added alongside ChoiceSetting later without changing the
-/// I2D row model or making interface elements own game configuration.
+/// Choice and numeric values are owned here rather than by interface elements.
+/// This lets OPTIONS close/reopen without losing edits and leaves one stable
+/// backend for later persistence and engine consumers.
 class GameSettings {
  public:
   /// Defines a setting only when the stable ID is not already present.
@@ -64,18 +90,32 @@ class GameSettings {
       std::vector<SettingChoice> choices,
       std::size_t selected_index);
 
+  /// Defines a bounded numeric setting only when the stable ID is new.
+  void ensure_number(std::string stable_id,
+      std::int32_t minimum,
+      std::int32_t maximum,
+      std::int32_t step,
+      std::int32_t value);
+
   bool adjust_choice(std::string_view stable_id, std::int32_t delta);
+  bool adjust_number(std::string_view stable_id, std::int32_t delta);
 
   [[nodiscard]] std::string choice_label(std::string_view stable_id) const;
   [[nodiscard]] std::optional<std::int32_t> choice_raw_value(
       std::string_view stable_id) const;
-
+  [[nodiscard]] std::optional<std::int32_t> number_value(
+      std::string_view stable_id) const;
+  [[nodiscard]] float number_fraction(std::string_view stable_id) const;
+ 
   [[nodiscard]] ChoiceSetting* find_choice(std::string_view stable_id);
   [[nodiscard]] const ChoiceSetting* find_choice(std::string_view stable_id) const;
-
+  [[nodiscard]] NumericSetting* find_number(std::string_view stable_id);
+  [[nodiscard]] const NumericSetting* find_number(std::string_view stable_id) const;
+ 
  private:
   // Transparent comparator permits find(string_view) without temporary keys.
   std::map<std::string, ChoiceSetting, std::less<>> m_choices;
+  std::map<std::string, NumericSetting, std::less<>> m_numbers;
 };
 
 }  // namespace App::Settings
