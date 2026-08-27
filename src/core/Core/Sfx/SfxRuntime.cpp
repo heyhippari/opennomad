@@ -172,6 +172,7 @@ std::expected<void, std::string> Runtime::link() {
       m_definitions_by_node.at(index) = &m_data.definitions.at(found->second);
     }
   }
+  m_definition_indices = std::move(definition_ids);
   return {};
 }
 
@@ -228,6 +229,15 @@ std::size_t Runtime::trigger(const std::int32_t type, const std::int32_t id) {
     }
   }
   return activated;
+}
+
+void Runtime::emit_definition(const std::int32_t definition_id, const App::Runtime::Vec3 position) {
+  const auto found{m_definition_indices.find(definition_id)};
+  if (found == m_definition_indices.end()) {
+    App::Log::warn(LogCategory::Scenario, "Cin-SFX definition ID {} does not exist", definition_id);
+    return;
+  }
+  enqueue_request(m_data.definitions.at(found->second), position);
 }
 
 // Retail activation recursively follows node references; the stack guard
@@ -453,11 +463,14 @@ void Runtime::service_requests() {
     if (request.sound_countdown >= 0.0F) {
       request.sound_countdown -= 1.0F;
       if (request.sound_countdown < 0.0F && request.definition->sound_id != 0x0000FFFF &&
-          request.definition->sound_id != -1 && !m_sound_unsupported_warned) {
-        m_sound_unsupported_warned = true;
-        App::Log::warn(LogCategory::Audio,
-            "SFX sound ID {} is preserved but playback is unsupported",
-            request.definition->sound_id);
+          request.definition->sound_id != -1) {
+        auto played{m_host.play_sfx_sound(request.definition->sound_id, request.position)};
+        if (!played) {
+          App::Log::warn(LogCategory::Audio,
+              "SFX sound hID {} could not be played: {}",
+              request.definition->sound_id,
+              played.error());
+        }
       }
     }
     if (request.emission_countdown >= 0.0F) {

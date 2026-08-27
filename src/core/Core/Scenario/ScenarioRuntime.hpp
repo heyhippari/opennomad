@@ -213,6 +213,8 @@ class ScenarioRuntime final : public Script::ScriptWorld, private Sfx::Host {
   void destroy_sfx_sprite(Sprite::SpriteHandle handle) override;
   [[nodiscard]] std::optional<Runtime::Transform> resolve_sfx_character_anchor(
       std::int32_t packed_reference_id) const override;
+  [[nodiscard]] std::expected<void, std::string> play_sfx_sound(
+      std::int32_t authored_h_id, Runtime::Vec3 position) override;
 
   /// Decodes one embedded sprite resource and uploads its GPU textures on
   /// first use (idempotent).
@@ -222,6 +224,7 @@ class ScenarioRuntime final : public Script::ScriptWorld, private Sfx::Host {
       std::size_t resource_index);
   [[nodiscard]] std::expected<const Omikron::Path3DP*, std::string> path_resource(
       std::size_t resource_index);
+    void service_cin_sfx(Character::RuntimeCharacter& character, std::size_t animation_index);
 
   std::vector<std::byte> m_scx_bytes;
   Omikron::ScxData m_scx;
@@ -245,6 +248,7 @@ class ScenarioRuntime final : public Script::ScriptWorld, private Sfx::Host {
   std::unique_ptr<Script::ScriptRuntime> m_script_runtime;
   std::optional<Omikron::SfxData> m_sfx_data;
   std::unique_ptr<Sfx::Runtime> m_sfx_runtime;
+    std::vector<std::optional<std::size_t>> m_cin_sfx_bindings;
   /// Runtime sound resources parallel to `m_scx.sounds` (lazily loaded).
   std::vector<Audio::SoundResourceId> m_sound_resources;
   /// Non-owning audio subsystem injected by the application.

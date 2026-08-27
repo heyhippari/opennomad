@@ -123,6 +123,13 @@ Scenario SFX
     RIFF/WAVE payloads
     controlled by structured Script_* functions
 
+SFX definition sound IDs are scenario-local DEAD0003 `ScxSoundRecord::h_id`
+values, not indices into the sound table. OpenNomad resolves the first matching
+hID, loads its parallel embedded WAVE through the normal sound-resource cache,
+and submits a one-shot spatial request. Runtime-native SFX emitter distances
+are minimum `78` inches and maximum `585` inches; conversion to metres remains
+at the ScenarioRuntime audio boundary.
+
 I2D/UI sounds
     WAV-like named resources under I2D paths
 

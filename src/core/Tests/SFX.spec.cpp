@@ -58,6 +58,20 @@ Buffer& node(Buffer& buffer) {
       .u32(0x44444444U);
 }
 
+Buffer& cin_record(Buffer& buffer) {
+  return buffer.u32(0x01020304U)
+      .u32(0xABCD1234U)
+      .u32(0x00000088U)
+      .i32(11)
+      .f32(12.5F)
+      .f32(13.5F)
+      .i32(14)
+      .i32(21)
+      .f32(22.5F)
+      .f32(23.5F)
+      .i32(24);
+}
+
 Buffer& point(Buffer& buffer,
     const std::int32_t id,
     const std::int32_t definition_id,
@@ -78,9 +92,9 @@ std::vector<std::byte> complete_fixture(const std::uint32_t count_high_bits = 0U
   buffer.u32(App::Omikron::k_sfx_magic)
       .u32(count_high_bits | 1U)
       .zeros(0x28U)
-      .u32(count_high_bits | 1U)
-      .zeros(0x2CU)
       .u32(count_high_bits | 1U);
+  cin_record(buffer);
+  buffer.u32(count_high_bits | 1U);
   definition(buffer);
   buffer.u32(count_high_bits | 1U).zeros(0x10U).u32(count_high_bits | 1U);
   node(buffer);
@@ -112,6 +126,25 @@ TEST_SUITE("Core::Omikron::SFX") {
     CHECK(parsed->magic == App::Omikron::k_sfx_magic);
     REQUIRE(parsed->records_a.size() == 1U);
     REQUIRE(parsed->records_b.size() == 1U);
+    const App::Omikron::SfxCinAnimationRecord& cin{parsed->records_b.front()};
+    CHECK(cin.association_id == 0x01020304U);
+    CHECK(cin.animation_lookup_raw == 0xABCD1234U);
+    CHECK(cin.animation_lookup_id() == 0x1234U);
+    CHECK(cin.flags == 0x88U);
+    CHECK(cin.channel1_definition_id == 11);
+    CHECK(cin.channel1_start == doctest::Approx(12.5F));
+    CHECK(cin.channel1_end == doctest::Approx(13.5F));
+    CHECK(cin.channel1_object_ref == 14);
+    CHECK(cin.channel2_definition_id == 21);
+    CHECK(cin.channel2_start == doctest::Approx(22.5F));
+    CHECK(cin.channel2_end == doctest::Approx(23.5F));
+    CHECK(cin.channel2_object_ref == 24);
+    CHECK(cin.cin_sfx_enabled());
+    CHECK(cin.channel1_enabled());
+    CHECK_FALSE(cin.channel2_enabled());
+    CHECK(App::Omikron::SfxCinAnimationRecord{.flags = 0x80U}.cin_sfx_enabled());
+    CHECK(App::Omikron::SfxCinAnimationRecord{.flags = 0x08U}.channel1_enabled());
+    CHECK(App::Omikron::SfxCinAnimationRecord{.flags = 0x10U}.channel2_enabled());
     REQUIRE(parsed->definitions.size() == 1U);
     const App::Omikron::SfxDefinition& value{parsed->definitions.front()};
     CHECK(value.definition_id == 17);

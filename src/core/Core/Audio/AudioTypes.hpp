@@ -71,6 +71,7 @@ enum class AudioOrigin : std::uint8_t {
   k_area_vm,
   k_interface,
   k_debug_audition,
+  k_sfx_runtime,
 };
 
 /// Semantic UI menu events. The interface layer expresses intents only; the
@@ -105,6 +106,8 @@ enum class UIMenuSoundEvent : std::uint8_t {
       return "Interface";
     case AudioOrigin::k_debug_audition:
       return "Debug audition";
+    case AudioOrigin::k_sfx_runtime:
+      return "SFX runtime";
   }
   return "Unknown";
 }

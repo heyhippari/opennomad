@@ -18,8 +18,25 @@ struct SfxRawRecord28 {
   std::array<std::byte, 0x28> bytes{};
 };
 
-struct SfxRawRecord2C {
-  std::array<std::byte, 0x2C> bytes{};
+struct SfxCinAnimationRecord {
+  std::uint32_t association_id{0};
+  std::uint32_t animation_lookup_raw{0};
+  std::uint32_t flags{0};
+  std::int32_t channel1_definition_id{0};
+  float channel1_start{0.0F};
+  float channel1_end{0.0F};
+  std::int32_t channel1_object_ref{0};
+  std::int32_t channel2_definition_id{0};
+  float channel2_start{0.0F};
+  float channel2_end{0.0F};
+  std::int32_t channel2_object_ref{0};
+
+  [[nodiscard]] constexpr std::uint16_t animation_lookup_id() const {
+    return static_cast<std::uint16_t>(animation_lookup_raw & 0xFFFFU);
+  }
+  [[nodiscard]] constexpr bool cin_sfx_enabled() const { return (flags & 0x80U) != 0U; }
+  [[nodiscard]] constexpr bool channel1_enabled() const { return (flags & 0x08U) != 0U; }
+  [[nodiscard]] constexpr bool channel2_enabled() const { return (flags & 0x10U) != 0U; }
 };
 
 struct SfxRawRecord10 {
@@ -101,7 +118,7 @@ struct SfxData {
   std::uint32_t raw_node_count{0};
   std::uint32_t raw_track_count{0};
   std::vector<SfxRawRecord28> records_a;
-  std::vector<SfxRawRecord2C> records_b;
+  std::vector<SfxCinAnimationRecord> records_b;
   std::vector<SfxDefinition> definitions;
   std::vector<SfxRawRecord10> section_d;
   std::vector<SfxNode> nodes;

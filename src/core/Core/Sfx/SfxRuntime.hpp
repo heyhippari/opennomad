@@ -9,6 +9,7 @@
 #include <random>
 #include <span>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "Core/Omikron/SFX.hpp"
@@ -34,6 +35,8 @@ class Host {
   virtual void destroy_sfx_sprite(Sprite::SpriteHandle handle) = 0;
   [[nodiscard]] virtual std::optional<App::Runtime::Transform> resolve_sfx_character_anchor(
       std::int32_t packed_reference_id) const = 0;
+    [[nodiscard]] virtual std::expected<void, std::string> play_sfx_sound(
+      std::int32_t authored_h_id, App::Runtime::Vec3 position) = 0;
 };
 
 struct NodeState {
@@ -86,6 +89,7 @@ class Runtime {
   void tick(float real_delta_seconds);
   void step();
   [[nodiscard]] std::size_t trigger(std::int32_t type, std::int32_t id);
+  void emit_definition(std::int32_t definition_id, App::Runtime::Vec3 position);
   [[nodiscard]] Diagnostics diagnostics() const;
   [[nodiscard]] std::span<const NodeState> nodes() const;
 
@@ -115,6 +119,7 @@ class Runtime {
   std::mt19937 m_generator;
   std::uniform_int_distribution<int> m_runtime_rand{0, 32767};
   std::vector<NodeState> m_nodes;
+  std::unordered_map<std::int32_t, std::size_t> m_definition_indices;
   std::vector<const Omikron::SfxDefinition*> m_definitions_by_node;
   std::vector<std::size_t> m_definition_sprite_resources;
   std::vector<EmissionRequest> m_requests;
@@ -122,7 +127,6 @@ class Runtime {
   float m_accumulator{0.0F};
   bool m_request_capacity_warned{false};
   bool m_particle_capacity_warned{false};
-  bool m_sound_unsupported_warned{false};
   bool m_acceleration_mode_warned{false};
 };
 

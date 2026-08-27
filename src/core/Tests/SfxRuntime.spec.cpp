@@ -76,6 +76,13 @@ class FakeHost final : public App::Sfx::Host {
                                             : std::optional<App::Runtime::Transform>{found->second};
   }
 
+  [[nodiscard]] std::expected<void, std::string> play_sfx_sound(
+      const std::int32_t authored_h_id, const App::Runtime::Vec3 position) override {
+    sound_requests.push_back(SoundRequest{.h_id = authored_h_id, .position = position});
+    return sound_available ? std::expected<void, std::string>{}
+                           : std::expected<void, std::string>{std::unexpect, "sound unavailable"};
+  }
+
   [[nodiscard]] App::Sprite::SpriteInstance* last_sprite() {
     return spawned.empty() ? nullptr : pool.find(spawned.back());
   }
@@ -90,6 +97,12 @@ class FakeHost final : public App::Sfx::Host {
   std::vector<App::Sprite::SpriteHandle> spawned;
   std::size_t frame_count{5U};
   std::size_t destroyed_count{0U};
+  struct SoundRequest {
+    std::int32_t h_id;
+    App::Runtime::Vec3 position;
+  };
+  std::vector<SoundRequest> sound_requests;
+  bool sound_available{true};
 };
 
 App::Omikron::SfxDefinition make_definition(
@@ -215,6 +228,30 @@ TEST_SUITE("Core::Sfx::Runtime") {
     CHECK(host.pool.live_count() == 0U);
     runtime->step();
     CHECK(host.pool.live_count() == 1U);
+  }
+
+  TEST_CASE("sound countdown submits authored hID without suppressing particles") {
+    FakeHost host;
+    auto data{basic_data()};
+    data.definitions.front().sound_id = 50;
+    data.definitions.front().sound_delay = 1.0F;
+    auto runtime{create_runtime(data, host)};
+    runtime->step();
+    CHECK(host.sound_requests.empty());
+    CHECK(host.pool.live_count() == 1U);
+    runtime->step();
+    REQUIRE(host.sound_requests.size() == 1U);
+    CHECK(host.sound_requests.front().h_id == 50);
+    CHECK(host.sound_requests.front().position.x == doctest::Approx(0.0F));
+
+    FakeHost unavailable_host;
+    unavailable_host.sound_available = false;
+    auto unavailable_data{basic_data()};
+    unavailable_data.definitions.front().sound_id = 81;
+    auto unavailable{create_runtime(unavailable_data, unavailable_host)};
+    unavailable->step();
+    CHECK(unavailable_host.pool.live_count() == 1U);
+    CHECK(unavailable_host.sound_requests.size() == 1U);
   }
 
   TEST_CASE("finite repetition terminates while sentinel 999 stays active at repeat index one") {

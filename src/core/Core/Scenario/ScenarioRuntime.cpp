@@ -356,6 +356,7 @@ std::expected<void, std::string> ScenarioRuntime::initialize(const Omikron::ScxD
   m_audio = audio;
   m_sfx_runtime.reset();
   m_sfx_data.reset();
+  m_cin_sfx_bindings.clear();
 
   const std::size_t count{m_scx.models.size()};
   m_sprite_resources.resize(count);
@@ -393,6 +394,20 @@ std::expected<void, std::string> ScenarioRuntime::initialize(const Omikron::ScxD
           fmt::format("Failed to initialise the SFX runtime: {}", sfx_runtime.error())};
     }
     m_sfx_runtime = std::move(sfx_runtime).value();
+    m_cin_sfx_bindings.resize(m_scx.animations.size());
+    for (std::size_t record_index{0}; record_index < m_sfx_data->records_b.size(); ++record_index) {
+      const Omikron::SfxCinAnimationRecord& record{m_sfx_data->records_b.at(record_index)};
+      if (!record.cin_sfx_enabled()) {
+        continue;
+      }
+      for (std::size_t animation_index{0}; animation_index < m_scx.animations.size();
+          ++animation_index) {
+        if (static_cast<std::uint16_t>(m_scx.animations.at(animation_index).animation_id) ==
+                record.animation_lookup_id() && !m_cin_sfx_bindings.at(animation_index).has_value()) {
+          m_cin_sfx_bindings.at(animation_index) = record_index;
+        }
+      }
+    }
     const Sfx::Diagnostics diagnostics{m_sfx_runtime->diagnostics()};
     App::Log::debug(LogCategory::Scenario,
         "SFX auto trigger (1,-1): activated={}",
@@ -630,6 +645,46 @@ std::optional<Runtime::Transform> ScenarioRuntime::resolve_sfx_character_anchor(
     }
   }
   return std::nullopt;
+}
+
+std::expected<void, std::string> ScenarioRuntime::play_sfx_sound(
+    const std::int32_t authored_h_id, const Runtime::Vec3 position) {
+  if (authored_h_id < 0 || std::cmp_greater(authored_h_id, std::numeric_limits<std::uint16_t>::max()) ||
+      authored_h_id == 0x0000FFFF) {
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format("invalid SFX sound hID {}", authored_h_id)};
+  }
+  const std::uint16_t h_id{static_cast<std::uint16_t>(authored_h_id)};
+  const auto sound{std::ranges::find(m_scx.sounds, h_id, &Omikron::ScxSoundRecord::h_id)};
+  if (sound == m_scx.sounds.end()) {
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format("scenario '{}' has no sound hID {}", m_scenario_name, h_id)};
+  }
+  const std::size_t index{static_cast<std::size_t>(std::distance(m_scx.sounds.begin(), sound))};
+  auto descriptor{resolve_sound(static_cast<std::uint32_t>(index))};
+  if (!descriptor || !descriptor->loaded) {
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format("scenario '{}' sound hID {} could not be loaded", m_scenario_name, h_id)};
+  }
+  const Audio::SoundPlayRequest request{.resource = descriptor->resource,
+      .loop = false,
+      .emitter = Audio::SoundEmitterState{.position = {position.x, position.y, position.z},
+          .velocity = {0.0F, 0.0F, 0.0F},
+          .minimum_distance = 78.0F,
+          .maximum_distance = 585.0F},
+      .scenario_sound_index = static_cast<std::uint16_t>(index),
+      .sound_name = descriptor->name,
+      .provenance = Audio::AudioProvenance{.origin = Audio::AudioOrigin::k_sfx_runtime,
+          .scenario_name = m_scenario_name,
+          .source_script_index = std::nullopt,
+          .script_instance_id = std::nullopt,
+          .function_id = std::nullopt},
+        .raw_flags = 0U};
+  auto played{play_sound(request)};
+  if (!played) {
+    return std::expected<void, std::string>{std::unexpect, played.error()};
+  }
+  return {};
 }
 
 std::string_view ScenarioRuntime::sprite_resource_name(const std::size_t resource_index) const {
@@ -907,6 +962,63 @@ std::expected<const Omikron::Path3DP*, std::string> ScenarioRuntime::path_resour
   return m_path_resources.at(resource_index).get();
 }
 
+void ScenarioRuntime::service_cin_sfx(
+    Character::RuntimeCharacter& character, const std::size_t animation_index) {
+  if (m_sfx_runtime == nullptr || !m_sfx_data.has_value() ||
+      animation_index >= m_cin_sfx_bindings.size() ||
+      !m_cin_sfx_bindings.at(animation_index).has_value() || character.model_resource == nullptr) {
+    return;
+  }
+  const std::size_t record_index{m_cin_sfx_bindings.at(animation_index).value_or(0U)};
+  const Omikron::SfxCinAnimationRecord& record{
+      m_sfx_data.value().records_b.at(record_index)};
+  const float elapsed{character.body_animation.previous_progress};
+  const auto emit_channel = [this, &character, elapsed](const bool enabled,
+                                   const std::int32_t definition_id,
+                                   const float start,
+                                   const float end,
+                                   const std::int32_t object_reference) {
+    if (!enabled || elapsed < start || elapsed > end) {
+      return;
+    }
+    const std::uint32_t script_id{object_reference > 0
+                                      ? static_cast<std::uint32_t>(object_reference - 1)
+                                      : 0U};
+    const auto mesh{std::ranges::find(character.model_resource->model.meshes,
+        script_id,
+        &Omikron::MeshDescriptor::script_id)};
+    if (mesh == character.model_resource->model.meshes.end()) {
+      App::Log::warn(LogCategory::Scenario,
+          "Cin-SFX object reference {} not found in character {}",
+          object_reference,
+          character.character_id);
+      return;
+    }
+    const std::size_t mesh_index{
+        static_cast<std::size_t>(std::distance(character.model_resource->model.meshes.begin(), mesh))};
+    if (mesh_index >= character.runtime_objects.size()) {
+      return;
+    }
+    const Runtime::Vec3 local_position{character.runtime_objects.at(mesh_index).world_translation};
+    const Runtime::Vec3 rotated{Runtime::transform_vector(local_position,
+        character.principal_orientation())};
+    m_sfx_runtime->emit_definition(definition_id,
+        Runtime::Vec3{.x = character.transform.translation.x + rotated.x,
+            .y = character.transform.translation.y + rotated.y,
+            .z = character.transform.translation.z + rotated.z});
+  };
+  emit_channel(record.channel1_enabled(),
+      record.channel1_definition_id,
+      record.channel1_start,
+      record.channel1_end,
+      record.channel1_object_ref);
+  emit_channel(record.channel2_enabled(),
+      record.channel2_definition_id,
+      record.channel2_start,
+      record.channel2_end,
+      record.channel2_object_ref);
+}
+
 std::expected<Script::BodyAnimationResult, Script::BodyAnimationFailure>
 ScenarioRuntime::select_body_animation(const Script::BodyAnimationRequest& request) {
   Character::RuntimeCharacter* character{m_character_runtime.find(request.character_id)};
@@ -970,6 +1082,7 @@ ScenarioRuntime::select_body_animation(const Script::BodyAnimationRequest& reque
     return std::expected<Script::BodyAnimationResult, Script::BodyAnimationFailure>{
         std::unexpect, std::move(applied).error()};
   }
+  service_cin_sfx(*character, request.animation_index);
   return Script::BodyAnimationResult{.max_frame_index = animation.max_frame_index};
 }
 
@@ -1062,6 +1175,7 @@ ScenarioRuntime::select_relative_body_animation(
     return std::expected<Script::RelativeBodyAnimationResult, Script::RelativeBodyAnimationFailure>{
         std::unexpect, std::move(applied).error()};
   }
+  service_cin_sfx(*character, request.animation_index);
   return Script::RelativeBodyAnimationResult{.max_frame_index = animation.max_frame_index};
 }
 

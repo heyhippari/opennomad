@@ -42,9 +42,27 @@ Checked reads reject truncation, count/size overflow, track-point overflow,
 variable tracks extending beyond the buffer, and trailing bytes.
 
 - The `0x28` records are **Unknown**: parsed and preserved only.
-- The `0x2C` records are **Confirmed — Runtime** as including animation/Cin-SFX
-  association records when byte `+0x08` has bit `0x80`; WORD `+0x04` is an
-  animation lookup ID. Cin-SFX runtime behavior is parsed but unsupported.
+- The `0x2C` records are **Confirmed — Runtime** animation/Cin-SFX records.
+  OpenNomad stores them as typed `SfxCinAnimationRecord` values:
+
+  | Offset | Type | Field |
+  |---:|---|---|
+  | `00` | u32 | association ID |
+  | `04` | u32 | animation lookup raw value; its low WORD is the animation ID |
+  | `08` | u32 | flags |
+  | `0C` | i32 | channel 1 definition ID |
+  | `10` | f32 | channel 1 start |
+  | `14` | f32 | channel 1 end |
+  | `18` | i32 | channel 1 model-object reference |
+  | `1C` | i32 | channel 2 definition ID |
+  | `20` | f32 | channel 2 start |
+  | `24` | f32 | channel 2 end |
+  | `28` | i32 | channel 2 model-object reference |
+
+  Bit `0x80` participates in animation association; bits `0x08` and `0x10`
+  independently enable channels 1 and 2. Other flag bits remain neutral.
+  Association matches `uint16(animation_lookup_raw)` to
+  `uint16(ScxAnimationRecord.animation_id)`, retaining the complete raw DWORD.
 - The `0x10` section-D records are **Unknown**: parsed and preserved only.
 
 ## Definition layout (`0x50`)
@@ -181,8 +199,18 @@ long-lived sprite. It enqueues a request containing its selected definition,
 world position, and sound/emission countdowns. The request capacity is 100.
 Countdowns decrement while nonnegative and fire once when crossing below zero;
 completed requests are removed. Sound IDs `0x0000FFFF` and `0xFFFFFFFF` are
-invalid. Valid SFX sound playback is currently preserved with a diagnostic but
-unsupported; GRID uses only the invalid sentinel.
+invalid. A valid SFX sound ID is a DEAD0003 sound record `h_id`, not a
+sound-table index. It is resolved by hID equality and submitted through the
+scenario audio path.
+
+Cin-SFX is serviced after each successful `SelectBodyAnimation` and
+`SelectRelativeBodyAnimation` pose application. Each enabled channel emits its
+ordinary SFX definition repeatedly during its inclusive `[start,end]` window.
+The channel object reference is normalized as `ref > 0 ? ref - 1 : 0` and
+matched against `MeshDescriptor::script_id`. Its position comes from the live
+animated `RuntimeObjectState::world_translation`, composed through the actor's
+current presentation orientation and translation. It then enters the ordinary
+SFX request, countdown, particle, and sound paths.
 
 Each burst creates `spawn_count` ordinary attached sprites up to the retail
 particle capacity of 1000. Creation selects the resource's default object and
