@@ -53,6 +53,27 @@ TEST_CASE("Dialog responses bottom-align their actual formatted heights") {
   CHECK(App::Interface::k_dialog_text_width == doctest::Approx(576.0F));
 }
 
+TEST_CASE("Recovered retail interface fonts are known FNT candidates with recovered metrics") {
+  const auto sneaky{App::Interface::FontManager::font_registry_entry('S')};
+  const auto journal{App::Interface::FontManager::font_registry_entry('J')};
+  const auto menu{App::Interface::FontManager::font_registry_entry('I')};
+
+  if (sneaky.has_value() && journal.has_value() && menu.has_value()) {
+    CHECK(sneaky->logical_name == "SNEAK");
+    CHECK(journal->logical_name == "JOURNAL");
+    CHECK(menu->logical_name == "MENUINTR");
+  } else {
+    FAIL("Recovered retail interface font registry entries are missing");
+  }
+
+  CHECK(App::Interface::FontManager::is_retail_font_key('S'));
+  CHECK(App::Interface::FontManager::is_retail_font_key('J'));
+  CHECK(App::Interface::FontManager::is_retail_font_key('I'));
+  CHECK(App::Interface::FontManager::fallback_logical_height('S') == doctest::Approx(20.0F));
+  CHECK(App::Interface::FontManager::fallback_logical_height('J') == doctest::Approx(17.0F));
+  CHECK(App::Interface::FontManager::fallback_logical_height('I') == doctest::Approx(36.0F));
+}
+
 TEST_CASE("Dialog presenter uses D and retail authored colours without markers") {
   CHECK(App::Interface::dialog_font_key() == 'D');
   CHECK(App::Interface::dialog_main_tint(

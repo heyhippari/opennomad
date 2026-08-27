@@ -38,11 +38,6 @@ constexpr std::string_view K_TTF_FALLBACK_PATH{"FONTS/OMIKRON.TTF"};
 
 unsigned int decode_utf8(const char*& cursor, const char* end);
 
-float fallback_logical_height(const char key, const FontRegistryEntry& entry) {
-  return key == 'D' || key == 'R' ? static_cast<float>(entry.line_height)
-                                 : FontManager::k_ttf_fallback_logical_size;
-}
-
 std::expected<std::vector<std::byte>, std::string> read_game_file(
     const std::filesystem::path& relative_path) {
   const std::filesystem::path request{Resources::game_data_path(relative_path)};
@@ -405,25 +400,23 @@ std::expected<void, std::string> FontManager::load_font(const char key) {
   }
 
   App::Log::debug(LogCategory::I2D, "font key '{}' -> {}", key, entry->logical_name);
-  if (key == 'D' || key == 'R') {
-    auto retail{load_retail_font(key, entry.value())};
-    if (retail) {
-      m_retail_fonts.emplace(key, std::move(retail).value());
-      return {};
-    }
-    App::Log::warn(LogCategory::I2D,
-        "{}.FNT unavailable or corrupt ({}); using OMIKRON.TTF fallback",
-        entry->logical_name,
-        retail.error());
+
+  auto retail{load_retail_font(key, entry.value())};
+  if (retail) {
+    m_retail_fonts.emplace(key, std::move(retail).value());
+    return {};
   }
+  App::Log::warn(LogCategory::I2D,
+      "{}.FNT unavailable or corrupt ({}); using OMIKRON.TTF fallback",
+      entry->logical_name,
+      retail.error());
 
   const std::filesystem::path ttf_request{
       Resources::game_data_path(std::filesystem::path{std::string{K_TTF_FALLBACK_PATH}})};
   const std::filesystem::path ttf_resolved{Resources::resolve_case_insensitive(ttf_request)};
 
-  auto font{FontResource::load_ttf_fallback(ttf_resolved,
-      k_ttf_fallback_logical_size,
-      fallback_logical_height(key, entry.value()))};
+  auto font{FontResource::load_ttf_fallback(
+      ttf_resolved, k_ttf_fallback_logical_size, fallback_logical_height(key))};
   if (!font) {
     return std::expected<void, std::string>{std::unexpect, font.error()};
   }
@@ -471,7 +464,7 @@ const FontResource* FontManager::ensure_font(const char key, const float referen
   const std::filesystem::path ttf_resolved{Resources::resolve_case_insensitive(ttf_request)};
 
   auto font{FontResource::load_ttf_fallback(
-      ttf_resolved, static_cast<float>(bucket), fallback_logical_height(key, entry.value()))};
+      ttf_resolved, static_cast<float>(bucket), fallback_logical_height(key))};
   if (!font) {
     App::Log::warn(LogCategory::I2D, "font key '{}' at {} px: {}", key, bucket, font.error());
     return nullptr;

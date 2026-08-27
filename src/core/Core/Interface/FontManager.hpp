@@ -156,6 +156,20 @@ class FontManager {
   /// still comes from the selected registry entry.
   static constexpr float k_ttf_fallback_logical_size{30.0F};
 
+  /// True when the key resolves to a recovered Runtime font registry entry whose
+  /// retail `.FNT` should be attempted before the temporary OMIKRON.TTF fallback.
+  [[nodiscard]] static bool is_retail_font_key(char key) {
+    return font_registry_entry(key).has_value();
+  }
+
+  /// Preserves the recovered logical metrics for known registry keys even when
+  /// the temporary TTF fallback is used for a missing/corrupt retail `.FNT`.
+  [[nodiscard]] static float fallback_logical_height(char key) {
+    const auto entry{font_registry_entry(key)};
+    return entry.has_value() ? static_cast<float>(entry->line_height)
+                             : k_ttf_fallback_logical_size;
+  }
+
   /// Quantizes a desired physical raster size to the nearest 2 px bucket so
   /// resizing a window does not rebuild atlases dozens of times per second.
   [[nodiscard]] static std::size_t raster_bucket(float reference_scale);
