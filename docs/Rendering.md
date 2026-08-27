@@ -47,9 +47,9 @@ commands. It never advances transition clocks during rendering.
 5. The ImGui debug UI, drawn later by `Window` in Debug builds.
 
 This ownership is intentional. Scenario and AREA runtimes emit typed camera/fade/letterbox/interface intent; they do
-not know about OpenGL, viewport dimensions, or renderer timing. Camera, subtitle, and object commands retain exact
-world scene/generation ownership. Fade and cinematic-letterbox commands are session-global and survive world-context
-changes; `ScenarioManager::reset_for_new_session()` advances their explicit reset epoch.
+not know about OpenGL, viewport dimensions, or renderer timing. Camera, Runtime world-text, and object commands retain
+exact world scene/generation ownership. Fade and cinematic-letterbox commands are session-global and survive
+world-context changes; `ScenarioManager::reset_for_new_session()` advances their explicit reset epoch.
 
 ## World renderer
 

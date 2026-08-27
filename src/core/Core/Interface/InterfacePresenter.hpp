@@ -5,6 +5,7 @@
 
 #include "Core/Dialog/DialogRuntime.hpp"
 #include "Core/Input/InputManager.hpp"
+#include "Core/Interface/RuntimeText.hpp"
 
 namespace App::Interface {
 
@@ -39,7 +40,10 @@ class InterfacePresenter {
       int pixel_width,
       int pixel_height);
 
-  void render_world_subtitle(std::string_view text, int pixel_width, int pixel_height);
+  void render_world_text(const RuntimeTextDocument& document,
+      std::uint64_t presentation_time_ms,
+      int pixel_width,
+      int pixel_height);
 
  private:
   InterfaceManager* m_manager{nullptr};

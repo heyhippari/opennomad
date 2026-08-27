@@ -23,6 +23,7 @@
 #include "Core/Dialog/DialogRuntime.hpp"
 #include "Core/Input/InputAction.hpp"
 #include "Core/Interface/InterfaceManager.hpp"
+#include "Core/Interface/RuntimeText.hpp"
 #include "Core/Log.hpp"
 #include "Core/LogCategory.hpp"
 #include "Core/Omikron/Model3DO.hpp"
@@ -683,12 +684,13 @@ void WorldScene::consume_object_presentation_commands(const WorldSceneContext* c
           played.error());
     }
   }
-  while (std::optional<WorldSubtitleCommand> command{
-      m_scenarios->world_presentation().take_subtitle()}) {
-    const bool applied{m_subtitle.apply_command(*command, context->scene_id, context->generation)};
+  while (std::optional<WorldTextCommand> command{
+      m_scenarios->world_presentation().take_world_text()}) {
+    const bool applied{
+        m_world_text.apply_command(*command, context->scene_id, context->generation)};
     if (!applied) {
       App::Log::debug(LogCategory::Renderer,
-          "WorldScene: discarded stale OBJECTS subtitle for scene={} generation={}",
+          "WorldScene: discarded stale OBJECTS world text for scene={} generation={}",
           command->scene_id,
           command->scene_generation);
     }
@@ -778,7 +780,7 @@ void WorldScene::update(const float delta_time, const Input::InputManager& input
             context->generation);
 
         m_camera.reset();
-        m_subtitle.reset();
+        m_world_text.reset();
         auto renderer{WorldRenderer::create(*context)};
         if (!renderer) {
           App::Log::error(LogCategory::Renderer,
@@ -804,7 +806,7 @@ void WorldScene::update(const float delta_time, const Input::InputManager& input
     } else if (m_world_observed) {
       m_world_renderer.reset();
       m_camera.reset();
-      m_subtitle.reset();
+      m_world_text.reset();
       m_world_observed = false;
     }
   }
@@ -866,7 +868,7 @@ void WorldScene::update(const float delta_time, const Input::InputManager& input
   consume_object_presentation_commands(context);
   m_fade.update(delta_time);
   m_letterbox.update(delta_time);
-  m_subtitle.update(delta_time);
+  m_world_text.update(delta_time);
   m_uv_phases.update(delta_time);
 
   m_camera.update(delta_time);
@@ -979,8 +981,12 @@ void WorldScene::render() {
   // background therefore covers the world while the main menu is active,
   // exactly as the stable WorldScene architecture intends.
   m_interfaces.render(m_width, m_height);
-  if (m_subtitle.active()) {
-    m_interfaces.render_world_subtitle(m_subtitle.text(), m_width, m_height);
+  if (m_world_text.active()) {
+    const Interface::RuntimeTextDocument* document{m_world_text.document()};
+    if (document != nullptr) {
+      m_interfaces.render_world_text(
+          *document, m_world_text.presentation_time_ms(), m_width, m_height);
+    }
   }
   if (m_scenarios != nullptr) {
     if (const auto dialog{m_scenarios->dialog_runtime().presentation()}; dialog.has_value()) {

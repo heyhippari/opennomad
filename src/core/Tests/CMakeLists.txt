@@ -68,9 +68,17 @@ add_executable(DialogVoiceCodecTest DialogVoiceCodec.spec.cpp $<TARGET_OBJECTS:T
 add_test(NAME DialogVoiceCodecTest COMMAND DialogVoiceCodecTest)
 target_link_libraries(DialogVoiceCodecTest PRIVATE doctest::doctest Core)
 
-add_executable(WorldSubtitleTest WorldSubtitle.spec.cpp $<TARGET_OBJECTS:TestRunner>)
-add_test(NAME WorldSubtitleTest COMMAND WorldSubtitleTest)
-target_link_libraries(WorldSubtitleTest PRIVATE doctest::doctest Core)
+add_executable(RuntimeTextTest RuntimeText.spec.cpp $<TARGET_OBJECTS:TestRunner>)
+add_test(NAME RuntimeTextTest COMMAND RuntimeTextTest)
+target_link_libraries(RuntimeTextTest PRIVATE doctest::doctest Core)
+
+add_executable(RuntimeTextLayoutTest RuntimeTextLayout.spec.cpp $<TARGET_OBJECTS:TestRunner>)
+add_test(NAME RuntimeTextLayoutTest COMMAND RuntimeTextLayoutTest)
+target_link_libraries(RuntimeTextLayoutTest PRIVATE doctest::doctest Core)
+
+add_executable(WorldTextTest WorldText.spec.cpp $<TARGET_OBJECTS:TestRunner>)
+add_test(NAME WorldTextTest COMMAND WorldTextTest)
+target_link_libraries(WorldTextTest PRIVATE doctest::doctest Core)
 
 add_executable(DialogPerformanceRuntimeTest
   DialogPerformanceRuntime.spec.cpp $<TARGET_OBJECTS:TestRunner>)

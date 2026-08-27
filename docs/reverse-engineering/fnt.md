@@ -1207,29 +1207,36 @@ observable to the compatibility parser.
 
 ---
 
-## 24. Recommended modern representation
+## 24. OpenNomad content and presentation representation
 
-A modern implementation should parse Runtime text into presentation-aware
-output rather than a single stripped string. A suitable model is conceptually:
+OpenNomad parses authored bytes into `RuntimeTextDocument`. The document owns
+the original byte string and a presentation-neutral event stream containing
+visible byte ranges, explicit line breaks, persistent style changes, absolute
+positions, format boundaries, and selectable-span boundaries. Plain visible
+bytes can be derived without destroying the authored document.
 
 ```text
-LegacyTextState
-    font_key
-    rgb
-    horizontal_mode
-    vertical_mode
-    blink
-    auxiliary_E
-    position
-    ...
-
-LegacyTextRun
-    bytes / decoded display glyphs
-    state snapshot
+authored retail bytes
+    |
+    v
+RuntimeTextDocument + events
+    |
+    +------------------------------+
+    |                              |
+    v                              v
+RuntimeTextLayout              future modern processing
+    |                       (derived text/cues only)
+    v
+faithful FNT presenter
 ```
 
-The exact architecture is an OpenNomad design choice, but it must preserve the
-important Runtime property:
+`RuntimeTextLayout` is CPU-only and walks the events with mutable
+`RuntimeTextStyle`. Font metrics are injected by key and byte, which permits
+mixed-font lines and tests without OpenGL. `I2DRenderer` supplies metrics and
+glyph textures from the existing `FontManager` registry and resolves the
+500 ms flash phase from explicit presentation time.
+
+The important Runtime property remains:
 
 ```text
 commands mutate persistent state
@@ -1291,10 +1298,12 @@ content can contain odd-looking markup which Runtime tolerates predictably.
 
 ---
 
-## 26. Current implementation consequence for world subtitles
+## 26. World-text presentation consequence
 
-A world subtitle sourced from IAM/OBJECT must pass through the Runtime-compatible
-text-control parser before FNT layout.
+IAM/OBJECT text passes through the Runtime-compatible parser before FNT layout.
+This facility is general world text rather than intrinsically a spoken
+subtitle: retail uses it for positioned credits, notifications, documents,
+and cinematic overlays as well as voice-over text.
 
 The original bug that exposed this grammar was the IMPASSE subtitle:
 
@@ -1302,14 +1311,21 @@ The original bug that exposed this grammar was the IMPASSE subtitle:
 {fD}You have been the victim ...
 ```
 
-OpenNomad passed the raw field directly to the FNT renderer, causing the markup
-bytes to appear as visible glyphs. The correct fix is **not** a special-case
-substring removal for `{fD}`. It is implementation of the shared legacy text
-control layer.
+The old path passed the raw field directly to a single-font renderer, causing
+the markup bytes to appear as visible glyphs. The shared Runtime parser now
+consumes `fD`, emits a font-state event, and leaves the visible text beginning
+at `You`; the original `{fD}...` bytes remain in the document.
 
 This also prevents future failures in object descriptions, pickup messages,
 credits, police documents, and other strings which use `I`, `X`, alignment,
 and `B` controls.
+
+`WorldTextCommand` carries source kind, object ID, audio resource, semantic
+role, and modernization policy beside the authored document. Current
+IAM/OBJECT requests use an unknown role and faithful-only policy; audio
+presence is not treated as proof of speech. This lets a future optional modern
+presenter derive cues from the same intact document while conservatively
+leaving unclassified credits and overlays faithful.
 
 ---
 

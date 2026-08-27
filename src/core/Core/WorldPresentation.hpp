@@ -10,6 +10,7 @@
 #include <string>
 #include <utility>
 
+#include "Core/Interface/RuntimeText.hpp"
 #include "Core/RuntimeMath.hpp"
 
 namespace App {
@@ -253,54 +254,100 @@ struct WorldVoiceOverCommand {
   std::string audio_path;
 };
 
-/// Centered subtitle submitted with a voice-over.  Lifetime is recovered in
-/// milliseconds and remains independent of render-frame cadence.
-struct WorldSubtitleCommand {
+enum class TextPresentationRole : std::uint8_t {
+  k_unknown,
+  k_spoken_subtitle,
+  k_dialog_line,
+  k_dialog_choice,
+  k_cinematic_overlay,
+  k_credit,
+  k_document,
+  k_interface_text,
+};
+
+enum class TextModernizationPolicy : std::uint8_t {
+  k_follow_user_setting,
+  k_faithful_only,
+};
+
+enum class TextSourceKind : std::uint8_t {
+  k_unknown,
+  k_iam_object,
+};
+
+/// Classification and source identity travel beside authored Runtime content;
+/// they are not inferred from markup or audio presence.
+struct WorldTextProvenance {
+  TextSourceKind source_kind{TextSourceKind::k_unknown};
+  std::int16_t object_id{0};
+  std::string audio_resource;
+  TextPresentationRole role{TextPresentationRole::k_unknown};
+  TextModernizationPolicy modernization_policy{TextModernizationPolicy::k_faithful_only};
+};
+
+/// General world/cinematic text presentation request. Lifetime remains based
+/// on the raw authored bytes and independent of render-frame cadence.
+struct WorldTextCommand {
   std::uint32_t scene_id{0};
   std::uint32_t scene_generation{0};
-  std::int16_t object_id{0};
-  std::string text;
+  Interface::RuntimeTextDocument document;
+  WorldTextProvenance provenance;
   std::uint32_t duration_ms{0};
 };
 
-/// CPU state for one current world subtitle.
-class WorldSubtitleState {
+/// CPU state for one current general world-text presentation.
+class WorldTextState {
  public:
   [[nodiscard]] bool apply_command(
-      WorldSubtitleCommand command, const std::uint32_t scene_id, const std::uint32_t generation) {
+      WorldTextCommand command, const std::uint32_t scene_id, const std::uint32_t generation) {
     if (command.scene_id != scene_id || command.scene_generation != generation) {
       return false;
     }
-    m_text = std::move(command.text);
+    m_document = std::move(command.document);
+    m_provenance = std::move(command.provenance);
     m_remaining_seconds = static_cast<float>(command.duration_ms) / 1000.0F;
+    m_elapsed_seconds = 0.0F;
     return true;
   }
 
   void update(const float delta_seconds) {
-    m_remaining_seconds = std::max(0.0F, m_remaining_seconds - std::max(delta_seconds, 0.0F));
+    const float elapsed{std::max(delta_seconds, 0.0F)};
+    m_elapsed_seconds += elapsed;
+    m_remaining_seconds = std::max(0.0F, m_remaining_seconds - elapsed);
     if (m_remaining_seconds == 0.0F) {
-      m_text.clear();
+      m_document.reset();
     }
   }
 
   void reset() {
-    m_text.clear();
+    m_document.reset();
+    m_provenance = {};
     m_remaining_seconds = 0.0F;
+    m_elapsed_seconds = 0.0F;
   }
 
   [[nodiscard]] bool active() const {
-    return !m_text.empty() && m_remaining_seconds > 0.0F;
+    return m_document.has_value() && !m_document->authored_bytes().empty() &&
+           m_remaining_seconds > 0.0F;
   }
-  [[nodiscard]] const std::string& text() const {
-    return m_text;
+  [[nodiscard]] const Interface::RuntimeTextDocument* document() const {
+    return m_document.has_value() ? &m_document.value() : nullptr;
+  }
+  [[nodiscard]] const WorldTextProvenance& provenance() const {
+    return m_provenance;
   }
   [[nodiscard]] float remaining_seconds() const {
     return m_remaining_seconds;
   }
+  [[nodiscard]] std::uint64_t presentation_time_ms() const {
+    return static_cast<std::uint64_t>(m_elapsed_seconds * 1000.0F);
+  }
 
  private:
-  std::string m_text;
+  std::optional<Interface::RuntimeTextDocument> m_document;
+  WorldTextProvenance m_provenance;
   float m_remaining_seconds{0.0F};
+  float m_elapsed_seconds{0.0F};
 };
 
 /// CPU-only state for OpenNomad's cinematic top/bottom presentation mask.
@@ -434,8 +481,8 @@ class WorldPresentationState {
     m_voice_over_commands.push_back(std::move(command));
   }
 
-  void enqueue_subtitle(WorldSubtitleCommand command) {
-    m_subtitle_commands.push_back(std::move(command));
+  void enqueue_world_text(WorldTextCommand command) {
+    m_world_text_commands.push_back(std::move(command));
   }
 
   [[nodiscard]] std::optional<WorldCameraCommand> take_camera() {
@@ -483,12 +530,12 @@ class WorldPresentationState {
     return command;
   }
 
-  [[nodiscard]] std::optional<WorldSubtitleCommand> take_subtitle() {
-    if (m_subtitle_commands.empty()) {
+  [[nodiscard]] std::optional<WorldTextCommand> take_world_text() {
+    if (m_world_text_commands.empty()) {
       return std::nullopt;
     }
-    WorldSubtitleCommand command{std::move(m_subtitle_commands.front())};
-    m_subtitle_commands.pop_front();
+    WorldTextCommand command{std::move(m_world_text_commands.front())};
+    m_world_text_commands.pop_front();
     return command;
   }
 
@@ -510,8 +557,8 @@ class WorldPresentationState {
   [[nodiscard]] std::size_t pending_voice_over_count() const {
     return m_voice_over_commands.size();
   }
-  [[nodiscard]] std::size_t pending_subtitle_count() const {
-    return m_subtitle_commands.size();
+  [[nodiscard]] std::size_t pending_world_text_count() const {
+    return m_world_text_commands.size();
   }
 
   /// Monotonic epoch incremented only at the global presentation/session
@@ -526,7 +573,7 @@ class WorldPresentationState {
     m_fade_commands.clear();
     m_letterbox_commands.clear();
     m_voice_over_commands.clear();
-    m_subtitle_commands.clear();
+    m_world_text_commands.clear();
     ++m_reset_generation;
   }
 
@@ -536,7 +583,7 @@ class WorldPresentationState {
   std::deque<WorldFadeCommand> m_fade_commands;
   std::deque<WorldLetterboxCommand> m_letterbox_commands;
   std::deque<WorldVoiceOverCommand> m_voice_over_commands;
-  std::deque<WorldSubtitleCommand> m_subtitle_commands;
+  std::deque<WorldTextCommand> m_world_text_commands;
   std::uint64_t m_reset_generation{0};
 };
 

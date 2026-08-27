@@ -85,7 +85,7 @@ class WorldScene final : public Scene, public Debug::SceneDebugView {
   WorldFadeState m_fade;
   WorldLetterboxState m_letterbox;
   WorldPresentationResetObserver m_presentation_reset_observer;
-  WorldSubtitleState m_subtitle;
+  WorldTextState m_world_text;
   WorldUvPhaseState m_uv_phases;
   int m_width{640};
   int m_height{480};

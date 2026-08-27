@@ -42,6 +42,7 @@
 #include "Core/Interface/InterfaceDispatcher.hpp"
 #include "Core/Interface/InterfacePresentation.hpp"
 #include "Core/Interface/OptionsMenuLayout.hpp"
+#include "Core/Interface/RuntimeText.hpp"
 #include "Core/Interface/StartMenuLayout.hpp"
 #include "Core/Log.hpp"
 #include "Core/LogCategory.hpp"
@@ -717,13 +718,16 @@ float InterfaceManager::render_dialog(const Dialog::DialogPresentation& dialog,
       dialog, selected_choice, scroll_offset, m_fonts, pixel_width, pixel_height, counters);
 }
 
-void InterfaceManager::render_world_subtitle(
-    const std::string_view text, const int pixel_width, const int pixel_height) {
-  if (m_renderer == nullptr || text.empty()) {
+void InterfaceManager::render_world_text(const RuntimeTextDocument& document,
+    const std::uint64_t presentation_time_ms,
+    const int pixel_width,
+    const int pixel_height) {
+  if (m_renderer == nullptr || document.authored_bytes().empty()) {
     return;
   }
   Debug::I2DCounters counters;
-  m_renderer->render_world_subtitle(text, m_fonts, pixel_width, pixel_height, counters);
+  m_renderer->render_world_text(
+      document, presentation_time_ms, m_fonts, pixel_width, pixel_height, counters);
 }
 
 void InterfaceManager::set_background_interpolated(const bool interpolated) {

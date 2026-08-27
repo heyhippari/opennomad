@@ -21,6 +21,7 @@
 #include "Core/Interface/InterfaceDescriptor.hpp"
 #include "Core/Interface/InterfaceDispatcher.hpp"
 #include "Core/Interface/InterfacePresentation.hpp"
+#include "Core/Interface/RuntimeText.hpp"
 #include "Core/Omikron/IamStringTable.hpp"
 #include "Core/Texture.hpp"
 #include "Settings/GameSettings.hpp"
@@ -194,9 +195,11 @@ class InterfaceManager {
       int pixel_width,
       int pixel_height);
 
-  /// Renders neutral world subtitle presentation using the shared I2D font
-  /// resources, without making it an interface or dialog runtime state.
-  void render_world_subtitle(std::string_view text, int pixel_width, int pixel_height);
+  /// Renders faithful Runtime world text using shared I2D font resources.
+  void render_world_text(const RuntimeTextDocument& document,
+      std::uint64_t presentation_time_ms,
+      int pixel_width,
+      int pixel_height);
 
   /// Creates a state owned by `instance`; returns its address (nullptr when
   /// the allocation fails).

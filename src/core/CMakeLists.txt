@@ -106,6 +106,8 @@ add_library(${NAME} STATIC
   Core/Interface/InterfaceDescriptor.hpp
   Core/Interface/StartMenuLayout.hpp
   Core/Interface/DialogTextLayout.hpp Core/Interface/DialogTextLayout.cpp
+  Core/Interface/RuntimeText.hpp Core/Interface/RuntimeText.cpp
+  Core/Interface/RuntimeTextLayout.hpp Core/Interface/RuntimeTextLayout.cpp
   Core/Interface/FontManager.hpp Core/Interface/FontManager.cpp
   Core/Interface/I2DBumpBackground.hpp Core/Interface/I2DBumpBackground.cpp
   Core/Interface/I2DBumpEffect.hpp Core/Interface/I2DBumpEffect.cpp

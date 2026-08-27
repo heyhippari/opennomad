@@ -97,8 +97,7 @@ void append_camera_request(
 std::vector<std::byte> make_camera_namespace_global(const bool has_camera) {
   constexpr std::size_t k_header_size{0x20U};
   constexpr std::size_t k_camera_size{0x2CU};
-  std::vector<std::byte> data(
-      k_header_size + (has_camera ? k_camera_size : 0U), std::byte{});
+  std::vector<std::byte> data(k_header_size + (has_camera ? k_camera_size : 0U), std::byte{});
   write_u32(data, 0x14U, k_header_size);
   write_u16(data, 0x1EU, has_camera ? 1U : 0U);
   if (has_camera) {
@@ -270,8 +269,7 @@ std::vector<std::byte> make_object_archive(const std::uint16_t object_id,
 /// current body and enables zone 3795; the record-relative zone event selects
 /// a move, toggles the controller, self-disables, waits on a camera, then
 /// toggles the controller off and ends.
-std::vector<std::byte> make_zone_contact_area_archive(
-    const bool starts_dialog = false,
+std::vector<std::byte> make_zone_contact_area_archive(const bool starts_dialog = false,
     const bool self_disables = true,
     const bool enable_controller = true) {
   Buffer top_level;
@@ -486,8 +484,7 @@ std::vector<std::byte> make_handoff_scene_archive() {
   return data;
 }
 
-std::vector<std::byte> make_camera_namespace_area_archive(
-    const CameraNamespaceFixture& fixture) {
+std::vector<std::byte> make_camera_namespace_area_archive(const CameraNamespaceFixture& fixture) {
   Buffer script;
   script.u8(0x47).u16(118).u16(0);
   script.u8(0x2F).u16(222).u16(0xFFFF).u16(0xFFFF);
@@ -544,8 +541,7 @@ std::vector<std::byte> make_camera_namespace_scene_record(const bool has_camera,
   constexpr std::size_t k_header_size{0x44U};
   constexpr std::size_t k_camera_size{0x2CU};
   const std::size_t camera_offset{k_header_size + script.data().size()};
-  std::vector<std::byte> data(
-      camera_offset + (has_camera ? k_camera_size : 0U), std::byte{});
+  std::vector<std::byte> data(camera_offset + (has_camera ? k_camera_size : 0U), std::byte{});
   write_u32(data, 0x04U, k_header_size);
   write_u32(data, 0x08U + (6U * 4U), static_cast<std::uint32_t>(camera_offset));
   write_u16(data, 0x28U + (6U * 2U), has_camera ? 1U : 0U);
@@ -556,14 +552,11 @@ std::vector<std::byte> make_camera_namespace_scene_record(const bool has_camera,
   return data;
 }
 
-std::vector<std::byte> make_camera_namespace_scene_archive(
-    const CameraNamespaceFixture& fixture) {
-  const std::vector<std::byte> source{make_camera_namespace_scene_record(
-      fixture.slot_0_scene, 200, false, false)};
-  const std::vector<std::byte> target{make_camera_namespace_scene_record(fixture.slot_1_scene,
-      400,
-      fixture.request_from_slot_1_scene,
-      fixture.tracked)};
+std::vector<std::byte> make_camera_namespace_scene_archive(const CameraNamespaceFixture& fixture) {
+  const std::vector<std::byte> source{
+      make_camera_namespace_scene_record(fixture.slot_0_scene, 200, false, false)};
+  const std::vector<std::byte> target{make_camera_namespace_scene_record(
+      fixture.slot_1_scene, 400, fixture.request_from_slot_1_scene, fixture.tracked)};
   constexpr std::size_t k_source_offset{0x800U};
   constexpr std::size_t k_target_offset{0xA00U};
   std::vector<std::byte> data(k_target_offset + target.size(), std::byte{});
@@ -829,7 +822,8 @@ void write_boot_fixtures(const TempDirectory& temp) {
 void write_zone_contact_fixtures(const TempDirectory& temp, const bool enable_controller = true) {
   write_bytes(temp.root() / "IAM" / "START", make_start());
   write_bytes(temp.root() / "IAM" / "GLOBAL", make_camera_namespace_global(true));
-  write_bytes(temp.root() / "IAM" / "AREA", make_zone_contact_area_archive(false, true, enable_controller));
+  write_bytes(
+      temp.root() / "IAM" / "AREA", make_zone_contact_area_archive(false, true, enable_controller));
   write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
   write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_minimal_scx());
 }
@@ -967,8 +961,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
             .expected_marker = 200},
         LookupCase{.fixture = {.slot_1_area = true, .slot_1_scene = true, .global = true},
             .expected_marker = 300},
-        LookupCase{.fixture = {.slot_1_scene = true, .global = true},
-            .expected_marker = 400},
+        LookupCase{.fixture = {.slot_1_scene = true, .global = true}, .expected_marker = 400},
         LookupCase{.fixture = {.global = true}, .expected_marker = 500}};
 
     for (const LookupCase& lookup : cases) {
@@ -993,9 +986,8 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     SUBCASE("slot0 AREA shadows the caller's slot1 SCENE") {
       const TempDirectory temp;
       write_camera_namespace_fixtures(temp,
-          CameraNamespaceFixture{.slot_0_area = true,
-              .slot_1_scene = true,
-              .request_from_slot_1_scene = true});
+          CameraNamespaceFixture{
+              .slot_0_area = true, .slot_1_scene = true, .request_from_slot_1_scene = true});
       const ScopedGameDataRoot root{temp.root()};
       App::ScenarioManager manager;
       App::ScenarioStartupController controller;
@@ -1016,8 +1008,8 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
 
     SUBCASE("GLOBAL supplies fields without becoming the owner world") {
       const TempDirectory temp;
-      write_camera_namespace_fixtures(temp,
-          CameraNamespaceFixture{.global = true, .request_from_slot_1_scene = true});
+      write_camera_namespace_fixtures(
+          temp, CameraNamespaceFixture{.global = true, .request_from_slot_1_scene = true});
       const ScopedGameDataRoot root{temp.root()};
       App::ScenarioManager manager;
       App::ScenarioStartupController controller;
@@ -1055,8 +1047,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
   TEST_CASE("tracked GLOBAL camera completion resumes the exact slot1 SCENE context") {
     const TempDirectory temp;
     write_camera_namespace_fixtures(temp,
-        CameraNamespaceFixture{
-            .global = true, .request_from_slot_1_scene = true, .tracked = true});
+        CameraNamespaceFixture{.global = true, .request_from_slot_1_scene = true, .tracked = true});
     const ScopedGameDataRoot root{temp.root()};
     App::ScenarioManager manager;
     App::ScenarioStartupController controller;
@@ -1071,13 +1062,12 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(owner->scene_script.has_value());
     CHECK(owner->scene_script->state() == AreaScriptState::k_waiting);
     CHECK_EQ(owner->scene_script->wait_state(), 7);
-    manager.world_presentation().enqueue_camera_completion(
-        App::WorldCameraOperationCompletion{.operation_generation =
-                                                command->operation_generation.value(),
-            .scene_id = command->scene_id,
-            .scene_generation = command->scene_generation,
-            .source_area_id = command->source_area_id,
-            .camera_id = command->camera_id});
+    manager.world_presentation().enqueue_camera_completion(App::WorldCameraOperationCompletion{
+        .operation_generation = command->operation_generation.value(),
+        .scene_id = command->scene_id,
+        .scene_generation = command->scene_generation,
+        .source_area_id = command->source_area_id,
+        .camera_id = command->camera_id});
     REQUIRE(controller.tick().has_value());
     owner = controller.runtime_area_slot(1);
     REQUIRE(owner != nullptr);
@@ -1118,15 +1108,14 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     const auto camera{manager.world_presentation().take_camera()};
     REQUIRE(camera.has_value());
     REQUIRE(camera->operation_generation.has_value());
-    manager.world_presentation().enqueue_camera_completion(
-      App::WorldCameraOperationCompletion{.operation_generation =
-                          camera->operation_generation.value(),
+    manager.world_presentation().enqueue_camera_completion(App::WorldCameraOperationCompletion{
+        .operation_generation = camera->operation_generation.value(),
         .scene_id = camera->scene_id,
         .scene_generation = camera->scene_generation,
         .source_area_id = camera->source_area_id,
         .camera_id = camera->camera_id});
     REQUIRE(controller.tick(1.0F / 30.0F).has_value());
-          REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
     CHECK_EQ(controller.zone_contact_count(), 0U);
     CHECK_FALSE(character->controller_enabled);
 
@@ -1203,9 +1192,8 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     const auto camera{manager.world_presentation().take_camera()};
     REQUIRE(camera.has_value());
     REQUIRE(camera->operation_generation.has_value());
-    manager.world_presentation().enqueue_camera_completion(
-      App::WorldCameraOperationCompletion{.operation_generation =
-                          camera->operation_generation.value(),
+    manager.world_presentation().enqueue_camera_completion(App::WorldCameraOperationCompletion{
+        .operation_generation = camera->operation_generation.value(),
         .scene_id = camera->scene_id,
         .scene_generation = camera->scene_generation,
         .source_area_id = camera->source_area_id,
@@ -1665,13 +1653,14 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK(area_script->wait_info().kind == App::Script::AreaWaitKind::k_none);
   }
 
-  TEST_CASE("OBJECTS non-image types submit VOICEOFF audio and a recovered-lifetime subtitle") {
+  TEST_CASE("OBJECTS submit authored Runtime world text with raw-byte lifetime") {
     const TempDirectory temp;
+    const std::string authored_text{"{fD}You have been the victim of a violent attack..."};
     write_bytes(temp.root() / "IAM" / "START", make_start());
     write_bytes(temp.root() / "IAM" / "GLOBAL", App::Tests::make_empty_iam_global());
     write_bytes(temp.root() / "IAM" / "AREA", make_object_activation_area_archive(141U));
     write_bytes(temp.root() / "IAM" / "OBJECT",
-        make_object_archive(141U, 7U, "ZVO M010 Agression", "123456789012345678901234567890"));
+        make_object_archive(141U, 7U, "ZVO M010 Agression", authored_text));
     write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
     write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_minimal_scx());
     const ScopedGameDataRoot root{temp.root()};
@@ -1684,10 +1673,18 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(voice.has_value());
     CHECK_EQ(voice->object_id, 141);
     CHECK_EQ(voice->audio_path, "VOICEOFF/ZVO M010 Agression.ADP");
-    const auto subtitle{manager.world_presentation().take_subtitle()};
-    REQUIRE(subtitle.has_value());
-    CHECK_EQ(subtitle->text, "123456789012345678901234567890");
-    CHECK_EQ(subtitle->duration_ms, 2400U);
+    const auto world_text{manager.world_presentation().take_world_text()};
+    REQUIRE(world_text.has_value());
+    CHECK_EQ(world_text->document.authored_bytes(), authored_text);
+    CHECK_EQ(App::Interface::runtime_text_plain_bytes(world_text->document),
+        "You have been the victim of a violent attack...");
+    CHECK_EQ(world_text->duration_ms, static_cast<std::uint32_t>(authored_text.size()) * 80U);
+    CHECK_EQ(world_text->provenance.source_kind, App::TextSourceKind::k_iam_object);
+    CHECK_EQ(world_text->provenance.object_id, 141);
+    CHECK_EQ(world_text->provenance.audio_resource, "VOICEOFF/ZVO M010 Agression.ADP");
+    CHECK_EQ(world_text->provenance.role, App::TextPresentationRole::k_unknown);
+    CHECK_EQ(
+        world_text->provenance.modernization_policy, App::TextModernizationPolicy::k_faithful_only);
     const App::Script::AreaScriptRuntime* runtime{controller.area_script()};
     REQUIRE(runtime != nullptr);
     CHECK(runtime->last_run_yielded());
@@ -1712,9 +1709,9 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
       const auto voice{manager.world_presentation().take_voice_over()};
       REQUIRE(voice.has_value());
       CHECK_EQ(voice->audio_path, "VOICEOFF/JINGOFF3.ADP");
-      const auto subtitle{manager.world_presentation().take_subtitle()};
-      REQUIRE(subtitle.has_value());
-      CHECK_EQ(subtitle->duration_ms, 2000U);
+      const auto world_text{manager.world_presentation().take_world_text()};
+      REQUIRE(world_text.has_value());
+      CHECK_EQ(world_text->duration_ms, 2000U);
     }
 
     SUBCASE("-1 does not require IAM/OBJECT") {
@@ -1730,7 +1727,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
       REQUIRE(controller.initialize(manager).has_value());
       REQUIRE(controller.tick().has_value());
       CHECK_EQ(manager.world_presentation().pending_voice_over_count(), 0U);
-      CHECK_EQ(manager.world_presentation().pending_subtitle_count(), 0U);
+      CHECK_EQ(manager.world_presentation().pending_world_text_count(), 0U);
     }
 
     SUBCASE("type 0x10 is not treated as voice-over") {
@@ -1748,7 +1745,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
       REQUIRE(controller.initialize(manager).has_value());
       REQUIRE(controller.tick().has_value());
       CHECK_EQ(manager.world_presentation().pending_voice_over_count(), 0U);
-      CHECK_EQ(manager.world_presentation().pending_subtitle_count(), 0U);
+      CHECK_EQ(manager.world_presentation().pending_world_text_count(), 0U);
     }
   }
 

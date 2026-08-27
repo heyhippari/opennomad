@@ -1,11 +1,12 @@
 #include "Core/Interface/InterfacePresenter.hpp"
 
 #include <cstddef>
-#include <string_view>
+#include <cstdint>
 
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Dialog/DialogRuntime.hpp"
 #include "Core/Interface/InterfaceManager.hpp"
+#include "Core/Interface/RuntimeText.hpp"
 
 namespace App::Interface {
 
@@ -49,10 +50,12 @@ float InterfacePresenter::render_dialog(const Dialog::DialogPresentation& dialog
   return 0.0F;
 }
 
-void InterfacePresenter::render_world_subtitle(
-    const std::string_view text, const int pixel_width, const int pixel_height) {
+void InterfacePresenter::render_world_text(const RuntimeTextDocument& document,
+    const std::uint64_t presentation_time_ms,
+    const int pixel_width,
+    const int pixel_height) {
   if (m_manager != nullptr) {
-    m_manager->render_world_subtitle(text, pixel_width, pixel_height);
+    m_manager->render_world_text(document, presentation_time_ms, pixel_width, pixel_height);
   }
 }
 

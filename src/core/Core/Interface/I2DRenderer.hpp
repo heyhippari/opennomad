@@ -18,6 +18,7 @@
 #include "Core/Interface/I2DModel.hpp"
 #include "Core/Interface/I2DPresentation.hpp"
 #include "Core/Interface/I2DStateTransition.hpp"
+#include "Core/Interface/RuntimeText.hpp"
 #include "Core/Shader.hpp"
 #include "Core/Texture.hpp"
 #include "Core/Vertex.hpp"
@@ -84,9 +85,10 @@ class I2DRenderer {
       int pixel_height,
       Debug::I2DCounters& counters);
 
-  /// Renders a neutral centered world subtitle above normal interfaces and
-  /// below the interactive dialog layer.
-  void render_world_subtitle(std::string_view text,
+  /// Faithfully renders authored Runtime world text above normal interfaces
+  /// and below the interactive dialog layer.
+  void render_world_text(const RuntimeTextDocument& document,
+      std::uint64_t presentation_time_ms,
       FontManager& fonts,
       int pixel_width,
       int pixel_height,

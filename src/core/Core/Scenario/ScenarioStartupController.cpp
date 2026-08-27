@@ -24,6 +24,7 @@
 #include "Core/GameDataLoader.hpp"
 #include "Core/GameState.hpp"
 #include "Core/Interface/InterfaceDispatcher.hpp"
+#include "Core/Interface/RuntimeText.hpp"
 #include "Core/Log.hpp"
 #include "Core/LogCategory.hpp"
 #include "Core/Omikron/IamArea.hpp"
@@ -1012,8 +1013,7 @@ std::optional<ResolvedCompactCamera> ScenarioStartupController::resolve_compact_
   for (std::size_t index{0}; index < m_area_slots.size(); ++index) {
     const RuntimeAreaSlot& slot{m_area_slots.at(index)};
     if (slot.primary.has_value()) {
-      const std::optional<Omikron::IamCameraRecord> camera{
-          slot.primary->camera_by_id(camera_id)};
+      const std::optional<Omikron::IamCameraRecord> camera{slot.primary->camera_by_id(camera_id)};
       if (camera.has_value()) {
         return ResolvedCompactCamera{.camera = camera.value(),
             .source = CompactCameraDefinitionSource::k_area,
@@ -1023,8 +1023,7 @@ std::optional<ResolvedCompactCamera> ScenarioStartupController::resolve_compact_
       }
     }
     if (slot.scene.has_value()) {
-      const std::optional<Omikron::IamCameraRecord> camera{
-          slot.scene->camera_by_id(camera_id)};
+      const std::optional<Omikron::IamCameraRecord> camera{slot.scene->camera_by_id(camera_id)};
       if (camera.has_value()) {
         return ResolvedCompactCamera{.camera = camera.value(),
             .source = CompactCameraDefinitionSource::k_scene,
@@ -1049,8 +1048,8 @@ std::optional<ResolvedCompactCamera> ScenarioStartupController::resolve_compact_
 }
 
 std::expected<Script::AreaCameraOperationHandle, std::string>
-ScenarioStartupController::enqueue_compact_camera(const std::size_t owner_slot,
-    const Script::AreaCameraRequest& request) {
+ScenarioStartupController::enqueue_compact_camera(
+    const std::size_t owner_slot, const Script::AreaCameraRequest& request) {
   if (m_manager == nullptr || owner_slot >= m_area_slots.size()) {
     const std::string error{
         fmt::format("compact camera {} requested without a resident owner", request.camera_id)};
@@ -1062,9 +1061,10 @@ ScenarioStartupController::enqueue_compact_camera(const std::size_t owner_slot,
   const std::optional<ResolvedCompactCamera> resolved{resolve_compact_camera(camera_id)};
   const WorldSceneContext* context{m_manager->find_world_context(slot.world_scene_id)};
   if (!resolved.has_value()) {
-    const std::string error{fmt::format("compact camera {} was not found in any resident "
-                                        "AREA/SCENE or IAM/GLOBAL",
-        request.camera_id)};
+    const std::string error{
+        fmt::format("compact camera {} was not found in any resident "
+                    "AREA/SCENE or IAM/GLOBAL",
+            request.camera_id)};
     App::Log::warn(LogCategory::Scenario, "{}", error);
     return std::expected<Script::AreaCameraOperationHandle, std::string>{std::unexpect, error};
   }
@@ -2065,11 +2065,11 @@ std::expected<void, std::string> ScenarioStartupController::present_compact_obje
                      ? "VOICEOFF/JINGOFF3.ADP"
                      : fmt::format("VOICEOFF/{}.ADP", stem);
   }
-  constexpr std::uint32_t k_minimum_subtitle_duration_ms{2000U};
-  constexpr std::uint32_t k_subtitle_milliseconds_per_character{80U};
-  const std::uint32_t subtitle_duration_ms{std::max(k_minimum_subtitle_duration_ms,
+  constexpr std::uint32_t k_minimum_world_text_duration_ms{2000U};
+  constexpr std::uint32_t k_world_text_milliseconds_per_raw_byte{80U};
+  const std::uint32_t world_text_duration_ms{std::max(k_minimum_world_text_duration_ms,
       static_cast<std::uint32_t>(object->subtitle().size()) *
-          k_subtitle_milliseconds_per_character)};
+          k_world_text_milliseconds_per_raw_byte)};
 
   if (audio_path.has_value()) {
     m_manager->world_presentation().enqueue_voice_over(
@@ -2078,23 +2078,26 @@ std::expected<void, std::string> ScenarioStartupController::present_compact_obje
             .object_id = request.object_id,
             .audio_path = audio_path.value()});
   }
-  m_manager->world_presentation().enqueue_subtitle(
-      WorldSubtitleCommand{.scene_id = context->scene_id,
-          .scene_generation = context->generation,
+  m_manager->world_presentation().enqueue_world_text(WorldTextCommand{.scene_id = context->scene_id,
+      .scene_generation = context->generation,
+      .document = Interface::parse_runtime_text(object->subtitle()),
+      .provenance = WorldTextProvenance{.source_kind = TextSourceKind::k_iam_object,
           .object_id = request.object_id,
-          .text = object->subtitle(),
-          .duration_ms = subtitle_duration_ms});
+          .audio_resource = audio_path.value_or(""),
+          .role = TextPresentationRole::k_unknown,
+          .modernization_policy = TextModernizationPolicy::k_faithful_only},
+      .duration_ms = world_text_duration_ms});
   record("AreaScript.ObjectActivate",
-      fmt::format("id={} type={:#x} voice={} subtitleMs={}",
+      fmt::format("id={} type={:#x} voice={} worldTextMs={}",
           request.object_id,
           object->object_type(),
           audio_path.value_or("<none>"),
-          subtitle_duration_ms));
+          world_text_duration_ms));
   App::Log::debug(LogCategory::Scenario,
-      "OBJECTS ID {} voice-over '{}' subtitle={} ms",
+      "OBJECTS ID {} voice-over '{}' world-text={} ms",
       request.object_id,
       audio_path.value_or("<none>"),
-      subtitle_duration_ms);
+      world_text_duration_ms);
   return {};
 }
 
@@ -2821,8 +2824,7 @@ bool ScenarioStartupController::zone_contact_reporting_enabled(
            active.area_id == contact.area_id && active.scene_id == contact.scene_id &&
            active.zone.zone_id == contact.zone.zone_id &&
            active.zone.event_offsets == contact.zone.event_offsets;
-  }) &&
-         zone_contact_spatially_matches(contact);
+  }) && zone_contact_spatially_matches(contact);
 }
 
 bool ScenarioStartupController::zone_contact_reporting_enabled(
@@ -2848,14 +2850,14 @@ bool ScenarioStartupController::zone_contact_reporting_enabled(
 
 std::expected<void, std::string> ScenarioStartupController::create_zone_contact(
     const ActiveZoneRef& active_zone) {
-  const bool exists{std::ranges::any_of(m_zone_contacts, [&active_zone](
-                       const std::unique_ptr<ZoneContactContext>& existing) {
-    return existing != nullptr && existing->resident_slot == active_zone.resident_slot &&
-           existing->source == active_zone.source && existing->area_id == active_zone.area_id &&
-           existing->scene_id == active_zone.scene_id &&
-           existing->zone.zone_id == active_zone.zone.zone_id &&
-           existing->zone.event_offsets == active_zone.zone.event_offsets;
-  })};
+  const bool exists{std::ranges::any_of(
+      m_zone_contacts, [&active_zone](const std::unique_ptr<ZoneContactContext>& existing) {
+        return existing != nullptr && existing->resident_slot == active_zone.resident_slot &&
+               existing->source == active_zone.source && existing->area_id == active_zone.area_id &&
+               existing->scene_id == active_zone.scene_id &&
+               existing->zone.zone_id == active_zone.zone.zone_id &&
+               existing->zone.event_offsets == active_zone.zone.event_offsets;
+      })};
   if (exists) {
     return {};
   }
@@ -2930,14 +2932,15 @@ std::expected<void, std::string> ScenarioStartupController::service_zone_contact
   });
 
   for (const ActiveZoneRef& active_zone : m_active_zones) {
-    const bool already_reported{std::ranges::any_of(m_zone_contacts, [&active_zone](
-        const std::unique_ptr<ZoneContactContext>& existing) {
-      return existing != nullptr && existing->resident_slot == active_zone.resident_slot &&
-             existing->source == active_zone.source && existing->area_id == active_zone.area_id &&
-             existing->scene_id == active_zone.scene_id &&
-             existing->zone.zone_id == active_zone.zone.zone_id &&
-             existing->zone.event_offsets == active_zone.zone.event_offsets;
-    })};
+    const bool already_reported{std::ranges::any_of(
+        m_zone_contacts, [&active_zone](const std::unique_ptr<ZoneContactContext>& existing) {
+          return existing != nullptr && existing->resident_slot == active_zone.resident_slot &&
+                 existing->source == active_zone.source &&
+                 existing->area_id == active_zone.area_id &&
+                 existing->scene_id == active_zone.scene_id &&
+                 existing->zone.zone_id == active_zone.zone.zone_id &&
+                 existing->zone.event_offsets == active_zone.zone.event_offsets;
+        })};
     if (!already_reported && zone_contact_reporting_enabled(active_zone)) {
       if (auto created{create_zone_contact(active_zone)}; !created) {
         return created;
@@ -2952,13 +2955,15 @@ std::expected<void, std::string> ScenarioStartupController::service_zone_contact
         }
         Script::AreaScriptRuntime& script{*contact->script};
         const bool spatial_match{zone_contact_spatially_matches(*contact)};
-        const bool active_zone{std::ranges::any_of(m_active_zones, [contact_ptr = contact.get()](const ActiveZoneRef& active) {
-          return active.resident_slot == contact_ptr->resident_slot &&
-                 active.source == contact_ptr->source && active.area_id == contact_ptr->area_id &&
-                 active.scene_id == contact_ptr->scene_id &&
-                 active.zone.zone_id == contact_ptr->zone.zone_id &&
-                 active.zone.event_offsets == contact_ptr->zone.event_offsets;
-        })};
+        const bool active_zone{std::ranges::any_of(
+            m_active_zones, [contact_ptr = contact.get()](const ActiveZoneRef& active) {
+              return active.resident_slot == contact_ptr->resident_slot &&
+                     active.source == contact_ptr->source &&
+                     active.area_id == contact_ptr->area_id &&
+                     active.scene_id == contact_ptr->scene_id &&
+                     active.zone.zone_id == contact_ptr->zone.zone_id &&
+                     active.zone.event_offsets == contact_ptr->zone.event_offsets;
+            })};
         if (!spatial_match && !contact->departure_queued &&
             script.event_entries().event3.has_value()) {
           script.queue_event(3);

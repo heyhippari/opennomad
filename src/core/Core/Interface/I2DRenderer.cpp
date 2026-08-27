@@ -32,6 +32,8 @@
 #include "Core/Interface/I2DModel.hpp"
 #include "Core/Interface/I2DPresentation.hpp"
 #include "Core/Interface/InterfaceManager.hpp"
+#include "Core/Interface/RuntimeText.hpp"
+#include "Core/Interface/RuntimeTextLayout.hpp"
 #include "Core/Log.hpp"
 #include "Core/LogCategory.hpp"
 #include "Core/Shader.hpp"
@@ -750,28 +752,32 @@ float I2DRenderer::render_dialog(const Dialog::DialogPresentation& dialog,
   return maximum_scroll;
 }
 
-void I2DRenderer::render_world_subtitle(const std::string_view text,
+void I2DRenderer::render_world_text(const RuntimeTextDocument& document,
+    const std::uint64_t presentation_time_ms,
     FontManager& fonts,
     const int pixel_width,
     const int pixel_height,
     Debug::I2DCounters& counters) {
-  if (!m_initialized || text.empty() || pixel_width <= 0 || pixel_height <= 0) {
+  if (!m_initialized || document.authored_bytes().empty() || pixel_width <= 0 ||
+      pixel_height <= 0) {
     return;
   }
   const I2DPresentationTransform transform{make_presentation_transform(pixel_width, pixel_height)};
-  const FontResource* font{
-      fonts.ensure_font(dialog_font_key(), transform.pixels_per_reference_unit)};
-  if (font == nullptr) {
-    return;
-  }
-  const DialogTextLayout layout{format_dialog_text(text,
-      k_dialog_text_width,
-      k_dialog_main_viewport_height,
-      font->line_height(),
-      [font](const std::string_view value) {
-        return font->measure(value);
+  const RuntimeTextLayout layout{layout_runtime_text(
+      document, [&fonts, &transform](const std::uint8_t font_key, const std::uint8_t text_byte) {
+        const FontResource* font{
+            fonts.ensure_font(static_cast<char>(font_key), transform.pixels_per_reference_unit)};
+        if (font == nullptr) {
+          font = fonts.ensure_font(dialog_font_key(), transform.pixels_per_reference_unit);
+        }
+        if (font == nullptr) {
+          return RuntimeGlyphMetrics{};
+        }
+        const auto glyph{font->glyph_for(static_cast<char32_t>(text_byte))};
+        return RuntimeGlyphMetrics{.advance_x = glyph.has_value() ? glyph->advance_x : 0.0F,
+            .line_height = font->line_height()};
       })};
-  if (layout.lines.empty()) {
+  if (layout.glyphs.empty()) {
     return;
   }
   glViewport(0, 0, pixel_width, pixel_height);
@@ -784,34 +790,36 @@ void I2DRenderer::render_world_subtitle(const std::string_view text,
       "u_mvp", std::span<const GLfloat, 16>{glm::value_ptr(transform.projection), 16});
   m_shader->set_uniform_int("u_texture0", 0);
   reset();
-  float origin_y{k_dialog_main_viewport_top +
-                 ((k_dialog_main_viewport_height - layout.formatted_height) * 0.5F)};
-  for (const DialogTextLine& line : layout.lines) {
-    float cursor_x{(k_reference_width - line.width) * 0.5F};
-    std::size_t byte_offset{0};
-    while (byte_offset < line.text.size()) {
-      const auto glyph{font->next_glyph(line.text, byte_offset)};
-      if (!glyph.has_value()) {
-        continue;
-      }
-      if (glyph->visible) {
-        push_quad(font->texture(),
-            cursor_x + glyph->x0,
-            origin_y + glyph->y0,
-            cursor_x + glyph->x1,
-            origin_y + glyph->y1,
-            glyph->u_left,
-            glyph->v_top,
-            glyph->u_right,
-            glyph->v_bottom,
-            k_dialog_white,
-            I2DBlitOptions{});
-        counters.glyphs += 1U;
-        counters.quads += 1U;
-      }
-      cursor_x += glyph->advance_x;
+  for (const RuntimePositionedGlyph& positioned : layout.glyphs) {
+    const FontResource* font{fonts.ensure_font(
+        static_cast<char>(positioned.style.font_key), transform.pixels_per_reference_unit)};
+    if (font == nullptr) {
+      font = fonts.ensure_font(dialog_font_key(), transform.pixels_per_reference_unit);
     }
-    origin_y += font->line_height();
+    if (font == nullptr) {
+      continue;
+    }
+    const auto glyph{font->glyph_for(static_cast<char32_t>(positioned.text_byte))};
+    if (glyph.has_value() && glyph->visible) {
+      const auto color{resolve_runtime_text_color(positioned.style, presentation_time_ms)};
+      const std::array<float, 4> tint{static_cast<float>(color.at(0)) / 255.0F,
+          static_cast<float>(color.at(1)) / 255.0F,
+          static_cast<float>(color.at(2)) / 255.0F,
+          1.0F};
+      push_quad(font->texture(),
+          positioned.x + glyph->x0,
+          positioned.y + glyph->y0,
+          positioned.x + glyph->x1,
+          positioned.y + glyph->y1,
+          glyph->u_left,
+          glyph->v_top,
+          glyph->u_right,
+          glyph->v_bottom,
+          tint,
+          I2DBlitOptions{});
+      counters.glyphs += 1U;
+      counters.quads += 1U;
+    }
   }
   flush();
   counters.draw_calls += m_commands.size();
