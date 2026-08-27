@@ -130,7 +130,7 @@ enum class OptionsInvocationMode : std::uint8_t {
 ///
 /// The numbers above are Runtime option-descriptor indices, not the visible
 /// IAM string indices. Descriptor +0x18 yields 0/16/21/28/80 respectively.
-inline constexpr std::array<OptionsRowDefinition, 5> k_options_root_rows{{
+inline constexpr std::array<OptionsRowDefinition, 6> k_options_root_rows{{
     {.stable_id = "video",
         .runtime_option_index = 1,
         .runtime_label_string_index = 0,
@@ -162,6 +162,14 @@ inline constexpr std::array<OptionsRowDefinition, 5> k_options_root_rows{{
         .choices = {},
         .default_choice = 0,
         .literal_label = {},
+        .accent = false},
+    {.stable_id = "enhancements",
+        .runtime_option_index = -1,
+        .runtime_label_string_index = -1,
+        .kind = OptionsRowKind::k_submenu,
+        .choices = {},
+        .default_choice = 0,
+        .literal_label = "Enhancements",
         .accent = false},
     {.stable_id = "back",
         .runtime_option_index = 72,
@@ -415,8 +423,42 @@ inline constexpr std::array<OptionsRowDefinition, 5> k_options_game_rows{{
 inline constexpr OptionsPageDefinition k_options_game_page{
     .stable_id = "game", .rows = std::span<const OptionsRowDefinition>{k_options_game_rows}};
 
+inline constexpr std::array<OptionsChoiceDefinition, 2> k_options_interpolation_choices{{
+    {.runtime_string_index = -1, .raw_value = 0, .literal_label = "Off"},
+    {.runtime_string_index = -1, .raw_value = 1, .literal_label = "On"},
+}};
+inline constexpr std::array<OptionsRowDefinition, 3> k_options_enhancements_rows{{
+    {.stable_id = "enhancements.title",
+        .runtime_option_index = -1,
+        .runtime_label_string_index = -1,
+        .kind = OptionsRowKind::k_submenu,
+        .choices = {},
+        .default_choice = 0,
+        .literal_label = "Enhancements",
+        .accent = true},
+    {.stable_id = "enhancements.menu_interpolation",
+        .runtime_option_index = -1,
+        .runtime_label_string_index = -1,
+        .kind = OptionsRowKind::k_enum,
+        .choices = std::span<const OptionsChoiceDefinition>{k_options_interpolation_choices},
+        .default_choice = 1,
+        .literal_label = "Menu animation interpolation",
+        .accent = false},
+    {.stable_id = "enhancements.back",
+        .runtime_option_index = 72,
+        .runtime_label_string_index = 80,
+        .kind = OptionsRowKind::k_back,
+        .choices = {},
+        .default_choice = 0,
+        .literal_label = {},
+        .accent = false},
+}};
+inline constexpr OptionsPageDefinition k_options_enhancements_page{.stable_id = "enhancements",
+    .rows = std::span<const OptionsRowDefinition>{k_options_enhancements_rows}};
+
 /// Runtime Controls root @ 0x004919E0. Descriptor 20 enters keyboard/mouse
-/// mode, 21 joystick mode, 22 Mouse Settings and 72 returns to OPTIONS.
+/// mode, 21 is reserved for future Gamepad controls, 22 Mouse Settings and
+/// 72 returns to OPTIONS.
 inline constexpr std::array<OptionsRowDefinition, 5> k_options_controls_rows{{
     {.stable_id = "controls.title",
         .runtime_option_index = 19,
@@ -434,13 +476,13 @@ inline constexpr std::array<OptionsRowDefinition, 5> k_options_controls_rows{{
         .default_choice = 0,
         .literal_label = {},
         .accent = false},
-    {.stable_id = "controls.joystick",
+    {.stable_id = "controls.gamepad",
         .runtime_option_index = 21,
-        .runtime_label_string_index = 78,
+        .runtime_label_string_index = -1,
         .kind = OptionsRowKind::k_submenu,
         .choices = {},
         .default_choice = 0,
-        .literal_label = {},
+        .literal_label = "Gamepad controls",
         .accent = false},
     {.stable_id = "controls.mouse_settings",
         .runtime_option_index = 22,
@@ -599,19 +641,20 @@ inline constexpr OptionsBindingPageDefinition k_options_keyboard_group3_page{
 inline constexpr std::int16_t k_options_restore_defaults_option_index{73};
 inline constexpr std::int16_t k_options_restore_defaults_string_index{81};
 
-// The five-entry START MENU root page is the easiest sanity check of the
-// recovered layout helper: 120 + N*65.
-static_assert(runtime_options_row_step(k_options_root_rows.size()) == 65);
+// The six-entry START MENU root page uses Runtime's 52-unit spacing: 120..380.
+static_assert(runtime_options_row_step(k_options_root_rows.size()) == 52);
 static_assert(runtime_options_row_y(
                   0, k_options_root_rows.size(), OptionsInvocationMode::k_start_menu) == 120);
 static_assert(runtime_options_row_y(
-                  1, k_options_root_rows.size(), OptionsInvocationMode::k_start_menu) == 185);
+                  1, k_options_root_rows.size(), OptionsInvocationMode::k_start_menu) == 172);
 static_assert(runtime_options_row_y(
-                  2, k_options_root_rows.size(), OptionsInvocationMode::k_start_menu) == 250);
+                  2, k_options_root_rows.size(), OptionsInvocationMode::k_start_menu) == 224);
 static_assert(runtime_options_row_y(
-                  3, k_options_root_rows.size(), OptionsInvocationMode::k_start_menu) == 315);
+                  3, k_options_root_rows.size(), OptionsInvocationMode::k_start_menu) == 276);
 static_assert(runtime_options_row_y(
-                  4, k_options_root_rows.size(), OptionsInvocationMode::k_start_menu) == 380);
+                  4, k_options_root_rows.size(), OptionsInvocationMode::k_start_menu) == 328);
+static_assert(runtime_options_row_y(
+                  5, k_options_root_rows.size(), OptionsInvocationMode::k_start_menu) == 380);
 
 // Nine Video rows use Runtime's 280-unit branch: start 120, step 32.
 static_assert(runtime_options_row_step(k_options_video_rows.size()) == 32);
@@ -633,6 +676,7 @@ static_assert(runtime_options_row_y(
                   4, k_options_game_rows.size(), OptionsInvocationMode::k_start_menu) == 380);
 
 static_assert(runtime_options_row_step(k_options_controls_rows.size()) == 65);
+static_assert(runtime_options_row_step(k_options_enhancements_rows.size()) == 60);
 static_assert(runtime_options_row_step(k_options_keyboard_categories_rows.size()) == 52);
 
 // Binding pages contain title + binding rows + Restore defaults + Back.

@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <deque>
 #include <expected>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -201,6 +202,9 @@ class InterfaceManager {
     return m_game_settings;
   }
 
+  /// Persists native OpenNomad settings when persistence is available.
+  void persist_game_settings();
+
   /// Sets the animated background's presentation mode (stepped or
   /// interpolated) for every resident instance. Debug/inspection helper.
   void set_background_interpolated(bool interpolated);
@@ -243,10 +247,13 @@ class InterfaceManager {
   void update_presentation(InterfaceInstance& instance, float delta_time);
 
   void handle_navigation(const Input::InputManager& input);
+  void apply_game_setting(std::string_view stable_id);
 
   std::unique_ptr<I2DRenderer> m_renderer;
   FontManager m_fonts;
   App::Settings::GameSettings m_game_settings;
+  std::filesystem::path m_settings_path;
+  bool m_settings_persistence_enabled{true};
   /// Resident interfaces in opening order (presentation order).
   std::vector<std::unique_ptr<InterfaceInstance>> m_instances;
   /// Focused (input-receiving) instance; nullopt when none resident.

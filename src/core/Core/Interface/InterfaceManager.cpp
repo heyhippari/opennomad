@@ -13,12 +13,14 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <filesystem>
 #include <memory>
 #include <optional>
 #include <ranges>
 #include <span>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -41,6 +43,7 @@
 #include "Core/LogCategory.hpp"
 #include "Core/Omikron/BmpImage.hpp"
 #include "Core/Omikron/IamStringTable.hpp"
+#include "Core/Resources.hpp"
 #include "Core/Texture.hpp"
 #include "Settings/GameSettings.hpp"
 
@@ -161,9 +164,28 @@ const InterfaceDescriptor* descriptor_for_id(const std::int32_t id) {
   return nullptr;
 }
 
-InterfaceManager::InterfaceManager() = default;
+InterfaceManager::InterfaceManager()
+    : m_settings_path(Resources::get_user_config_path() / "settings.cfg") {
+    m_game_settings.ensure_choice("enhancements.menu_interpolation",
+      {App::Settings::SettingChoice{.label = "Off", .raw_value = 0},
+        App::Settings::SettingChoice{.label = "On", .raw_value = 1}},
+      1U);
+  if (auto result{m_game_settings.load(m_settings_path)}; !result) {
+    std::error_code error;
+    if (std::filesystem::exists(m_settings_path, error) && !error) {
+      m_settings_persistence_enabled = false;
+      App::Log::warn(LogCategory::Interface,
+          "native settings disabled for this session: {}",
+          result.error());
+    }
+  }
+  m_game_settings.set_change_callback(
+      [this](const std::string_view stable_id) { apply_game_setting(stable_id); });
+  apply_game_setting("enhancements.menu_interpolation");
+}
 
 InterfaceManager::~InterfaceManager() {
+  persist_game_settings();
   close();
 }
 
@@ -292,6 +314,15 @@ void InterfaceManager::close() {
   }
   m_focused_interface.reset();
   m_completion_overlay_latch.reset();
+}
+
+void InterfaceManager::persist_game_settings() {
+  if (!m_settings_persistence_enabled) {
+    return;
+  }
+  if (auto result{m_game_settings.save(m_settings_path)}; !result) {
+    App::Log::warn(LogCategory::Interface, "failed to save native settings: {}", result.error());
+  }
 }
 
 void InterfaceManager::close(const InterfaceHandle handle) {
@@ -574,6 +605,14 @@ void InterfaceManager::set_background_interpolated(const bool interpolated) {
       instance->background->set_interpolated(interpolated);
     }
   }
+}
+
+void InterfaceManager::apply_game_setting(const std::string_view stable_id) {
+  if (stable_id != "enhancements.menu_interpolation") {
+    return;
+  }
+  const auto raw{m_game_settings.choice_raw_value(stable_id)};
+  set_background_interpolated(raw.value_or(1) != 0);
 }
 
 bool InterfaceManager::background_interpolated() const {
@@ -969,6 +1008,8 @@ void close_options_to_host(InterfaceManager& manager, InterfaceInstance& options
     }
   }
 
+  manager.persist_game_settings();
+
   // Must be the final operation that touches options_instance: close destroys
   // the state graph containing the callback currently being executed.
   manager.close(options_handle);
@@ -1358,6 +1399,9 @@ void initialize_start_menu(InterfaceManager& manager, InterfaceInstance& instanc
   // Animated background: IMAGES/CLOUD.BMP. Missing source degrades to no
   // background (the canvas stays clear) rather than an invented asset.
   if (auto background{I2DBumpBackground::create()}) {
+    background.value()->set_interpolated(
+        manager.game_settings().choice_raw_value("enhancements.menu_interpolation").value_or(1) !=
+        0);
     root->background = background->get();
     options->background = background->get();
     quit->background = background->get();
@@ -1519,8 +1563,9 @@ void initialize_options(InterfaceManager& manager, InterfaceInstance& instance) 
   I2DState* audio{manager.create_state(instance)};
   I2DState* game{manager.create_state(instance)};
   I2DState* controls{manager.create_state(instance)};
+  I2DState* enhancements{manager.create_state(instance)};
   I2DState* keyboard_categories{manager.create_state(instance)};
-  I2DState* joystick_action{manager.create_state(instance)};
+  I2DState* gamepad_action{manager.create_state(instance)};
   I2DState* mouse_settings_action{manager.create_state(instance)};
   I2DState* keyboard_group0{manager.create_state(instance)};
   I2DState* keyboard_group1{manager.create_state(instance)};
@@ -1529,7 +1574,8 @@ void initialize_options(InterfaceManager& manager, InterfaceInstance& instance) 
   I2DState* back_action{manager.create_state(instance)};
 
   if (root == nullptr || video == nullptr || audio == nullptr || game == nullptr ||
-      controls == nullptr || keyboard_categories == nullptr || joystick_action == nullptr ||
+      controls == nullptr || enhancements == nullptr || keyboard_categories == nullptr ||
+      gamepad_action == nullptr ||
       mouse_settings_action == nullptr || keyboard_group0 == nullptr ||
       keyboard_group1 == nullptr || keyboard_group2 == nullptr || keyboard_group3 == nullptr ||
       back_action == nullptr) {
@@ -1537,22 +1583,24 @@ void initialize_options(InterfaceManager& manager, InterfaceInstance& instance) 
     return;
   }
 
-  const std::array<I2DState*, 5> targets{video, audio, game, controls, back_action};
+  const std::array<I2DState*, 6> targets{video, audio, game, controls, enhancements, back_action};
   for (I2DState* target : targets) {
     target->parent = root;
   }
 
   keyboard_categories->parent = controls;
-  joystick_action->parent = controls;
+  enhancements->parent = root;
+  gamepad_action->parent = controls;
   mouse_settings_action->parent = controls;
   keyboard_group0->parent = keyboard_categories;
   keyboard_group1->parent = keyboard_categories;
   keyboard_group2->parent = keyboard_categories;
   keyboard_group3->parent = keyboard_categories;
 
-  joystick_action->on_enter = [](InterfaceManager&, InterfaceInstance&, I2DState&) {
+  gamepad_action->on_enter = [](InterfaceManager&, InterfaceInstance&, I2DState&) {
     App::Log::info(
-        LogCategory::Interface, "joystick controls require the future SDL gamepad device layer");
+        LogCategory::Interface,
+        "Gamepad controls are deferred to the modern SDL gamepad controls phase");
   };
   mouse_settings_action->on_enter = [](InterfaceManager&, InterfaceInstance&, I2DState&) {
     App::Log::info(LogCategory::Interface,
@@ -1586,6 +1634,10 @@ void initialize_options(InterfaceManager& manager, InterfaceInstance& instance) 
   seed_video_settings(manager, instance);
   seed_audio_settings(manager, instance);
   seed_game_settings(manager, instance);
+    manager.game_settings().ensure_choice("enhancements.menu_interpolation",
+      {App::Settings::SettingChoice{.label = "Off", .raw_value = 0},
+        App::Settings::SettingChoice{.label = "On", .raw_value = 1}},
+      1U);
 
   I2DGroup root_rows;
   root_rows.runtime_flags = k_options_text_flags;
@@ -1605,11 +1657,12 @@ void initialize_options(InterfaceManager& manager, InterfaceInstance& instance) 
   populate_options_page(manager, *video, k_options_video_page, *root);
   populate_options_page(manager, *audio, k_options_audio_page, *root);
   populate_options_page(manager, *game, k_options_game_page, *root);
+  populate_options_page(manager, *enhancements, k_options_enhancements_page, *root);
 
-  // Controls root. Runtime's title is static; the four following entries are
-  // Keyboard/Mouse, Joystick, Mouse Settings and Back.
-  const std::array<I2DState*, 5> controls_targets{
-      nullptr, keyboard_categories, joystick_action, mouse_settings_action, root};
+    // Controls root. Runtime's title is static; the four following entries are
+    // Keyboard/Mouse, Gamepad, Mouse Settings and Back.
+    const std::array<I2DState*, 5> controls_targets{
+      nullptr, keyboard_categories, gamepad_action, mouse_settings_action, root};
   I2DGroup controls_rows;
   controls_rows.runtime_flags = k_options_text_flags;
   std::size_t controls_index{0};

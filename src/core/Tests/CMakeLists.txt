@@ -4,6 +4,10 @@ add_executable(ResourcesTest Resources.spec.cpp $<TARGET_OBJECTS:TestRunner>)
 add_test(NAME ResourcesTest COMMAND ResourcesTest)
 target_link_libraries(ResourcesTest PRIVATE doctest::doctest Core)
 
+add_executable(GameSettingsTest GameSettings.spec.cpp $<TARGET_OBJECTS:TestRunner>)
+add_test(NAME GameSettingsTest COMMAND GameSettingsTest)
+target_link_libraries(GameSettingsTest PRIVATE doctest::doctest Core)
+
 add_executable(MetricsTest Metrics.spec.cpp $<TARGET_OBJECTS:TestRunner>)
 add_test(NAME MetricsTest COMMAND MetricsTest)
 target_link_libraries(MetricsTest PRIVATE doctest::doctest Core)

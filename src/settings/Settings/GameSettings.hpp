@@ -3,6 +3,8 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <expected>
+#include <filesystem>
 #include <functional>
 #include <map>
 #include <optional>
@@ -35,6 +37,7 @@ class ChoiceSetting {
   /// Moves one choice in the requested direction, clamped at the endpoints.
   /// Returns true only when the selected value changed.
   bool adjust(std::int32_t delta);
+  bool set_raw_value(std::int32_t raw_value);
 
   [[nodiscard]] std::string_view label() const;
   [[nodiscard]] std::optional<std::int32_t> raw_value() const;
@@ -58,6 +61,7 @@ class NumericSetting {
   /// Moves one step in the sign of `delta`, clamped to [minimum, maximum].
   /// Returns true only when the value changed.
   bool adjust(std::int32_t delta);
+  bool set_value(std::int32_t value);
 
   [[nodiscard]] std::int32_t value() const;
   [[nodiscard]] float fraction() const;
@@ -117,6 +121,8 @@ class RuntimeControlBindings {
 /// backend for later persistence and engine consumers.
 class GameSettings {
  public:
+  using GameSettingChangeCallback = std::function<void(std::string_view stable_id)>;
+
   /// Defines a setting only when the stable ID is not already present.
   /// Reopening OPTIONS therefore preserves changes made earlier in the run.
   void ensure_choice(
@@ -137,6 +143,10 @@ class GameSettings {
   bool adjust_choice(std::string_view stable_id, std::int32_t delta);
   bool adjust_number(std::string_view stable_id, std::int32_t delta);
 
+  [[nodiscard]] std::expected<void, std::string> load(const std::filesystem::path& path);
+  [[nodiscard]] std::expected<void, std::string> save(const std::filesystem::path& path) const;
+  void set_change_callback(GameSettingChangeCallback callback);
+
   [[nodiscard]] std::string choice_label(std::string_view stable_id) const;
   [[nodiscard]] std::optional<std::int32_t> choice_raw_value(std::string_view stable_id) const;
   [[nodiscard]] std::optional<std::int32_t> number_value(std::string_view stable_id) const;
@@ -155,10 +165,15 @@ class GameSettings {
   }
 
  private:
+  void notify_change(std::string_view stable_id);
+
   // Transparent comparator permits find(string_view) without temporary keys.
   std::map<std::string, ChoiceSetting, std::less<>> m_choices;
   std::map<std::string, NumericSetting, std::less<>> m_numbers;
+  std::map<std::string, std::int32_t, std::less<>> m_pending_choices;
+  std::map<std::string, std::int32_t, std::less<>> m_pending_numbers;
   RuntimeControlBindings m_runtime_control_bindings;
+  GameSettingChangeCallback m_change_callback;
 };
 
 }  // namespace App::Settings
