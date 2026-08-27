@@ -8,6 +8,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -89,6 +90,16 @@ struct InterfaceInstance {
   /// OpenNomad presentation policy state, separate from recovered I2D state.
   InterfacePresentationState presentation;
 };
+
+struct TransitionStateDestination {
+  InterfaceInstance* instance{nullptr};
+  I2DState* state{nullptr};
+};
+
+/// Installs every destination state owned by its interface, then invokes
+/// `after_commit`. Invalid or mismatched destinations are ignored.
+void commit_transition_destinations(std::span<const TransitionStateDestination> destinations,
+    const std::function<void()>& after_commit = {});
 
 /// Generic interface system: looks up a static descriptor, creates a runtime
 /// instance, loads its resources and delegates interface-specific setup to
@@ -230,7 +241,7 @@ class InterfaceManager {
       std::vector<TransitionLayer> incoming,
       I2DStateTransitionDirection direction,
       I2DTransitionContext context,
-      std::function<void(InterfaceManager&)> commit);
+      std::function<void(InterfaceManager&)> after_commit);
 
   // --- Generic navigation (focused interface) ---
   void select_previous();
@@ -275,10 +286,13 @@ class InterfaceManager {
     I2DTransitionContext context{I2DTransitionContext::k_options};
     float elapsed_seconds{0.0F};
     float duration_seconds{0.0F};
-    std::function<void(InterfaceManager&)> commit;
+    /// Side effects run after every valid incoming layer is installed.
+    std::function<void(InterfaceManager&)> after_commit;
   };
 
   void begin_state_transition(InterfaceInstance& instance, I2DState& target);
+  void complete_transition_destination(const std::vector<TransitionLayer>& incoming,
+      std::function<void(InterfaceManager&)> after_commit);
   void update_state_transition(float delta_time);
 
   std::unique_ptr<I2DRenderer> m_renderer;

@@ -4,14 +4,18 @@
 // misc-include-cleaner, cppcoreguidelines-pro-bounds-constant-array-index,
 // cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
 
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <string>
 #include <vector>
 
+#include "Core/Interface/I2DBumpBackground.hpp"
 #include "Core/Interface/I2DModel.hpp"
 #include "Core/Interface/I2DStateTransition.hpp"
+#include "Core/Interface/InterfaceManager.hpp"
 #include "Settings/GameSettings.hpp"
 
 namespace {
@@ -101,6 +105,62 @@ TEST_SUITE("Settings::GameSettings") {
           App::Interface::I2DStateTransitionDirection::k_replace);
     CHECK(App::Interface::determine_transition_direction(&grandchild, &root) ==
           App::Interface::I2DStateTransitionDirection::k_replace);
+  }
+
+  TEST_CASE("menu selection advances exactly one entry") {
+    using App::Interface::next_selection;
+    using App::Interface::previous_selection;
+
+    CHECK(next_selection(0U, 4U) == 1U);
+    CHECK(next_selection(1U, 4U) == 2U);
+    CHECK(next_selection(2U, 4U) == 3U);
+    CHECK(next_selection(3U, 4U) == 0U);
+    CHECK(previous_selection(0U, 4U) == 3U);
+
+    CHECK(next_selection(0U, 3U) == 1U);
+    CHECK(next_selection(1U, 3U) == 2U);
+    CHECK(previous_selection(1U, 3U) == 0U);
+  }
+
+  TEST_CASE("transition destinations commit before completion callback") {
+    using namespace App::Interface;
+    InterfaceInstance host;
+    InterfaceInstance child;
+    host.states.push_back(std::make_unique<I2DState>());
+    host.states.push_back(std::make_unique<I2DState>());
+    child.states.push_back(std::make_unique<I2DState>());
+    host.current_state = host.states.at(0U).get();
+    child.current_state = nullptr;
+    I2DState* options_shell{host.states.at(1U).get()};
+    I2DState* child_root{child.states.at(0U).get()};
+    const std::array destinations{
+        TransitionStateDestination{.instance = &host, .state = options_shell},
+        TransitionStateDestination{.instance = &child, .state = child_root}};
+    bool callback_ran{false};
+
+    commit_transition_destinations(destinations, [&]() {
+      CHECK(host.current_state == options_shell);
+      CHECK(child.current_state == child_root);
+      callback_ran = true;
+    });
+
+    CHECK(callback_ran);
+
+    I2DState* host_root{host.states.at(0U).get()};
+    const std::array back_destination{
+        TransitionStateDestination{.instance = &host, .state = host_root}};
+    bool child_torn_down{false};
+    commit_transition_destinations(back_destination, [&]() {
+      CHECK(host.current_state == host_root);
+      child_torn_down = true;
+    });
+    CHECK(child_torn_down);
+
+    I2DState foreign_state;
+    const std::array invalid_destination{
+        TransitionStateDestination{.instance = &host, .state = &foreign_state}};
+    commit_transition_destinations(invalid_destination);
+    CHECK(host.current_state == host_root);
   }
 
   TEST_CASE("menu transition policy samples exact presentation motion") {

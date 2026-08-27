@@ -174,6 +174,30 @@ const InterfaceDescriptor* descriptor_for_id(const std::int32_t id) {
   return nullptr;
 }
 
+void commit_transition_destinations(const std::span<const TransitionStateDestination> destinations,
+    const std::function<void()>& after_commit) {
+  for (const TransitionStateDestination& destination : destinations) {
+    if (destination.instance == nullptr || destination.state == nullptr) {
+      continue;
+    }
+    const bool owns_state{std::ranges::any_of(destination.instance->states,
+        [state = destination.state](const std::unique_ptr<I2DState>& owned) {
+          return owned.get() == state;
+        })};
+    if (!owns_state) {
+      App::Log::warn(LogCategory::Interface,
+          "ignored transition destination state not owned by interface {} generation {}",
+          destination.instance->handle.interface_id,
+          destination.instance->handle.generation);
+      continue;
+    }
+    destination.instance->current_state = destination.state;
+  }
+  if (after_commit) {
+    after_commit();
+  }
+}
+
 InterfaceManager::InterfaceManager()
     : m_settings_path(Resources::get_user_config_path() / "settings.cfg") {
   m_game_settings.ensure_choice("enhancements.menu_interpolation",
@@ -601,34 +625,6 @@ void InterfaceManager::render(const int pixel_width, const int pixel_height) {
         std::clamp(transition.elapsed_seconds / transition.duration_seconds, 0.0F, 1.0F)};
     const I2DTransitionSample sample{
         sample_transition(transition.style, transition.direction, transition.context, progress)};
-    bool background_rendered{false};
-    for (const TransitionLayer& layer : transition.outgoing) {
-      if (const InterfaceInstance* instance{find(layer.interface_handle)};
-          instance != nullptr && layer.state != nullptr) {
-        m_renderer->render_state(*instance,
-            *layer.state,
-            sample.outgoing,
-            m_fonts,
-            pixel_width,
-            pixel_height,
-            counters,
-            !background_rendered);
-        background_rendered = true;
-      }
-    }
-    for (const TransitionLayer& layer : transition.incoming) {
-      if (const InterfaceInstance* instance{find(layer.interface_handle)};
-          instance != nullptr && layer.state != nullptr) {
-        m_renderer->render_state(*instance,
-            *layer.state,
-            sample.incoming,
-            m_fonts,
-            pixel_width,
-            pixel_height,
-            counters,
-            false);
-      }
-    }
     const auto is_participant = [&transition](const InterfaceHandle handle) {
       const auto matches = [handle](const TransitionLayer& layer) {
         return layer.interface_handle == handle;
@@ -636,7 +632,62 @@ void InterfaceManager::render(const int pixel_width, const int pixel_height) {
       return std::ranges::any_of(transition.outgoing, matches) ||
              std::ranges::any_of(transition.incoming, matches);
     };
-    for (const auto& instance : m_instances) {
+
+    std::size_t first_participant{m_instances.size()};
+    std::size_t last_participant{0U};
+    for (std::size_t index{0U}; index < m_instances.size(); ++index) {
+      if (is_participant(m_instances.at(index)->handle)) {
+        first_participant = std::min(first_participant, index);
+        last_participant = index;
+      }
+    }
+    if (first_participant < m_instances.size()) {
+      const bool participants_contiguous{
+          std::ranges::all_of(std::views::iota(first_participant, last_participant + 1U),
+              [this, &is_participant](const std::size_t index) {
+                return is_participant(m_instances.at(index)->handle);
+              })};
+      if (!participants_contiguous) {
+        App::Log::error(LogCategory::Interface,
+            "transition participants are not contiguous in resident presentation order");
+      }
+    }
+
+    bool background_rendered{false};
+    for (std::size_t index{0U}; index < first_participant; ++index) {
+      const auto& instance{m_instances.at(index)};
+      m_renderer->render(*instance, m_fonts, pixel_width, pixel_height, counters);
+      background_rendered =
+          background_rendered ||
+          (instance->current_state != nullptr && instance->current_state->background != nullptr);
+    }
+
+    const auto render_layers = [this, pixel_width, pixel_height, &counters, &background_rendered](
+                                   const std::vector<TransitionLayer>& layers,
+                                   const I2DStateVisual& visual) {
+      for (const TransitionLayer& layer : layers) {
+        if (const InterfaceInstance* instance{find(layer.interface_handle)};
+            instance != nullptr && layer.state != nullptr) {
+          const bool render_background{!background_rendered && layer.state->background != nullptr};
+          m_renderer->render_state(*instance,
+              *layer.state,
+              visual,
+              m_fonts,
+              pixel_width,
+              pixel_height,
+              counters,
+              render_background);
+          background_rendered = background_rendered || render_background;
+        }
+      }
+    };
+    render_layers(transition.outgoing, sample.outgoing);
+    render_layers(transition.incoming, sample.incoming);
+
+    const std::size_t after_participants{
+        first_participant < m_instances.size() ? last_participant + 1U : m_instances.size()};
+    for (std::size_t index{after_participants}; index < m_instances.size(); ++index) {
+      const auto& instance{m_instances.at(index)};
       if (!is_participant(instance->handle)) {
         m_renderer->render(*instance, m_fonts, pixel_width, pixel_height, counters);
       }
@@ -761,14 +812,14 @@ void InterfaceManager::begin_state_transition(InterfaceInstance& instance, I2DSt
           .context = context,
           .elapsed_seconds = 0.0F,
           .duration_seconds = duration,
-          .commit = {}};
+          .after_commit = {}};
 }
 
 void InterfaceManager::transition_cross_interface(std::vector<TransitionLayer> outgoing,
     std::vector<TransitionLayer> incoming,
     const I2DStateTransitionDirection direction,
     const I2DTransitionContext context,
-    std::function<void(InterfaceManager&)> commit) {
+    std::function<void(InterfaceManager&)> after_commit) {
   if (m_active_transition.has_value() || outgoing.empty() || incoming.empty()) {
     return;
   }
@@ -776,9 +827,7 @@ void InterfaceManager::transition_cross_interface(std::vector<TransitionLayer> o
   const I2DMenuTransitionStyle style{menu_transition_style_from_raw(raw.value_or(0))};
   const float duration{transition_duration(style, context)};
   if (duration <= 0.0F) {
-    if (commit) {
-      commit(*this);
-    }
+    complete_transition_destination(incoming, std::move(after_commit));
     return;
   }
   m_active_transition = ActiveStateTransition{.outgoing = std::move(outgoing),
@@ -788,7 +837,27 @@ void InterfaceManager::transition_cross_interface(std::vector<TransitionLayer> o
       .context = context,
       .elapsed_seconds = 0.0F,
       .duration_seconds = duration,
-      .commit = std::move(commit)};
+      .after_commit = std::move(after_commit)};
+}
+
+void InterfaceManager::complete_transition_destination(const std::vector<TransitionLayer>& incoming,
+    std::function<void(InterfaceManager&)> after_commit) {
+  std::vector<TransitionStateDestination> destinations;
+  destinations.reserve(incoming.size());
+  for (const TransitionLayer& layer : incoming) {
+    InterfaceInstance* instance{find(layer.interface_handle)};
+    if (instance != nullptr) {
+      destinations.push_back(
+          TransitionStateDestination{.instance = instance, .state = layer.state});
+    }
+  }
+  std::function<void()> completion;
+  if (after_commit) {
+    completion = [this, callback = std::move(after_commit)]() {
+      callback(*this);
+    };
+  }
+  commit_transition_destinations(destinations, completion);
 }
 
 void InterfaceManager::update_state_transition(const float delta_time) {
@@ -801,19 +870,9 @@ void InterfaceManager::update_state_transition(const float delta_time) {
     return;
   }
   const std::vector<TransitionLayer> incoming{transition.incoming};
-  const std::function<void(InterfaceManager&)> commit{std::move(transition.commit)};
+  const std::function<void(InterfaceManager&)> after_commit{std::move(transition.after_commit)};
   m_active_transition.reset();
-  if (commit) {
-    commit(*this);
-  } else {
-    for (const TransitionLayer& layer : incoming) {
-      InterfaceInstance* instance{find(layer.interface_handle)};
-      if (instance == nullptr || layer.state == nullptr) {
-        continue;
-      }
-      instance->current_state = layer.state;
-    }
-  }
+  complete_transition_destination(incoming, after_commit);
 }
 
 // NOLINTNEXTLINE(readability-convert-member-functions-to-static) — descriptor API parity
@@ -855,11 +914,7 @@ void InterfaceManager::select_previous() {
   }
   std::size_t& selected{instance->current_state->selected_element};
   const std::size_t previous{selected};
-  if (selected == 0U) {
-    selected = selectable.size() - 1U;
-  } else {
-    --selected;
-  }
+  selected = previous_selection(selected, selectable.size());
   const I2DTextElement& active{*selectable.at(selected)};
   if (selected != previous && instance->descriptor != nullptr) {
     play_ui_sound(*instance->descriptor, Audio::UIMenuSoundEvent::k_navigate);
@@ -879,7 +934,7 @@ void InterfaceManager::select_next() {
   }
   std::size_t& selected{instance->current_state->selected_element};
   const std::size_t previous{selected};
-  selected = (selected + 1U) % selectable.size();
+  selected = next_selection(selected, selectable.size());
   const I2DTextElement& active{*selectable.at(selected)};
   if (selected != previous && instance->descriptor != nullptr) {
     play_ui_sound(*instance->descriptor, Audio::UIMenuSoundEvent::k_navigate);
@@ -997,45 +1052,6 @@ void InterfaceManager::handle_navigation(const Input::InputManager& input) {
       cancel_physical_input_capture();
       return;
     }
-    const PhysicalInputCaptureCallback callback{
-        std::move(m_pending_physical_input_capture->callback)};
-    cancel_physical_input_capture();
-    if (callback) {
-      callback(pressed.value());
-    }
-    return;
-  }
-  if (input.is_action_pressed(Input::Action::k_menu_up)) {
-    select_previous();
-  }
-  if (input.is_action_pressed(Input::Action::k_menu_down)) {
-    select_next();
-  }
-  if (input.is_action_pressed(Input::Action::k_menu_left)) {
-    adjust_selected(-1);
-  }
-  if (input.is_action_pressed(Input::Action::k_menu_right)) {
-    adjust_selected(1);
-  }
-  if (input.is_action_pressed(Input::Action::k_menu_confirm)) {
-    confirm();
-  }
-  if (input.is_action_pressed(Input::Action::k_menu_cancel)) {
-    cancel();
-  }
-  if (m_pending_physical_input_capture.has_value()) {
-    const std::optional<Input::InputSource> pressed{input.last_physical_press()};
-    if (!pressed.has_value()) {
-      return;
-    }
-
-    if (pressed->type == Input::SourceType::k_key &&
-        pressed->index == static_cast<std::uint32_t>(SDL_SCANCODE_ESCAPE)) {
-      App::Log::debug(LogCategory::Interface, "physical input capture cancelled");
-      cancel_physical_input_capture();
-      return;
-    }
-
     const PhysicalInputCaptureCallback callback{
         std::move(m_pending_physical_input_capture->callback)};
     cancel_physical_input_capture();

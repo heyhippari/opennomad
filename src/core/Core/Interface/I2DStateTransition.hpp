@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 
 #include "Core/Interface/InterfacePresentation.hpp"
@@ -35,6 +36,19 @@ struct I2DTransitionSample {
   I2DStateVisual outgoing;
   I2DStateVisual incoming;
 };
+
+[[nodiscard]] constexpr std::size_t next_selection(
+    const std::size_t current, const std::size_t count) {
+  return count == 0U ? current : (current + 1U) % count;
+}
+
+[[nodiscard]] constexpr std::size_t previous_selection(
+    const std::size_t current, const std::size_t count) {
+  if (count == 0U) {
+    return current;
+  }
+  return current == 0U ? count - 1U : current - 1U;
+}
 
 [[nodiscard]] constexpr I2DMenuTransitionStyle menu_transition_style_from_raw(
     const std::int32_t raw) {
