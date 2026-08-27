@@ -1,89 +1,92 @@
-# AGENTS.md — guidance for AI coding agents
+# AGENTS.md - guidance for AI coding agents
 
-OpenNomad: an open-source reimplementation of the **Omikron: The Nomad Soul** game engine.
-C++23 app and engine: SDL3 + OpenGL 4.1 + Dear ImGui, built with CMake + vcpkg (manifest mode) + Ninja.
+OpenNomad is a C++23 reimplementation of the *Omikron: The Nomad Soul* engine. It uses CMake, vcpkg manifest
+mode, Ninja on Linux, SDL3, OpenGL, Dear ImGui, and doctest.
 
-## Build, run, test
+## Build and test
 
-- Configure/build: `cmake --preset debug && cmake --build build/debug` (or `release`).
-- **`VCPKG_ROOT` must be set** (e.g. `$HOME/.local/share/vcpkg`) — the preset toolchain path depends on it.
-  The predefined VS Code workspace tasks set it; the CMake Tools extension's own configure may not,
-  which fails with a bogus `/scripts/buildsystems/vcpkg.cmake` cached path.
-- First configure builds all transitive vcpkg dependencies (one-time cost, cached in `build/<config>/vcpkg_installed`).
-- Tests: `ctest --test-dir build/debug` (or `build/release`).
-- Debug (non-Release) builds run clang-tidy and ASan. The ASan app exits with a LeakSanitizer report —
-  leaks are in SDL3/ALSA/DBus/PipeWire, pre-existing and harmless. Don't chase them.
+The checked-in presets are the supported entry points. On Linux, set `VCPKG_ROOT` before configuring:
 
-## Layout
+```sh
+cmake --preset debug
+cmake --build build/debug
+ctest --test-dir build/debug --output-on-failure
+```
 
-- `src/core` — static lib `Core`: GL/rendering classes, `Application`/`Scene` framework,
-  `Core/Omikron/` game-data parsers and `Core/Sprite/` (Runtime-style sprite instances,
-  frame resolution, billboard queue and sprite renderer).
-- `src/app` — `App` executable (`App/Main.cpp`).
-- `src/settings` — `Settings` lib (`Project.cpp.in` is configured into `Project.cpp`).
-- `src/core/Tests` — doctest specs, one per class.
-- Details: [docs/WhereIsWhat.md](docs/WhereIsWhat.md).
+Use `release` and `build/release` for a Release build. The Release build preset targets `App`; Debug builds all
+registered targets. The macOS presets are `xcode-debug` and `xcode-release`; they may need an explicit
+`-DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"`.
 
-## Conventions
+Debug is the normal development configuration. When available, `clang-tidy` runs during non-Release compilation and
+its diagnostics are errors. Non-Windows non-Release builds use AddressSanitizer. The authoritative checks are in
+`.clang-tidy`; do not duplicate its check list here.
 
-- All code lives in namespace `App`; `App::Settings`, `App::Debug`, `App::Omikron` are nested, not top-level.
-- Error handling: **`std::expected<T, std::string>`** for recoverable errors — no exceptions.
-  Parsers use error-state readers (`Omikron::BinaryReader::has_error()`).
-- C++23 with `CMAKE_CXX_EXTENSIONS OFF`. `#pragma once`; direct includes only
-  (`misc-include-cleaner` is enforced — every symbol used in a `.cpp` needs its include there).
-- Naming: `m_` members, `k_` constants; `[[nodiscard]]` on getters/statics; Doxygen `///` on public API.
-- Factories: `create()` returns by value (movable types) or `expected<unique_ptr<T>, string>`;
-  private ctors + `new T(...)` inside factories need `NOLINT(cppcoreguidelines-owning-memory)`.
-- libstdc++ makes dynamic→fixed `std::span` conversion **explicit** — construct fixed spans at call sites
-  (`std::span<const GLfloat, 4>{array}`).
+Build and run one test without rebuilding everything:
 
-## Clang-tidy is strict (warnings-as-errors in non-Release builds; keep both builds clean)
+```sh
+cmake --build build/debug --target Model3DOTest
+ctest --test-dir build/debug -R '^Model3DOTest$' --output-on-failure
+```
 
-- Checks that bite most: `misc-include-cleaner`, `cppcoreguidelines-pro-bounds-avoid-unchecked-container-access`
-  (use `.at()`; `std::span`/`std::mdspan` have no `.at()` → NOLINT),
-  `readability-math-missing-parentheses`, `performance-no-int-to-ptr`,
-  `modernize-use-designated-initializers`, `modernize-use-ranges`.
-- NOLINT style: per-line `// NOLINTNEXTLINE(check-name, ...)` with a brief reason;
-  file-scoped `NOLINTBEGIN(...)`/`NOLINTEND(...)` in GL-heavy and test files.
+Tests needing original, uncommitted game data are disabled by default. Enable them at configure time and set the
+data root when running them:
 
-## Omikron game-data loading
+```sh
+cmake --preset debug -DOPENNOMAD_GAME_DATA_TESTS=ON
+OPENNOMAD_GAME_DATA_ROOT=/path/to/Omikron ctest --test-dir build/debug -R 'IntegrationTest$' --output-on-failure
+```
 
-- **Every** file loader must route through `Resources::resolve_case_insensitive(path)`
-  (`src/core/Core/Resources.hpp`) before opening a file — game data on disk has inconsistent
-  casing and lookups must be case-insensitive on case-sensitive filesystems.
-- Loader template: `ModelScene.cpp`'s `read_file` (resolve → `SDL_LoadFile` → `expected<vector<byte>, string>`).
-- Parser pattern: `Core/Omikron/Model3DO.{hpp,cpp}` and `Texture3DT.{hpp,cpp}`.
-  New parsers (ANIMS, MAP2D) follow the same style: header-only `BinaryReader`, static `load()`,
-  spec in `src/core/Tests` building binary fixtures with `OmikronTestBuffer.hpp`.
+Useful project options include `DEACTIVATE_LOGGING`, `DEBUG`, and `ENABLE_DEBUG_UI`; options are cached per build
+tree. See [BuildAndExecution.md](docs/BuildAndExecution.md) and [Testing.md](docs/Testing.md) for packaging,
+runtime controls, and integration-test details.
 
-## Tests
+## Structure and architecture
 
-- doctest. Specs live next to the code: `src/core/Tests/<Area>.spec.cpp`.
-- Each spec is its own executable registered in `src/core/Tests/CMakeLists.txt`
-  via `add_executable(XTest ...)` + `add_test(NAME XTest COMMAND XTest)`.
-- Assert on `std::expected` results via `.has_value()` / `.value()`.
+- `src/app` builds the `App` executable. `App/Main.cpp` owns process startup and delegates engine work to `Core`.
+- `src/core` builds the `Core` static library. It contains the application/window loop, rendering, audio, input,
+  runtime/game state, scenes, interface, startup/video, script/scenario systems, sprites, debug UI, and Omikron
+  game-data readers.
+- `src/settings` builds the `Settings` static library. It owns process-lifetime settings state and generated project
+  metadata; interface code should consume settings rather than own their persistent values.
+- `src/tests/TestRunner.cpp` supplies the shared doctest main. `src/core/Tests` contains focused specs, each built as
+  a separate executable and registered with CTest in its `CMakeLists.txt`.
+- `src/assets` contains packaged fonts and icons. `cmake/` contains shared build settings and packaging support is
+  under `packaging/` and `src/app/cmake/`.
 
-## Build-system landmines (do not "fix")
+All project namespaces are rooted at `App` (for example `App::Settings`, `App::Omikron`, and `App::Debug`). Keep
+ownership aligned with the existing target boundaries: `App` is the executable layer, `Core` is engine/runtime code,
+and `Settings` is independent settings state.
 
-- `cmake/StandardProjectSettings.cmake` sets `CMAKE_CXX_SCAN_FOR_MODULES OFF` — required with CMake 4.4,
-  otherwise clang-tidy rejects the injected module-scan flags. Removing it breaks the build.
-- `overlay-ports/sdl3` mirrors the vcpkg sdl3 port (registered via `vcpkg-configuration.json`)
-  with an opt-in `libdecor` feature (`SDL_WAYLAND_LIBDECOR=ON`, enabled in the root `vcpkg.json`).
-  Upstream hardcodes libdecor OFF, which leaves windowed mode undecorated on Wayland compositors
-  without server-side decorations (GNOME/Weston). SDL finds the **system** libdecor via pkg-config
-  (like it already does for wayland/xkbcommon), so `libdecor` (Arch) / `libdecor-0-dev`
-  (Debian/Ubuntu) must be installed. Don't "simplify" the overlay away.
-- `.clang-tidy` YAML regexes must use single-quoted scalars (`'...\.h'`); double quotes make
-  `\.` an invalid escape and clang-tidy silently disables all checks.
-- The vcpkg imgui port installs backend headers flat: include `<imgui_impl_sdl3.h>` /
-  `<imgui_impl_opengl3.h>` directly (no `backends/` prefix).
-- Font/icon assets are Git LFS tracked; a missing `git lfs pull` surfaces as a runtime font crash.
-- Logging via `App::Log` (`Core/Log.hpp`) uses `fmt::format_string`, consteval-checked —
-  invalid format strings are compile errors. spdlog has no `fatal` level (mapped to `critical`).
+## Coding rules
 
-## Further reading
+- Use C++23 with extensions disabled and include every directly used header. Debug builds enforce include-cleaner.
+- Use `std::expected<T, std::string>` for recoverable failures rather than exceptions. Preserve the existing error
+  propagation style in the surrounding subsystem.
+- Follow the configured naming rules: `m_` for private members, lower-case methods/functions/members, CamelCase types
+  and namespaces, and `UPPER_CASE` global constants. Mark non-mutating query functions and factories `[[nodiscard]]`
+  where the surrounding API does so. Use `///` for public API documentation.
+- Prefer the ownership and factory patterns already used by the subsystem. Do not introduce global state or a new
+  abstraction merely to avoid a small amount of local code.
+- Add focused doctest coverage for new behavior. Use generated fixtures for normal tests; integration tests are the
+  place for original game data. Assert `std::expected` results explicitly with `.has_value()` or `.value()`.
+- Keep clang-tidy suppressions narrow and justified. Use `NOLINTNEXTLINE(check-name, ...)` for a single intentional
+  violation; use a file-scoped `NOLINTBEGIN`/`NOLINTEND` only when a whole test or graphics file requires it.
 
-Link rather than duplicate: [docs/README.md](docs/README.md) (usage guide), [docs/QuickStart.md](docs/QuickStart.md),
-[docs/BuildAndExecution.md](docs/BuildAndExecution.md), [docs/Testing.md](docs/Testing.md),
-[docs/Rendering.md](docs/Rendering.md), [docs/Logging.md](docs/Logging.md),
-[docs/PlatformCode.md](docs/PlatformCode.md), [docs/Dependencies.md](docs/Dependencies.md).
+## Game-data and platform constraints
+
+- Resolve game-data paths with `Resources::resolve_case_insensitive()` before opening files. Original data uses
+  inconsistent casing, and lookups must work on case-sensitive filesystems.
+- Keep platform-specific resource behavior in `src/core/Platform/<platform>/` and select it through the existing
+  CMake platform branches. Do not bypass `Resources` with platform-specific path assumptions.
+- The vcpkg SDL3 overlay and custom `x64-linux-dynamic-glcore` triplet are part of the supported Linux setup. Keep
+  them when changing dependencies; the overlay enables Wayland `libdecor` support. See [Dependencies.md](docs/Dependencies.md)
+  for system prerequisites.
+- Use `App::Log` for logging. Its format strings are checked through `fmt`; keep format arguments consistent with
+  the format string and use the logging levels exposed by the wrapper.
+
+## References
+
+Prefer the repository documentation over repeating operational detail here: [README.md](README.md),
+[docs/WhereIsWhat.md](docs/WhereIsWhat.md), [docs/BuildAndExecution.md](docs/BuildAndExecution.md),
+[docs/Testing.md](docs/Testing.md), [docs/Rendering.md](docs/Rendering.md), and
+[reverse-engineering/startup-sequence.md](docs/reverse-engineering/startup-sequence.md).
