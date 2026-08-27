@@ -15,6 +15,7 @@
 
 #include "Core/Audio/AudioTypes.hpp"
 #include "Core/Omikron/SCX.hpp"
+#include "Core/RuntimeMath.hpp"
 #include "Core/Script/ScriptOpcode.hpp"
 #include "Core/Sprite/SpriteInstance.hpp"
 
@@ -153,6 +154,11 @@ struct ScriptInstance {
   /// Accumulated Runtime script time in native 30 Hz frame units.
   /// PlaySyncSound compares its authored schedule directly against this clock.
   float elapsed_script_frames{0.0F};
+  /// Camera editing context IDs attached to this instance (up to 4).
+  /// First zero slot is where scanning begins for active editing contexts.
+  std::array<std::uint8_t, 4> camera_editing_context_ids{};
+  /// Current slot index for camera editing context selection.
+  std::uint8_t camera_editing_slot_index{0};
   bool completed{false};
   bool paused{false};
   ScriptPauseInfo pause_info;
@@ -196,6 +202,19 @@ struct CameraInterpolationRequest {
   std::string_view camera_b;
   float fraction{0.0F};
   bool snap_to_target{false};
+};
+
+/// Typed request for a generated camera pose from a DEAD000A camera-editing timeline.
+struct CameraEditingPose {
+  Runtime::Vec3 eye{};
+  Runtime::Vec3 target{};
+  float roll_degrees{0.0F};
+  float horizontal_fov_degrees{0.0F};
+
+  /// Diagnostics only.
+  std::uint8_t context_id{0};
+  std::string_view editing_name;
+  std::string_view segment_name;
 };
 
 /// Typed request for Runtime's Script_SelectBodyAnimation operation. All
@@ -362,6 +381,15 @@ class ScriptWorld {
         std::unexpect, "structured 3DO cameras are unavailable in this world"};
   }
 
+  /// Applies a generated camera pose from DEAD000A camera-editing evaluation.
+  /// This becomes the scene camera until another producer replaces it.
+  [[nodiscard]] virtual std::expected<void, std::string> apply_camera_editing_pose(
+      const CameraEditingPose& pose) {
+    (void)pose;
+    return std::expected<void, std::string>{
+        std::unexpect, "camera editing is unavailable in this world"};
+  }
+
   /// Resolves cached SCX resources and applies one non-path body-animation
   /// interval to the explicitly character-bound model instance.
   [[nodiscard]] virtual std::expected<BodyAnimationResult, BodyAnimationFailure>
@@ -380,6 +408,7 @@ class ScriptWorld {
     return std::expected<RelativeBodyAnimationResult, RelativeBodyAnimationFailure>{std::unexpect,
         RelativeBodyAnimationFailure{.error = BodyAnimationApplyError::k_resource_resolution,
             .reason_text = "relative body animation is unavailable in this world"}};
+
   }
 
   /// Clears instance-local body-animation playback state during script reset.
@@ -523,6 +552,14 @@ class ScriptRuntime {
 
   /// Restores debugger-visible runtime state to the serialized initial state.
   void reset_instance_to_initial_state(ScriptInstance& instance);
+
+  /// Attaches DEAD000A camera-editing context IDs to an instance based on
+  /// its source script ID. Called during instance creation.
+  void attach_camera_editing_contexts(ScriptInstance& instance);
+
+  /// Evaluates active camera-editing track for one instance at the given
+  /// script elapsed time. Called before adding frame delta to elapsed time.
+  void service_camera_editing(ScriptInstance& instance, float pre_delta_elapsed_frames);
 
   /// Handler implementations.
   HandlerResult handle_select_camera(ScriptInstance& instance, RuntimeScriptCommand& command);

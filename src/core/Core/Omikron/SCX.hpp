@@ -10,6 +10,8 @@
 #include <string>
 #include <vector>
 
+#include "Core/Omikron/ScxCameraEditing.hpp"
+
 namespace App::Omikron {
 
 /// 16-byte header of an .SCX scenario/resource package.
@@ -233,6 +235,8 @@ struct ScxData {
   bool has_global_mode_chunk{false};
   /// DEAD000A owns one appended 8-byte-header extra block when present.
   std::optional<ScxEmbeddedResource> extra_block;
+  /// DEAD000A parsed camera-editing timeline when present.
+  std::optional<ScxCameraEditingData> camera_editing;
 };
 
 /// Parser for SCX v5 scenario/resource packages.

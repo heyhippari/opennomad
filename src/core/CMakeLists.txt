@@ -73,6 +73,7 @@ add_library(${NAME} STATIC
   Core/Omikron/BmpImage.hpp Core/Omikron/BmpImage.cpp
   Core/Omikron/IndexedBmp8.hpp Core/Omikron/IndexedBmp8.cpp
   Core/Omikron/SCX.hpp Core/Omikron/SCX.cpp
+  Core/Omikron/ScxCameraEditing.hpp Core/Omikron/ScxCameraEditing.cpp
   Core/Omikron/SFX.hpp Core/Omikron/SFX.cpp
   Core/Omikron/IamCamera.hpp Core/Omikron/IamCamera.cpp
   Core/Omikron/IamGlobal.hpp Core/Omikron/IamGlobal.cpp

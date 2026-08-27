@@ -18,6 +18,7 @@
 #include "Core/Log.hpp"
 #include "Core/LogCategory.hpp"
 #include "Core/Omikron/BinaryReader.hpp"
+#include "Core/Omikron/ScxCameraEditing.hpp"
 
 namespace App::Omikron {
 
@@ -863,6 +864,20 @@ std::expected<ScxData, std::string> SCX::load(const std::span<const std::byte> d
               std::unexpect, std::move(parsed).error()};
         }
         scx.extra_block = parsed->resource;
+
+        // Parse DEAD000A camera-editing timeline if present
+        if (scx.extra_block.has_value()) {
+          const auto payload{data.subspan(
+              scx.extra_block->payload_offset,
+              scx.extra_block->payload_size)};
+          auto camera_editing{ScxCameraEditing::load(payload)};
+          if (!camera_editing) {
+            return std::expected<ScxData, std::string>{
+                std::unexpect, std::move(camera_editing).error()};
+          }
+          scx.camera_editing = std::move(camera_editing).value();
+        }
+
         position = parsed->next_offset;
         break;
       }

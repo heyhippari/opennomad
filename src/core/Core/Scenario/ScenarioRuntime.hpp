@@ -171,6 +171,8 @@ class ScenarioRuntime final : public Script::ScriptWorld, private Sfx::Host {
   [[nodiscard]] std::expected<void, std::string> select_camera(std::string_view camera_name) override;
   [[nodiscard]] std::expected<void, std::string> interpolate_cameras(
       const Script::CameraInterpolationRequest& request) override;
+  [[nodiscard]] std::expected<void, std::string> apply_camera_editing_pose(
+      const Script::CameraEditingPose& pose) override;
   [[nodiscard]] std::expected<Script::BodyAnimationResult, Script::BodyAnimationFailure>
   select_body_animation(const Script::BodyAnimationRequest& request) override;
   [[nodiscard]] std::expected<Script::RelativeBodyAnimationResult,
@@ -253,6 +255,18 @@ class ScenarioRuntime final : public Script::ScriptWorld, private Sfx::Host {
   std::vector<Omikron::Model3DOData::RuntimeObjectState> m_decor_runtime_objects;
   std::vector<Omikron::CameraRecord> m_decor_cameras;
   std::optional<std::size_t> m_selected_decor_camera_index;
+
+  /// Distinguishes between decor cameras and generated editing cameras.
+  enum class StructuredCameraSource {
+    k_none,
+    k_decor,
+    k_camera_editing,
+  };
+  StructuredCameraSource m_structured_camera_source{StructuredCameraSource::k_none};
+
+  /// Generated camera from DEAD000A camera-editing evaluation.
+  std::optional<Omikron::CameraRecord> m_camera_editing_camera;
+
   std::uint64_t m_decor_pose_revision{0};
   bool m_initialized{false};
 };

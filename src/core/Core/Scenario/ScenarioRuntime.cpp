@@ -1081,6 +1081,7 @@ std::expected<void, std::string> ScenarioRuntime::select_camera(const std::strin
 
   m_selected_decor_camera_index =
       static_cast<std::size_t>(std::distance(m_decor_cameras.begin(), camera));
+  m_structured_camera_source = StructuredCameraSource::k_decor;
   App::Log::trace(LogCategory::Script,
       "structured camera selected — scenario='{}' camera='{}'",
       m_scenario_name,
@@ -1130,6 +1131,22 @@ std::expected<void, std::string> ScenarioRuntime::interpolate_cameras(
   return {};
 }
 
+std::expected<void, std::string> ScenarioRuntime::apply_camera_editing_pose(
+    const Script::CameraEditingPose& pose) {
+  // Create or update the generated editing camera
+  Omikron::CameraRecord camera;
+  camera.name = fmt::format("camera_editing:{}:{}", pose.context_id, pose.editing_name);
+  camera.eye = pose.eye;
+  camera.target = pose.target;
+  camera.roll_degrees = pose.roll_degrees;
+  camera.horizontal_fov_degrees = pose.horizontal_fov_degrees;
+
+  m_camera_editing_camera = camera;
+  m_structured_camera_source = StructuredCameraSource::k_camera_editing;
+
+  return {};
+}
+
 void ScenarioRuntime::bind_decor_model(const Omikron::Model3DOData* const decor_model) {
   m_decor_model = decor_model;
   m_decor_runtime_objects = decor_model == nullptr
@@ -1138,6 +1155,8 @@ void ScenarioRuntime::bind_decor_model(const Omikron::Model3DOData* const decor_
   m_decor_cameras =
       decor_model == nullptr ? std::vector<Omikron::CameraRecord>{} : decor_model->cameras;
   m_selected_decor_camera_index.reset();
+  m_camera_editing_camera.reset();
+  m_structured_camera_source = StructuredCameraSource::k_none;
   m_decor_pose_revision = 0;
 }
 
@@ -1155,11 +1174,24 @@ std::uint64_t ScenarioRuntime::decor_pose_revision() const {
 }
 
 const Omikron::CameraRecord* ScenarioRuntime::selected_structured_camera() const {
-  if (!m_selected_decor_camera_index.has_value() ||
-      m_selected_decor_camera_index.value() >= m_decor_cameras.size()) {
-    return nullptr;
+  switch (m_structured_camera_source) {
+    case StructuredCameraSource::k_camera_editing:
+      if (m_camera_editing_camera.has_value()) {
+        return &m_camera_editing_camera.value();
+      }
+      return nullptr;
+
+    case StructuredCameraSource::k_decor:
+      if (!m_selected_decor_camera_index.has_value() ||
+          m_selected_decor_camera_index.value() >= m_decor_cameras.size()) {
+        return nullptr;
+      }
+      return &m_decor_cameras.at(m_selected_decor_camera_index.value());
+
+    case StructuredCameraSource::k_none:
+    default:
+      return nullptr;
   }
-  return &m_decor_cameras.at(m_selected_decor_camera_index.value());
 }
 
 std::expected<Script::MoveObjectOnPathResult, Script::MoveObjectOnPathFailure>

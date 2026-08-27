@@ -19,6 +19,8 @@
 #include "Core/Log.hpp"
 #include "Core/LogCategory.hpp"
 #include "Core/Omikron/SCX.hpp"
+#include "Core/Omikron/ScxCameraEditing.hpp"
+#include "Core/RuntimeMath.hpp"
 #include "Core/Script/ScriptOpcode.hpp"
 #include "Core/Sprite/SpriteInstance.hpp"
 
@@ -504,6 +506,9 @@ std::expected<std::size_t, std::string> ScriptRuntime::create_instance(
     reinitialize_command(instance, command);
   }
 
+  // Attach camera-editing context IDs from DEAD000A if present
+  attach_camera_editing_contexts(instance);
+
   const std::size_t instance_id{instance.instance_id};
   App::Log::debug(LogCategory::Script,
       "created instance {} from script {} '{}' ({} roots, {} linked)",
@@ -549,6 +554,9 @@ void ScriptRuntime::advance(const float script_delta_frames) {
     }
     // Runtime keeps the script clock in native 30 Hz frame units.
     // PlaySyncSound's authored schedule is expressed in the same units.
+    // Camera editing MUST evaluate at pre-delta time before advancing the clock.
+    service_camera_editing(instance, instance.elapsed_script_frames);
+
     instance.elapsed_script_frames += script_delta_frames;
     if (!advance_instance(instance, script_delta_frames, budget)) {
       return;  // Scenario execution paused partway through the tick.
@@ -1368,6 +1376,179 @@ void ScriptRuntime::reset_instance_to_initial_state(ScriptInstance& instance) {
   instance.step_at_root = true;
   instance.step_linked_index = 0;
   instance.step_chain_position = 0;
+}
+
+void ScriptRuntime::attach_camera_editing_contexts(ScriptInstance& instance) {
+  if (!m_scx->camera_editing.has_value()) {
+    return;  // No camera editing in this SCX
+  }
+
+  const Omikron::ScxCameraEditingData& editing{m_scx->camera_editing.value()};
+  const Omikron::ScxScript& source{m_scx->scripts.at(instance.source_script_index)};
+
+  // Find all tracks targeting this script, in serialized order
+  instance.camera_editing_context_ids = {};
+  instance.camera_editing_slot_index = 0;
+  std::size_t slot{0};
+
+  for (const auto& track : editing.tracks) {
+    if (track.target_script_id == source.script_id && slot < 4) {
+      // Check if this context ID is already attached
+      bool already_attached{false};
+      for (std::size_t i{0}; i < slot; ++i) {
+        if (instance.camera_editing_context_ids.at(i) == track.context_id) {
+          already_attached = true;
+          break;
+        }
+      }
+
+      if (!already_attached) {
+        instance.camera_editing_context_ids.at(slot) = track.context_id;
+        slot++;
+      }
+    }
+  }
+
+  if (slot > 0) {
+    App::Log::trace(LogCategory::Script,
+        "instance {} attached camera editing contexts: slot[0]={} slot[1]={} slot[2]={} "
+        "slot[3]={}",
+        instance.instance_id,
+        instance.camera_editing_context_ids.at(0),
+        instance.camera_editing_context_ids.at(1),
+        instance.camera_editing_context_ids.at(2),
+        instance.camera_editing_context_ids.at(3));
+  }
+}
+
+void ScriptRuntime::service_camera_editing(
+    ScriptInstance& instance, const float pre_delta_elapsed_frames) {
+  if (!m_scx->camera_editing.has_value()) {
+    return;  // No camera editing in this SCX
+  }
+
+  const Omikron::ScxCameraEditingData& editing{m_scx->camera_editing.value()};
+
+  // Find active context ID by scanning from current slot
+  std::uint8_t active_context_id{0};
+  bool found_active{false};
+
+  for (std::size_t scan{0}; scan < 4; ++scan) {
+    const std::size_t slot_idx{(instance.camera_editing_slot_index + scan) % 4};
+    if (instance.camera_editing_context_ids.at(slot_idx) != 0) {
+      active_context_id = instance.camera_editing_context_ids.at(slot_idx);
+      instance.camera_editing_slot_index = static_cast<std::uint8_t>(slot_idx);
+      found_active = true;
+      break;
+    }
+  }
+
+  if (!found_active) {
+    return;  // No active context for this instance
+  }
+
+  // Find track with this context ID
+  const auto track_idx{editing.track_by_context_id(active_context_id)};
+  if (!track_idx.has_value()) {
+    return;  // Track not found (shouldn't happen if attachment was correct)
+  }
+
+  const Omikron::ScxCameraEditingTrack& track{editing.tracks.at(track_idx.value())};
+
+  // Check if track has finished
+  if (pre_delta_elapsed_frames >= static_cast<float>(track.total_duration_frames)) {
+    // Track finished; advance slot and do not evaluate
+    instance.camera_editing_slot_index =
+        static_cast<std::uint8_t>((instance.camera_editing_slot_index + 1) % 4);
+    return;
+  }
+
+  // Evaluate the track timeline at the given elapsed time
+  // Build absolute timeline by concatenating segments
+  float segment_start{0.0F};
+  for (const std::size_t seg_idx : track.segment_indices) {
+    const Omikron::ScxCameraEditingSegment& segment{editing.segments.at(seg_idx)};
+
+    // Get the last key's time to know segment duration
+    if (segment.key_indices.empty()) {
+      continue;  // Empty segment; skip
+    }
+
+    const std::size_t last_key_idx{segment.key_indices.back()};
+    const float segment_duration{editing.keys.at(last_key_idx).local_time_frames};
+    const float segment_end{segment_start + segment_duration};
+
+    // Check if elapsed time falls in this segment's interval
+    if (pre_delta_elapsed_frames >= segment_start && pre_delta_elapsed_frames < segment_end) {
+      // Evaluate this segment
+      const float local_elapsed{pre_delta_elapsed_frames - segment_start};
+
+      // Find the two keys bracketing this local time
+      std::optional<std::size_t> key_a_idx;
+      std::optional<std::size_t> key_b_idx;
+
+      for (std::size_t i{0}; i + 1 < segment.key_indices.size(); ++i) {
+        const std::size_t idx_a{segment.key_indices.at(i)};
+        const std::size_t idx_b{segment.key_indices.at(i + 1)};
+        const float time_a{editing.keys.at(idx_a).local_time_frames};
+        const float time_b{editing.keys.at(idx_b).local_time_frames};
+
+        // Half-open interval: [A, B)
+        if (local_elapsed >= time_a && local_elapsed < time_b) {
+          key_a_idx = idx_a;
+          key_b_idx = idx_b;
+          break;
+        }
+      }
+
+      if (key_a_idx.has_value() && key_b_idx.has_value()) {
+        // Interpolate between the two keys
+        const Omikron::ScxCameraEditingKey& key_a{editing.keys.at(key_a_idx.value())};
+        const Omikron::ScxCameraEditingKey& key_b{editing.keys.at(key_b_idx.value())};
+        const Omikron::ScxCameraEditingPose& pose_a{
+            editing.poses.at(key_a.camera_index)};
+        const Omikron::ScxCameraEditingPose& pose_b{
+            editing.poses.at(key_b.camera_index)};
+
+        const float time_a{key_a.local_time_frames};
+        const float time_b{key_b.local_time_frames};
+        const float fraction{(local_elapsed - time_a) / (time_b - time_a)};
+
+        // Linear interpolation of all eight camera fields
+        CameraEditingPose result;
+        result.eye.x = pose_a.eye.x + ((pose_b.eye.x - pose_a.eye.x) * fraction);
+        result.eye.y = pose_a.eye.y + ((pose_b.eye.y - pose_a.eye.y) * fraction);
+        result.eye.z = pose_a.eye.z + ((pose_b.eye.z - pose_a.eye.z) * fraction);
+
+        result.target.x = pose_a.target.x + ((pose_b.target.x - pose_a.target.x) * fraction);
+        result.target.y = pose_a.target.y + ((pose_b.target.y - pose_a.target.y) * fraction);
+        result.target.z = pose_a.target.z + ((pose_b.target.z - pose_a.target.z) * fraction);
+
+        result.roll_degrees =
+            pose_a.roll_degrees + ((pose_b.roll_degrees - pose_a.roll_degrees) * fraction);
+        result.horizontal_fov_degrees =
+            pose_a.horizontal_fov_degrees +
+            ((pose_b.horizontal_fov_degrees - pose_a.horizontal_fov_degrees) * fraction);
+
+        result.context_id = active_context_id;
+        result.editing_name = track.name;
+        result.segment_name = segment.name;
+
+        // Apply the generated camera pose to the world
+        auto apply_result{m_world->apply_camera_editing_pose(result)};
+        if (!apply_result) {
+          App::Log::warn(LogCategory::Script,
+              "instance {} camera editing apply failed: {}",
+              instance.instance_id,
+              apply_result.error());
+        }
+      }
+
+      return;  // Successfully evaluated this frame
+    }
+
+    segment_start = segment_end;
+  }
 }
 
 std::expected<Sprite::SpriteHandle, std::string> ScriptRuntime::resolve_sprite(
