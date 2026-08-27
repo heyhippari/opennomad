@@ -6,8 +6,13 @@ on:
   pull_request:
     branches: [ "main" ]
 
+concurrency:
+  group: release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   BUILD_TYPE: Release
+  VCPKG_BINARY_SOURCES: clear
 
 permissions:
   contents: read
@@ -30,7 +35,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            nasm \
+            nasm autoconf autoconf-archive automake libtool \
             libx11-dev libxft-dev libxext-dev \
             libwayland-dev libxkbcommon-dev libegl1-mesa-dev \
             libibus-1.0-dev libdecor-0-dev libgl1-mesa-dev
@@ -47,6 +52,15 @@ jobs:
           # manifest, which holds the builtin-baseline commit id.
           vcpkgJsonGlob: 'vcpkg.json'
 
+      - name: Restore vcpkg dependencies
+        id: vcpkg-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: build/vcpkg_installed
+          key: vcpkg-installed-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'overlay-ports/**', 'triplets/**') }}
+          restore-keys: |
+            vcpkg-installed-${{ runner.os }}-${{ runner.arch }}-
+
       # Linux uses the custom overlay triplet (shared libs + glad core profile).
       - name: Configure CMake (Linux)
         if: runner.os == 'Linux'
@@ -59,6 +73,13 @@ jobs:
       - name: Configure CMake (Windows)
         if: runner.os == 'Windows'
         run: cmake -B "${{ github.workspace }}/build" -DCMAKE_BUILD_TYPE="${{ env.BUILD_TYPE }}" -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake"
+
+      - name: Save vcpkg dependencies
+        if: steps.vcpkg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: build/vcpkg_installed
+          key: ${{ steps.vcpkg-cache.outputs.cache-primary-key }}
 
       - name: Build
         run: cmake --build "${{ github.workspace }}/build" --config "${{ env.BUILD_TYPE }}"
