@@ -1172,7 +1172,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK_EQ(controller.zone_contact_count(), 0U);
   }
 
-  TEST_CASE("disabled current-character controller does not suppress fresh zone contact") {
+  TEST_CASE("persistent zone activation remains independent of a disabled controller") {
     constexpr std::int16_t k_zone_id{12};
     const TempDirectory temp;
     write_zone_contact_fixtures(temp, false, k_zone_id);
@@ -1199,16 +1199,17 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     App::Character::RuntimeCharacter* character{runtime->character_runtime().find(136)};
     REQUIRE(character != nullptr);
     REQUIRE(character->ctl_controller.has_value());
-    CHECK_EQ(controller.zone_contact_count(), 1U);
-    CHECK_EQ(character->current_move_id(), std::optional<std::int16_t>{100});
-    CHECK(character->controller_enabled);
-    CHECK(character->ctl_controller->direct_control_active());
+    CHECK(manager.game_state()->zone_flag(k_zone_id).value());
+    CHECK_EQ(controller.zone_contact_count(), 0U);
+    CHECK_EQ(character->current_move_id(), std::optional<std::int16_t>{7});
+    CHECK_FALSE(character->controller_enabled);
+    CHECK_FALSE(character->ctl_controller->direct_control_active());
   }
 
   TEST_CASE("zone contact in progress survives controller-off inside its event") {
     constexpr std::int16_t k_zone_id{13};
     const TempDirectory temp;
-    write_zone_contact_fixtures(temp, false, k_zone_id, true);
+    write_zone_contact_fixtures(temp, true, k_zone_id, true);
     const ScopedGameDataRoot root{temp.root()};
 
     App::ScenarioManager manager;

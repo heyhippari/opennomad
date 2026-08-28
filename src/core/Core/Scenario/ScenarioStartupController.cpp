@@ -2942,7 +2942,13 @@ bool ScenarioStartupController::zone_contact_reporting_enabled(
   ScenarioRuntime* const runtime{m_manager->world_runtime(slot.world_scene_id)};
   const Character::RuntimeCharacter* const character{
       runtime == nullptr ? nullptr : runtime->character_runtime().find(current->character_id)};
-  if (character == nullptr || !character->active || !character->area_present) {
+  // TEMPORARY: OpenNomad does not yet model Runtime's separate current-character
+  // spatial trigger proxy/contact-state machinery. controller_enabled currently
+  // prevents scripted presentation motion from being mistaken for native spatial-
+  // proxy contact updates. Remove this guard only when the Runtime-style proxy is
+  // implemented.
+  if (character == nullptr || !character->active || !character->area_present ||
+      !character->controller_enabled) {
     return false;
   }
   return std::ranges::any_of(m_active_zones, [&contact](const ActiveZoneRef& active) {
@@ -2966,7 +2972,10 @@ bool ScenarioStartupController::zone_contact_reporting_enabled(
   ScenarioRuntime* const runtime{m_manager->world_runtime(slot.world_scene_id)};
   const Character::RuntimeCharacter* const character{
       runtime == nullptr ? nullptr : runtime->character_runtime().find(current->character_id)};
-  if (character == nullptr || !character->active || !character->area_present) {
+  // TEMPORARY: See the contact overload above. Fresh contacts must remain gated
+  // until OpenNomad has a Runtime-style current-character spatial trigger proxy.
+  if (character == nullptr || !character->active || !character->area_present ||
+      !character->controller_enabled) {
     return false;
   }
   return zone_contains_runtime_xz(active_zone.zone, character->transform.translation) &&
