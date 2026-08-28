@@ -2097,8 +2097,7 @@ void AreaScriptRuntime::execute_instruction() {
           m_state = AreaScriptState::k_failed;
           return;
         }
-      }
-      if (wait && !operation.has_value()) {
+      } else if (wait) {
         m_pause_info = AreaPauseInfo{.offset = instruction_offset,
             .opcode = opcode,
             .opcode_name = std::string{info->name},
@@ -2111,8 +2110,8 @@ void AreaScriptRuntime::execute_instruction() {
           m_last_camera_request->camera_id,
           duration,
           m_last_camera_request->flags,
-          wait ? " and wait" : "");
-      if (wait) {
+          wait && operation.has_value() ? " and wait" : "");
+      if (wait && operation.has_value()) {
         m_wait_state = K_CAMERA_WAIT_STATE;
         m_wait = AreaWaitState{.kind = AreaWaitKind::k_camera,
             .runtime_state = K_CAMERA_WAIT_STATE,

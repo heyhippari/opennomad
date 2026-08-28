@@ -23,6 +23,7 @@
 #include "Core/LogCategory.hpp"
 #include "Core/Omikron/Model3DO.hpp"
 #include "Core/Scenario/ScenarioEngine.hpp"
+#include "Core/Scenario/ScenarioManager.hpp"
 #include "Core/Scenario/ScenarioRuntime.hpp"
 #include "Core/Sprite/SpriteFrame.hpp"
 #include "Core/Sprite/SpriteInstance.hpp"
@@ -74,6 +75,21 @@ void DebugUI::show_world_inspector() {
   }
 
   if (const auto world{view->world_render_debug_state()}; world.has_value()) {
+    const ScenarioManager* const scenarios{m_context.scenario_manager};
+    const std::optional<ControlledCharacterRef> controlled{
+        scenarios == nullptr ? std::nullopt : scenarios->controlled_character()};
+    const WorldSceneContext* const active_world{
+        scenarios == nullptr ? nullptr : scenarios->active_world_context()};
+    ImGui::SeparatorText("Session character ownership");
+    if (controlled.has_value()) {
+      ImGui::Text("ControlledCharacterRef: character %d, world scene %u",
+          controlled->character_id,
+          controlled->world_scene_id);
+    } else {
+      ImGui::TextUnformatted("ControlledCharacterRef: none");
+    }
+    ImGui::TextDisabled("Session ownership is independent of CTL controller enablement.");
+
     ImGui::SeparatorText("World / Renderer");
     ImGui::Text("Renderer: %s", world->renderer_ready ? "ready" : "not ready");
     ImGui::Text("Working space: linear sRGB / Rec.709 primaries (HDR)");
@@ -281,11 +297,14 @@ void DebugUI::show_world_inspector() {
       ImGui::TableSetupColumn("Model");
       ImGui::TableHeadersRow();
       for (const Debug::RuntimeCharacterDebugState& character : world->runtime_characters) {
+        const bool is_controlled{controlled.has_value() && active_world != nullptr &&
+                                 controlled->world_scene_id == active_world->scene_id &&
+                                 controlled->character_id == character.character_id};
         ImGui::TableNextRow();
         ImGui::TableNextColumn();
         ImGui::Text("%zu", character.instance_id);
         ImGui::TableNextColumn();
-        ImGui::Text("%d", character.character_id);
+        ImGui::Text(is_controlled ? "%d *" : "%d", character.character_id);
         ImGui::TableNextColumn();
         ImGui::Text("%d", character.area_id);
         ImGui::TableNextColumn();
@@ -303,12 +322,18 @@ void DebugUI::show_world_inspector() {
     }
     ImGui::TextDisabled("Expand a character for Source -> Runtime -> Presentation detail.");
     for (const Debug::RuntimeCharacterDebugState& character : world->runtime_characters) {
+      const bool is_controlled{controlled.has_value() && active_world != nullptr &&
+                               controlled->world_scene_id == active_world->scene_id &&
+                               controlled->character_id == character.character_id};
       const std::string label{fmt::format(
           "Character {}##RuntimeCharacter{}", character.character_id, character.instance_id)};
       if (!ImGui::CollapsingHeader(label.c_str())) {
         continue;
       }
       ImGui::Indent();
+      if (is_controlled) {
+        ImGui::TextUnformatted("CURRENT CONTROLLED CHARACTER");
+      }
       ImGui::Text("Instance: %zu", character.instance_id);
       ImGui::Text("AREA: %d", character.area_id);
       ImGui::Text("Active: %s", character.active ? "yes" : "no");

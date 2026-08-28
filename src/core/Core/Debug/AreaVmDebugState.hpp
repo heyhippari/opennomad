@@ -15,6 +15,12 @@ class ScenarioEngine;
 
 namespace App::Debug {
 
+enum class AreaVmContextSourceType : std::uint8_t {
+  k_area,
+  k_scene,
+  k_zone,
+};
+
 /// Confirmed capacities of the retail Runtime scenario-context architecture.
 inline constexpr std::size_t k_retail_area_vm_registry_capacity{32};
 inline constexpr std::size_t k_retail_area_vm_queue_capacity{4};
@@ -25,12 +31,51 @@ inline constexpr std::size_t k_retail_area_vm_stack_capacity{16};
 struct AreaVmContextSourceDebugState {
   std::uint64_t identity{0};
   std::size_t open_nomad_context_index{0};
+  AreaVmContextSourceType source_type{AreaVmContextSourceType::k_area};
   std::optional<std::uint8_t> owner_area_slot;
   std::optional<std::uint8_t> retail_registry_slot;
   std::int32_t area_id{0};
+  std::optional<std::int32_t> scene_id;
+  std::optional<std::int16_t> zone_id;
   std::optional<std::uint32_t> source_primary_event_offset;
   std::array<std::optional<std::uint32_t>, 3> source_event_entry_offsets{};
   std::size_t open_nomad_execution_base_offset{0};
+};
+
+struct AreaVmTrackedCommandDebugState {
+  struct Argument {
+    std::uint32_t raw{0};
+    std::int32_t as_signed{0};
+    std::uint32_t as_unsigned{0};
+    float as_float{0.0F};
+  };
+
+  bool root{false};
+  std::size_t command_index{0};
+  std::uint32_t opcode{0};
+  std::string opcode_name;
+  std::uint32_t execution_count{0};
+  std::uint32_t execution_limit{0};
+  std::string status;
+  std::vector<Argument> arguments;
+};
+
+struct AreaVmTrackedScriptDebugState {
+  std::size_t instance_id{0};
+  std::size_t source_script_index{0};
+  std::uint16_t source_script_id{0};
+  std::string source_script_name;
+  std::optional<std::int16_t> bound_character_id;
+  bool paused{false};
+  bool completed{false};
+  std::size_t current_group_index{0};
+  std::size_t group_count{0};
+  std::uint32_t repeat_index{0};
+  std::int32_t repeat_limit{0};
+  float elapsed_script_frames{0.0F};
+  std::size_t root_command_count{0};
+  std::size_t linked_command_count{0};
+  std::vector<AreaVmTrackedCommandDebugState> active_group_commands;
 };
 
 /// Sorted global-variable row retained as typed/raw values for the inspector.
@@ -61,6 +106,7 @@ struct AreaVmContextDebugState {
   std::vector<std::uint16_t> queued_events;
   std::vector<std::int32_t> evaluation_stack;
   Script::AreaWaitState wait;
+  std::optional<AreaVmTrackedScriptDebugState> tracked_script;
   std::optional<Script::AreaCameraRequest> last_camera_request;
   std::vector<AreaVmVariableDebugState> variables;
   Script::AreaPauseInfo pause;

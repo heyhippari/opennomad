@@ -94,6 +94,11 @@ struct ZoneContactContext {
   bool departure_queued{false};
 };
 
+struct ZoneQualificationDiagnostic {
+  std::uint64_t identity{0};
+  bool qualifies{false};
+};
+
 /// Staged startup that follows the recovered Runtime.exe path:
 /// IAM/START -> IAM/AREA record -> area-selected decor/SCX dependencies ->
 /// area script context -> interface 29 -> native main menu.
@@ -210,6 +215,10 @@ class ScenarioStartupController {
   /// Number of live zone-owned compact contexts, exposed for focused lifecycle tests.
   [[nodiscard]] std::size_t zone_contact_count() const {
     return m_zone_contacts.size();
+  }
+  /// One live zone-owned compact context for debugger registry inspection.
+  [[nodiscard]] const ZoneContactContext* zone_contact(std::size_t index) const {
+    return index < m_zone_contacts.size() ? m_zone_contacts.at(index).get() : nullptr;
   }
   [[nodiscard]] bool area_transition_pending() const {
     return m_area_transition.has_value();
@@ -359,8 +368,9 @@ class ScenarioStartupController {
   [[nodiscard]] std::optional<ResolvedCompactCamera> resolve_compact_camera(
       std::int16_t camera_id) const;
   /// Submits globally resolved immutable fields through the calling compact
-  /// context's owner world, where live attachment resolution occurs.
-  [[nodiscard]] std::expected<Script::AreaCameraOperationHandle, std::string>
+  /// context's owner world, where live attachment resolution occurs. Missing
+  /// cameras resolve as a no-op and return no tracked operation handle.
+  [[nodiscard]] std::expected<std::optional<Script::AreaCameraOperationHandle>, std::string>
   enqueue_compact_camera(std::size_t owner_slot, const Script::AreaCameraRequest& request);
   void service_scene_scripts(float delta_seconds);
   [[nodiscard]] std::expected<void, std::string> service_zone_contacts(float delta_seconds);
@@ -422,6 +432,7 @@ class ScenarioStartupController {
   std::uint64_t m_next_camera_operation_generation{1};
   std::vector<ActiveZoneRef> m_active_zones;
   std::vector<std::unique_ptr<ZoneContactContext>> m_zone_contacts;
+  std::vector<ZoneQualificationDiagnostic> m_zone_qualification_diagnostics;
 
   std::int16_t m_initial_area_id{0};
   std::int16_t m_linked_area_id{0};

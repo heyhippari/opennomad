@@ -257,6 +257,7 @@ void ScenarioStartupController::reset_session() {
   m_next_camera_operation_generation = 1;
   m_active_zones.clear();
   m_zone_contacts.clear();
+  m_zone_qualification_diagnostics.clear();
   m_start_bytes.clear();
   m_global_bytes.clear();
   m_area_archive_bytes.clear();
@@ -1047,61 +1048,67 @@ std::optional<ResolvedCompactCamera> ScenarioStartupController::resolve_compact_
   return std::nullopt;
 }
 
-std::expected<Script::AreaCameraOperationHandle, std::string>
+std::expected<std::optional<Script::AreaCameraOperationHandle>, std::string>
 ScenarioStartupController::enqueue_compact_camera(
     const std::size_t owner_slot, const Script::AreaCameraRequest& request) {
   if (m_manager == nullptr || owner_slot >= m_area_slots.size()) {
     const std::string error{
         fmt::format("compact camera {} requested without a resident owner", request.camera_id)};
     App::Log::warn(LogCategory::Scenario, "{}", error);
-    return std::expected<Script::AreaCameraOperationHandle, std::string>{std::unexpect, error};
+    return std::expected<std::optional<Script::AreaCameraOperationHandle>, std::string>{
+        std::unexpect, error};
   }
   const RuntimeAreaSlot& slot{m_area_slots.at(owner_slot)};
   const std::int16_t camera_id{static_cast<std::int16_t>(request.camera_id)};
   const std::optional<ResolvedCompactCamera> resolved{resolve_compact_camera(camera_id)};
   const WorldSceneContext* context{m_manager->find_world_context(slot.world_scene_id)};
   if (!resolved.has_value()) {
-    const std::string error{
-        fmt::format("compact camera {} was not found in any resident "
-                    "AREA/SCENE or IAM/GLOBAL",
-            request.camera_id)};
-    App::Log::warn(LogCategory::Scenario, "{}", error);
-    return std::expected<Script::AreaCameraOperationHandle, std::string>{std::unexpect, error};
+    App::Log::debug(LogCategory::Scenario,
+        "compact camera {} resolved to no-op because no authored AREA/SCENE/GLOBAL record was "
+        "found",
+        request.camera_id);
+    return std::expected<std::optional<Script::AreaCameraOperationHandle>, std::string>{
+        std::in_place, std::nullopt};
   }
   if (context == nullptr) {
     const std::string error{
         fmt::format("compact camera {} requested without an owner world", request.camera_id)};
     App::Log::warn(LogCategory::Scenario, "{}", error);
-    return std::expected<Script::AreaCameraOperationHandle, std::string>{std::unexpect, error};
+    return std::expected<std::optional<Script::AreaCameraOperationHandle>, std::string>{
+        std::unexpect, error};
   }
-  const Omikron::IamCameraRecord& camera{resolved->camera};
+
+  const Omikron::IamCameraRecord camera{resolved->camera};
   if (request.wait_for_completion && camera.camera_type != 12U) {
-    return std::expected<Script::AreaCameraOperationHandle, std::string>{std::unexpect,
+    return std::expected<std::optional<Script::AreaCameraOperationHandle>, std::string>{
+        std::unexpect,
         fmt::format("tracked camera {} uses unsupported controller mode {}",
             request.camera_id,
             camera.camera_type)};
   }
 
-  switch (resolved->source) {
-    case CompactCameraDefinitionSource::k_area:
-      App::Log::debug(LogCategory::Scenario,
-          "compact camera {} resolved from AREA slot={} area={}",
-          request.camera_id,
-          resolved->resident_slot.value_or(0U),
-          resolved->area_id);
-      break;
-    case CompactCameraDefinitionSource::k_scene:
-      App::Log::debug(LogCategory::Scenario,
-          "compact camera {} resolved from SCENE slot={} scene={} area={}",
-          request.camera_id,
-          resolved->resident_slot.value_or(0U),
-          resolved->scene_id,
-          resolved->area_id);
-      break;
-    case CompactCameraDefinitionSource::k_global:
-      App::Log::debug(
-          LogCategory::Scenario, "compact camera {} resolved from IAM/GLOBAL", request.camera_id);
-      break;
+  if (resolved.has_value()) {
+    switch (resolved->source) {
+      case CompactCameraDefinitionSource::k_area:
+        App::Log::debug(LogCategory::Scenario,
+            "compact camera {} resolved from AREA slot={} area={}",
+            request.camera_id,
+            resolved->resident_slot.value_or(0U),
+            resolved->area_id);
+        break;
+      case CompactCameraDefinitionSource::k_scene:
+        App::Log::debug(LogCategory::Scenario,
+            "compact camera {} resolved from SCENE slot={} scene={} area={}",
+            request.camera_id,
+            resolved->resident_slot.value_or(0U),
+            resolved->scene_id,
+            resolved->area_id);
+        break;
+      case CompactCameraDefinitionSource::k_global:
+        App::Log::debug(
+            LogCategory::Scenario, "compact camera {} resolved from IAM/GLOBAL", request.camera_id);
+        break;
+    }
   }
 
   const std::optional<std::uint64_t> operation_generation{
@@ -1138,6 +1145,10 @@ ScenarioStartupController::enqueue_compact_camera(
       .target_attachment_selector = camera.target_attachment_selector,
       .eye_attachment_selector = camera.eye_attachment_selector,
       .tail_fields = camera.tail_fields});
+  const std::string camera_source_name{resolved.has_value()
+                                          ? std::string{compact_camera_definition_source_name(
+                                              resolved->source)}
+                                          : std::string{"ACTIVE"}};
   record("AreaScript.CameraRequested",
       fmt::format("id={} duration={} flags={} type={} hFov={}deg source={} operation={}",
           request.camera_id,
@@ -1145,10 +1156,14 @@ ScenarioStartupController::enqueue_compact_camera(
           request.flags,
           camera.camera_type,
           Runtime::area_angle_to_degrees(camera.horizontal_fov_units),
-          compact_camera_definition_source_name(resolved->source),
+          camera_source_name,
           operation_generation.has_value() ? fmt::format("{}", operation_generation.value())
                                            : std::string{"none"}));
-  return Script::AreaCameraOperationHandle{.generation = operation_generation.value_or(0U)};
+  return std::optional<Script::AreaCameraOperationHandle>{
+      operation_generation.has_value()
+          ? std::optional<Script::AreaCameraOperationHandle>{
+                Script::AreaCameraOperationHandle{.generation = operation_generation.value()}}
+          : std::nullopt};
 }
 
 void ScenarioStartupController::bind_compact_state_services(Script::AreaScriptRuntime& runtime,
@@ -1762,7 +1777,8 @@ std::expected<void, std::string> ScenarioStartupController::select_current_chara
           slot.world_scene_id,
           character->model_resource_name));
   App::Log::info(LogCategory::Scenario,
-      "current character selected — id={} world={} model={}",
+          "CurrentCharacterChanged — ownerSlot={} id={} world={} model={}",
+          owner_slot,
       character->character_id,
       slot.world_scene_id,
       character->model_resource_name);
@@ -1884,11 +1900,14 @@ std::expected<void, std::string> ScenarioStartupController::set_current_characte
   if (character->ctl_controller.has_value()) {
     character->ctl_controller->set_player_direct_control(request.enabled);
   }
-  App::Log::debug(LogCategory::Scenario,
-      "current character controller {} — id={} world={}",
-      request.enabled ? "enabled" : "disabled",
+    App::Log::info(LogCategory::Scenario,
+      "{} — controlledCharacter={} world={} controllerEnabled={} directControl={}",
+      request.enabled ? "ControllerOn" : "ControllerOff",
       current->character_id,
-      current->world_scene_id);
+      current->world_scene_id,
+      character->controller_enabled,
+      character->ctl_controller.has_value() &&
+          character->ctl_controller->direct_control_active());
   return {};
 }
 
@@ -2511,6 +2530,21 @@ std::expected<void, std::string> ScenarioStartupController::set_zone_activation(
   if (auto refreshed{refresh_active_zones()}; !refreshed) {
     return refreshed;
   }
+  if (request.enabled) {
+    for (const ActiveZoneRef& zone : m_active_zones) {
+      if (static_cast<std::uint16_t>(zone.zone.zone_id) != raw_zone_id) {
+        continue;
+      }
+      App::Log::info(LogCategory::Scenario,
+          "ZoneActivated — source={} ownerSlot={} area={} scene={} zone={} qualifies={}",
+          zone.source == ActiveZoneSource::k_area ? "AREA" : "SCENE",
+          zone.resident_slot,
+          zone.area_id,
+          zone.scene_id,
+          zone.zone.zone_id,
+          zone_contact_reporting_enabled(zone));
+    }
+  }
   App::Log::debug(
       LogCategory::Script, "{} ZONE {}", request.enabled ? "activate" : "deactivate", raw_zone_id);
   return {};
@@ -2608,11 +2642,14 @@ std::expected<void, std::string> ScenarioStartupController::service_character_sc
   if (auto completed{area_script.complete_character_script_wait(instance_id)}; !completed) {
     return completed;
   }
-  record("AreaScript.CharacterScriptCompleted", fmt::format("instance={}", instance_id));
-  App::Log::debug(LogCategory::Script,
-      "tracked character-script wait completed — owner slot={} compactIp=+{:#x} target={} "
+    record("AreaScript.CharacterScriptCompleted",
+      fmt::format("ownerSlot={} instance={}", owner_slot, instance_id));
+    App::Log::info(LogCategory::Script,
+      "CompactWaitResumed — ownerSlot={} area={} scene={} compactIp=+{:#x} target={} "
       "script={} instance={} name='{}' group={} paused={} execution={}/{}",
       owner_slot,
+      slot.primary_area_id,
+      slot.scene_id,
       area_script.instruction_pointer(),
       wait_request.character_id.value_or(-1),
       wait_request.script_id,
@@ -2806,7 +2843,32 @@ void ScenarioStartupController::service_scene_scripts(const float delta_seconds)
         script.state() != Script::AreaScriptState::k_running) {
       continue;
     }
+    const Script::AreaScriptState previous_state{script.state()};
+    const std::optional<std::uint16_t> previous_event{script.active_event()};
     const Script::AreaScriptState state{script.run(delta_seconds)};
+    if (previous_state != Script::AreaScriptState::k_waiting &&
+        state == Script::AreaScriptState::k_waiting) {
+      App::Log::info(LogCategory::Script,
+          "CompactWaitEntered — source=SCENE ownerSlot={} area={} scene={} ip=+{:#x} kind={} "
+          "runtimeState={} scxInstance={} characterInstance={}",
+          index,
+          slot.primary_area_id,
+          slot.scene_id,
+          script.instruction_pointer(),
+          static_cast<unsigned int>(script.wait_info().kind),
+          script.wait_info().runtime_state,
+          script.wait_info().scx_script_instance.value_or(0U),
+          script.wait_info().character_script_instance.value_or(0U));
+    }
+    if (previous_event.has_value() && !script.active_event().has_value()) {
+      App::Log::info(LogCategory::Script,
+          "CompactEventEnded — source=SCENE ownerSlot={} area={} scene={} event={} ip=+{:#x}",
+          index,
+          slot.primary_area_id,
+          slot.scene_id,
+          previous_event.value(),
+          script.instruction_pointer());
+    }
     if (state == Script::AreaScriptState::k_paused_unsupported) {
       App::Log::warn(LogCategory::Script,
           "SCENE {} compact VM paused — unsupported opcode={:#04x} offset=+{:#x} bytes=[{}]",
@@ -2880,8 +2942,7 @@ bool ScenarioStartupController::zone_contact_reporting_enabled(
   ScenarioRuntime* const runtime{m_manager->world_runtime(slot.world_scene_id)};
   const Character::RuntimeCharacter* const character{
       runtime == nullptr ? nullptr : runtime->character_runtime().find(current->character_id)};
-  if (character == nullptr || !character->active || !character->area_present ||
-      !character->controller_enabled) {
+  if (character == nullptr || !character->active || !character->area_present) {
     return false;
   }
   return std::ranges::any_of(m_active_zones, [&contact](const ActiveZoneRef& active) {
@@ -2905,8 +2966,7 @@ bool ScenarioStartupController::zone_contact_reporting_enabled(
   ScenarioRuntime* const runtime{m_manager->world_runtime(slot.world_scene_id)};
   const Character::RuntimeCharacter* const character{
       runtime == nullptr ? nullptr : runtime->character_runtime().find(current->character_id)};
-  if (character == nullptr || !character->active || !character->area_present ||
-      !character->controller_enabled) {
+  if (character == nullptr || !character->active || !character->area_present) {
     return false;
   }
   return zone_contains_runtime_xz(active_zone.zone, character->transform.translation) &&
@@ -3006,7 +3066,62 @@ std::expected<void, std::string> ScenarioStartupController::service_zone_contact
                  existing->zone.zone_id == active_zone.zone.zone_id &&
                  existing->zone.event_offsets == active_zone.zone.event_offsets;
         })};
-    if (!already_reported && zone_contact_reporting_enabled(active_zone)) {
+    const bool qualifies{zone_contact_reporting_enabled(active_zone)};
+    const std::uint64_t diagnostic_identity{
+      (static_cast<std::uint64_t>(active_zone.resident_slot) << 48U) |
+      (static_cast<std::uint64_t>(active_zone.source) << 40U) |
+      static_cast<std::uint16_t>(active_zone.zone.zone_id)};
+    auto diagnostic{std::ranges::find_if(m_zone_qualification_diagnostics,
+      [diagnostic_identity](const ZoneQualificationDiagnostic& candidate) {
+        return candidate.identity == diagnostic_identity;
+      })};
+    if (diagnostic == m_zone_qualification_diagnostics.end() ||
+      diagnostic->qualifies != qualifies) {
+      if (diagnostic == m_zone_qualification_diagnostics.end()) {
+      m_zone_qualification_diagnostics.push_back(
+        ZoneQualificationDiagnostic{.identity = diagnostic_identity, .qualifies = qualifies});
+      } else {
+      diagnostic->qualifies = qualifies;
+      }
+      const RuntimeAreaSlot& slot{m_area_slots.at(active_zone.resident_slot)};
+      const std::optional<ControlledCharacterRef> current{m_manager->controlled_character()};
+      const std::int16_t character_id{
+        current.has_value() ? current->character_id : std::int16_t{-1}};
+      const ScenarioRuntime* const runtime{
+        current.has_value() && current->world_scene_id == slot.world_scene_id
+          ? m_manager->world_runtime(slot.world_scene_id)
+          : nullptr};
+      const Character::RuntimeCharacter* const character{
+        runtime == nullptr ? nullptr : runtime->character_runtime().find(character_id)};
+      const bool spatial{character != nullptr &&
+               zone_contains_runtime_xz(active_zone.zone, character->transform.translation)};
+      const bool orientation{
+        character != nullptr &&
+        active_zone.zone.accepts_orientation(character->serialized_orientation_units)};
+      App::Log::info(LogCategory::Scenario,
+        "ZoneQualification — source={} ownerSlot={} area={} scene={} zone={} qualifies={} "
+        "current={} active={} areaPresent={} controller={} serialized=({},{},{}) "
+        "runtime=({:.3f},{:.3f},{:.3f}) spatial={} orientation={}",
+        active_zone.source == ActiveZoneSource::k_area ? "AREA" : "SCENE",
+        active_zone.resident_slot,
+        active_zone.area_id,
+        active_zone.scene_id,
+        active_zone.zone.zone_id,
+        qualifies,
+        character_id,
+        character != nullptr && character->active,
+        character != nullptr && character->area_present,
+        character != nullptr && character->controller_enabled,
+        character == nullptr ? 0 : character->serialized_area_position.at(0),
+        character == nullptr ? 0 : character->serialized_area_position.at(1),
+        character == nullptr ? 0 : character->serialized_area_position.at(2),
+        character == nullptr ? 0.0F : character->transform.translation.x,
+        character == nullptr ? 0.0F : character->transform.translation.y,
+        character == nullptr ? 0.0F : character->transform.translation.z,
+        spatial,
+        orientation);
+    }
+    if (!already_reported && qualifies) {
       if (auto created{create_zone_contact(active_zone)}; !created) {
         return created;
       }
@@ -3047,7 +3162,19 @@ std::expected<void, std::string> ScenarioStartupController::service_zone_contact
               contact->zone.zone_id,
               serviced.error());
         }
+              const std::optional<std::uint16_t> previous_event{script.active_event()};
         const Script::AreaScriptState state{script.run(delta_seconds)};
+              if (previous_event.has_value() && !script.active_event().has_value()) {
+                App::Log::info(LogCategory::Script,
+                "CompactEventEnded — source=ZONE ownerSlot={} area={} scene={} zone={} event={} "
+                "ip=+{:#x}",
+                contact->resident_slot,
+                contact->area_id,
+                contact->scene_id,
+                contact->zone.zone_id,
+                previous_event.value(),
+                script.instruction_pointer());
+              }
         if (state == Script::AreaScriptState::k_paused_unsupported ||
             state == Script::AreaScriptState::k_failed) {
           App::Log::warn(LogCategory::Script,

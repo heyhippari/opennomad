@@ -299,19 +299,21 @@ void install_stub_ctl_loader(App::ScenarioRuntime& runtime) {
       });
 }
 
-/// Synthetic AREA-222-shaped contact fixture. The top-level context selects a
-/// current body and enables zone 3795; the record-relative zone event selects
+/// Synthetic AREA contact fixture. The top-level context selects a current
+/// body and enables a zone; the record-relative zone event selects
 /// a move, toggles the controller, self-disables, waits on a camera, then
 /// toggles the controller off and ends.
 std::vector<std::byte> make_zone_contact_area_archive(const bool starts_dialog = false,
     const bool self_disables = true,
-    const bool enable_controller = true) {
+  const bool enable_controller = true,
+  const std::int16_t zone_id = 3795,
+  const bool controller_off_before_wait = false) {
   Buffer top_level;
   top_level.u8(0x38).u16(136);
   if (enable_controller) {
     top_level.u8(0x68);
   }
-  top_level.u8(0x40).u16(3795);
+  top_level.u8(0x40).u16(static_cast<std::uint16_t>(zone_id));
   top_level.u8(0x03);
 
   Buffer zone_event;
@@ -321,10 +323,13 @@ std::vector<std::byte> make_zone_contact_area_archive(const bool starts_dialog =
     zone_event.u8(0x3F).u16(100);
     if (self_disables) {
       zone_event.u8(0x68);
-      zone_event.u8(0x41).u16(3795);
+      zone_event.u8(0x41).u16(static_cast<std::uint16_t>(zone_id));
+      if (controller_off_before_wait) {
+        zone_event.u8(0x69);
+      }
     }
     zone_event.u8(0x60).u16(42).u16(1).u16(3);
-    if (self_disables) {
+    if (self_disables && !controller_off_before_wait) {
       zone_event.u8(0x69);
     }
   }
@@ -368,7 +373,9 @@ std::vector<std::byte> make_zone_contact_area_archive(const bool starts_dialog =
   }
   write_u16(data, k_record_offset + k_table2_offset + 0x3CU, 4090);
   write_u16(data, k_record_offset + k_table2_offset + 0x3EU, 0);
-  write_u16(data, k_record_offset + k_table2_offset + 0x40U, 3795);
+  write_u16(data,
+      k_record_offset + k_table2_offset + 0x40U,
+      static_cast<std::uint16_t>(zone_id));
   write_u16(data, k_record_offset + k_table2_offset + 0x42U, 0xFFFF);
 
   write_u32(data, k_record_offset + 0x28U + (4U * 4U), k_table4_offset);
@@ -857,11 +864,15 @@ void write_boot_fixtures(const TempDirectory& temp) {
   write_bytes(temp.root() / "MESHES" / "DECORS" / "GRID.3DO", make_minimal_3do());
 }
 
-void write_zone_contact_fixtures(const TempDirectory& temp, const bool enable_controller = true) {
+void write_zone_contact_fixtures(const TempDirectory& temp,
+  const bool enable_controller = true,
+  const std::int16_t zone_id = 3795,
+  const bool controller_off_before_wait = false) {
   write_bytes(temp.root() / "IAM" / "START", make_start());
   write_bytes(temp.root() / "IAM" / "GLOBAL", make_camera_namespace_global(true));
-  write_bytes(
-      temp.root() / "IAM" / "AREA", make_zone_contact_area_archive(false, true, enable_controller));
+    write_bytes(temp.root() / "IAM" / "AREA",
+      make_zone_contact_area_archive(
+        false, true, enable_controller, zone_id, controller_off_before_wait));
   write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
   write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_minimal_scx());
 }
@@ -1067,7 +1078,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     }
   }
 
-  TEST_CASE("missing camera fails cleanly without emitting a command") {
+  TEST_CASE("missing camera is a no-op without emitting a command or blocking") {
     const TempDirectory temp;
     write_camera_namespace_fixtures(temp, CameraNamespaceFixture{.tracked = true});
     const ScopedGameDataRoot root{temp.root()};
@@ -1076,9 +1087,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(controller.initialize(manager).has_value());
     REQUIRE(controller.tick().has_value());
     const auto result{controller.tick()};
-    REQUIRE_FALSE(result.has_value());
-    CHECK(result.error().find("not found in any resident AREA/SCENE or IAM/GLOBAL") !=
-          std::string::npos);
+    REQUIRE(result.has_value());
     CHECK_EQ(manager.world_presentation().pending_camera_count(), 0U);
   }
 
@@ -1163,9 +1172,43 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK_EQ(controller.zone_contact_count(), 0U);
   }
 
-  TEST_CASE("current character controller gate suppresses fresh zone contact while inside") {
+  TEST_CASE("disabled current-character controller does not suppress fresh zone contact") {
+    constexpr std::int16_t k_zone_id{12};
     const TempDirectory temp;
-    write_zone_contact_fixtures(temp, false);
+    write_zone_contact_fixtures(temp, false, k_zone_id);
+    const ScopedGameDataRoot root{temp.root()};
+
+    App::ScenarioManager manager;
+    App::ScenarioStartupController controller;
+    REQUIRE(controller.initialize(manager).has_value());
+    App::ScenarioRuntime* runtime{manager.world_runtime(0)};
+    REQUIRE(runtime != nullptr);
+    runtime->character_runtime().set_model_loader(
+        [](const std::string_view name)
+            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
+          auto resource{std::make_shared<App::Character::ModelResource>()};
+          resource->name = name;
+          resource->groups.push_back(App::Omikron::MaterialGroup{});
+          return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
+        });
+    install_stub_ctl_loader(*runtime);
+
+    REQUIRE(manager.game_state() != nullptr);
+    CHECK_FALSE(manager.game_state()->zone_flag(k_zone_id).value());
+    REQUIRE(controller.tick().has_value());
+    App::Character::RuntimeCharacter* character{runtime->character_runtime().find(136)};
+    REQUIRE(character != nullptr);
+    REQUIRE(character->ctl_controller.has_value());
+    CHECK_EQ(controller.zone_contact_count(), 1U);
+    CHECK_EQ(character->current_move_id(), std::optional<std::int16_t>{100});
+    CHECK(character->controller_enabled);
+    CHECK(character->ctl_controller->direct_control_active());
+  }
+
+  TEST_CASE("zone contact in progress survives controller-off inside its event") {
+    constexpr std::int16_t k_zone_id{13};
+    const TempDirectory temp;
+    write_zone_contact_fixtures(temp, false, k_zone_id, true);
     const ScopedGameDataRoot root{temp.root()};
 
     App::ScenarioManager manager;
@@ -1186,20 +1229,17 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(controller.tick().has_value());
     App::Character::RuntimeCharacter* character{runtime->character_runtime().find(136)};
     REQUIRE(character != nullptr);
-    character->controller_enabled = false;
-
-    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
-    CHECK_EQ(controller.zone_contact_count(), 0U);
-    // The controller exists from the 0x38 selection and holds the bank's
-    // flag-selected default move; the zone event's 0x3F has not run yet.
-    CHECK_EQ(character->current_move_id(), std::optional<std::int16_t>{7});
-    CHECK_FALSE(character->controller_enabled);
-
-    character->controller_enabled = true;
-    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
-    CHECK_EQ(controller.zone_contact_count(), 1U);
+    REQUIRE(character->ctl_controller.has_value());
     CHECK_EQ(character->current_move_id(), std::optional<std::int16_t>{100});
-    CHECK(character->controller_enabled);
+    CHECK_FALSE(character->controller_enabled);
+    CHECK_FALSE(character->ctl_controller->direct_control_active());
+    CHECK_EQ(controller.zone_contact_count(), 1U);
+
+    const App::ZoneContactContext* contact{controller.zone_contact(0)};
+    REQUIRE(contact != nullptr);
+    REQUIRE(contact->script != nullptr);
+    CHECK(contact->script->state() == AreaScriptState::k_waiting);
+    CHECK(contact->script->wait_info().kind == App::Script::AreaWaitKind::k_camera);
   }
 
   TEST_CASE("zone contact follows live runtime position instead of the AREA placement snapshot") {
@@ -1548,6 +1588,8 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
 
     REQUIRE(controller.tick().has_value());
     CHECK(controller.ticked());
+    CHECK_FALSE(controller.main_menu_active());
+    REQUIRE(controller.tick().has_value());
 
     CHECK(controller.main_menu_active());
     CHECK(controller.area_script()->state() == AreaScriptState::k_waiting);
@@ -1617,11 +1659,19 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
           return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
         });
 
+    REQUIRE(controller.tick().has_value());  // Unresolved 0x5F yields before interface 29.
     REQUIRE(controller.tick().has_value());
     REQUIRE(controller
             .complete_interface(App::InterfaceCompletion{
                 .handle = App::InterfaceHandle{.interface_id = 29, .generation = 1}, .result = 3})
             .has_value());
+    REQUIRE_EQ(manager.world_presentation().pending_fade_count(), 1U);
+    const auto bootstrap_fade{manager.world_presentation().take_fade()};
+    REQUIRE(bootstrap_fade.has_value());
+    CHECK_EQ(bootstrap_fade->mode, 1U);
+    CHECK_EQ(bootstrap_fade->color, 0U);
+    CHECK_EQ(bootstrap_fade->duration_units, 0);
+    CHECK_EQ(bootstrap_fade->delay_units, 0);
     REQUIRE(controller.tick().has_value());  // 0x84 intent, then 0x77 yield.
     REQUIRE_EQ(manager.world_presentation().pending_letterbox_count(), 1U);
     const auto letterbox{manager.world_presentation().take_letterbox()};

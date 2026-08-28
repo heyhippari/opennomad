@@ -11,10 +11,14 @@
 #include <vector>
 
 #include "Core/Omikron/IamArea.hpp"
+#include "Core/Omikron/SCX.hpp"
 #include "Core/Scenario/ScenarioEngine.hpp"
+#include "Core/Scenario/ScenarioRuntime.hpp"
 #include "Core/Scenario/ScenarioStartupController.hpp"
 #include "Core/Script/AreaScriptOpcode.hpp"
 #include "Core/Script/AreaScriptRuntime.hpp"
+#include "Core/Script/ScriptOpcode.hpp"
+#include "Core/Script/ScriptRuntime.hpp"
 
 namespace App::Debug {
 
@@ -54,6 +58,7 @@ AreaVmContextDebugState build_area_vm_context_debug_state(
       .queued_events = {runtime.queued_events().begin(), runtime.queued_events().end()},
       .evaluation_stack = runtime.evaluation_stack(),
       .wait = runtime.wait_info(),
+      .tracked_script = std::nullopt,
       .last_camera_request = runtime.last_camera_request(),
       .variables = {},
       .pause = runtime.pause_info(),
@@ -95,6 +100,110 @@ AreaVmContextDebugState build_area_vm_context_debug_state(
   return result;
 }
 
+namespace {
+
+std::string command_status(const Script::ScriptInstance& instance,
+    const Script::RuntimeScriptCommand& command) {
+  if (instance.paused) {
+    return "paused";
+  }
+  if (command.execution_limit != 0xFFFFFFFFU &&
+      command.execution_count >= command.execution_limit) {
+    return "completed";
+  }
+  return instance.completed ? "completed" : "running";
+}
+
+AreaVmTrackedCommandDebugState snapshot_command(const Script::ScriptInstance& instance,
+    const Script::RuntimeScriptCommand& command,
+    const std::size_t command_index,
+    const bool root) {
+  const Script::OpcodeInfo* const info{Script::opcode_info(command.opcode)};
+  AreaVmTrackedCommandDebugState result{.root = root,
+      .command_index = command_index,
+      .opcode = command.opcode,
+      .opcode_name = info == nullptr ? "Unknown" : std::string{info->name},
+      .execution_count = command.execution_count,
+      .execution_limit = command.execution_limit,
+      .status = command_status(instance, command),
+      .arguments = {}};
+  for (std::uint32_t offset{0}; offset < command.value_count; ++offset) {
+    const std::size_t value_index{command.first_value_index + offset};
+    if (value_index >= instance.value_pool.size()) {
+      break;
+    }
+    const Omikron::ScriptValue& value{instance.value_pool.at(value_index)};
+    result.arguments.push_back(AreaVmTrackedCommandDebugState::Argument{.raw = value.raw,
+        .as_signed = value.as_signed(),
+        .as_unsigned = value.as_unsigned(),
+        .as_float = value.as_float()});
+  }
+  return result;
+}
+
+void attach_tracked_script(AreaVmContextDebugState& context,
+    const ScenarioEngine& engine,
+    const std::size_t owner_slot) {
+  std::optional<std::size_t> instance_id;
+  if (context.wait.kind == Script::AreaWaitKind::k_character_script) {
+    instance_id = context.wait.character_script_instance;
+  } else if (context.wait.kind == Script::AreaWaitKind::k_scx_script) {
+    instance_id = context.wait.scx_script_instance;
+  }
+  const RuntimeAreaSlot* const owner{engine.runtime_area_slot(owner_slot)};
+  if (!instance_id.has_value() || owner == nullptr) {
+    return;
+  }
+  const ScenarioRuntime* const scenario{engine.manager().world_runtime(owner->world_scene_id)};
+  const Script::ScriptRuntime* const runtime{
+      scenario == nullptr ? nullptr : scenario->script_runtime()};
+  const Script::ScriptInstance* const instance{
+      runtime == nullptr ? nullptr : runtime->instance(instance_id.value())};
+  if (runtime == nullptr || instance == nullptr) {
+    return;
+  }
+  const Omikron::ScxScript& source{runtime->scx().scripts.at(instance->source_script_index)};
+  AreaVmTrackedScriptDebugState tracked{.instance_id = instance->instance_id,
+      .source_script_index = instance->source_script_index,
+      .source_script_id = source.script_id,
+      .source_script_name = source.name,
+      .bound_character_id = instance->launch_context.character_id,
+      .paused = instance->paused,
+      .completed = instance->completed,
+      .current_group_index = instance->current_group_index,
+      .group_count = instance->root_commands.size(),
+      .repeat_index = instance->repeat_index,
+      .repeat_limit = instance->repeat_limit,
+      .elapsed_script_frames = instance->elapsed_script_frames,
+      .root_command_count = instance->root_commands.size(),
+      .linked_command_count = instance->linked_commands.size(),
+      .active_group_commands = {}};
+  if (!instance->root_commands.empty()) {
+    const std::size_t group_index{std::min(
+        instance->current_group_index, instance->root_commands.size() - 1U)};
+    const Script::RuntimeScriptCommand& root{instance->root_commands.at(group_index)};
+    tracked.active_group_commands.push_back(snapshot_command(*instance, root, group_index, true));
+    std::optional<std::uint32_t> linked{root.next_linked_command_index};
+    while (linked.has_value() && linked.value() < instance->linked_commands.size()) {
+      const Script::RuntimeScriptCommand& command{instance->linked_commands.at(linked.value())};
+      tracked.active_group_commands.push_back(
+          snapshot_command(*instance, command, linked.value(), false));
+      linked = command.next_linked_command_index;
+    }
+  }
+  context.tracked_script = std::move(tracked);
+}
+
+std::uint64_t context_identity(const AreaVmContextSourceType type,
+    const std::size_t owner_slot,
+    const std::int32_t id) {
+  return (static_cast<std::uint64_t>(type) << 60U) |
+         (static_cast<std::uint64_t>(owner_slot) << 56U) |
+         static_cast<std::uint32_t>(id);
+}
+
+}  // namespace
+
 AreaVmRegistryDebugState build_area_vm_registry_debug_state(const ScenarioEngine& engine) {
   AreaVmRegistryDebugState result;
   std::size_t context_index{0};
@@ -119,19 +228,71 @@ AreaVmRegistryDebugState build_area_vm_registry_debug_state(const ScenarioEngine
 
     // Stable across active-world switches and distinct for the two resident
     // owners even if malformed/test data were ever to reuse an AREA ID.
-    const std::uint64_t identity{
-        (static_cast<std::uint64_t>(static_cast<std::uint32_t>(area_id)) << 32U) |
-        static_cast<std::uint64_t>(owner_slot)};
-
-    result.contexts.push_back(build_area_vm_context_debug_state(*runtime,
-        AreaVmContextSourceDebugState{.identity = identity,
+    AreaVmContextDebugState context{build_area_vm_context_debug_state(*runtime,
+        AreaVmContextSourceDebugState{.identity = 0,
             .open_nomad_context_index = context_index++,
+        .source_type = AreaVmContextSourceType::k_area,
             .owner_area_slot = static_cast<std::uint8_t>(owner_slot),
             .retail_registry_slot = std::nullopt,
             .area_id = area_id,
+        .scene_id = std::nullopt,
+        .zone_id = std::nullopt,
             .source_primary_event_offset = primary_event_offset,
             .source_event_entry_offsets = event_entries,
-            .open_nomad_execution_base_offset = primary_event_offset}));
+        .open_nomad_execution_base_offset = primary_event_offset})};
+    context.source.identity = context_identity(AreaVmContextSourceType::k_area, owner_slot, area_id);
+    attach_tracked_script(context, engine, owner_slot);
+    result.contexts.push_back(std::move(context));
+
+    if (slot->scene.has_value() && slot->scene_script.has_value()) {
+      const std::uint32_t script_offset{slot->scene->script_offset()};
+      AreaVmContextDebugState scene{build_area_vm_context_debug_state(*slot->scene_script,
+        AreaVmContextSourceDebugState{
+          .identity = context_identity(
+            AreaVmContextSourceType::k_scene, owner_slot, slot->scene_id),
+          .open_nomad_context_index = context_index++,
+          .source_type = AreaVmContextSourceType::k_scene,
+          .owner_area_slot = static_cast<std::uint8_t>(owner_slot),
+          .retail_registry_slot = std::nullopt,
+          .area_id = area_id,
+          .scene_id = slot->scene_id,
+          .zone_id = std::nullopt,
+          .source_primary_event_offset = script_offset,
+          .source_event_entry_offsets = {script_offset, std::nullopt, std::nullopt},
+          .open_nomad_execution_base_offset = script_offset})};
+      attach_tracked_script(scene, engine, owner_slot);
+      result.contexts.push_back(std::move(scene));
+    }
+    }
+
+    for (std::size_t index{0}; index < engine.zone_contact_count(); ++index) {
+    const ZoneContactContext* const contact{engine.zone_contact(index)};
+    if (contact == nullptr || contact->script == nullptr) {
+      continue;
+    }
+    const std::int32_t zone_identity_id{
+      (contact->source == ActiveZoneSource::k_scene ? 1 << 16 : 0) |
+      static_cast<std::uint16_t>(contact->zone.zone_id)};
+    AreaVmContextDebugState zone{build_area_vm_context_debug_state(*contact->script,
+      AreaVmContextSourceDebugState{
+        .identity = context_identity(
+          AreaVmContextSourceType::k_zone, contact->resident_slot, zone_identity_id),
+        .open_nomad_context_index = context_index++,
+        .source_type = AreaVmContextSourceType::k_zone,
+        .owner_area_slot = static_cast<std::uint8_t>(contact->resident_slot),
+        .retail_registry_slot = std::nullopt,
+        .area_id = contact->area_id,
+        .scene_id = contact->source == ActiveZoneSource::k_scene
+                ? std::optional<std::int32_t>{contact->scene_id}
+                : std::nullopt,
+        .zone_id = contact->zone.zone_id,
+        .source_primary_event_offset = contact->zone.event_offsets.at(0),
+        .source_event_entry_offsets = {contact->zone.event_offsets.at(0),
+          contact->zone.event_offsets.at(1),
+          contact->zone.event_offsets.at(2)},
+        .open_nomad_execution_base_offset = 0U})};
+    attach_tracked_script(zone, engine, contact->resident_slot);
+    result.contexts.push_back(std::move(zone));
   }
   return result;
 }

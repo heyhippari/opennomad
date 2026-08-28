@@ -369,9 +369,10 @@ class AreaScriptRuntime {
   using CurrentCharacterControllerSink =
       std::function<std::expected<void, std::string>(const AreaCurrentCharacterControllerRequest&)>;
 
-  /// Presentation bridge for 0x5F/0x60. The presentation owner returns the
-  /// stable operation identity used by a blocking 0x60 wait.
-  using CameraSink = std::function<std::expected<AreaCameraOperationHandle, std::string>(
+  /// Presentation bridge for 0x5F/0x60. A resolved camera returns the stable
+  /// operation identity used by a blocking 0x60 wait; a missing or intentionally
+  /// no-op camera is reported as success with no tracked operation.
+  using CameraSink = std::function<std::expected<std::optional<AreaCameraOperationHandle>, std::string>(
       const AreaCameraRequest&)>;
 
   /// Presentation bridge for 0x76/0x77. The VM owns opcode/yield semantics;

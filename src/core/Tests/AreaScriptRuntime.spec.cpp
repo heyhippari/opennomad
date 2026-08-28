@@ -1067,6 +1067,36 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     CHECK_EQ(runtime.instruction_pointer(), 0U);
   }
 
+  TEST_CASE("Unresolved timed camera yields once without entering camera wait") {
+    Buffer bytes;
+    bytes.u8(0x60).u16(42).u16(10).u16(0);
+    bytes.u8(0x0D).u16(7).u8(0x03);
+    AreaScriptRuntime runtime{bytes.data()};
+    SharedGlobalStore globals;
+    globals.bind(runtime);
+    std::size_t camera_requests{0};
+    runtime.set_camera_sink(
+        [&camera_requests](const AreaCameraRequest&)
+            -> std::expected<std::optional<AreaCameraOperationHandle>, std::string> {
+          ++camera_requests;
+          return std::optional<AreaCameraOperationHandle>{};
+        });
+
+    runtime.queue_event(1);
+    runtime.activate();
+
+    CHECK(runtime.run() == AreaScriptState::k_running);
+    CHECK_EQ(camera_requests, 1U);
+    CHECK(runtime.last_run_yielded());
+    CHECK_EQ(runtime.instruction_pointer(), 7U);
+    CHECK(runtime.wait_info().kind == AreaWaitKind::k_none);
+    CHECK_EQ(runtime.wait_state(), 0U);
+    CHECK_EQ(runtime.variable(7), std::optional<std::int32_t>{0});
+
+    CHECK(runtime.run() == AreaScriptState::k_ready);
+    CHECK_EQ(runtime.variable(7), std::optional<std::int32_t>{1});
+  }
+
   TEST_CASE("Queueing event 1 runs the prefix, plays 109 and opens interface 29") {
     const Buffer bytes{make_startup_prefix()};
     AreaScriptRuntime runtime{bytes.data()};

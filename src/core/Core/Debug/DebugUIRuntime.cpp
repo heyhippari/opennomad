@@ -163,6 +163,30 @@ std::string area_trace_operands_text(const std::vector<std::int32_t>& operands) 
   return result;
 }
 
+const char* area_context_source_name(const AreaVmContextSourceType source) {
+  switch (source) {
+    case AreaVmContextSourceType::k_area:
+      return "AREA";
+    case AreaVmContextSourceType::k_scene:
+      return "SCENE";
+    case AreaVmContextSourceType::k_zone:
+      return "ZONE";
+  }
+  return "UNKNOWN";
+}
+
+std::int32_t area_context_source_id(const AreaVmContextSourceDebugState& source) {
+  switch (source.source_type) {
+    case AreaVmContextSourceType::k_area:
+      return source.area_id;
+    case AreaVmContextSourceType::k_scene:
+      return source.scene_id.value_or(-1);
+    case AreaVmContextSourceType::k_zone:
+      return source.zone_id.value_or(-1);
+  }
+  return -1;
+}
+
 }  // namespace
 
 void DebugUI::show_script_command(Script::ScriptInstance& instance,
@@ -676,9 +700,10 @@ void DebugUI::show_area_vm() {
   if (ImGui::BeginChild("##AreaVmContexts", ImVec2{list_width, 0.0F}, ImGuiChildFlags_Borders)) {
     ImGui::SeparatorText("Contexts");
     for (const AreaVmContextDebugState& context : registry.contexts) {
-      const std::string label{fmt::format("[{}] AREA {}\n{}",
+      const std::string label{fmt::format("[{}] {} {}\n{}",
           context.source.open_nomad_context_index,
-          context.source.area_id,
+        area_context_source_name(context.source.source_type),
+          area_context_source_id(context.source),
           area_lifecycle_name(context.lifecycle_state))};
       const bool is_selected{selected_matches(context)};
       if (ImGui::Selectable(label.c_str(), is_selected)) {
@@ -699,7 +724,14 @@ void DebugUI::show_area_vm() {
 
     ImGui::SeparatorText("Identity / source");
     ImGui::Text("OpenNomad context index: %zu", context.source.open_nomad_context_index);
+    ImGui::Text("Source type: %s", area_context_source_name(context.source.source_type));
     ImGui::Text("AREA ID: %d", context.source.area_id);
+    if (context.source.scene_id.has_value()) {
+      ImGui::Text("SCENE ID: %d", context.source.scene_id.value());
+    }
+    if (context.source.zone_id.has_value()) {
+      ImGui::Text("Zone ID: %d", context.source.zone_id.value());
+    }
     if (context.source.owner_area_slot.has_value()) {
       ImGui::Text("Owner AREA slot: %u",
           static_cast<unsigned int>(context.source.owner_area_slot.value()));
@@ -860,6 +892,52 @@ void DebugUI::show_area_vm() {
     if (context.wait.character_script_instance.has_value()) {
       ImGui::Text("Tracked ScriptRuntime instance: %zu",
           context.wait.character_script_instance.value());
+    }
+    if (context.tracked_script.has_value()) {
+      const AreaVmTrackedScriptDebugState& tracked{context.tracked_script.value()};
+      ImGui::SeparatorText("Tracked ScriptInstance");
+      ImGui::Text("Instance %zu | source [%zu] ID %u '%s'",
+        tracked.instance_id,
+        tracked.source_script_index,
+        static_cast<unsigned int>(tracked.source_script_id),
+        tracked.source_script_name.c_str());
+      ImGui::Text("Bound character: %s",
+        tracked.bound_character_id.has_value()
+          ? fmt::format("{}", tracked.bound_character_id.value()).c_str()
+          : "none");
+      ImGui::Text("Paused: %s | completed: %s",
+        tracked.paused ? "yes" : "no",
+        tracked.completed ? "yes" : "no");
+      ImGui::Text("Group %zu / %zu | repeat %u / %d | elapsed %.3f frames",
+        tracked.current_group_index,
+        tracked.group_count,
+        tracked.repeat_index,
+        tracked.repeat_limit,
+        static_cast<double>(tracked.elapsed_script_frames));
+      ImGui::Text("Commands: %zu root, %zu linked",
+        tracked.root_command_count,
+        tracked.linked_command_count);
+      for (const AreaVmTrackedCommandDebugState& command : tracked.active_group_commands) {
+      ImGui::Text("%s %zu: %#010x %s | %s | execution %u / %#x",
+        command.root ? "Root" : "Linked",
+        command.command_index,
+        command.opcode,
+        command.opcode_name.c_str(),
+        command.status.c_str(),
+        command.execution_count,
+        command.execution_limit);
+      for (std::size_t argument_index{0}; argument_index < command.arguments.size();
+         ++argument_index) {
+        const AreaVmTrackedCommandDebugState::Argument& argument{
+          command.arguments.at(argument_index)};
+        ImGui::TextDisabled("  arg %zu: raw %#010x signed %d unsigned %u float %.6g",
+          argument_index,
+          argument.raw,
+          argument.as_signed,
+          argument.as_unsigned,
+          static_cast<double>(argument.as_float));
+      }
+      }
     }
     if (context.wait.area_transition.has_value()) {
       const Script::AreaTransitionRequest& request{context.wait.area_transition.value()};
