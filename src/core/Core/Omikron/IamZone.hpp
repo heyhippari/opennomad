@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -22,7 +23,7 @@ struct IamZoneRecord {
   /// Runtime's X/Z even/odd polygon test; Y is deliberately ignored.
   [[nodiscard]] bool contains_xz(std::int32_t x, std::int32_t z) const;
   /// Runtime's independent heading filter; a zero span imposes no limit.
-  [[nodiscard]] bool accepts_orientation(std::int16_t heading_units) const;
+  [[nodiscard]] bool accepts_heading_degrees(float heading_degrees) const;
 };
 
 /// Decodes a validated fixed-width IAM table-2 record without relocating its
@@ -65,22 +66,16 @@ inline bool IamZoneRecord::contains_xz(const std::int32_t x, const std::int32_t 
   return inside;
 }
 
-inline bool IamZoneRecord::accepts_orientation(const std::int16_t heading_units) const {
+inline bool IamZoneRecord::accepts_heading_degrees(const float heading_degrees) const {
   if (orientation_span_units == 0) {
     return true;
   }
-  constexpr std::int32_t k_full_turn_units{4096};
-  const std::int32_t heading{static_cast<std::int32_t>(heading_units) & (k_full_turn_units - 1)};
-  const std::int32_t center{
-      static_cast<std::int32_t>(orientation_center_units) & (k_full_turn_units - 1)};
-  std::int32_t delta{(heading - center) & (k_full_turn_units - 1)};
-  if (delta >= (k_full_turn_units / 2)) {
-    delta -= k_full_turn_units;
-  }
-  const std::int32_t half_span{orientation_span_units < 0
-                                   ? -static_cast<std::int32_t>(orientation_span_units) / 2
-                                   : static_cast<std::int32_t>(orientation_span_units) / 2};
-  return delta >= -half_span && delta <= half_span;
+  constexpr float k_degrees_per_unit{360.0F / 4096.0F};
+  const float center_degrees{static_cast<float>(orientation_center_units) * k_degrees_per_unit};
+  const float half_span_degrees{
+      std::abs(static_cast<float>(orientation_span_units) * k_degrees_per_unit) * 0.5F};
+  const float delta{std::remainder(heading_degrees - center_degrees, 360.0F)};
+  return delta >= -half_span_degrees && delta <= half_span_degrees;
 }
 
 }  // namespace App::Omikron

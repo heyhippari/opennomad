@@ -17,6 +17,8 @@
 #include "Core/Omikron/IamScene.hpp"
 #include "Core/Omikron/IamStart.hpp"
 #include "Core/Omikron/IamZone.hpp"
+#include "Core/RuntimeMath.hpp"
+#include "Core/Scenario/ScenarioManager.hpp"
 #include "Core/Script/AreaScriptRuntime.hpp"
 
 namespace App::Startup {
@@ -25,6 +27,10 @@ class StartupTraceRecorder;
 
 namespace App::Audio {
 class AudioSystem;
+}
+
+namespace App::Character {
+struct RuntimeCharacter;
 }
 
 namespace App {
@@ -91,12 +97,28 @@ struct ZoneContactContext {
   std::int32_t scene_id{-1};
   Omikron::IamZoneRecord zone;
   std::unique_ptr<Script::AreaScriptRuntime> script;
+  bool overlapping{true};
   bool departure_queued{false};
 };
 
 struct ZoneQualificationDiagnostic {
   std::uint64_t identity{0};
   bool qualifies{false};
+};
+
+/// Session-owned spatial trigger proxy for the durable current character.
+/// Runtime updates this independently from scripted presentation transforms.
+struct CurrentCharacterTriggerProxy {
+  ControlledCharacterRef owner;
+  bool registered{false};
+  bool contact_ready{false};
+  Runtime::Vec3 position{};
+  float radius{0.0F};
+  float heading_degrees{0.0F};
+  std::uint64_t generation{0};
+  std::size_t overlapping_zone_count{0};
+  bool synchronization_suspended{false};
+  std::string suspension_reason;
 };
 
 /// Staged startup that follows the recovered Runtime.exe path:
@@ -219,6 +241,10 @@ class ScenarioStartupController {
   /// One live zone-owned compact context for debugger registry inspection.
   [[nodiscard]] const ZoneContactContext* zone_contact(std::size_t index) const {
     return index < m_zone_contacts.size() ? m_zone_contacts.at(index).get() : nullptr;
+  }
+  [[nodiscard]] const std::optional<CurrentCharacterTriggerProxy>&
+  current_character_trigger_proxy() const {
+    return m_current_character_trigger_proxy;
   }
   [[nodiscard]] bool area_transition_pending() const {
     return m_area_transition.has_value();
@@ -378,6 +404,11 @@ class ScenarioStartupController {
   [[nodiscard]] bool zone_contact_spatially_matches(const ZoneContactContext& contact) const;
   [[nodiscard]] bool zone_contact_reporting_enabled(const ZoneContactContext& contact) const;
   [[nodiscard]] bool zone_contact_reporting_enabled(const ActiveZoneRef& active_zone) const;
+    void register_current_character_trigger_proxy(const ControlledCharacterRef& owner,
+      const Character::RuntimeCharacter& character);
+    void service_current_character_trigger_proxy();
+    [[nodiscard]] bool current_character_structured_script_active(
+      const ControlledCharacterRef& owner) const;
   [[nodiscard]] std::expected<void, std::string> create_zone_contact(
       const ActiveZoneRef& active_zone);
   [[nodiscard]] std::optional<std::size_t> resident_area_slot(std::int32_t area_id) const;
@@ -433,6 +464,8 @@ class ScenarioStartupController {
   std::vector<ActiveZoneRef> m_active_zones;
   std::vector<std::unique_ptr<ZoneContactContext>> m_zone_contacts;
   std::vector<ZoneQualificationDiagnostic> m_zone_qualification_diagnostics;
+  std::optional<CurrentCharacterTriggerProxy> m_current_character_trigger_proxy;
+  std::uint64_t m_next_trigger_proxy_generation{1};
 
   std::int16_t m_initial_area_id{0};
   std::int16_t m_linked_area_id{0};
@@ -453,6 +486,8 @@ class ScenarioStartupController {
   ScenarioManager* m_manager{nullptr};
   /// Global scheduling takeover entered by any successful compact 0x3D.
   bool m_dialog_takeover_active{false};
+  bool m_current_character_address_placed_this_tick{false};
+  bool m_current_character_proxy_registered_this_tick{false};
   std::optional<std::int16_t> m_dialog_takeover_id;
   /// UI dispatch; pure transport, no lifecycle policy.
   InterfaceDispatcher m_dispatcher;

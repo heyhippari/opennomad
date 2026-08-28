@@ -25,6 +25,7 @@
 #include "Core/Scenario/ScenarioEngine.hpp"
 #include "Core/Scenario/ScenarioManager.hpp"
 #include "Core/Scenario/ScenarioRuntime.hpp"
+#include "Core/Scenario/ScenarioStartupController.hpp"
 #include "Core/Sprite/SpriteFrame.hpp"
 #include "Core/Sprite/SpriteInstance.hpp"
 #include "Core/Sprite/SpritePool.hpp"
@@ -89,6 +90,30 @@ void DebugUI::show_world_inspector() {
       ImGui::TextUnformatted("ControlledCharacterRef: none");
     }
     ImGui::TextDisabled("Session ownership is independent of CTL controller enablement.");
+    if (m_context.scenario_engine != nullptr &&
+      m_context.scenario_engine->current_character_trigger_proxy().has_value()) {
+      const CurrentCharacterTriggerProxy& proxy{
+        m_context.scenario_engine->current_character_trigger_proxy().value()};
+      ImGui::Text("Trigger proxy: %s | owner character %d, world %u | generation %llu",
+        proxy.registered ? "registered" : "unregistered",
+        proxy.owner.character_id,
+        proxy.owner.world_scene_id,
+        static_cast<unsigned long long>(proxy.generation));
+        ImGui::Text("Proxy contact readiness: %s", proxy.contact_ready ? "ready" : "armed");
+      ImGui::Text("Proxy XYZ: %.3f, %.3f, %.3f | radius %.3f | heading %.3f deg",
+        static_cast<double>(proxy.position.x),
+        static_cast<double>(proxy.position.y),
+        static_cast<double>(proxy.position.z),
+        static_cast<double>(proxy.radius),
+        static_cast<double>(proxy.heading_degrees));
+        ImGui::Text("Proxy overlapping zone contacts: %zu", proxy.overlapping_zone_count);
+      ImGui::Text("Proxy synchronization: %s%s%s",
+        proxy.synchronization_suspended ? "frozen" : "ordinary actor update",
+        proxy.suspension_reason.empty() ? "" : " - ",
+        proxy.suspension_reason.c_str());
+    } else {
+      ImGui::TextUnformatted("Trigger proxy: not registered");
+    }
 
     ImGui::SeparatorText("World / Renderer");
     ImGui::Text("Renderer: %s", world->renderer_ready ? "ready" : "not ready");

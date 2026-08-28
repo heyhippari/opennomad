@@ -307,11 +307,22 @@ std::vector<std::byte> make_zone_contact_area_archive(const bool starts_dialog =
     const bool self_disables = true,
   const bool enable_controller = true,
   const std::int16_t zone_id = 3795,
-  const bool controller_off_before_wait = false) {
+  const bool controller_off_before_wait = false,
+  const bool place_before_activation = false,
+  const std::uint32_t initial_xz = 50U,
+  const std::int16_t orientation_center_units = 4090,
+  const std::int16_t orientation_span_units = 0,
+  const bool launch_fire_and_forget = false) {
   Buffer top_level;
   top_level.u8(0x38).u16(136);
+  if (launch_fire_and_forget) {
+    top_level.u8(0x5A).u16(221).u16(0);
+  }
   if (enable_controller) {
     top_level.u8(0x68);
+  }
+  if (place_before_activation) {
+    top_level.u8(0x49).u16(44);
   }
   top_level.u8(0x40).u16(static_cast<std::uint16_t>(zone_id));
   top_level.u8(0x03);
@@ -334,14 +345,18 @@ std::vector<std::byte> make_zone_contact_area_archive(const bool starts_dialog =
     }
   }
   zone_event.u8(0x03);
+  Buffer departure_event;
+  departure_event.u8(0x03);
 
   constexpr std::size_t k_record_offset{0x800};
   constexpr std::size_t k_table0_offset{0x0B4};
   constexpr std::size_t k_table2_offset{k_table0_offset + 0x14U};
   constexpr std::size_t k_table4_offset{k_table2_offset + 0x44U};
-  constexpr std::size_t k_script_offset{k_table4_offset + 0x114U};
+  constexpr std::size_t k_table5_offset{k_table4_offset + 0x114U};
+  const std::size_t k_script_offset{k_table5_offset + (place_before_activation ? 0x10U : 0U)};
   const std::size_t zone_event_offset{k_script_offset + top_level.data().size()};
-  const std::size_t record_size{zone_event_offset + zone_event.data().size()};
+  const std::size_t departure_event_offset{zone_event_offset + zone_event.data().size()};
+  const std::size_t record_size{departure_event_offset + departure_event.data().size()};
   std::vector<std::byte> data(k_record_offset + record_size, std::byte{});
   write_u32(data, 118U * 8U, static_cast<std::uint32_t>(k_record_offset));
   write_u32(data, (118U * 8U) + 4U, static_cast<std::uint32_t>(record_size));
@@ -352,18 +367,21 @@ std::vector<std::byte> make_zone_contact_area_archive(const bool starts_dialog =
   write_u16(data, k_record_offset + 0x48U, 1);
   write_u16(data, k_record_offset + k_table0_offset + 0x00U, 0xFFFF);
   write_u16(data, k_record_offset + k_table0_offset + 0x02U, 136);
-  write_u32(data, k_record_offset + k_table0_offset + 0x04U, 50);
+  write_u32(data, k_record_offset + k_table0_offset + 0x04U, initial_xz);
   write_u32(data, k_record_offset + k_table0_offset + 0x08U, 999);
-  write_u32(data, k_record_offset + k_table0_offset + 0x0CU, 50);
+  write_u32(data, k_record_offset + k_table0_offset + 0x0CU, initial_xz);
   write_u16(data, k_record_offset + k_table0_offset + 0x10U, 4090);
   write_u16(data, k_record_offset + k_table0_offset + 0x12U, 136);
 
   write_u32(data, k_record_offset + 0x28U + (2U * 4U), k_table2_offset);
   write_u16(data, k_record_offset + 0x48U + (2U * 2U), 1);
   write_u32(data, k_record_offset + k_table2_offset, static_cast<std::uint32_t>(zone_event_offset));
-  // Four X/Y/Z vertices; y deliberately varies to prove contact is X/Z-only.
-  constexpr std::array<std::array<std::uint32_t, 3>, 4> k_vertices{
-      {{0U, 100U, 0U}, {100U, 200U, 0U}, {100U, 300U, 100U}, {0U, 400U, 100U}}};
+  write_u32(data,
+      k_record_offset + k_table2_offset + 0x08U,
+      static_cast<std::uint32_t>(departure_event_offset));
+  // Four X/Y/Z vertices; the Y slab contains the zero-radius synthetic actor.
+  constexpr std::array<std::array<std::uint32_t, 3>, 4> k_vertices = {
+      {{0U, 900U, 0U}, {100U, 1100U, 0U}, {100U, 1100U, 100U}, {0U, 900U, 100U}}};
   for (std::size_t index{0}; index < k_vertices.size(); ++index) {
     for (std::size_t coordinate{0}; coordinate < k_vertices.at(index).size(); ++coordinate) {
       write_u32(data,
@@ -371,8 +389,12 @@ std::vector<std::byte> make_zone_contact_area_archive(const bool starts_dialog =
           k_vertices.at(index).at(coordinate));
     }
   }
-  write_u16(data, k_record_offset + k_table2_offset + 0x3CU, 4090);
-  write_u16(data, k_record_offset + k_table2_offset + 0x3EU, 0);
+    write_u16(data,
+      k_record_offset + k_table2_offset + 0x3CU,
+      static_cast<std::uint16_t>(orientation_center_units));
+    write_u16(data,
+      k_record_offset + k_table2_offset + 0x3EU,
+      static_cast<std::uint16_t>(orientation_span_units));
   write_u16(data,
       k_record_offset + k_table2_offset + 0x40U,
       static_cast<std::uint16_t>(zone_id));
@@ -393,12 +415,24 @@ std::vector<std::byte> make_zone_contact_area_archive(const bool starts_dialog =
       k_model_name.data(),
       k_model_name.size());
   write_u16(data, k_record_offset + k_table4_offset + 0x110U, 136);
+  write_u32(data, k_record_offset + 0x28U + (5U * 4U), static_cast<std::uint32_t>(k_table5_offset));
+  write_u16(data, k_record_offset + 0x48U + (5U * 2U), place_before_activation ? 1U : 0U);
+  if (place_before_activation) {
+    write_u32(data, k_record_offset + k_table5_offset + 0x00U, 500U);
+    write_u32(data, k_record_offset + k_table5_offset + 0x04U, 999U);
+    write_u32(data, k_record_offset + k_table5_offset + 0x08U, 500U);
+    write_u16(data, k_record_offset + k_table5_offset + 0x0CU, 0U);
+    write_u16(data, k_record_offset + k_table5_offset + 0x0EU, 44U);
+  }
   std::memcpy(data.data() + k_record_offset + k_script_offset,
       top_level.data().data(),
       top_level.data().size());
   std::memcpy(data.data() + k_record_offset + zone_event_offset,
       zone_event.data().data(),
       zone_event.data().size());
+    std::memcpy(data.data() + k_record_offset + departure_event_offset,
+      departure_event.data().data(),
+      departure_event.data().size());
   return data;
 }
 
@@ -621,9 +655,7 @@ std::vector<std::byte> make_minimal_scx() {
   return bytes.data();
 }
 
-/// Minimal SCX with source index 0 carrying authored script ID 1. The command
-/// intentionally omits arguments so this focused launch-lifecycle fixture
-/// stops after proving the exact character-bound instance was dispatched.
+/// Minimal SCX with one immediately completable structured wait command.
 std::vector<std::byte> make_kayl_arrives_scx(const std::uint16_t script_id = 1) {
   Buffer descriptor;
   descriptor.u32(K_SCRIPTS_TAG).u32(1);
@@ -633,9 +665,9 @@ std::vector<std::byte> make_kayl_arrives_scx(const std::uint16_t script_id = 1) 
   descriptor.u32(0).u32(0);                  // field34 and runtime field38.
   descriptor.zeros(3U * 4U).zeros(3U * 4U);  // Binding-table header fields.
   descriptor.u32(0).u32(0).zeros(8);         // Related/runtime placeholders and tail.
-  descriptor.u32(0);                         // Empty shared value pool.
+  descriptor.u32(2).f32(0.0F).f32(0.0F);    // Wait duration and elapsed time.
   descriptor.u8(0);                          // No related script.
-  descriptor.u32(0x0200002AU).u32(0).u32(0).u32(0xFFFFFFFFU).u32(1).u32(0);
+  descriptor.u32(0x06000017U).u32(2).u32(0).u32(0xFFFFFFFFU).u32(1).u32(0);
   descriptor.u32(0).u32(0);  // Empty binding tables A and B.
   descriptor.u32(K_END_TAG);
 
@@ -867,14 +899,29 @@ void write_boot_fixtures(const TempDirectory& temp) {
 void write_zone_contact_fixtures(const TempDirectory& temp,
   const bool enable_controller = true,
   const std::int16_t zone_id = 3795,
-  const bool controller_off_before_wait = false) {
+  const bool controller_off_before_wait = false,
+  const bool place_before_activation = false,
+  const std::uint32_t initial_xz = 50U,
+  const std::int16_t orientation_center_units = 4090,
+  const std::int16_t orientation_span_units = 0,
+  const bool launch_fire_and_forget = false) {
   write_bytes(temp.root() / "IAM" / "START", make_start());
   write_bytes(temp.root() / "IAM" / "GLOBAL", make_camera_namespace_global(true));
     write_bytes(temp.root() / "IAM" / "AREA",
       make_zone_contact_area_archive(
-        false, true, enable_controller, zone_id, controller_off_before_wait));
+        false,
+        true,
+        enable_controller,
+        zone_id,
+        controller_off_before_wait,
+        place_before_activation,
+        initial_xz,
+        orientation_center_units,
+          orientation_span_units,
+          launch_fire_and_forget));
   write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
-  write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_minimal_scx());
+        write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX",
+        launch_fire_and_forget ? make_kayl_arrives_scx(221) : make_minimal_scx());
 }
 
 void write_live_zone_contact_fixtures(const TempDirectory& temp) {
@@ -1143,6 +1190,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     install_stub_ctl_loader(*runtime);
 
     REQUIRE(controller.tick().has_value());
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
     REQUIRE(manager.game_state() != nullptr);
     CHECK_FALSE(manager.game_state()->zone_flag(3795).value());
     CHECK_EQ(controller.zone_contact_count(), 1U);
@@ -1172,7 +1220,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK_EQ(controller.zone_contact_count(), 0U);
   }
 
-  TEST_CASE("persistent zone activation remains independent of a disabled controller") {
+  TEST_CASE("registered proxy permits fresh contact while controller is disabled") {
     constexpr std::int16_t k_zone_id{12};
     const TempDirectory temp;
     write_zone_contact_fixtures(temp, false, k_zone_id);
@@ -1199,11 +1247,20 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     App::Character::RuntimeCharacter* character{runtime->character_runtime().find(136)};
     REQUIRE(character != nullptr);
     REQUIRE(character->ctl_controller.has_value());
-    CHECK(manager.game_state()->zone_flag(k_zone_id).value());
-    CHECK_EQ(controller.zone_contact_count(), 0U);
-    CHECK_EQ(character->current_move_id(), std::optional<std::int16_t>{7});
-    CHECK_FALSE(character->controller_enabled);
-    CHECK_FALSE(character->ctl_controller->direct_control_active());
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+    REQUIRE(controller.current_character_trigger_proxy().has_value());
+    const App::CurrentCharacterTriggerProxy proxy{
+      controller.current_character_trigger_proxy().value()};
+    CHECK(proxy.registered);
+    CHECK_EQ(proxy.owner.character_id, 136);
+    CHECK_EQ(proxy.owner.world_scene_id, 0U);
+    CHECK_EQ(controller.zone_contact_count(), 1U);
+    CHECK_EQ(character->current_move_id(), std::optional<std::int16_t>{100});
+    CHECK(character->controller_enabled);
+    CHECK(character->ctl_controller->direct_control_active());
+    CHECK_EQ(controller.current_character_trigger_proxy()->position.x, proxy.position.x);
+    CHECK_EQ(controller.current_character_trigger_proxy()->position.y, proxy.position.y);
+    CHECK_EQ(controller.current_character_trigger_proxy()->position.z, proxy.position.z);
   }
 
   TEST_CASE("zone contact in progress survives controller-off inside its event") {
@@ -1228,6 +1285,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     install_stub_ctl_loader(*runtime);
 
     REQUIRE(controller.tick().has_value());
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
     App::Character::RuntimeCharacter* character{runtime->character_runtime().find(136)};
     REQUIRE(character != nullptr);
     REQUIRE(character->ctl_controller.has_value());
@@ -1235,12 +1293,157 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK_FALSE(character->controller_enabled);
     CHECK_FALSE(character->ctl_controller->direct_control_active());
     CHECK_EQ(controller.zone_contact_count(), 1U);
+    REQUIRE(controller.current_character_trigger_proxy().has_value());
+    CHECK(controller.current_character_trigger_proxy()->registered);
 
     const App::ZoneContactContext* contact{controller.zone_contact(0)};
     REQUIRE(contact != nullptr);
     REQUIRE(contact->script != nullptr);
     CHECK(contact->script->state() == AreaScriptState::k_waiting);
     CHECK(contact->script->wait_info().kind == App::Script::AreaWaitKind::k_camera);
+  }
+
+  TEST_CASE("compact address placement does not synchronize the trigger proxy") {
+    constexpr std::int16_t k_zone_id{14};
+    const TempDirectory temp;
+    write_zone_contact_fixtures(temp, false, k_zone_id, false, true);
+    const ScopedGameDataRoot root{temp.root()};
+
+    App::ScenarioManager manager;
+    App::ScenarioStartupController controller;
+    REQUIRE(controller.initialize(manager).has_value());
+    App::ScenarioRuntime* runtime{manager.world_runtime(0)};
+    REQUIRE(runtime != nullptr);
+    runtime->character_runtime().set_model_loader(
+        [](const std::string_view name)
+            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
+          auto resource{std::make_shared<App::Character::ModelResource>()};
+          resource->name = name;
+          resource->groups.push_back(App::Omikron::MaterialGroup{});
+          return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
+        });
+    install_stub_ctl_loader(*runtime);
+
+    REQUIRE(controller.tick().has_value());
+    const App::Character::RuntimeCharacter* character{runtime->character_runtime().find(136)};
+    REQUIRE(character != nullptr);
+    REQUIRE(controller.current_character_trigger_proxy().has_value());
+    CHECK_EQ(character->serialized_area_position.at(0), 500);
+    CHECK_EQ(controller.current_character_trigger_proxy()->position.x,
+        App::Runtime::area_position_to_inches(50));
+    CHECK(controller.current_character_trigger_proxy()->synchronization_suspended);
+    CHECK_EQ(controller.zone_contact_count(), 0U);
+  }
+
+  TEST_CASE("ordinary proxy synchronization may create contact while controller is disabled") {
+    constexpr std::int16_t k_zone_id{15};
+    const TempDirectory temp;
+    write_zone_contact_fixtures(temp, false, k_zone_id, false, false, 500U);
+    const ScopedGameDataRoot root{temp.root()};
+
+    App::ScenarioManager manager;
+    App::ScenarioStartupController controller;
+    REQUIRE(controller.initialize(manager).has_value());
+    App::ScenarioRuntime* runtime{manager.world_runtime(0)};
+    REQUIRE(runtime != nullptr);
+    runtime->character_runtime().set_model_loader(
+        [](const std::string_view name)
+            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
+          auto resource{std::make_shared<App::Character::ModelResource>()};
+          resource->name = name;
+          resource->groups.push_back(App::Omikron::MaterialGroup{});
+          return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
+        });
+    install_stub_ctl_loader(*runtime);
+
+    REQUIRE(controller.tick().has_value());
+    App::Character::RuntimeCharacter* character{runtime->character_runtime().find(136)};
+    REQUIRE(character != nullptr);
+    CHECK_FALSE(character->controller_enabled);
+    CHECK_EQ(controller.zone_contact_count(), 0U);
+    character->transform.translation =
+        App::Runtime::area_position_to_inches(std::array<std::int32_t, 3>{50, 999, 50});
+
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+    CHECK_EQ(controller.zone_contact_count(), 1U);
+    CHECK_EQ(character->current_move_id(), std::optional<std::int16_t>{100});
+    CHECK(character->controller_enabled);
+  }
+
+  TEST_CASE("proxy qualification uses live degree heading instead of placement yaw") {
+    constexpr std::int16_t k_zone_id{16};
+    constexpr std::int16_t k_quarter_turn_units{1024};
+    const TempDirectory temp;
+    write_zone_contact_fixtures(
+        temp, false, k_zone_id, false, false, 500U, k_quarter_turn_units, 100);
+    const ScopedGameDataRoot root{temp.root()};
+
+    App::ScenarioManager manager;
+    App::ScenarioStartupController controller;
+    REQUIRE(controller.initialize(manager).has_value());
+    App::ScenarioRuntime* runtime{manager.world_runtime(0)};
+    REQUIRE(runtime != nullptr);
+    runtime->character_runtime().set_model_loader(
+        [](const std::string_view name)
+            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
+          auto resource{std::make_shared<App::Character::ModelResource>()};
+          resource->name = name;
+          resource->groups.push_back(App::Omikron::MaterialGroup{});
+          return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
+        });
+    install_stub_ctl_loader(*runtime);
+
+    REQUIRE(controller.tick().has_value());
+    App::Character::RuntimeCharacter* character{runtime->character_runtime().find(136)};
+    REQUIRE(character != nullptr);
+    CHECK_EQ(character->serialized_orientation_units, 4090);
+    character->transform.translation =
+        App::Runtime::area_position_to_inches(std::array<std::int32_t, 3>{50, 999, 50});
+    character->set_principal_orientation(App::Runtime::Vec3{.x = 0.0F, .y = 90.0F, .z = 0.0F});
+
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+    REQUIRE(controller.current_character_trigger_proxy().has_value());
+    CHECK_EQ(controller.current_character_trigger_proxy()->heading_degrees, 90.0F);
+    CHECK_EQ(controller.zone_contact_count(), 1U);
+  }
+
+  TEST_CASE("fire-and-forget current-character script freezes proxy synchronization") {
+    constexpr std::int16_t k_zone_id{17};
+    const TempDirectory temp;
+    write_zone_contact_fixtures(
+        temp, false, k_zone_id, false, false, 50U, 4090, 0, true);
+    const ScopedGameDataRoot root{temp.root()};
+
+    App::ScenarioManager manager;
+    App::ScenarioStartupController controller;
+    REQUIRE(controller.initialize(manager).has_value());
+    App::ScenarioRuntime* runtime{manager.world_runtime(0)};
+    REQUIRE(runtime != nullptr);
+    runtime->character_runtime().set_model_loader(
+        [](const std::string_view name)
+            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
+          auto resource{std::make_shared<App::Character::ModelResource>()};
+          resource->name = name;
+          resource->groups.push_back(App::Omikron::MaterialGroup{});
+          return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
+        });
+    install_stub_ctl_loader(*runtime);
+
+    REQUIRE(controller.tick().has_value());
+    REQUIRE(controller.current_character_trigger_proxy().has_value());
+    CHECK(controller.current_character_trigger_proxy()->synchronization_suspended);
+    CHECK_FALSE(controller.current_character_trigger_proxy()->contact_ready);
+    CHECK_EQ(controller.zone_contact_count(), 0U);
+    const App::Script::ScriptRuntime* scripts{runtime->script_runtime()};
+    REQUIRE(scripts != nullptr);
+    REQUIRE_EQ(scripts->instances().size(), 1U);
+    CHECK_FALSE(scripts->instances().front().completed);
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+    CHECK(controller.current_character_trigger_proxy()->synchronization_suspended);
+    CHECK_EQ(controller.current_character_trigger_proxy()->suspension_reason,
+      "current-character structured script active");
+    CHECK_FALSE(controller.current_character_trigger_proxy()->contact_ready);
+    CHECK_EQ(controller.zone_contact_count(), 0U);
   }
 
   TEST_CASE("zone contact follows live runtime position instead of the AREA placement snapshot") {
@@ -1264,6 +1467,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     install_stub_ctl_loader(*runtime);
 
     REQUIRE(controller.tick().has_value());
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
     CHECK_EQ(controller.zone_contact_count(), 1U);
     REQUIRE(manager.game_state() != nullptr);
     CHECK(manager.game_state()->zone_flag(3795).value());
@@ -1272,6 +1476,9 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(character != nullptr);
     CHECK_EQ(character->serialized_area_position.at(0), 50);
     CHECK_EQ(character->serialized_area_position.at(2), 50);
+
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+    CHECK_EQ(controller.zone_contact_count(), 1U);
 
     const auto camera{manager.world_presentation().take_camera()};
     REQUIRE(camera.has_value());
@@ -1283,17 +1490,16 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
         .source_area_id = camera->source_area_id,
         .camera_id = camera->camera_id});
 
-    // Leave the immutable AREA snapshot inside the zone but move the live actor
-    // far outside. The existing contact must become ineligible and finish.
-    character->transform.translation.x = 1000.0F;
-    character->transform.translation.z = 1000.0F;
+    // Leave X/Z inside but move the live actor above the zone's Y slab. The
+    // proxy's 3D broadphase must reject the contact before the polygon test.
+    character->transform.translation.y = 1000.0F;
     REQUIRE(controller.tick(1.0F).has_value());
     REQUIRE(controller.tick(1.0F / 30.0F).has_value());
     CHECK_EQ(controller.zone_contact_count(), 0U);
     CHECK(manager.game_state()->zone_flag(3795).value());
 
     // Now make the serialized snapshot explicitly outside while putting the
-    // continuous live transform back at the authored inside coordinate.
+    // continuous live transform back inside all three proxy dimensions.
     character->serialized_area_position = {10000, 999, 10000};
     character->transform.translation =
         App::Runtime::area_position_to_inches(std::array<std::int32_t, 3>{50, 999, 50});
@@ -1324,6 +1530,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     install_stub_ctl_loader(*runtime);
 
     REQUIRE(controller.tick().has_value());
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
     CHECK_EQ(controller.zone_contact_count(), 1U);
     CHECK(controller.dialog_takeover_active());
     CHECK_EQ(controller.dialog_takeover_id(), std::optional<std::int16_t>{272});
@@ -1532,6 +1739,31 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(instance != nullptr);
     CHECK_EQ(instance->launch_context.character_id, std::optional<std::int16_t>{57});
     CHECK_EQ(instance->launch_context.parameter, 0);
+
+    REQUIRE(controller.current_character_trigger_proxy().has_value());
+    const App::Runtime::Vec3 frozen_position{
+      controller.current_character_trigger_proxy()->position};
+    CHECK(controller.current_character_trigger_proxy()->synchronization_suspended);
+    App::Character::RuntimeCharacter* mutable_destination_character{
+      destination_runtime->character_runtime().find(57)};
+    REQUIRE(mutable_destination_character != nullptr);
+    mutable_destination_character->transform.translation.x += 100.0F;
+
+    // Compact servicing observes the still-active structured child and leaves
+    // the proxy frozen despite visible/logical actor movement.
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+    CHECK_EQ(controller.current_character_trigger_proxy()->position.x, frozen_position.x);
+    CHECK(controller.current_character_trigger_proxy()->synchronization_suspended);
+
+    // The child completes in the later world-runtime stage. There is no
+    // same-update proxy callback; the following ordinary scenario tick catches up.
+    destination_runtime->tick(1.0F / 30.0F);
+    CHECK(instance->completed);
+    CHECK_EQ(controller.current_character_trigger_proxy()->position.x, frozen_position.x);
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+    CHECK_FALSE(controller.current_character_trigger_proxy()->synchronization_suspended);
+    CHECK_EQ(controller.current_character_trigger_proxy()->position.x,
+      mutable_destination_character->transform.translation.x);
   }
 
   TEST_CASE("Startup reaches the main menu through START, AREA 118 and interface 29") {

@@ -422,7 +422,7 @@ TEST_SUITE("Core::Omikron::IamAreaRecord") {
     CHECK_EQ(static_cast<std::uint16_t>(zones.at(1).zone_id), 0x8005U);
   }
 
-  TEST_CASE("IAM zones use X/Z containment and wrapped orientation intervals") {
+  TEST_CASE("IAM zones use X/Z containment and wrapped degree heading intervals") {
     App::Omikron::IamAreaZoneRecord zone{.event_offsets = {},
         .serialized_vertices = {{{0, 100, 0}, {10, 200, 0}, {10, -500, 10}, {0, 0, 10}}},
         .orientation_center_units = 0,
@@ -431,12 +431,12 @@ TEST_SUITE("Core::Omikron::IamAreaRecord") {
         .unknown_42 = -1};
     CHECK(zone.contains_xz(5, 5));
     CHECK_FALSE(zone.contains_xz(11, 5));
-    CHECK(zone.accepts_orientation(2048));
+    CHECK(zone.accepts_heading_degrees(180.0F));
 
     zone.orientation_center_units = 4090;
     zone.orientation_span_units = 20;
-    CHECK(zone.accepts_orientation(2));
-    CHECK_FALSE(zone.accepts_orientation(40));
+    CHECK(zone.accepts_heading_degrees(0.0F));
+    CHECK_FALSE(zone.accepts_heading_degrees(4.0F));
   }
 }
 

@@ -8,6 +8,7 @@
 #include <expected>
 #include <filesystem>
 #include <iterator>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <span>
@@ -116,6 +117,30 @@ std::string dependency_path(const std::string_view directory,
     }
   }
   return inside;
+}
+
+[[nodiscard]] bool zone_intersects_proxy_bounds(const Omikron::IamZoneRecord& zone,
+    const Runtime::Vec3& position,
+    const float radius) {
+  Runtime::Vec3 minimum{.x = std::numeric_limits<float>::max(),
+      .y = std::numeric_limits<float>::max(),
+      .z = std::numeric_limits<float>::max()};
+  Runtime::Vec3 maximum{.x = std::numeric_limits<float>::lowest(),
+      .y = std::numeric_limits<float>::lowest(),
+      .z = std::numeric_limits<float>::lowest()};
+  for (const auto& vertex : zone.serialized_vertices) {
+    const Runtime::Vec3 runtime_vertex{Runtime::area_position_to_inches(vertex)};
+    minimum.x = std::min(minimum.x, runtime_vertex.x);
+    minimum.y = std::min(minimum.y, runtime_vertex.y);
+    minimum.z = std::min(minimum.z, runtime_vertex.z);
+    maximum.x = std::max(maximum.x, runtime_vertex.x);
+    maximum.y = std::max(maximum.y, runtime_vertex.y);
+    maximum.z = std::max(maximum.z, runtime_vertex.z);
+  }
+  const float safe_radius{std::max(radius, 0.0F)};
+  return (position.x + safe_radius) >= minimum.x && (position.x - safe_radius) <= maximum.x &&
+         (position.y + safe_radius) >= minimum.y && (position.y - safe_radius) <= maximum.y &&
+         (position.z + safe_radius) >= minimum.z && (position.z - safe_radius) <= maximum.z;
 }
 
 struct PreparedAreaWorld {
@@ -258,6 +283,8 @@ void ScenarioStartupController::reset_session() {
   m_active_zones.clear();
   m_zone_contacts.clear();
   m_zone_qualification_diagnostics.clear();
+  m_current_character_trigger_proxy.reset();
+  m_next_trigger_proxy_generation = 1;
   m_start_bytes.clear();
   m_global_bytes.clear();
   m_area_archive_bytes.clear();
@@ -1759,8 +1786,9 @@ std::expected<void, std::string> ScenarioStartupController::select_current_chara
   }
   game_state->ensure_character_profile(request.character_id, definition->values);
   game_state->establish_current_character(definition.value());
-  m_manager->set_controlled_character(ControlledCharacterRef{
-      .character_id = request.character_id, .world_scene_id = slot.world_scene_id});
+    const ControlledCharacterRef selected{
+      .character_id = request.character_id, .world_scene_id = slot.world_scene_id};
+    m_manager->set_controlled_character(selected);
 
   // Becoming the persistent current character installs the adventure CTL
   // controller from the definition's authored control set. The controller is
@@ -1771,6 +1799,7 @@ std::expected<void, std::string> ScenarioStartupController::select_current_chara
       !controller) {
     return controller;
   }
+  register_current_character_trigger_proxy(selected, *character);
   record("AreaScript.CurrentCharacterSelected",
       fmt::format("character={} world={} model={}",
           character->character_id,
@@ -1935,6 +1964,126 @@ void ScenarioStartupController::service_ctl_controller(const float delta_seconds
   for (const Character::CtlController::SoundMarkerEvent& event :
       controller.take_sound_marker_events()) {
     runtime->play_ctl_sound_marker(event.sound_hid, character->transform.translation);
+  }
+}
+
+void ScenarioStartupController::register_current_character_trigger_proxy(
+    const ControlledCharacterRef& owner, const Character::RuntimeCharacter& character) {
+  m_current_character_trigger_proxy = CurrentCharacterTriggerProxy{.owner = owner,
+      .registered = true,
+      .contact_ready = false,
+      .position = character.transform.translation,
+      .radius = character.model_resource == nullptr ? 0.0F : character.model_resource->bounds_radius,
+      .heading_degrees = character.principal_orientation_degrees.y,
+      .generation = m_next_trigger_proxy_generation++,
+      .overlapping_zone_count = 0,
+      .synchronization_suspended = false,
+      .suspension_reason = {}};
+  m_current_character_proxy_registered_this_tick = true;
+  App::Log::info(LogCategory::Scenario,
+      "TriggerProxyRegistered — character={} world={} generation={} xyz=({:.3f},{:.3f},{:.3f}) "
+      "radius={:.3f}",
+      owner.character_id,
+      owner.world_scene_id,
+      m_current_character_trigger_proxy->generation,
+      character.transform.translation.x,
+      character.transform.translation.y,
+      character.transform.translation.z,
+      m_current_character_trigger_proxy->radius);
+}
+
+bool ScenarioStartupController::current_character_structured_script_active(
+    const ControlledCharacterRef& owner) const {
+  if (m_manager == nullptr) {
+    return false;
+  }
+  const ScenarioRuntime* const scenario{m_manager->world_runtime(owner.world_scene_id)};
+  const Script::ScriptRuntime* const scripts{
+      scenario == nullptr ? nullptr : scenario->script_runtime()};
+  if (scripts == nullptr) {
+    return false;
+  }
+  return std::ranges::any_of(scripts->instances(), [&owner](const Script::ScriptInstance& instance) {
+    return !instance.completed && instance.launch_context.character_id == owner.character_id;
+  });
+}
+
+void ScenarioStartupController::service_current_character_trigger_proxy() {
+  if (m_manager == nullptr || !m_current_character_trigger_proxy.has_value() ||
+      !m_current_character_trigger_proxy->registered) {
+    return;
+  }
+  CurrentCharacterTriggerProxy& proxy{m_current_character_trigger_proxy.value()};
+  const std::optional<ControlledCharacterRef> current{m_manager->controlled_character()};
+  if (!current.has_value() || current.value() != proxy.owner) {
+    proxy.registered = false;
+    proxy.synchronization_suspended = true;
+    proxy.suspension_reason = "controlled-character ownership changed";
+    return;
+  }
+  const ScenarioRuntime* const scenario{m_manager->world_runtime(proxy.owner.world_scene_id)};
+  const Character::RuntimeCharacter* const character{
+      scenario == nullptr ? nullptr
+                          : scenario->character_runtime().find(proxy.owner.character_id)};
+  if (character == nullptr || !character->active || !character->area_present) {
+    proxy.synchronization_suspended = true;
+    proxy.suspension_reason = "current character is not active and AREA-present";
+    return;
+  }
+  if (m_current_character_proxy_registered_this_tick) {
+    proxy.synchronization_suspended = true;
+    proxy.suspension_reason = "registered this tick; awaiting ordinary actor update";
+    return;
+  }
+  if (current_character_structured_script_active(proxy.owner)) {
+    if (!proxy.synchronization_suspended ||
+        proxy.suspension_reason != "current-character structured script active") {
+      App::Log::info(LogCategory::Scenario,
+          "TriggerProxyFrozen — character={} world={} generation={} reason=structured-script",
+          proxy.owner.character_id,
+          proxy.owner.world_scene_id,
+          proxy.generation);
+    }
+    proxy.synchronization_suspended = true;
+    proxy.suspension_reason = "current-character structured script active";
+    return;
+  }
+  if (m_current_character_address_placed_this_tick) {
+    App::Log::debug(LogCategory::Scenario,
+      "TriggerProxyFrozen — character={} world={} generation={} reason=compact-address",
+      proxy.owner.character_id,
+      proxy.owner.world_scene_id,
+      proxy.generation);
+    proxy.synchronization_suspended = true;
+    proxy.suspension_reason = "compact address placement occurred this tick";
+    return;
+  }
+
+  const bool was_suspended{proxy.synchronization_suspended};
+  const bool moved{proxy.position.x != character->transform.translation.x ||
+                   proxy.position.y != character->transform.translation.y ||
+                   proxy.position.z != character->transform.translation.z};
+  proxy.position = character->transform.translation;
+  proxy.radius = character->model_resource == nullptr ? 0.0F : character->model_resource->bounds_radius;
+  proxy.heading_degrees = character->principal_orientation_degrees.y;
+  proxy.synchronization_suspended = false;
+  proxy.suspension_reason.clear();
+  const bool first_ready_sync{!proxy.contact_ready};
+  proxy.contact_ready = true;
+  if (moved) {
+    ++proxy.generation;
+  }
+  if (was_suspended || first_ready_sync) {
+    App::Log::info(LogCategory::Scenario,
+        "TriggerProxySynchronized — character={} world={} generation={} xyz=({:.3f},{:.3f},{:.3f}) "
+        "radius={:.3f}",
+        proxy.owner.character_id,
+        proxy.owner.world_scene_id,
+        proxy.generation,
+        proxy.position.x,
+        proxy.position.y,
+        proxy.position.z,
+        proxy.radius);
   }
 }
 
@@ -2379,6 +2528,7 @@ std::expected<void, std::string> ScenarioStartupController::place_current_charac
   auto placed{runtime->character_runtime().place_character_at_address(
       current->character_id, resolved_address.value())};
   if (placed) {
+    m_current_character_address_placed_this_tick = true;
     App::Log::info(
         LogCategory::Scenario, "current character placed at address {}", request.address_id);
   }
@@ -2911,7 +3061,8 @@ bool ScenarioStartupController::zone_contact_backing_resident(
 
 bool ScenarioStartupController::zone_contact_spatially_matches(
     const ZoneContactContext& contact) const {
-  if (m_manager == nullptr || contact.resident_slot >= m_area_slots.size()) {
+  if (m_manager == nullptr || contact.resident_slot >= m_area_slots.size() ||
+      !m_current_character_trigger_proxy.has_value()) {
     return false;
   }
   const RuntimeAreaSlot& slot{m_area_slots.at(contact.resident_slot)};
@@ -2919,14 +3070,13 @@ bool ScenarioStartupController::zone_contact_spatially_matches(
   if (!current.has_value() || current->world_scene_id != slot.world_scene_id) {
     return false;
   }
-  ScenarioRuntime* const runtime{m_manager->world_runtime(slot.world_scene_id)};
-  const Character::RuntimeCharacter* const character{
-      runtime == nullptr ? nullptr : runtime->character_runtime().find(current->character_id)};
-  if (character == nullptr || !character->active || !character->area_present) {
+  const CurrentCharacterTriggerProxy& proxy{m_current_character_trigger_proxy.value()};
+  if (!proxy.registered || !proxy.contact_ready || proxy.owner != current.value() ||
+      !zone_intersects_proxy_bounds(contact.zone, proxy.position, proxy.radius)) {
     return false;
   }
-  return zone_contains_runtime_xz(contact.zone, character->transform.translation) &&
-         contact.zone.accepts_orientation(character->serialized_orientation_units);
+  return zone_contains_runtime_xz(contact.zone, proxy.position) &&
+         contact.zone.accepts_heading_degrees(proxy.heading_degrees);
 }
 
 bool ScenarioStartupController::zone_contact_reporting_enabled(
@@ -2942,13 +3092,7 @@ bool ScenarioStartupController::zone_contact_reporting_enabled(
   ScenarioRuntime* const runtime{m_manager->world_runtime(slot.world_scene_id)};
   const Character::RuntimeCharacter* const character{
       runtime == nullptr ? nullptr : runtime->character_runtime().find(current->character_id)};
-  // TEMPORARY: OpenNomad does not yet model Runtime's separate current-character
-  // spatial trigger proxy/contact-state machinery. controller_enabled currently
-  // prevents scripted presentation motion from being mistaken for native spatial-
-  // proxy contact updates. Remove this guard only when the Runtime-style proxy is
-  // implemented.
-  if (character == nullptr || !character->active || !character->area_present ||
-      !character->controller_enabled) {
+  if (character == nullptr || !character->active || !character->area_present) {
     return false;
   }
   return std::ranges::any_of(m_active_zones, [&contact](const ActiveZoneRef& active) {
@@ -2961,7 +3105,8 @@ bool ScenarioStartupController::zone_contact_reporting_enabled(
 
 bool ScenarioStartupController::zone_contact_reporting_enabled(
     const ActiveZoneRef& active_zone) const {
-  if (m_manager == nullptr || active_zone.resident_slot >= m_area_slots.size()) {
+  if (m_manager == nullptr || active_zone.resident_slot >= m_area_slots.size() ||
+      !m_current_character_trigger_proxy.has_value()) {
     return false;
   }
   const RuntimeAreaSlot& slot{m_area_slots.at(active_zone.resident_slot)};
@@ -2969,17 +3114,13 @@ bool ScenarioStartupController::zone_contact_reporting_enabled(
   if (!current.has_value() || current->world_scene_id != slot.world_scene_id) {
     return false;
   }
-  ScenarioRuntime* const runtime{m_manager->world_runtime(slot.world_scene_id)};
-  const Character::RuntimeCharacter* const character{
-      runtime == nullptr ? nullptr : runtime->character_runtime().find(current->character_id)};
-  // TEMPORARY: See the contact overload above. Fresh contacts must remain gated
-  // until OpenNomad has a Runtime-style current-character spatial trigger proxy.
-  if (character == nullptr || !character->active || !character->area_present ||
-      !character->controller_enabled) {
+  const CurrentCharacterTriggerProxy& proxy{m_current_character_trigger_proxy.value()};
+  if (!proxy.registered || !proxy.contact_ready || proxy.owner != current.value() ||
+      !zone_intersects_proxy_bounds(active_zone.zone, proxy.position, proxy.radius)) {
     return false;
   }
-  return zone_contains_runtime_xz(active_zone.zone, character->transform.translation) &&
-         active_zone.zone.accepts_orientation(character->serialized_orientation_units);
+  return zone_contains_runtime_xz(active_zone.zone, proxy.position) &&
+         active_zone.zone.accepts_heading_degrees(proxy.heading_degrees);
 }
 
 std::expected<void, std::string> ScenarioStartupController::create_zone_contact(
@@ -3025,6 +3166,7 @@ std::expected<void, std::string> ScenarioStartupController::create_zone_contact(
   contact->scene_id = active_zone.scene_id;
   contact->zone = active_zone.zone;
   contact->script = std::make_unique<Script::AreaScriptRuntime>(record_bytes);
+  contact->overlapping = true;
   const auto entry_or_missing = [](const std::uint32_t offset) -> std::optional<std::size_t> {
     return offset == 0U ? std::nullopt : std::optional<std::size_t>{offset};
   };
@@ -3047,6 +3189,9 @@ std::expected<void, std::string> ScenarioStartupController::create_zone_contact(
       active_zone.zone.zone_id,
       active_zone.source == ActiveZoneSource::k_area ? "AREA" : "SCENE",
       active_zone.resident_slot);
+  App::Log::info(LogCategory::Scenario,
+      "ZoneContactTransition — zone={} state=entered queuedEvent=1",
+      active_zone.zone.zone_id);
   m_zone_contacts.push_back(std::move(contact));
   return {};
 }
@@ -3077,20 +3222,20 @@ std::expected<void, std::string> ScenarioStartupController::service_zone_contact
         })};
     const bool qualifies{zone_contact_reporting_enabled(active_zone)};
     const std::uint64_t diagnostic_identity{
-      (static_cast<std::uint64_t>(active_zone.resident_slot) << 48U) |
-      (static_cast<std::uint64_t>(active_zone.source) << 40U) |
-      static_cast<std::uint16_t>(active_zone.zone.zone_id)};
+        (static_cast<std::uint64_t>(active_zone.resident_slot) << 48U) |
+        (static_cast<std::uint64_t>(active_zone.source) << 40U) |
+        static_cast<std::uint16_t>(active_zone.zone.zone_id)};
     auto diagnostic{std::ranges::find_if(m_zone_qualification_diagnostics,
-      [diagnostic_identity](const ZoneQualificationDiagnostic& candidate) {
-        return candidate.identity == diagnostic_identity;
-      })};
+        [diagnostic_identity](const ZoneQualificationDiagnostic& candidate) {
+          return candidate.identity == diagnostic_identity;
+        })};
     if (diagnostic == m_zone_qualification_diagnostics.end() ||
-      diagnostic->qualifies != qualifies) {
+        diagnostic->qualifies != qualifies) {
       if (diagnostic == m_zone_qualification_diagnostics.end()) {
-      m_zone_qualification_diagnostics.push_back(
-        ZoneQualificationDiagnostic{.identity = diagnostic_identity, .qualifies = qualifies});
+        m_zone_qualification_diagnostics.push_back(
+            ZoneQualificationDiagnostic{.identity = diagnostic_identity, .qualifies = qualifies});
       } else {
-      diagnostic->qualifies = qualifies;
+        diagnostic->qualifies = qualifies;
       }
       const RuntimeAreaSlot& slot{m_area_slots.at(active_zone.resident_slot)};
       const std::optional<ControlledCharacterRef> current{m_manager->controlled_character()};
@@ -3102,15 +3247,23 @@ std::expected<void, std::string> ScenarioStartupController::service_zone_contact
           : nullptr};
       const Character::RuntimeCharacter* const character{
         runtime == nullptr ? nullptr : runtime->character_runtime().find(character_id)};
-      const bool spatial{character != nullptr &&
-               zone_contains_runtime_xz(active_zone.zone, character->transform.translation)};
-      const bool orientation{
-        character != nullptr &&
-        active_zone.zone.accepts_orientation(character->serialized_orientation_units)};
+        const CurrentCharacterTriggerProxy* const proxy{
+          m_current_character_trigger_proxy.has_value()
+            ? &m_current_character_trigger_proxy.value()
+            : nullptr};
+          const bool broadphase{proxy != nullptr && proxy->registered && proxy->contact_ready &&
+                  zone_intersects_proxy_bounds(
+                    active_zone.zone, proxy->position, proxy->radius)};
+          const bool polygon{proxy != nullptr && proxy->registered && proxy->contact_ready &&
+                 zone_contains_runtime_xz(active_zone.zone, proxy->position)};
+          const bool heading{proxy != nullptr && proxy->registered && proxy->contact_ready &&
+                 active_zone.zone.accepts_heading_degrees(proxy->heading_degrees)};
       App::Log::info(LogCategory::Scenario,
         "ZoneQualification — source={} ownerSlot={} area={} scene={} zone={} qualifies={} "
-        "current={} active={} areaPresent={} controller={} serialized=({},{},{}) "
-        "runtime=({:.3f},{:.3f},{:.3f}) spatial={} orientation={}",
+          "current={} active={} areaPresent={} controller={} actor=({:.3f},{:.3f},{:.3f}) "
+          "proxyRegistered={} contactReady={} proxy=({:.3f},{:.3f},{:.3f}) radius={:.3f} "
+          "generation={} "
+          "proxyFrozen={} reason='{}' broadphase={} polygon={} heading={}",
         active_zone.source == ActiveZoneSource::k_area ? "AREA" : "SCENE",
         active_zone.resident_slot,
         active_zone.area_id,
@@ -3121,14 +3274,21 @@ std::expected<void, std::string> ScenarioStartupController::service_zone_contact
         character != nullptr && character->active,
         character != nullptr && character->area_present,
         character != nullptr && character->controller_enabled,
-        character == nullptr ? 0 : character->serialized_area_position.at(0),
-        character == nullptr ? 0 : character->serialized_area_position.at(1),
-        character == nullptr ? 0 : character->serialized_area_position.at(2),
         character == nullptr ? 0.0F : character->transform.translation.x,
         character == nullptr ? 0.0F : character->transform.translation.y,
         character == nullptr ? 0.0F : character->transform.translation.z,
-        spatial,
-        orientation);
+          proxy != nullptr && proxy->registered,
+          proxy != nullptr && proxy->contact_ready,
+          proxy == nullptr ? 0.0F : proxy->position.x,
+          proxy == nullptr ? 0.0F : proxy->position.y,
+          proxy == nullptr ? 0.0F : proxy->position.z,
+          proxy == nullptr ? 0.0F : proxy->radius,
+          proxy == nullptr ? 0U : proxy->generation,
+          proxy != nullptr && proxy->synchronization_suspended,
+          proxy == nullptr ? "not registered" : proxy->suspension_reason,
+          broadphase,
+          polygon,
+          heading);
     }
     if (!already_reported && qualifies) {
       if (auto created{create_zone_contact(active_zone)}; !created) {
@@ -3144,6 +3304,8 @@ std::expected<void, std::string> ScenarioStartupController::service_zone_contact
         }
         Script::AreaScriptRuntime& script{*contact->script};
         const bool spatial_match{zone_contact_spatially_matches(*contact)};
+        const bool overlap_lost{contact->overlapping && !spatial_match};
+        contact->overlapping = spatial_match;
         const bool active_zone{std::ranges::any_of(
             m_active_zones, [contact_ptr = contact.get()](const ActiveZoneRef& active) {
               return active.resident_slot == contact_ptr->resident_slot &&
@@ -3153,10 +3315,13 @@ std::expected<void, std::string> ScenarioStartupController::service_zone_contact
                      active.zone.zone_id == contact_ptr->zone.zone_id &&
                      active.zone.event_offsets == contact_ptr->zone.event_offsets;
             })};
-        if (!spatial_match && !contact->departure_queued &&
+        if (overlap_lost && !contact->departure_queued &&
             script.event_entries().event3.has_value()) {
           script.queue_event(3);
           contact->departure_queued = true;
+          App::Log::info(LogCategory::Scenario,
+              "ZoneContactTransition — zone={} state=lost queuedEvent=3",
+              contact->zone.zone_id);
         }
         if (auto serviced{service_scx_script_wait(script, contact->resident_slot)}; !serviced) {
           App::Log::warn(LogCategory::Script,
@@ -3199,6 +3364,12 @@ std::expected<void, std::string> ScenarioStartupController::service_zone_contact
         }
         return false;
       });
+  if (m_current_character_trigger_proxy.has_value()) {
+    m_current_character_trigger_proxy->overlapping_zone_count = static_cast<std::size_t>(
+        std::ranges::count_if(m_zone_contacts, [](const auto& contact) {
+          return contact != nullptr && contact->overlapping;
+        }));
+  }
   return {};
 }
 
@@ -3211,6 +3382,8 @@ std::expected<void, std::string> ScenarioStartupController::tick(const float del
   }
 
   m_ticked = true;
+  m_current_character_address_placed_this_tick = false;
+  m_current_character_proxy_registered_this_tick = false;
   if (auto cameras{service_camera_completions()}; !cameras) {
     m_last_error = cameras.error();
     return std::expected<void, std::string>{std::unexpect, m_last_error};
@@ -3290,6 +3463,7 @@ std::expected<void, std::string> ScenarioStartupController::tick(const float del
   // Phase 4.2 inserts physics/collision resolution between the CTL candidate
   // and the accepted position without changing this ordering.
   service_ctl_controller(delta_seconds);
+  service_current_character_trigger_proxy();
 
   if (auto zones{service_zone_contacts(delta_seconds)}; !zones) {
     m_last_error = zones.error();
