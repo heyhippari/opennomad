@@ -357,6 +357,41 @@ void DebugUI::show_world_inspector() {
       ImGui::Text("Model resource: %s", character.model_resource.c_str());
       ImGui::Text("Loaded: %s", character.loaded ? "yes" : "no");
       ImGui::Text("Renderable: %s", character.renderable ? "yes" : "no");
+      ImGui::Text("Pose owner: %s", character.pose_owner.c_str());
+      if (character.has_controller) {
+        ImGui::SeparatorText("CTL Controller");
+        ImGui::Text("Control set: %s", character.ctl_control_set.c_str());
+        ImGui::Text("Enabled: %s, direct control: %s",
+            character.ctl_enabled ? "yes" : "no",
+            character.ctl_direct_control ? "yes" : "no");
+        ImGui::Text("Move: %d (%s)",
+            static_cast<int>(character.ctl_move_id.value_or(0)),
+            character.ctl_move_name.c_str());
+        ImGui::Text("State: %d, animation key: %s",
+            static_cast<int>(character.ctl_state_id.value_or(0)),
+            character.ctl_animation_key.empty() ? "<none>"
+                                                : character.ctl_animation_key.c_str());
+        ImGui::Text("Phase: %.3f -> %.3f (end %.3f)",
+            static_cast<double>(character.ctl_previous_progress),
+            static_cast<double>(character.ctl_current_progress),
+            static_cast<double>(character.ctl_effective_end));
+        ImGui::Text("Canonical input: 0x%08X", character.ctl_input_mask);
+        ImGui::Text("Pending transition: %s (%u ticks), callbacks queued: %zu",
+            character.ctl_transition_pending ? "yes" : "no",
+            character.ctl_pending_ticks,
+            character.ctl_callback_queue_size);
+        ImGui::Text("Same-state restarts: %u, markers fired: %zu",
+            character.ctl_restart_count,
+            character.ctl_markers_fired);
+        ImGui::Text("Candidate XYZ: %.3f, %.3f, %.3f",
+            static_cast<double>(character.ctl_candidate_translation.at(0)),
+            static_cast<double>(character.ctl_candidate_translation.at(1)),
+            static_cast<double>(character.ctl_candidate_translation.at(2)));
+        ImGui::Text("Accepted XYZ: %.3f, %.3f, %.3f",
+            static_cast<double>(character.ctl_accepted_translation.at(0)),
+            static_cast<double>(character.ctl_accepted_translation.at(1)),
+            static_cast<double>(character.ctl_accepted_translation.at(2)));
+      }
       ImGui::Text("Model groups: %zu", character.model_group_count);
       ImGui::Text("Runtime bounds: center %.3f, %.3f, %.3f radius %.3f",
           static_cast<double>(character.runtime_bounds_center.at(0)),

@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -20,6 +21,7 @@
 
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/GameDataLoader.hpp"
+#include "Core/Omikron/CtlControlSet.hpp"
 #include "Core/Omikron/IamArea.hpp"
 #include "Core/Omikron/IamScene.hpp"
 #include "Core/Omikron/Model3DO.hpp"
@@ -33,6 +35,18 @@ namespace App::Character {
 namespace {
 
 constexpr std::string_view K_CHARACTER_MODEL_DIRECTORY{"MESHES/PERSOS"};
+/// Runtime generically loads character control sets from ANIMS/<name>.
+constexpr std::string_view K_CONTROL_SET_DIRECTORY{"ANIMS"};
+
+/// Cache key for shared CTL banks: the authored control-set name uppercased
+/// (original data uses inconsistent casing).
+[[nodiscard]] std::string normalized_control_set_name(const std::string_view control_set_name) {
+  std::string normalized{control_set_name};
+  std::ranges::transform(normalized, normalized.begin(), [](const char character) {
+    return static_cast<char>(std::toupper(static_cast<unsigned char>(character)));
+  });
+  return normalized;
+}
 
 std::filesystem::path character_resource_path(
     const std::string_view resource, const std::string_view extension) {
@@ -76,10 +90,81 @@ void resolve_bounds(ModelResource& resource) {
 
 Runtime::Runtime() : Runtime{load_model_resource} {}
 
-Runtime::Runtime(ModelLoader model_loader) : m_model_loader{std::move(model_loader)} {}
+Runtime::Runtime(ModelLoader model_loader)
+    : m_model_loader{std::move(model_loader)}, m_ctl_bank_loader{load_ctl_bank} {}
 
 void Runtime::set_model_loader(ModelLoader model_loader) {
   m_model_loader = std::move(model_loader);
+}
+
+void Runtime::set_ctl_bank_loader(CtlBankLoader ctl_bank_loader) {
+  m_ctl_bank_loader = std::move(ctl_bank_loader);
+}
+
+std::expected<std::shared_ptr<const Omikron::CtlControlSet>, std::string> Runtime::load_ctl_bank(
+    const std::string_view control_set_name) {
+  APP_PROFILE_FUNCTION();
+
+  if (control_set_name.empty()) {
+    return std::expected<std::shared_ptr<const Omikron::CtlControlSet>, std::string>{
+        std::unexpect, "character definition has an empty adventure control set"};
+  }
+
+  const std::filesystem::path control_set_path{std::filesystem::path{K_CONTROL_SET_DIRECTORY} /
+      (std::string{control_set_name} + std::string{".CTL"})};
+  auto control_set_file{load_game_file(control_set_path)};
+  if (!control_set_file) {
+    return std::expected<std::shared_ptr<const Omikron::CtlControlSet>, std::string>{
+        std::unexpect,
+        fmt::format(
+            "character control set '{}': {}", control_set_name, control_set_file.error())};
+  }
+  auto control_set{
+      Omikron::CtlControlSet::load(std::span<const std::byte>{control_set_file->bytes})};
+  if (!control_set) {
+    return std::expected<std::shared_ptr<const Omikron::CtlControlSet>, std::string>{
+        std::unexpect,
+        fmt::format("character control set '{}': {}", control_set_name, control_set.error())};
+  }
+  return std::make_shared<const Omikron::CtlControlSet>(std::move(control_set).value());
+}
+
+std::expected<void, std::string> Runtime::ensure_adventure_controller(
+    const std::int16_t character_id, const std::string_view adventure_control_set) {
+  if (adventure_control_set.empty()) {
+    return {};
+  }
+  RuntimeCharacter* character{find(character_id)};
+  if (character == nullptr) {
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format("character {} is not materialized for CTL controller setup", character_id)};
+  }
+
+  const std::string normalized_name{normalized_control_set_name(adventure_control_set)};
+  if (character->ctl_controller.has_value() &&
+      character->ctl_controller->resource_name() == normalized_name) {
+    // Same immutable bank: the live controller state is preserved.
+    return {};
+  }
+
+  std::shared_ptr<const Omikron::CtlControlSet> bank;
+  if (const auto cached{m_ctl_banks.find(normalized_name)}; cached != m_ctl_banks.end()) {
+    bank = cached->second;
+  } else {
+    auto loaded{m_ctl_bank_loader(adventure_control_set)};
+    if (!loaded) {
+      return std::expected<void, std::string>{std::unexpect, std::move(loaded).error()};
+    }
+    bank = std::move(loaded).value();
+    m_ctl_banks.emplace(normalized_name, bank);
+  }
+
+  auto controller{CtlController::create(std::move(bank), normalized_name)};
+  if (!controller) {
+    return std::expected<void, std::string>{std::unexpect, std::move(controller).error()};
+  }
+  character->ctl_controller = std::move(controller).value();
+  return {};
 }
 
 std::expected<std::shared_ptr<const ModelResource>, std::string> Runtime::load_model_resource(
@@ -416,8 +501,11 @@ std::expected<void, std::string> Runtime::materialize_character(const std::int32
         .serialized_orientation_units = orientation_units,
         .transform = {},
         .runtime_orientation_degrees = 0,
-        .current_move_id = std::nullopt,
+        .ctl_controller = std::nullopt,
         .controller_enabled = false,
+        .pose_owner = PoseOwner::k_model_defaults,
+        .adventure_mode = 0,
+        .suppress_automatic_movement_heading = false,
         .definition_name = std::string{definition_name},
         .model_resource_name = std::string{model_resource},
         .model_resource = std::move(resource),
@@ -452,6 +540,7 @@ std::expected<void, std::string> Runtime::materialize_character(const std::int32
   character->posed_groups = character->model_resource->groups;
   character->body_animation = BodyAnimationPlayback{};
   character->dialog_performance.reset();
+  character->pose_owner = PoseOwner::k_model_defaults;
   character->pose_revision += 1U;
   return {};
 }
@@ -484,6 +573,7 @@ void Runtime::reset_pose(const std::int16_t character_id) {
   character->posed_groups = character->model_resource->groups;
   character->body_animation = BodyAnimationPlayback{};
   character->dialog_performance.reset();
+  character->pose_owner = PoseOwner::k_model_defaults;
   character->pose_revision += 1U;
 }
 

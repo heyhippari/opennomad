@@ -138,6 +138,22 @@ void WorldCameraSystem::apply_command(const WorldCameraCommand& command) {
   m_transition_duration = duration_seconds;
 }
 
+void WorldCameraSystem::release_structured_controller() {
+  if (m_active_controller_mode != 13U) {
+    return;
+  }
+  m_active_controller_mode = 0U;
+  m_controller_transition_elapsed = 0.0F;
+  m_controller_transition_duration = 0.0F;
+  m_active_camera_id.reset();
+  m_last_command.reset();
+  m_transition_elapsed = 0.0F;
+  m_transition_duration = 0.0F;
+  // The last evaluated pose stays as a presentation fallback; the scripted
+  // source claim is released.
+  m_has_scripted_pose = false;
+}
+
 void WorldCameraSystem::apply_controller_mode(const WorldCameraCommand& command) {
   m_active_controller_mode = command.controller_mode;
   m_controller_transition_elapsed = 0.0F;

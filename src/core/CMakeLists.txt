@@ -37,6 +37,7 @@ add_library(${NAME} STATIC
   Core/Dialog/DialogRuntime.hpp Core/Dialog/DialogRuntime.cpp
   Core/Dialog/DialogPerformanceRuntime.hpp Core/Dialog/DialogPerformanceRuntime.cpp
   Core/Character/CharacterRuntime.hpp Core/Character/CharacterRuntime.cpp
+  Core/Character/CtlController.hpp Core/Character/CtlController.cpp
   Core/Object/ObjectPlacementRuntime.hpp Core/Object/ObjectPlacementRuntime.cpp
   Core/CameraController.cpp Core/CameraController.hpp
   Core/Input/InputAction.hpp
@@ -64,6 +65,7 @@ add_library(${NAME} STATIC
   Core/TextureCube.hpp Core/TextureCube.cpp
   Core/Reflection.hpp
   Core/Omikron/BinaryReader.hpp
+  Core/Omikron/CtlControlSet.hpp Core/Omikron/CtlControlSet.cpp
   Core/Omikron/FontFNT.hpp Core/Omikron/FontFNT.cpp
   Core/Omikron/Animation3DA.hpp Core/Omikron/Animation3DA.cpp
   Core/Omikron/Path3DP.hpp Core/Omikron/Path3DP.cpp

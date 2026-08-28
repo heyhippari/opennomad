@@ -24,6 +24,7 @@
 
 #include "Core/Character/CharacterRuntime.hpp"
 #include "Core/GameState.hpp"
+#include "Core/Omikron/CtlControlSet.hpp"
 #include "Core/Omikron/Model3DO.hpp"
 #include "Core/Scenario/ScenarioManager.hpp"
 #include "Core/Scenario/ScenarioRuntime.hpp"
@@ -265,6 +266,39 @@ std::vector<std::byte> make_object_archive(const std::uint16_t object_id,
   return data;
 }
 
+/// Synthetic CTL bank for zone-contact fixtures: move 7 is the flag-selected
+/// default; the 0x3F zone event explicitly selects move 100. Keeping the two
+/// distinct proves the opcode performs a real move switch.
+std::vector<std::byte> make_stub_ctl_bank_bytes() {
+  Buffer ctl;
+  ctl.u32(0x30374543U).u32(0x101U).u32(0).u32(2).zeros(0x48U);
+  ctl.u32(7).u32(1).u32(1).u32(0).u32(0).chars("Default", 12);
+  ctl.u32(100).u32(1).u32(0).u32(0).u32(0).chars("Selected", 12);
+  ctl.u32(71).u32(0).u32(0x8022U).zeros(0x58U - 12U);
+  ctl.u32(101).u32(0).u32(0x8022U).zeros(0x58U - 12U);
+  return ctl.data();
+}
+
+/// Installs a CTL bank loader answering every authored control set with the
+/// stub bank, so current-character selection builds a real controller.
+void install_stub_ctl_loader(App::ScenarioRuntime& runtime) {
+  runtime.character_runtime().set_ctl_bank_loader(
+      [](const std::string_view name)
+          -> std::expected<std::shared_ptr<const App::Omikron::CtlControlSet>, std::string> {
+        if (name.empty()) {
+          return std::expected<std::shared_ptr<const App::Omikron::CtlControlSet>, std::string>{
+              std::unexpect, "empty control set"};
+        }
+        const std::vector<std::byte> bytes{make_stub_ctl_bank_bytes()};
+        auto parsed{App::Omikron::CtlControlSet::load(bytes)};
+        if (!parsed) {
+          return std::expected<std::shared_ptr<const App::Omikron::CtlControlSet>, std::string>{
+              std::unexpect, parsed.error()};
+        }
+        return std::make_shared<const App::Omikron::CtlControlSet>(std::move(parsed).value());
+      });
+}
+
 /// Synthetic AREA-222-shaped contact fixture. The top-level context selects a
 /// current body and enables zone 3795; the record-relative zone event selects
 /// a move, toggles the controller, self-disables, waits on a camera, then
@@ -341,9 +375,13 @@ std::vector<std::byte> make_zone_contact_area_archive(const bool starts_dialog =
   write_u16(data, k_record_offset + 0x48U + (4U * 2U), 1);
   constexpr std::string_view k_character_name{"CURRENT CHARACTER"};
   constexpr std::string_view k_model_name{"CURRENT_BODY"};
+  constexpr std::string_view k_control_set{"TESTCTL"};
   std::memcpy(data.data() + k_record_offset + k_table4_offset + 0x08U,
       k_character_name.data(),
       k_character_name.size());
+  std::memcpy(data.data() + k_record_offset + k_table4_offset + 0x48U,
+      k_control_set.data(),
+      k_control_set.size());
   std::memcpy(data.data() + k_record_offset + k_table4_offset + 0x90U,
       k_model_name.data(),
       k_model_name.size());
@@ -1093,6 +1131,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
           resource->groups.push_back(App::Omikron::MaterialGroup{});
           return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
         });
+    install_stub_ctl_loader(*runtime);
 
     REQUIRE(controller.tick().has_value());
     REQUIRE(manager.game_state() != nullptr);
@@ -1100,7 +1139,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK_EQ(controller.zone_contact_count(), 1U);
     const App::Character::RuntimeCharacter* character{runtime->character_runtime().find(136)};
     REQUIRE(character != nullptr);
-    CHECK_EQ(character->current_move_id, std::optional<std::int16_t>{100});
+    CHECK_EQ(character->current_move_id(), std::optional<std::int16_t>{100});
     CHECK(character->controller_enabled);
 
     // 0x41 refreshed the persistent zone table, but the context must remain
@@ -1142,6 +1181,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
           resource->groups.push_back(App::Omikron::MaterialGroup{});
           return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
         });
+    install_stub_ctl_loader(*runtime);
 
     REQUIRE(controller.tick().has_value());
     App::Character::RuntimeCharacter* character{runtime->character_runtime().find(136)};
@@ -1150,13 +1190,15 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
 
     REQUIRE(controller.tick(1.0F / 30.0F).has_value());
     CHECK_EQ(controller.zone_contact_count(), 0U);
-    CHECK_FALSE(character->current_move_id.has_value());
+    // The controller exists from the 0x38 selection and holds the bank's
+    // flag-selected default move; the zone event's 0x3F has not run yet.
+    CHECK_EQ(character->current_move_id(), std::optional<std::int16_t>{7});
     CHECK_FALSE(character->controller_enabled);
 
     character->controller_enabled = true;
     REQUIRE(controller.tick(1.0F / 30.0F).has_value());
     CHECK_EQ(controller.zone_contact_count(), 1U);
-    CHECK_EQ(character->current_move_id, std::optional<std::int16_t>{100});
+    CHECK_EQ(character->current_move_id(), std::optional<std::int16_t>{100});
     CHECK(character->controller_enabled);
   }
 
@@ -1178,6 +1220,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
           resource->groups.push_back(App::Omikron::MaterialGroup{});
           return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
         });
+    install_stub_ctl_loader(*runtime);
 
     REQUIRE(controller.tick().has_value());
     CHECK_EQ(controller.zone_contact_count(), 1U);
@@ -1215,7 +1258,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
         App::Runtime::area_position_to_inches(std::array<std::int32_t, 3>{50, 999, 50});
     REQUIRE(controller.tick(1.0F / 30.0F).has_value());
     CHECK_EQ(controller.zone_contact_count(), 1U);
-    CHECK_EQ(character->current_move_id, std::optional<std::int16_t>{100});
+    CHECK_EQ(character->current_move_id(), std::optional<std::int16_t>{100});
     CHECK(character->controller_enabled);
   }
 
@@ -1237,6 +1280,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
           resource->groups.push_back(App::Omikron::MaterialGroup{});
           return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
         });
+    install_stub_ctl_loader(*runtime);
 
     REQUIRE(controller.tick().has_value());
     CHECK_EQ(controller.zone_contact_count(), 1U);

@@ -170,6 +170,18 @@ void InputManager::reset() {
   m_last_physical_press.reset();
 }
 
+std::uint32_t InputManager::ctl_profile_mask() const {
+  std::uint32_t mask{0};
+  for (std::size_t slot{0}; slot < 14U; ++slot) {
+    const auto action{
+        static_cast<Action>(std::to_underlying(Action::k_ctl_slot_0) + static_cast<int>(slot))};
+    if (m_action_values.at(std::to_underlying(action)) >= k_press_threshold) {
+      mask |= 1U << slot;
+    }
+  }
+  return mask;
+}
+
 void InputManager::reset_per_frame_input() {
   m_per_frame_input = 0;
 }

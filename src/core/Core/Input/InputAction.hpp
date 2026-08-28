@@ -40,11 +40,36 @@ enum class Action : std::uint8_t {
   k_menu_confirm,
   /// Interface navigation: return to the parent state / cancel.
   k_menu_cancel,
+  /// CTL player-input profile slots 0..13 (Runtime's profile-0 canonical
+  /// action bits 0x0001..0x2000). These are lower-level than any one CTL
+  /// bank's interpretation; the CTL controller consumes only the resulting
+  /// 32-bit mask. Retail keyboard defaults: Left/Right/Up/Down arrows, E, R,
+  /// D, F, Left Ctrl, Space, G, H, Left Shift, Tab.
+  k_ctl_slot_0,
+  k_ctl_slot_1,
+  k_ctl_slot_2,
+  k_ctl_slot_3,
+  k_ctl_slot_4,
+  k_ctl_slot_5,
+  k_ctl_slot_6,
+  k_ctl_slot_7,
+  k_ctl_slot_8,
+  k_ctl_slot_9,
+  k_ctl_slot_10,
+  k_ctl_slot_11,
+  k_ctl_slot_12,
+  k_ctl_slot_13,
 };
 
 /// Number of entries in Action. Keep in sync with the enum above — the
 /// static_assert turns a forgotten update into a compile error.
-inline constexpr std::size_t k_action_count{13};
-static_assert(k_action_count == std::to_underlying(Action::k_menu_cancel) + 1U);
+inline constexpr std::size_t k_action_count{27};
+static_assert(k_action_count == std::to_underlying(Action::k_ctl_slot_13) + 1U);
+
+/// CTL profile slot of one k_ctl_slot_* action.
+[[nodiscard]] constexpr std::size_t ctl_slot_index(const Action action) {
+  return static_cast<std::size_t>(std::to_underlying(action) -
+                                  std::to_underlying(Action::k_ctl_slot_0));
+}
 
 }  // namespace App::Input

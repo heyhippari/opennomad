@@ -13,6 +13,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "Core/Character/CtlController.hpp"
 #include "Core/Omikron/IamArea.hpp"
 #include "Core/Omikron/IamScene.hpp"
 #include "Core/Omikron/Model3DO.hpp"
@@ -89,6 +90,16 @@ struct DialogPerformanceOverlay {
   std::vector<DialogFaceVertexOverride> face_vertices;
 };
 
+/// Owner of the character's visible base pose. Scripted Select*BodyAnimation
+/// owns the pose while it authors one; an enabled CTL controller owns it once
+/// it services a state animation. Dialog-performance overlays compose over
+/// whichever base owner is current.
+enum class PoseOwner : std::uint8_t {
+  k_model_defaults,
+  k_script_animation,
+  k_ctl_controller,
+};
+
 /// Persistent logical character materialized in one world runtime.
 struct RuntimeCharacter {
   std::size_t instance_id{0};
@@ -116,11 +127,30 @@ struct RuntimeCharacter {
   /// placement initializes (0,Y,0); Script_Select*BodyAnimation and
   /// Script_SelectRelativeBodyAnimation overwrite all three components.
   App::Runtime::Vec3 principal_orientation_degrees{};
-  /// Selected authored CTL move/control-bank ID. Execution is intentionally
-  /// deferred until the full CTL controller is recovered.
-  std::optional<std::int16_t> current_move_id;
-  /// Neutral controller boolean toggled by compact 0x68/0x69.
+  /// Adventure CTL controller created from the current character definition's
+  /// authored adventure_control_set. It exists and holds a current move/state
+  /// while disabled; `controller_enabled` gates whether it is serviced.
+  std::optional<CtlController> ctl_controller;
+  /// Neutral controller boolean toggled by compact 0x68/0x69; it gates CTL
+  /// controller participation without repositioning or reposing the actor.
   bool controller_enabled{false};
+  /// Selected authored CTL move ID, derived from the live controller so there
+  /// is a single source of truth.
+  [[nodiscard]] std::optional<std::int16_t> current_move_id() const {
+    if (ctl_controller.has_value() && ctl_controller->current_move() != nullptr) {
+      return static_cast<std::int16_t>(ctl_controller->current_move()->move_id);
+    }
+    return std::nullopt;
+  }
+
+  /// Which subsystem currently owns the visible base pose.
+  PoseOwner pose_owner{PoseOwner::k_model_defaults};
+  /// Character adventure/control mode consumed by CTL callbacks (RSTAVNT
+  /// selects mode 1; MDSTAND's autonomous waits require it).
+  std::int32_t adventure_mode{0};
+  /// Transient MDROT000 flag: suppresses the physical stage's automatic
+  /// movement-heading rewrite for the relevant update (consumed by Phase 4.2).
+  bool suppress_automatic_movement_heading{false};
 
   std::string definition_name;
   std::string model_resource_name;
@@ -171,6 +201,11 @@ class Runtime {
   using ModelLoader =
       std::function<std::expected<std::shared_ptr<const ModelResource>, std::string>(
           std::string_view model_resource)>;
+  /// Loads and parses one shared immutable CTL control set by authored name
+  /// (Runtime loads character control sets from ANIMS/<name>).
+  using CtlBankLoader =
+      std::function<std::expected<std::shared_ptr<const Omikron::CtlControlSet>, std::string>(
+          std::string_view control_set_name)>;
 
   Runtime();
   explicit Runtime(ModelLoader model_loader);
@@ -178,6 +213,16 @@ class Runtime {
   /// Replaces the CPU model loader. Intended for embedding/tests before any
   /// character resources are materialized; already-cached resources remain.
   void set_model_loader(ModelLoader model_loader);
+
+  /// Replaces the CTL bank loader. Intended for embedding/tests before any
+  /// controller is created; already-cached banks remain shared.
+  void set_ctl_bank_loader(CtlBankLoader ctl_bank_loader);
+
+  /// Ensures the character's adventure controller uses the authored control
+  /// set of its current definition. An existing controller on the same bank
+  /// keeps its live mutable state; an empty control set is a no-op.
+  [[nodiscard]] std::expected<void, std::string> ensure_adventure_controller(
+      std::int16_t character_id, std::string_view adventure_control_set);
 
   /// Resolves and activates one AREA request. Successful activation is
   /// immediate and reuses both an existing logical instance and cached model
@@ -254,6 +299,8 @@ class Runtime {
  private:
   [[nodiscard]] static std::expected<std::shared_ptr<const ModelResource>, std::string>
   load_model_resource(std::string_view model_resource);
+  [[nodiscard]] static std::expected<std::shared_ptr<const Omikron::CtlControlSet>, std::string>
+  load_ctl_bank(std::string_view control_set_name);
 
   [[nodiscard]] std::expected<void, std::string> materialize_character(std::int32_t area_id,
       std::optional<std::int32_t> scene_id,
@@ -266,8 +313,11 @@ class Runtime {
       bool activate);
 
   ModelLoader m_model_loader;
+  CtlBankLoader m_ctl_bank_loader;
   std::vector<RuntimeCharacter> m_characters;
   std::unordered_map<std::string, std::shared_ptr<const ModelResource>> m_model_resources;
+  /// Shared immutable CTL banks cached by normalized authored name.
+  std::unordered_map<std::string, std::shared_ptr<const Omikron::CtlControlSet>> m_ctl_banks;
 };
 
 }  // namespace App::Character

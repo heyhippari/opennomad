@@ -136,6 +136,31 @@ struct RuntimeCharacterDebugState {
   std::array<float, 3> root_motion_delta{};
   std::array<float, 3> accumulated_root_translation{};
   std::vector<RuntimeCharacterObjectPoseDebugState> object_poses;
+
+  /// Which subsystem owns the visible base pose (model defaults / scripted
+  /// body animation / CTL controller), as a display string.
+  std::string pose_owner;
+
+  /// Adventure CTL controller diagnostics; has_controller gates the rest.
+  bool has_controller{false};
+  std::string ctl_control_set;
+  bool ctl_enabled{false};
+  bool ctl_direct_control{false};
+  std::optional<std::uint32_t> ctl_move_id;
+  std::string ctl_move_name;
+  std::optional<std::uint32_t> ctl_state_id;
+  std::string ctl_animation_key;
+  float ctl_previous_progress{0.0F};
+  float ctl_current_progress{0.0F};
+  float ctl_effective_end{0.0F};
+  std::uint32_t ctl_input_mask{0};
+  bool ctl_transition_pending{false};
+  std::uint32_t ctl_pending_ticks{0};
+  std::size_t ctl_callback_queue_size{0};
+  std::uint32_t ctl_restart_count{0};
+  std::array<float, 3> ctl_candidate_translation{};
+  std::array<float, 3> ctl_accepted_translation{};
+  std::size_t ctl_markers_fired{0};
 };
 
 /// Presentation diagnostics exposed by a normal 3D world scene.

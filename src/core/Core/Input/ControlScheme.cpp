@@ -3,6 +3,8 @@
 #include <SDL3/SDL_mouse.h>
 #include <SDL3/SDL_scancode.h>
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <utility>
@@ -109,6 +111,33 @@ ControlScheme ControlScheme::make_keyboard_mouse_default() {
           .source = InputSource{.type = SourceType::k_key,
               .index = static_cast<std::uint32_t>(SDL_SCANCODE_ESCAPE)},
           .scale = 1.0F});
+
+  // CTL player-input profile 0 with the retail keyboard defaults. The CTL
+  // controller sees only the resulting canonical 14-slot mask; menu actions
+  // above remain independent.
+  const std::array ctl_slot_keys{
+      SDL_SCANCODE_LEFT,
+      SDL_SCANCODE_RIGHT,
+      SDL_SCANCODE_UP,
+      SDL_SCANCODE_DOWN,
+      SDL_SCANCODE_E,
+      SDL_SCANCODE_R,
+      SDL_SCANCODE_D,
+      SDL_SCANCODE_F,
+      SDL_SCANCODE_LCTRL,
+      SDL_SCANCODE_SPACE,
+      SDL_SCANCODE_G,
+      SDL_SCANCODE_H,
+      SDL_SCANCODE_LSHIFT,
+      SDL_SCANCODE_TAB,
+  };
+  for (std::size_t slot{0}; slot < ctl_slot_keys.size(); ++slot) {
+    scheme.add_binding({.action = static_cast<Action>(std::to_underlying(Action::k_ctl_slot_0) +
+                                                     static_cast<int>(slot)),
+        .source = InputSource{.type = SourceType::k_key,
+            .index = static_cast<std::uint32_t>(ctl_slot_keys.at(slot))},
+        .scale = 1.0F});
+  }
   return scheme;
 }
 

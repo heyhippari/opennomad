@@ -18,6 +18,7 @@
 #include "Core/Audio/AudioSystem.hpp"
 #include "Core/Audio/AudioTypes.hpp"
 #include "Core/Character/CharacterRuntime.hpp"
+#include "Core/Character/CtlController.hpp"
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Debug/SceneDebugView.hpp"
 #include "Core/Dialog/DialogRuntime.hpp"
@@ -502,7 +503,68 @@ std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state
           .accumulated_root_translation = {animation.accumulated_root_translation.x,
               animation.accumulated_root_translation.y,
               animation.accumulated_root_translation.z},
-          .object_poses = {}};
+          .object_poses = {},
+          .pose_owner = {},
+          .has_controller = false,
+          .ctl_control_set = {},
+          .ctl_enabled = false,
+          .ctl_direct_control = false,
+          .ctl_move_id = std::nullopt,
+          .ctl_move_name = {},
+          .ctl_state_id = std::nullopt,
+          .ctl_animation_key = {},
+          .ctl_previous_progress = 0.0F,
+          .ctl_current_progress = 0.0F,
+          .ctl_effective_end = 0.0F,
+          .ctl_input_mask = 0U,
+          .ctl_transition_pending = false,
+          .ctl_pending_ticks = 0U,
+          .ctl_callback_queue_size = 0U,
+          .ctl_restart_count = 0U,
+          .ctl_candidate_translation = {},
+          .ctl_accepted_translation = {},
+          .ctl_markers_fired = 0U};
+      switch (character.pose_owner) {
+        case Character::PoseOwner::k_model_defaults:
+          debug_character.pose_owner = "model defaults";
+          break;
+        case Character::PoseOwner::k_script_animation:
+          debug_character.pose_owner = "scripted body animation";
+          break;
+        case Character::PoseOwner::k_ctl_controller:
+          debug_character.pose_owner = "CTL controller";
+          break;
+      }
+      debug_character.ctl_enabled = character.controller_enabled;
+      if (character.ctl_controller.has_value()) {
+        const Character::CtlController& controller{character.ctl_controller.value()};
+        debug_character.has_controller = true;
+        debug_character.ctl_control_set = controller.resource_name();
+        debug_character.ctl_direct_control = controller.direct_control_active();
+        if (controller.current_move() != nullptr) {
+          debug_character.ctl_move_id = controller.current_move()->move_id;
+          debug_character.ctl_move_name = controller.current_move()->name;
+        }
+        if (controller.current_state() != nullptr) {
+          debug_character.ctl_state_id = controller.current_state()->state_id;
+          debug_character.ctl_animation_key = controller.current_state()->animation_key;
+        }
+        debug_character.ctl_previous_progress = controller.previous_progress();
+        debug_character.ctl_current_progress = controller.current_progress();
+        debug_character.ctl_effective_end = controller.effective_animation_end();
+        debug_character.ctl_input_mask = controller.current_input();
+        debug_character.ctl_transition_pending = controller.transition_pending();
+        debug_character.ctl_pending_ticks = controller.pending_ticks();
+        debug_character.ctl_callback_queue_size = controller.callback_queue_size();
+        debug_character.ctl_restart_count = controller.same_state_restart_count();
+        debug_character.ctl_candidate_translation = {controller.candidate_translation().x,
+            controller.candidate_translation().y,
+            controller.candidate_translation().z};
+        debug_character.ctl_accepted_translation = {controller.accepted_translation().x,
+            controller.accepted_translation().y,
+            controller.accepted_translation().z};
+        debug_character.ctl_markers_fired = controller.markers_fired_this_execution();
+      }
       if (model_resource != nullptr) {
         const Omikron::Model3DOData& model{model_resource->model};
         for (std::size_t index{0};
@@ -872,14 +934,31 @@ void WorldScene::update(const float delta_time, const Input::InputManager& input
   m_uv_phases.update(delta_time);
 
   m_camera.update(delta_time);
-  if (std::optional<WorldCameraOperationCompletion> completed{m_camera.take_completed_operation()};
-      completed.has_value() && m_scenarios != nullptr) {
+  if (std::optional<WorldCameraOperationCompletion> completed{m_camera.take_completed_operation()};      completed.has_value() && m_scenarios != nullptr) {
     if (completed->source_area_id == 222 &&
         (completed->camera_id == 4291U || completed->camera_id == 4292U)) {
       App::Log::info(
           LogCategory::Scenario, "AREA 222 sequence: {} completed", completed->camera_id);
     }
     m_scenarios->world_presentation().enqueue_camera_completion(completed.value());
+  }
+
+  // Runtime's structured camera is frame-published: when no structured
+  // script republished a camera this frame and controller mode 13 is active,
+  // ownership logically releases to mode 0 (automatic player camera; the
+  // actual follow mathematics are Phase 4.3). The renderer keeps the last
+  // valid pose as a presentation fallback inside release_structured_controller.
+  if (m_camera.active_controller_mode() == 13U) {
+    const ScenarioRuntime* const runtime{
+        context == nullptr || context->runtime == nullptr ? nullptr : context->runtime.get()};
+    const bool structured_published{
+        runtime != nullptr && runtime->selected_structured_camera() != nullptr};
+    if (!structured_published && m_scenarios != nullptr &&
+        m_scenarios->controlled_character().has_value()) {
+      m_camera.release_structured_controller();
+      App::Log::debug(LogCategory::Renderer,
+          "structured camera source ended — camera controller released to mode 0");
+    }
   }
 
   // The world camera is also the listener for scenario-owned spatial audio.

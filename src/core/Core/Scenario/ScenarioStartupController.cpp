@@ -1746,6 +1746,16 @@ std::expected<void, std::string> ScenarioStartupController::select_current_chara
   game_state->establish_current_character(definition.value());
   m_manager->set_controlled_character(ControlledCharacterRef{
       .character_id = request.character_id, .world_scene_id = slot.world_scene_id});
+
+  // Becoming the persistent current character installs the adventure CTL
+  // controller from the definition's authored control set. The controller is
+  // created disabled: scripted cinematic animation keeps owning the pose
+  // until compact 0x68 enables controller participation.
+  if (auto controller{runtime->character_runtime().ensure_adventure_controller(
+          request.character_id, definition->adventure_control_set)};
+      !controller) {
+    return controller;
+  }
   record("AreaScript.CurrentCharacterSelected",
       fmt::format("character={} world={} model={}",
           character->character_id,
@@ -1813,7 +1823,27 @@ std::expected<void, std::string> ScenarioStartupController::select_current_chara
         current->world_scene_id);
     return {};
   }
-  character->current_move_id = request.move_id;
+  if (character->ctl_controller.has_value()) {
+    // Runtime 0x0041B6F0 -> 0x0046ACE0 -> 0x0045A630: exact move-ID lookup
+    // and controller move switch against the current character's CTL bank.
+    if (auto selected{character->ctl_controller->select_move(
+            static_cast<std::uint32_t>(request.move_id))};
+        !selected) {
+      App::Log::warn(LogCategory::Scenario,
+          "current character move {} failed — id={} world={}: {}",
+          request.move_id,
+          current->character_id,
+          current->world_scene_id,
+          selected.error());
+      return std::expected<void, std::string>{std::unexpect, std::move(selected).error()};
+    }
+  } else {
+    App::Log::debug(LogCategory::Scenario,
+        "current character move {} ignored — character {} has no adventure CTL controller",
+        request.move_id,
+        current->character_id);
+    return {};
+  }
   App::Log::debug(LogCategory::Scenario,
       "current character move/control selection {} — id={} world={}",
       request.move_id,
@@ -1845,13 +1875,48 @@ std::expected<void, std::string> ScenarioStartupController::set_current_characte
         current->world_scene_id);
     return {};
   }
+  // 0x68/0x69 only gate participation of the already-initialized adventure
+  // CTL controller: no repositioning, no transform reset, no explicit state
+  // selection and no bank loading. On enable, the normal player direct-
+  // control flags (native 0x81) become active; the first enabled service
+  // applies the current CTL state's authored animation as the base pose.
   character->controller_enabled = request.enabled;
+  if (character->ctl_controller.has_value()) {
+    character->ctl_controller->set_player_direct_control(request.enabled);
+  }
   App::Log::debug(LogCategory::Scenario,
       "current character controller {} — id={} world={}",
       request.enabled ? "enabled" : "disabled",
       current->character_id,
       current->world_scene_id);
   return {};
+}
+
+void ScenarioStartupController::service_ctl_controller(const float delta_seconds) {
+  if (m_manager == nullptr) {
+    return;
+  }
+  const std::optional<ControlledCharacterRef> current{m_manager->controlled_character()};
+  if (!current.has_value()) {
+    return;
+  }
+  ScenarioRuntime* const runtime{m_manager->world_runtime(current->world_scene_id)};
+  Character::RuntimeCharacter* const character{
+      runtime == nullptr ? nullptr : runtime->character_runtime().find(current->character_id)};
+  if (character == nullptr || !character->ctl_controller.has_value() ||
+      !character->controller_enabled || !character->active || !character->area_present) {
+    return;
+  }
+
+  Character::CtlController& controller{character->ctl_controller.value()};
+  controller.service(delta_seconds, m_manager->ctl_input_mask(), *character);
+
+  // One-shot animation-linked audio markers resolve through the owner
+  // world's SCX DEAD0003 hID table at the live character position.
+  for (const Character::CtlController::SoundMarkerEvent& event :
+      controller.take_sound_marker_events()) {
+    runtime->play_ctl_sound_marker(event.sound_hid, character->transform.translation);
+  }
 }
 
 std::expected<void, std::string> ScenarioStartupController::start_compact_dialog(
@@ -3084,6 +3149,12 @@ std::expected<void, std::string> ScenarioStartupController::tick(const float del
   // Attached SCENE contexts are separate registrations created after their
   // owning AREA context. Service them after resident primary AREA contexts.
   service_scene_scripts(delta_seconds);
+
+  // Input -> enabled CTL controller -> accepted position -> zone contacts.
+  // Phase 4.2 inserts physics/collision resolution between the CTL candidate
+  // and the accepted position without changing this ordering.
+  service_ctl_controller(delta_seconds);
+
   if (auto zones{service_zone_contacts(delta_seconds)}; !zones) {
     m_last_error = zones.error();
     return std::expected<void, std::string>{std::unexpect, m_last_error};

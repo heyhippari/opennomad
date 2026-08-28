@@ -75,6 +75,30 @@ TEST_SUITE("Core::Input") {
     CHECK_EQ(manager.get_action_value(Action::k_move_forward), doctest::Approx(-1.0F));
   }
 
+  TEST_CASE("CTL profile slots resolve to the canonical 14-bit mask") {
+    InputManager manager{App::Input::make_default_manager()};
+    RawInputState state{};
+
+    // No keys held: an empty profile mask (the controller applies the
+    // 0x40000000 no-input sentinel itself).
+    manager.update(state);
+    CHECK_EQ(manager.ctl_profile_mask(), 0U);
+
+    // Retail profile-0 defaults: Left = slot 0, Up = slot 2, Space = slot 9,
+    // Left Shift = slot 12. Menu arrows share the keys without interference.
+    state.key_down.at(SDL_SCANCODE_LEFT) = true;
+    state.key_down.at(SDL_SCANCODE_UP) = true;
+    state.key_down.at(SDL_SCANCODE_SPACE) = true;
+    state.key_down.at(SDL_SCANCODE_LSHIFT) = true;
+    manager.update(state);
+    CHECK_EQ(manager.ctl_profile_mask(), 0x1U | 0x4U | 0x200U | 0x1000U);
+    CHECK_EQ(manager.get_action_value(Action::k_menu_left), doctest::Approx(1.0F));
+
+    state.key_down.at(SDL_SCANCODE_LEFT) = false;
+    manager.update(state);
+    CHECK_EQ(manager.ctl_profile_mask(), 0x4U | 0x200U | 0x1000U);
+  }
+
   TEST_CASE("Mouse deltas feed the look axes unclamped") {
     InputManager manager{App::Input::make_default_manager()};
     RawInputState state{};

@@ -186,6 +186,11 @@ class ScenarioRuntime final : public Script::ScriptWorld, private Sfx::Host {
   move_object_on_path(const Script::MoveObjectOnPathRequest& request) override;
   [[nodiscard]] std::string_view scenario_name() const override;
 
+  /// Resolves one authored SCX DEAD0003 sound hID (never a sound-table
+  /// index) and plays it as a one-shot at the given world position for a CTL
+  /// animation audio marker. Missing or unloadable hIDs are nonfatal.
+  void play_ctl_sound_marker(std::uint16_t sound_hid, Runtime::Vec3 position);
+
   /// Binds the context-owned immutable decor descriptor to this scenario's
   /// mutable instance state after transactional world load.
   void bind_decor_model(const Omikron::Model3DOData* decor_model);

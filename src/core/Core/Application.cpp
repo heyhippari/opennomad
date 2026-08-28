@@ -275,7 +275,7 @@ std::expected<Application, std::string> Application::create(const std::string& t
           Settings::SettingChoice{.label = "150 m", .raw_value = 150},
           Settings::SettingChoice{.label = "200 m", .raw_value = 200}},
       1U);
-  game_settings->ensure_choice("video.display_sky",
+  game_settings->ensure_choice("video.display)pàôooooooooooooooooooooo_sky",
       {Settings::SettingChoice{.label = "Off", .raw_value = 0},
           Settings::SettingChoice{.label = "On", .raw_value = 1}},
       1U);
@@ -862,6 +862,13 @@ void Application::run_engine_frame() {
   // update so a completion queued by the New Game child-state action is
   // never delivered while the selected element is still being iterated.
   drain_interface_completions();
+
+  // Feed the CTL player-input profile mask (semantic actions, never raw
+  // devices) to the scenario layer before the scenario scheduler services
+  // character controllers.
+  if (m_scenario_manager != nullptr) {
+    m_scenario_manager->set_ctl_input_mask(m_input.ctl_profile_mask());
+  }
 
   // Continue the scenario scheduler on the normal frame path. The initial
   // mode-1 execution already happened during startup; this keeps a waiting

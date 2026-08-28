@@ -506,6 +506,40 @@ TEST_SUITE("Core::WorldCameraSystem") {
     CHECK(camera.pose().eye.z == doctest::Approx(3.0F));
   }
 
+  TEST_CASE("Mode 13 logically releases to mode 0 when the structured source ends") {
+    WorldCameraSystem camera;
+    std::optional<App::WorldCameraPose> live{
+        App::WorldCameraPose{.eye = {.x = 10.0F, .y = 20.0F, .z = 30.0F},
+            .target = {.x = 40.0F, .y = 50.0F, .z = 60.0F},
+            .horizontal_fov_degrees = 80.0F}};
+    camera.set_controller_pose_provider([&live]() {
+      return live;
+    });
+    camera.apply_command(WorldCameraCommand{
+        .kind = App::WorldCameraCommandKind::k_controller_mode, .controller_mode = 13U});
+    camera.update(0.0F);
+    REQUIRE_EQ(camera.active_controller_mode().value_or(0U), 13U);
+    CHECK(camera.pose().eye.x == doctest::Approx(10.0F));
+
+    // The structured script stopped publishing: ownership releases to the
+    // automatic player camera (mode 0). The last pose stays as a
+    // presentation fallback, but the source is no longer scripted.
+    camera.release_structured_controller();
+    CHECK_EQ(camera.active_controller_mode().value_or(0xFFFFU), 0U);
+    CHECK(camera.has_pose());
+    CHECK_FALSE(camera.has_scripted_pose());
+    CHECK(camera.pose().eye.x == doctest::Approx(10.0F));
+
+    // The released controller no longer consumes the structured source.
+    live->eye.x = 999.0F;
+    camera.update(0.5F);
+    CHECK(camera.pose().eye.x == doctest::Approx(10.0F));
+
+    // Releasing again without mode 13 is a no-op.
+    camera.release_structured_controller();
+    CHECK_EQ(camera.active_controller_mode().value_or(0xFFFFU), 0U);
+  }
+
   TEST_CASE("Tracked mode-12 transition exposes its exact completion once") {
     WorldCameraSystem camera;
     camera.apply_command(camera_2172());

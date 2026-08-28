@@ -220,6 +220,9 @@ void begin_body_animation(Character::RuntimeCharacter& character,
   playback.max_frame_index = animation.max_frame_index;
   playback.authored_offset = authored_offset;
   playback.final_anchor = anchor;
+  // Structured body animation owns the visible base pose until an enabled
+  // CTL controller services its own state animation.
+  character.pose_owner = Character::PoseOwner::k_script_animation;
 }
 
 [[nodiscard]] std::expected<void, BodyAnimationFailure> apply_body_animation(
@@ -524,6 +527,14 @@ std::expected<std::size_t, std::string> ScenarioRuntime::spawn_character_script_
 }
 
 void ScenarioRuntime::tick(const float real_delta_seconds) {
+  // Runtime 0x00420399: the structured selected camera is FRAME-PUBLISHED
+  // state. Clear it before structured script service; active
+  // Script_SelectCamera / camera-editing commands republish their camera,
+  // and a script that stopped publishing leaves no stale selection behind.
+  m_selected_decor_camera_index.reset();
+  m_camera_editing_camera.reset();
+  m_structured_camera_source = StructuredCameraSource::k_none;
+
   if (m_script_runtime != nullptr) {
     m_script_runtime->tick(real_delta_seconds);
   }
@@ -1181,6 +1192,46 @@ ScenarioRuntime::select_relative_body_animation(
 
 void ScenarioRuntime::reset_body_animation(const std::int16_t character_id) {
   m_character_runtime.reset_pose(character_id);
+}
+
+void ScenarioRuntime::play_ctl_sound_marker(const std::uint16_t sound_hid,
+    const Runtime::Vec3 position) {
+  const auto sound{std::ranges::find(m_scx.sounds, sound_hid, &Omikron::ScxSoundRecord::h_id)};
+  if (sound == m_scx.sounds.end()) {
+    App::Log::warn(LogCategory::Scenario,
+        "scenario '{}' has no sound hID {} for a CTL animation marker (nonfatal)",
+        m_scenario_name,
+        sound_hid);
+    return;
+  }
+  const std::size_t index{static_cast<std::size_t>(std::distance(m_scx.sounds.begin(), sound))};
+  auto descriptor{resolve_sound(static_cast<std::uint32_t>(index))};
+  if (!descriptor || !descriptor->loaded) {
+    App::Log::warn(LogCategory::Scenario,
+        "scenario '{}' CTL marker sound hID {} could not be loaded (nonfatal)",
+        m_scenario_name,
+        sound_hid);
+    return;
+  }
+  // General scenario spatial defaults apply; no CTL-specific attenuation
+  // metadata has been recovered for Phase 4.1.
+  const Audio::SoundPlayRequest request{.resource = descriptor->resource,
+      .loop = false,
+      .emitter = Audio::SoundEmitterState{.position = {position.x, position.y, position.z}},
+      .scenario_sound_index = static_cast<std::uint16_t>(index),
+      .sound_name = descriptor->name,
+      .provenance = Audio::AudioProvenance{.origin = Audio::AudioOrigin::k_ctl_controller,
+          .scenario_name = m_scenario_name,
+          .source_script_index = std::nullopt,
+          .script_instance_id = std::nullopt,
+          .function_id = std::nullopt},
+      .raw_flags = 0U};
+  if (auto played{play_sound(request)}; !played) {
+    App::Log::warn(LogCategory::Scenario,
+        "CTL marker sound hID {} could not be played: {} (nonfatal)",
+        sound_hid,
+        played.error());
+  }
 }
 
 std::expected<void, std::string> ScenarioRuntime::select_camera(const std::string_view camera_name) {

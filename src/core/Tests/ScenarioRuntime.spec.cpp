@@ -408,6 +408,47 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
     CHECK(selected->horizontal_fov_degrees == doctest::Approx(60.0F));
   }
 
+  TEST_CASE("Structured camera selection is frame-scoped, not persistent") {
+    App::ScenarioRuntime runtime;
+    const App::Omikron::Model3DOData decor{make_camera_decor()};
+    runtime.bind_decor_model(&decor);
+
+    // Frame N: an active SelectCamera publishes the camera.
+    REQUIRE(runtime.select_camera("CAM_A").has_value());
+    REQUIRE(runtime.selected_structured_camera() != nullptr);
+    CHECK_EQ(runtime.selected_structured_camera()->name, "CAM_A");
+
+    // Frame N+1: the slot is cleared before script service; nothing
+    // republished, so no stale camera remains logically selected.
+    runtime.tick(1.0F / 30.0F);
+    CHECK(runtime.selected_structured_camera() == nullptr);
+
+    // Camera-editing poses follow the same frame-scoped rule.
+    REQUIRE(runtime
+                .apply_camera_editing_pose(App::Script::CameraEditingPose{.context_id = 1,
+                    .editing_name = "edit",
+                    .segment_name = "seg"})
+                .has_value());
+    CHECK(runtime.selected_structured_camera() != nullptr);
+    runtime.tick(1.0F / 30.0F);
+    CHECK(runtime.selected_structured_camera() == nullptr);
+
+    // A fresh selection still publishes normally after the handoff.
+    REQUIRE(runtime.select_camera("CAM_B").has_value());
+    REQUIRE(runtime.selected_structured_camera() != nullptr);
+    CHECK_EQ(runtime.selected_structured_camera()->name, "CAM_B");
+  }
+
+  TEST_CASE("CTL sound markers resolve by SCX sound hID and tolerate misses") {
+    App::Omikron::ScxData scx;
+    App::ScenarioRuntime runtime;
+    REQUIRE(runtime.initialize(scx, std::span<const std::byte>{}, "ctl_audio", nullptr, false)
+                .has_value());
+    // No SCX sound owns hID 999: nonfatal, never an index lookup, no throw.
+    runtime.play_ctl_sound_marker(999, {.x = 1.0F, .y = 2.0F, .z = 3.0F});
+    CHECK(runtime.initialized());
+  }
+
   TEST_CASE("Initializes an empty scenario") {
     App::Omikron::ScxData scx;
     App::ScenarioRuntime runtime;

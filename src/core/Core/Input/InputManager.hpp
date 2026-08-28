@@ -72,6 +72,11 @@ class InputManager {
   /// Edge-mask configuration is preserved.
   void reset();
 
+  /// Canonical CTL profile-0 mask: bit (1 << slot) for every held CTL slot
+  /// action, 0 when no slot is held. The CTL controller applies the 14-slot
+  /// semantics and the 0x40000000 no-input sentinel itself.
+  [[nodiscard]] std::uint32_t ctl_profile_mask() const;
+
   /// Resets the neutral per-frame input field, recovered from the original
   /// clearing `DAT_0090e0e0 = 0` before the engine callback. Its purpose
   /// and consumer remain unresolved; the field exists only to preserve the

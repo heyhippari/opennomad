@@ -634,6 +634,22 @@ OpenNomad mirrors this as `transform.matrix` (base orientation) plus `body_orien
 
 ---
 
+# 22.0.1 CTL controller root motion
+
+CTL-driven locomotion reuses the same integration and orientation transform,
+with two deliberate differences from the scripted body-animation path:
+
+- the CTL controller starts from the actor's **current live world position**
+  and accumulates; 3DA translation sample 0 is a reference value and never
+  anchors the actor (no `reference_translation()` placement);
+- the integrated interval updates the controller's **candidate character
+  position in full XYZ** — it does not use the scripted path's X/Z-actor /
+  Y-visual-residual split, which exists for cinematic fidelity only.
+
+See [ctl.md](ctl.md) §4.6.
+
+---
+
 # 22.1 Camera attachment orientation selectors
 
 Native camera attachment selector `0` anchors to the current actor position and rotates the authored camera vector using only the persistent body-animation offset Euler triple. Selector `1` uses the actor base Euler orientation plus that same body offset. Both finish with `anchor - transformedVector`.

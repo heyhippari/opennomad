@@ -3449,7 +3449,7 @@ High-confidence or useful current names:
 | `0x3A` | `StartScxScriptTracked` | strongly recovered |
 | `0x3B` | `StartCharacterScript` | strongly recovered |
 | `0x3C` | `StartCharacterScriptTracked` | strongly recovered |
-| `0x3F` | `StartCurrentCharacterMove` | implemented; Scalar16 current-actor CTL move/control-record selection, nonblocking; CTL execution remains deferred |
+| `0x3F` | `StartCurrentCharacterMove` | implemented; Scalar16 current-actor CTL move selection (exact authored move ID, full input/transition reset, default-child activation); see [ctl.md](ctl.md) |
 | `0x46` | `OpenInterface` | strongly recovered |
 | `0x47` | `AttachAreaScene` | implemented; two Scalar16 values, nonblocking |
 | `0x49` | `PlaceCurrentCharacterAtAddress` | implemented; one Scalar16, nonblocking |
@@ -3462,8 +3462,8 @@ High-confidence or useful current names:
 | `0x5F` | camera select | provisional |
 | `0x60` | camera move/wait | provisional |
 | `0x67` | music operation | track ID firm |
-| `0x68` | `SetCurrentCharacterControllerEnabled` | implemented; zero-operand current-actor controller boolean `true`, nonblocking |
-| `0x69` | `SetCurrentCharacterControllerDisabled` | implemented; zero-operand current-actor controller boolean `false`, nonblocking |
+| `0x68` | `SetCurrentCharacterControllerEnabled` | implemented; zero-operand, nonblocking; enables participation of the existing adventure CTL controller only — no reposition/transform reset/pose clear (see [ctl.md](ctl.md) §4.1) |
+| `0x69` | `SetCurrentCharacterControllerDisabled` | implemented; zero-operand, nonblocking; stops CTL controller participation while preserving its move/state |
 | `0x76` | global fade into colour | implemented; colour + duration + delay |
 | `0x77` | global fade out of colour | implemented; colour + duration + delay |
 | `0x83` | subsystem operation | provisional |

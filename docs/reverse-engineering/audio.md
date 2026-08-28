@@ -130,6 +130,14 @@ and submits a one-shot spatial request. Runtime-native SFX emitter distances
 are minimum `78` inches and maximum `585` inches; conversion to metres remains
 at the ScenarioRuntime audio boundary.
 
+CTL animation audio markers (states with `animation_mode & 0x0008`) use the
+same DEAD0003 **hID** namespace through Runtime's `0x0048CC80` lookup — never
+a table index. The ordinary locomotion markers are one-shot per state
+execution at an authored animation phase (footsteps); their spatial origin is
+the live character position. No CTL-specific attenuation constants are
+recovered for this path, so OpenNomad uses the general scenario spatial-sound
+defaults rather than the SFX-specific 78/585 pair. See [ctl.md](ctl.md) §4.8.
+
 I2D/UI sounds
     WAV-like named resources under I2D paths
 

@@ -310,6 +310,10 @@ class ScenarioStartupController {
       const Script::AreaCurrentCharacterMoveRequest& request);
   [[nodiscard]] std::expected<void, std::string> set_current_character_controller(
       const Script::AreaCurrentCharacterControllerRequest& request);
+  /// Services the controlled character's enabled adventure CTL controller
+  /// once per scenario tick, before zone-contact production, using the
+  /// session's current CTL profile input mask.
+  void service_ctl_controller(float delta_seconds);
   /// Starts a compact-owned dialog and enters the session-global scheduling
   /// takeover shared by AREA, SCENE, and contact contexts.
   [[nodiscard]] std::expected<void, std::string> start_compact_dialog(

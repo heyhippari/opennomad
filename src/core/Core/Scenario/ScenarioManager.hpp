@@ -274,6 +274,16 @@ class ScenarioManager {
   void set_controlled_character(ControlledCharacterRef character);
   void clear_controlled_character();
 
+  /// The frame's raw CTL profile-0 slot bits supplied by the application from
+  /// InputManager. The CTL controller applies the 14-slot semantics and the
+  /// 0x40000000 no-input sentinel; scenario code never reads raw devices.
+  void set_ctl_input_mask(std::uint32_t mask) {
+    m_ctl_input_mask = mask;
+  }
+  [[nodiscard]] std::uint32_t ctl_input_mask() const {
+    return m_ctl_input_mask;
+  }
+
   /// Moves the selected body from source to target when the selection belongs
   /// to source. No model/resource reload occurs; all live character state is
   /// transferred with the single runtime owner.
@@ -420,6 +430,8 @@ class ScenarioManager {
   GameplayModeSlot m_gameplay_mode_slot;
   std::array<WorldSceneContext, WorldSceneContext::k_capacity> m_world_contexts;
   std::optional<ControlledCharacterRef> m_controlled_character;
+  /// Frame-scoped CTL profile slot bits (0 until the application feeds them).
+  std::uint32_t m_ctl_input_mask{0};
   /// Durable IAM/START-derived flags and object collections. This outlives
   /// AREA/SCENE slot swaps and world-runtime residency changes.
   std::optional<GameState> m_game_state;

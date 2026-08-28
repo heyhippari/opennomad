@@ -3049,3 +3049,30 @@ The major remaining gaps are no longer the broad startup order. They are the fin
 - dynamic main-menu construction and rendering.
 
 Those are the next layers to reverse engineer. They should not be bypassed with startup-specific shortcuts if OpenNomad's goal is behavioral fidelity to `Runtime.exe`.
+
+---
+
+# Post-intro controller handoff (Phase 4.0/4.1)
+
+When a scripted introduction sequence ends, control passes from the authored
+cinematic to the normal adventure player controller through generic
+mechanisms, not intro-specific shortcuts:
+
+1. the current character's adventure CTL bank was already loaded from the IAM
+   character definition's `adventure_control_set` when the character was
+   selected, and its default move/default state were initialized with the
+   controller **disabled**;
+2. scripted body animation owns the visible pose for the whole cinematic;
+3. compact opcode `0x68` only enables the existing controller — it does not
+   reposition the actor, reset transforms, select a state, or clear the
+   cinematic pose;
+4. the next enabled CTL service applies the current CTL state's authored
+   animation as the base pose, so the completed cinematic pose stops owning
+   the character naturally;
+5. the structured cinematic camera is frame-published state: once its script
+   stops republishing a named 3DO camera, controller mode 13 logically
+   releases to mode 0 (the automatic player camera; follow mathematics are a
+   later phase).
+
+See [ctl.md](ctl.md) for the CTL format, controller state machine, callbacks,
+and recovered addresses.

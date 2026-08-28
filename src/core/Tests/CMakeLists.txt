@@ -56,6 +56,14 @@ add_executable(CharacterRuntimeTest CharacterRuntime.spec.cpp $<TARGET_OBJECTS:T
 add_test(NAME CharacterRuntimeTest COMMAND CharacterRuntimeTest)
 target_link_libraries(CharacterRuntimeTest PRIVATE doctest::doctest Core)
 
+add_executable(CtlControlSetTest CtlControlSet.spec.cpp $<TARGET_OBJECTS:TestRunner>)
+add_test(NAME CtlControlSetTest COMMAND CtlControlSetTest)
+target_link_libraries(CtlControlSetTest PRIVATE doctest::doctest Core)
+
+add_executable(CtlControllerTest CtlController.spec.cpp $<TARGET_OBJECTS:TestRunner>)
+add_test(NAME CtlControllerTest COMMAND CtlControllerTest)
+target_link_libraries(CtlControllerTest PRIVATE doctest::doctest Core)
+
 add_executable(ObjectPlacementRuntimeTest ObjectPlacementRuntime.spec.cpp $<TARGET_OBJECTS:TestRunner>)
 add_test(NAME ObjectPlacementRuntimeTest COMMAND ObjectPlacementRuntimeTest)
 target_link_libraries(ObjectPlacementRuntimeTest PRIVATE doctest::doctest Core)

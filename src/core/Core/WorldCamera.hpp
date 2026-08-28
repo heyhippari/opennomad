@@ -43,6 +43,14 @@ class WorldCameraSystem {
   /// settings such as the current aspect ratio.
   void reset();
 
+  /// Logical ownership release of controller mode 13 (the structured/
+  /// cinematic camera owner) when the structured script no longer publishes
+  /// a camera. The last valid pose is retained only as a presentation
+  /// fallback until the real automatic player camera exists (Phase 4.3);
+  /// the logical controller becomes mode 0 / automatic-pending and no longer
+  /// claims a scripted source.
+  void release_structured_controller();
+
   /// Installs a diagnostic camera which frames the loaded decor. It is used
   /// only until the first scripted IAM camera is received.
   void set_fallback_pose(const std::array<float, 3>& center, float radius);
