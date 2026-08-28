@@ -4,9 +4,7 @@
 #include <SDL3/SDL_events.h>
 #include <SDL3/SDL_keyboard.h>
 #include <SDL3/SDL_scancode.h>
-#include <SDL3/SDL_video.h>
 #include <fmt/format.h>
-#include <glad/glad.h>
 
 #include <algorithm>
 #include <array>
@@ -21,7 +19,6 @@
 #include <span>
 #include <string>
 #include <string_view>
-#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -30,6 +27,7 @@
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Debug/Metrics.hpp"
 #include "Core/Dialog/DialogRuntime.hpp"
+#include "Core/DisplayConfiguration.hpp"
 #include "Core/GameDataLoader.hpp"
 #include "Core/Input/InputAction.hpp"
 #include "Core/Input/InputManager.hpp"
@@ -48,8 +46,8 @@
 #include "Core/LogCategory.hpp"
 #include "Core/Omikron/BmpImage.hpp"
 #include "Core/Omikron/IamStringTable.hpp"
-#include "Core/Resources.hpp"
 #include "Core/Texture.hpp"
+#include "Core/Window.hpp"
 #include "Settings/GameSettings.hpp"
 
 namespace App::Interface {
@@ -80,6 +78,7 @@ void initialize_start_menu(InterfaceManager& manager, InterfaceInstance& instanc
 void destroy_start_menu(InterfaceManager& manager, InterfaceInstance& instance);
 void initialize_options(InterfaceManager& manager, InterfaceInstance& instance);
 void destroy_options(InterfaceManager& manager, InterfaceInstance& instance);
+void seed_video_settings(InterfaceManager& manager, const InterfaceInstance& instance);
 
 /// Builds the Runtime-formatted resource path for a descriptor field.
 std::string bitmap_path(const std::string_view name) {
@@ -199,34 +198,18 @@ void commit_transition_destinations(const std::span<const TransitionStateDestina
   }
 }
 
-InterfaceManager::InterfaceManager()
-    : m_settings_path(Resources::get_user_config_path() / "settings.cfg") {
-  m_game_settings.ensure_choice("enhancements.menu_interpolation",
-      {App::Settings::SettingChoice{.label = "Off", .raw_value = 0},
-          App::Settings::SettingChoice{.label = "On", .raw_value = 1}},
-      1U);
-  m_game_settings.ensure_choice("enhancements.menu_transition_style",
-      {App::Settings::SettingChoice{.label = "Modern", .raw_value = 0},
-          App::Settings::SettingChoice{.label = "Classic", .raw_value = 1},
-          App::Settings::SettingChoice{.label = "Reduced Motion", .raw_value = 2}},
-      0U);
-  if (auto result{m_game_settings.load(m_settings_path)}; !result) {
-    std::error_code error;
-    if (std::filesystem::exists(m_settings_path, error) && !error) {
-      m_settings_persistence_enabled = false;
-      App::Log::warn(
-          LogCategory::Interface, "native settings disabled for this session: {}", result.error());
-    }
-  }
-  m_game_settings.set_change_callback([this](const std::string_view stable_id) {
-    apply_game_setting(stable_id);
-  });
-  apply_game_setting("enhancements.menu_interpolation");
+InterfaceManager::InterfaceManager(App::Settings::GameSettings& game_settings)
+    : m_game_settings(&game_settings) {
+  m_settings_listener_id =
+      m_game_settings->add_change_listener([this](const std::string_view stable_id) {
+        apply_game_setting(stable_id);
+      });
+  apply_game_setting("enhancements.animation_interpolation");
   apply_game_setting("enhancements.menu_transition_style");
 }
 
 InterfaceManager::~InterfaceManager() {
-  persist_game_settings();
+  m_game_settings->remove_change_listener(m_settings_listener_id);
   close();
 }
 
@@ -356,15 +339,6 @@ void InterfaceManager::close() {
   }
   m_focused_interface.reset();
   m_completion_overlay_latch.reset();
-}
-
-void InterfaceManager::persist_game_settings() {
-  if (!m_settings_persistence_enabled) {
-    return;
-  }
-  if (auto result{m_game_settings.save(m_settings_path)}; !result) {
-    App::Log::warn(LogCategory::Interface, "failed to save native settings: {}", result.error());
-  }
 }
 
 void InterfaceManager::close(const InterfaceHandle handle) {
@@ -742,6 +716,23 @@ void InterfaceManager::set_audio_system(Audio::AudioSystem* audio) {
   m_audio_system = audio;
 }
 
+void InterfaceManager::set_window(Window* window) {
+  m_window = window;
+}
+
+void InterfaceManager::refresh_display_options() {
+  if (m_window == nullptr) {
+    return;
+  }
+  for (const auto& instance : m_instances) {
+    if (instance->descriptor == nullptr ||
+        instance->descriptor->id != static_cast<std::int32_t>(k_options_interface_id)) {
+      continue;
+    }
+    seed_video_settings(*this, *instance);
+  }
+}
+
 void InterfaceManager::play_ui_sound(
     const InterfaceDescriptor& descriptor, const Audio::UIMenuSoundEvent event) {
   if (m_audio_system == nullptr || !descriptor.sounds.has_value()) {
@@ -764,8 +755,8 @@ void InterfaceManager::play_ui_sound(
 }
 
 void InterfaceManager::apply_game_setting(const std::string_view stable_id) {
-  if (stable_id == "enhancements.menu_interpolation") {
-    const auto raw{m_game_settings.choice_raw_value(stable_id)};
+  if (stable_id == "enhancements.animation_interpolation") {
+    const auto raw{m_game_settings->choice_raw_value(stable_id)};
     set_background_interpolated(raw.value_or(1) != 0);
     return;
   }
@@ -797,7 +788,7 @@ void InterfaceManager::begin_state_transition(InterfaceInstance& instance, I2DSt
       instance.current_state == &target) {
     return;
   }
-  const auto raw{m_game_settings.choice_raw_value("enhancements.menu_transition_style")};
+  const auto raw{m_game_settings->choice_raw_value("enhancements.menu_transition_style")};
   const I2DMenuTransitionStyle style{menu_transition_style_from_raw(raw.value_or(0))};
   const I2DTransitionContext context{instance.descriptor != nullptr && instance.descriptor->id == 29
                                          ? I2DTransitionContext::k_start_menu
@@ -827,7 +818,7 @@ void InterfaceManager::transition_cross_interface(std::vector<TransitionLayer> o
   if (m_active_transition.has_value() || outgoing.empty() || incoming.empty()) {
     return;
   }
-  const auto raw{m_game_settings.choice_raw_value("enhancements.menu_transition_style")};
+  const auto raw{m_game_settings->choice_raw_value("enhancements.menu_transition_style")};
   const I2DMenuTransitionStyle style{menu_transition_style_from_raw(raw.value_or(0))};
   const float duration{transition_duration(style, context)};
   if (duration <= 0.0F) {
@@ -1294,7 +1285,6 @@ void close_options_to_host(InterfaceManager& manager, InterfaceInstance& options
           I2DStateTransitionDirection::k_back,
           I2DTransitionContext::k_cross_interface,
           [options_handle, host_id](InterfaceManager& manager_ref) {
-            manager_ref.persist_game_settings();
             manager_ref.close(options_handle);
             manager_ref.set_focused(host_id);
           });
@@ -1302,40 +1292,12 @@ void close_options_to_host(InterfaceManager& manager, InterfaceInstance& options
     }
   }
 
-  manager.persist_game_settings();
-
   // Must be the final operation that touches options_instance: close destroys
   // the state graph containing the callback currently being executed.
   manager.close(options_handle);
   if (host_handle.has_value()) {
     manager.set_focused(host_handle.value());
   }
-}
-
-std::string current_options_resolution_label() {
-  int width{800};
-  int height{600};
-  if (SDL_Window* window{SDL_GetKeyboardFocus()}; window != nullptr) {
-    int live_width{0};
-    int live_height{0};
-    if (SDL_GetWindowSize(window, &live_width, &live_height) && live_width > 0 && live_height > 0) {
-      width = live_width;
-      height = live_height;
-    }
-  }
-  // OpenNomad requests an RGBA8 OpenGL framebuffer rather than Runtime's
-  // selectable 16-bit DirectDraw mode, so report the real modern depth.
-  return fmt::format("{} x {} x 32 bpp", width, height);
-}
-
-std::string current_options_renderer_label() {
-  const GLubyte* renderer{glGetString(GL_RENDERER)};
-  if (renderer == nullptr) {
-    return "OpenGL";
-  }
-  // OpenGL exposes the renderer string as GLubyte*. It is NUL-terminated text.
-  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
-  return std::string{reinterpret_cast<const char*>(renderer)};
 }
 
 std::vector<App::Settings::SettingChoice> copy_runtime_choices(
@@ -1369,22 +1331,46 @@ void seed_choice_settings(InterfaceManager& manager,
 
 void seed_video_settings(InterfaceManager& manager, const InterfaceInstance& instance) {
   seed_choice_settings(manager, instance, k_options_video_page);
-  manager.game_settings().replace_choice("video.resolution",
-      std::vector<App::Settings::SettingChoice>{App::Settings::SettingChoice{
-          .label = current_options_resolution_label(), .raw_value = 0}},
-      0U);
-  manager.game_settings().replace_choice("video.renderer",
-      std::vector<App::Settings::SettingChoice>{
-          App::Settings::SettingChoice{.label = current_options_renderer_label(), .raw_value = 0}},
-      0U);
+  if (manager.window() == nullptr) {
+    return;
+  }
+  const DisplayModeCatalog catalog{manager.window()->display_mode_catalog()};
+  const DisplayMode mode{manager.window()->actual_display_mode()};
+  const std::vector<DisplayResolution>& available_resolutions{
+      mode == DisplayMode::k_exclusive_fullscreen ? catalog.exclusive_resolutions
+                                                  : catalog.resolutions};
+  std::vector<App::Settings::SettingChoice> resolutions;
+  resolutions.reserve(available_resolutions.size() + 1U);
+  for (const DisplayResolution resolution : available_resolutions) {
+    resolutions.push_back(
+        App::Settings::SettingChoice{.label = display_resolution_label(resolution),
+            .raw_value = pack_display_resolution(resolution).value_or(0)});
+  }
+  if (const auto stored{unpack_display_resolution(
+          manager.game_settings().choice_raw_value("display.resolution").value_or(0))};
+      mode != DisplayMode::k_exclusive_fullscreen && stored.has_value() &&
+      !std::ranges::any_of(resolutions,
+          [raw = pack_display_resolution(stored.value()).value_or(0)](
+              const App::Settings::SettingChoice& choice) {
+            return choice.raw_value == raw;
+          })) {
+    resolutions.push_back(
+        App::Settings::SettingChoice{.label = display_resolution_label(stored.value()),
+            .raw_value = pack_display_resolution(stored.value()).value_or(0)});
+  }
+  std::ranges::sort(resolutions, {}, [](const App::Settings::SettingChoice& choice) {
+    return choice.raw_value;
+  });
+  manager.game_settings().replace_choice("display.resolution", std::move(resolutions), 0U);
 }
 
 void seed_audio_settings(InterfaceManager& manager, const InterfaceInstance& instance) {
   seed_choice_settings(manager, instance, k_options_audio_page);
 
-  // Runtime's three volume controls are UI values 0..100, step 10. The
-  // corresponding saved attenuation defaults are zero, presented as 100%.
+  // Runtime's three recovered volume controls and OpenNomad's music control
+  // use UI values 0..100 in steps of 10.
   manager.game_settings().ensure_number("audio.dialogue_volume", 0, 100, 10, 100);
+  manager.game_settings().ensure_number("audio.music_volume", 0, 100, 10, 100);
   manager.game_settings().ensure_number("audio.ambient_volume", 0, 100, 10, 100);
   manager.game_settings().ensure_number("audio.sfx_volume", 0, 100, 10, 100);
 }
@@ -1399,10 +1385,10 @@ I2DTextElement make_options_text(InterfaceManager& manager,
     const std::size_t active_count,
     I2DState* target_state) {
   I2DTextElement text;
-  if (definition.runtime_label_string_index >= 0) {
-    text.string_index = static_cast<std::uint16_t>(definition.runtime_label_string_index);
-  } else {
+  if (!definition.literal_label.empty()) {
     text.literal_text = std::string{definition.literal_label};
+  } else if (definition.runtime_label_string_index >= 0) {
+    text.string_index = static_cast<std::uint16_t>(definition.runtime_label_string_index);
   }
   const bool choice_row{
       definition.kind == OptionsRowKind::k_enum || definition.kind == OptionsRowKind::k_dynamic};
@@ -1445,11 +1431,25 @@ I2DTextElement make_options_text(InterfaceManager& manager,
     text.layout = I2DTextLayout::k_option_pair;
     const std::string setting_id{definition.stable_id};
     const App::Settings::GameSettings* settings{&manager.game_settings()};
+    const Window* const window{manager.window()};
     text.value_text = [settings, setting_id]() {
       return settings->choice_label(setting_id);
     };
+    if (setting_id == "display.resolution" && window != nullptr) {
+      text.value_text = [settings, setting_id, window]() {
+        if (window->actual_display_mode() == DisplayMode::k_borderless_fullscreen) {
+          return fmt::format(
+              "Desktop ({})", display_resolution_label(window->display_mode_catalog().desktop));
+        }
+        return settings->choice_label(setting_id);
+      };
+    }
     text.on_adjust =
         [setting_id](InterfaceManager& manager_ref, InterfaceInstance&, const std::int32_t delta) {
+          if (setting_id == "display.resolution" && manager_ref.window() != nullptr &&
+              manager_ref.window()->actual_display_mode() == DisplayMode::k_borderless_fullscreen) {
+            return false;
+          }
           const bool changed{manager_ref.game_settings().adjust_choice(setting_id, delta)};
           if (!changed) {
             return false;
@@ -1502,21 +1502,20 @@ I2DTextElement make_keyboard_binding_text(InterfaceManager& manager,
   const std::size_t slot{definition.slot};
   const std::string capture_token{std::string{definition.stable_id}};
   const InterfaceManager* manager_ptr{&manager};
-  App::Settings::RuntimeControlBindings* bindings{
-      &manager.game_settings().runtime_control_bindings()};
+  const App::Settings::RuntimeControlBindings& bindings{manager.game_settings().runtime_control_bindings()};
 
-  text.value_text = [manager_ptr, bindings, capture_token, group, slot]() {
+  text.value_text = [manager_ptr, &bindings, capture_token, group, slot]() {
     if (manager_ptr->physical_input_capture_active(capture_token)) {
       return std::string{"Press a key or mouse button..."};
     }
-    return keyboard_mouse_binding_label(*bindings, group, slot);
+    return keyboard_mouse_binding_label(bindings, group, slot);
   };
 
-  text.on_activate = [bindings, capture_token, group, slot](
+  text.on_activate = [capture_token, group, slot](
                          InterfaceManager& manager_ref, InterfaceInstance&) {
     App::Log::debug(LogCategory::Interface, "capture binding group={} slot={}", group, slot);
     manager_ref.capture_next_physical_input(
-        capture_token, [bindings, group, slot](const Input::InputSource& source) {
+        capture_token, [&manager_ref, group, slot](const Input::InputSource& source) {
           if (source.type == Input::SourceType::k_key) {
             const std::optional<std::uint32_t> dik{runtime_dik_from_sdl(source.index)};
             if (!dik.has_value()) {
@@ -1525,7 +1524,7 @@ I2DTextElement make_keyboard_binding_text(InterfaceManager& manager,
                   source.index);
               return;
             }
-            bindings->set_value(
+            manager_ref.game_settings().set_runtime_control_binding(
                 App::Settings::RuntimeControlDevice::k_keyboard, group, slot, dik.value());
             return;
           }
@@ -1536,7 +1535,7 @@ I2DTextElement make_keyboard_binding_text(InterfaceManager& manager,
             if (!offset.has_value()) {
               return;
             }
-            bindings->set_value(
+            manager_ref.game_settings().set_runtime_control_binding(
                 App::Settings::RuntimeControlDevice::k_mouse, group, slot, offset.value());
           }
         });
@@ -1574,6 +1573,7 @@ void populate_keyboard_binding_page(InterfaceManager& manager,
 
   I2DTextElement restore;
   restore.string_index = static_cast<std::uint16_t>(k_options_restore_defaults_string_index);
+  restore.literal_text = "Reset to Defaults";
   restore.font_key = k_options_value_font_key;
   restore.bounds = I2DRect{.x = k_options_row_x,
       .y = runtime_options_row_y(row_index, active_count, OptionsInvocationMode::k_start_menu),
@@ -1581,7 +1581,7 @@ void populate_keyboard_binding_page(InterfaceManager& manager,
       .height = k_options_row_height};
   restore.runtime_flags = k_options_value_text_flags;
   restore.on_activate = [](InterfaceManager& manager_ref, InterfaceInstance&) {
-    manager_ref.game_settings().runtime_control_bindings().restore_keyboard_mouse_defaults();
+    manager_ref.game_settings().restore_runtime_keyboard_mouse_defaults();
     App::Log::info(LogCategory::Interface, "restored Runtime keyboard/mouse control defaults");
   };
   rows.elements.push_back(
@@ -1710,8 +1710,9 @@ void initialize_start_menu(InterfaceManager& manager, InterfaceInstance& instanc
   // background (the canvas stays clear) rather than an invented asset.
   if (auto background{I2DBumpBackground::create()}) {
     background.value()->set_interpolated(
-        manager.game_settings().choice_raw_value("enhancements.menu_interpolation").value_or(1) !=
-        0);
+        manager.game_settings()
+            .choice_raw_value("enhancements.animation_interpolation")
+            .value_or(1) != 0);
     root->background = background->get();
     options->background = background->get();
     quit->background = background->get();
@@ -1908,11 +1909,11 @@ void initialize_options(InterfaceManager& manager, InterfaceInstance& instance) 
 
   gamepad_action->on_enter = [](InterfaceManager&, InterfaceInstance&, I2DState&) {
     App::Log::info(LogCategory::Interface,
-        "Gamepad controls are deferred to the modern SDL gamepad controls phase");
+        "Controller settings are deferred to the modern SDL gamepad controls phase");
   };
   mouse_settings_action->on_enter = [](InterfaceManager&, InterfaceInstance&, I2DState&) {
     App::Log::info(LogCategory::Interface,
-        "Mouse Settings is deferred until its Runtime type-1 sensitivity "
+        "Mouse settings are deferred until Runtime's type-1 sensitivity "
         "lookup semantics are fully recovered");
   };
 
@@ -1942,11 +1943,6 @@ void initialize_options(InterfaceManager& manager, InterfaceInstance& instance) 
   seed_video_settings(manager, instance);
   seed_audio_settings(manager, instance);
   seed_game_settings(manager, instance);
-  manager.game_settings().ensure_choice("enhancements.menu_interpolation",
-      {App::Settings::SettingChoice{.label = "Off", .raw_value = 0},
-          App::Settings::SettingChoice{.label = "On", .raw_value = 1}},
-      1U);
-
   I2DGroup root_rows;
   root_rows.runtime_flags = k_options_text_flags;
   std::size_t index{0};
@@ -1968,7 +1964,7 @@ void initialize_options(InterfaceManager& manager, InterfaceInstance& instance) 
   populate_options_page(manager, *enhancements, k_options_enhancements_page, *root);
 
   // Controls root. Runtime's title is static; the four following entries are
-  // Keyboard/Mouse, Gamepad, Mouse Settings and Back.
+  // Keyboard & Mouse, Controller, Mouse and Back.
   const std::array<I2DState*, 5> controls_targets{
       nullptr, keyboard_categories, gamepad_action, mouse_settings_action, root};
   I2DGroup controls_rows;

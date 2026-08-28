@@ -55,6 +55,7 @@ void VoicePool::configure(const VoiceHandle handle, const SoundPlayRequest& requ
   voice.scenario_sound_index = request.scenario_sound_index;
   voice.owner = request.owner;
   voice.provenance = request.provenance;
+  voice.category = request.category;
   voice.emitter = request.emitter;
   voice.previous_distance = -1.0F;
   voice.base_frequency_hz = 0.0F;
@@ -87,6 +88,7 @@ void VoicePool::release(const VoiceHandle handle) {
   voice.scenario_sound_index = 0xFFFFU;
   voice.owner = AudioOwnerToken{};
   voice.provenance = AudioProvenance{};
+  voice.category = SoundCategory::k_sfx;
   voice.emitter.reset();
   voice.previous_distance = -1.0F;
   voice.base_frequency_hz = 0.0F;

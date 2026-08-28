@@ -16,6 +16,7 @@ add_library(${NAME} STATIC
   Core/Debug/DebugUIRuntime.cpp Core/Debug/DebugUIWorld.cpp
   Core/Debug/DebugUIAudio.cpp
   Core/Application.cpp Core/Application.hpp
+  Core/DisplayConfiguration.cpp Core/DisplayConfiguration.hpp
   Core/Window.cpp Core/Window.hpp
   Core/Audio/AudioTypes.hpp
   Core/Audio/LegacySpatializer.hpp Core/Audio/LegacySpatializer.cpp

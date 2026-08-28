@@ -1,3 +1,5 @@
+#include "Core/Interface/I2DBumpTimeline.hpp"
+
 #include <doctest/doctest.h>
 
 #include <array>
@@ -7,7 +9,6 @@
 
 #include "Core/Interface/I2DBumpEffect.hpp"
 #include "Core/Interface/I2DBumpEndpoint.hpp"
-#include "Core/Interface/I2DBumpTimeline.hpp"
 #include "Core/Omikron/IndexedBmp8.hpp"
 
 // NOLINTBEGIN(misc-use-anonymous-namespace,
@@ -22,9 +23,7 @@ namespace {
 
 App::Omikron::IndexedBmp8 flat_height_map(const std::uint8_t value) {
   return App::Omikron::IndexedBmp8{
-      .width = 256,
-      .height = 256,
-      .indices = std::vector<std::uint8_t>(256U * 256U, value)};
+      .width = 256, .height = 256, .indices = std::vector<std::uint8_t>(256U * 256U, value)};
 }
 
 }  // namespace
@@ -53,8 +52,8 @@ TEST_SUITE("Core::Interface::I2DBumpTimeline") {
   }
 
   TEST_CASE("Timeline reaches the same tick after one second at any refresh rate") {
-    using App::Interface::BumpTimelineState;
     using App::Interface::advance_bump_timeline;
+    using App::Interface::BumpTimelineState;
 
     struct FramePattern {
       double frame_time;
@@ -85,8 +84,8 @@ TEST_SUITE("Core::Interface::I2DBumpTimeline") {
   }
 
   TEST_CASE("Irregular frame times accumulate to the correct tick and alpha") {
-    using App::Interface::BumpTimelineState;
     using App::Interface::advance_bump_timeline;
+    using App::Interface::BumpTimelineState;
 
     // 8+9+14+55+3+41 ms = 130 ms = 3.9 endpoint intervals.
     const std::array<double, 6> frames{0.008, 0.009, 0.014, 0.055, 0.003, 0.041};
@@ -103,8 +102,8 @@ TEST_SUITE("Core::Interface::I2DBumpTimeline") {
   }
 
   TEST_CASE("A 100 ms frame crosses three ticks at once") {
-    using App::Interface::BumpTimelineState;
     using App::Interface::advance_bump_timeline;
+    using App::Interface::BumpTimelineState;
 
     BumpTimelineState state;
     double remainder{0.0};
@@ -115,9 +114,28 @@ TEST_SUITE("Core::Interface::I2DBumpTimeline") {
     CHECK(advance.state.alpha == doctest::Approx(0.0F).epsilon(1e-6));
   }
 
+  TEST_CASE("Presentation mode changes do not alter authoritative timeline state") {
+    using App::Interface::advance_bump_timeline;
+    using App::Interface::BumpAnimationMode;
+    using App::Interface::BumpTimelineState;
+
+    BumpTimelineState state;
+    double remainder{0.0};
+    state = advance_bump_timeline(state, remainder, 0.05).state;
+    const BumpTimelineState authoritative{state};
+    const double authoritative_remainder{remainder};
+
+    BumpAnimationMode mode{BumpAnimationMode::k_interpolated};
+    mode = BumpAnimationMode::k_stepped;
+    CHECK(mode == BumpAnimationMode::k_stepped);
+    CHECK(state.current_tick == authoritative.current_tick);
+    CHECK(state.alpha == authoritative.alpha);
+    CHECK(remainder == authoritative_remainder);
+  }
+
   TEST_CASE("Endpoint state matches the CPU reference at representative ticks") {
-    using App::Interface::I2DBumpEndpointState;
     using App::Interface::advance_endpoint;
+    using App::Interface::I2DBumpEndpointState;
 
     for (const std::uint64_t ticks : {0ULL, 1ULL, 2ULL, 30ULL, 300ULL}) {
       auto effect{App::Interface::I2DBumpEffect::create(flat_height_map(7))};

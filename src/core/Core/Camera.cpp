@@ -62,6 +62,10 @@ float Camera::get_pitch() const {
   return m_pitch;
 }
 
+float Camera::get_vertical_fov_degrees() const {
+  return m_fov;
+}
+
 float Camera::get_near_plane() const {
   return m_near;
 }

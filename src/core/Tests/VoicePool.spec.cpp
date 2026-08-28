@@ -12,6 +12,7 @@
 namespace {
 
 using App::Audio::AudioOwnerToken;
+using App::Audio::SoundCategory;
 using App::Audio::SoundPlayRequest;
 using App::Audio::SoundResourceId;
 using App::Audio::VoiceHandle;
@@ -103,6 +104,33 @@ TEST_SUITE("Core::Audio::VoicePool") {
     CHECK_EQ(voice->provenance.scenario_name, "Grid.SCX");
     REQUIRE(voice->provenance.script_instance_id.has_value());
     CHECK_EQ(voice->provenance.script_instance_id.value(), 7U);
+  }
+
+  TEST_CASE("Category gain policy and settings normalization are independent") {
+    CHECK_EQ(App::Audio::normalized_settings_gain(0), doctest::Approx(0.0F));
+    CHECK_EQ(App::Audio::normalized_settings_gain(100), doctest::Approx(1.0F));
+    CHECK_EQ(App::Audio::category_gain(SoundCategory::k_sfx, 0.2F, 0.6F), doctest::Approx(0.2F));
+    CHECK_EQ(
+        App::Audio::category_gain(SoundCategory::k_ambience, 0.2F, 0.6F), doctest::Approx(0.6F));
+    CHECK_FALSE(App::Audio::should_spatialize(false, false, true));
+    CHECK(App::Audio::should_spatialize(true, false, true));
+    CHECK_FALSE(App::Audio::should_spatialize(true, true, true));
+  }
+
+  TEST_CASE("Reused slots take the new request category") {
+    VoicePool pool;
+    const VoiceHandle first{pool.allocate().value()};
+    SoundPlayRequest ambience{request(SoundResourceId{1}, AudioOwnerToken{})};
+    ambience.category = SoundCategory::k_ambience;
+    pool.configure(first, ambience);
+    REQUIRE(pool.find(first) != nullptr);
+    CHECK_EQ(pool.find(first)->category, SoundCategory::k_ambience);
+    pool.release(first);
+
+    const VoiceHandle reused{pool.allocate().value()};
+    pool.configure(reused, request(SoundResourceId{2}, AudioOwnerToken{}));
+    REQUIRE(pool.find(reused) != nullptr);
+    CHECK_EQ(pool.find(reused)->category, SoundCategory::k_sfx);
   }
 
   TEST_CASE("find_first_active matches (soundId, owner) and skips free slots") {

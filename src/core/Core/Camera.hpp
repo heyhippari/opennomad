@@ -32,6 +32,7 @@ class Camera {
   /// Retrieves the camera orientation in degrees.
   [[nodiscard]] float get_yaw() const;
   [[nodiscard]] float get_pitch() const;
+  [[nodiscard]] float get_vertical_fov_degrees() const;
 
   /// Depth-test bounds of the projection.
   [[nodiscard]] float get_near_plane() const;

@@ -28,6 +28,7 @@ void VoiceOverPlayer::attach(MIX_Mixer* mixer) {
     App::Log::warn(
         LogCategory::Audio, "failed to tag OBJECTS voice-over track: {}", SDL_GetError());
   }
+  set_gain(m_gain);
 }
 
 void VoiceOverPlayer::shutdown() {
@@ -71,6 +72,13 @@ void VoiceOverPlayer::stop() {
     MIX_SetTrackAudio(m_track, nullptr);
   }
   m_samples.reset();
+}
+
+void VoiceOverPlayer::set_gain(const float gain) {
+  m_gain = gain;
+  if (m_track != nullptr) {
+    MIX_SetTrackGain(m_track, m_gain);
+  }
 }
 
 bool VoiceOverPlayer::is_playing() const {

@@ -195,7 +195,9 @@ std::expected<std::unique_ptr<AudioSystem>, std::string> AudioSystem::create() {
   system->m_dialog_voice.attach(mixer);
   system->m_voice_over.attach(mixer);
   system->set_master_gain(1.0F);
+  system->set_dialogue_gain(1.0F);
   system->set_sfx_gain(1.0F);
+  system->set_ambience_gain(1.0F);
   system->set_music_gain(1.0F);
   system->rebuild_snapshot();
   return system;
@@ -670,9 +672,10 @@ void AudioSystem::update(const float real_delta_seconds) {
       continue;
     }
 
-    if (voice.nonspatial || !voice.emitter.has_value()) {
+    const float voice_category_gain{category_gain(voice.category, m_sfx_gain, m_ambience_gain)};
+    if (!should_spatialize(m_spatial_audio_enabled, voice.nonspatial, voice.emitter.has_value())) {
       MIX_SetTrackStereo(track, nullptr);
-      MIX_SetTrackGain(track, 1.0F);
+      MIX_SetTrackGain(track, voice_category_gain);
       MIX_SetTrackFrequencyRatio(track, 1.0F);
       voice.attenuation_gain = 1.0F;
       voice.pan = 0.0F;
@@ -683,9 +686,12 @@ void AudioSystem::update(const float real_delta_seconds) {
       continue;
     }
 
-    const SpatialResult result{
-        spatialize(m_listener, voice.emitter.value(), voice.previous_distance, delta)};
-    MIX_SetTrackGain(track, result.attenuation_gain);
+    const SoundEmitterState* const emitter{voice.emitter ? &*voice.emitter : nullptr};
+    if (emitter == nullptr) {
+      continue;
+    }
+    const SpatialResult result{spatialize(m_listener, *emitter, voice.previous_distance, delta)};
+    MIX_SetTrackGain(track, voice_category_gain * result.attenuation_gain);
     const MIX_StereoGains gains{.left = result.left_gain, .right = result.right_gain};
     MIX_SetTrackStereo(track, &gains);
     MIX_SetTrackFrequencyRatio(track, result.frequency_ratio);
@@ -730,28 +736,65 @@ void AudioSystem::set_master_gain(const float gain) {
 
 void AudioSystem::set_sfx_gain(const float gain) {
   m_sfx_gain = clamp_gain(gain);
-  if (available()) {
-    MIX_SetTagGain(m_mixer.get(), "sfx", m_sfx_gain);
-    MIX_SetTagGain(m_mixer.get(), "dialog", m_sfx_gain);
-    MIX_SetTagGain(m_mixer.get(), "voiceover", m_sfx_gain);
-  }
+  refresh_voice_gains();
+}
+
+void AudioSystem::set_dialogue_gain(const float gain) {
+  m_dialogue_gain = clamp_gain(gain);
+  m_dialog_voice.set_gain(m_dialogue_gain);
+  m_voice_over.set_gain(m_dialogue_gain);
+}
+
+void AudioSystem::set_ambience_gain(const float gain) {
+  m_ambience_gain = clamp_gain(gain);
+  refresh_voice_gains();
 }
 
 void AudioSystem::set_music_gain(const float gain) {
   m_music_gain = clamp_gain(gain);
-  if (available()) {
-    MIX_SetTagGain(m_mixer.get(), "music", m_music_gain);
-  }
+  m_music.set_gain(m_music_gain);
+}
+
+void AudioSystem::set_spatial_audio_enabled(const bool enabled) {
+  m_spatial_audio_enabled = enabled;
 }
 
 float AudioSystem::master_gain() const {
   return m_master_gain;
 }
+float AudioSystem::dialogue_gain() const {
+  return m_dialogue_gain;
+}
 float AudioSystem::sfx_gain() const {
   return m_sfx_gain;
 }
+float AudioSystem::ambience_gain() const {
+  return m_ambience_gain;
+}
 float AudioSystem::music_gain() const {
   return m_music_gain;
+}
+bool AudioSystem::spatial_audio_enabled() const {
+  return m_spatial_audio_enabled;
+}
+
+void AudioSystem::refresh_voice_gains() {
+  if (!available()) {
+    return;
+  }
+  for (std::size_t index{0}; index < m_pool.size(); ++index) {
+    const SoundVoice& voice{m_pool.at(index)};
+    if (voice.state != VoiceState::k_playing && voice.state != VoiceState::k_queued) {
+      continue;
+    }
+    MIX_Track* track{m_tracks.at(index)};
+    if (track == nullptr) {
+      continue;
+    }
+    const float spatial_gain{m_spatial_audio_enabled ? voice.attenuation_gain : 1.0F};
+    MIX_SetTrackGain(
+        track, category_gain(voice.category, m_sfx_gain, m_ambience_gain) * spatial_gain);
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -888,8 +931,11 @@ void AudioSystem::rebuild_snapshot() {
   snapshot.requested_format = m_requested_format;
   snapshot.negotiated_format = m_negotiated_format;
   snapshot.master_gain = m_master_gain;
+  snapshot.dialogue_gain = m_dialogue_gain;
   snapshot.sfx_gain = m_sfx_gain;
+  snapshot.ambience_gain = m_ambience_gain;
   snapshot.music_gain = m_music_gain;
+  snapshot.spatial_audio_enabled = m_spatial_audio_enabled;
   snapshot.active_voices = m_pool.active_count();
   snapshot.free_voices = m_pool.free_count();
   snapshot.cached_resources = m_cache != nullptr ? m_cache->count() : 0;
@@ -935,6 +981,7 @@ void AudioSystem::rebuild_snapshot() {
     }
     info.owner_description = voice.owner.describe();
     info.provenance = voice.provenance;
+    info.category = voice.category;
     info.looping = voice.looping;
     info.nonspatial = voice.nonspatial;
     info.unknown_flag = voice.unknown_flag;

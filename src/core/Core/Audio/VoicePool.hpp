@@ -21,6 +21,7 @@ struct SoundVoice {
   std::uint16_t scenario_sound_index{0xFFFFU};
   AudioOwnerToken owner{};
   AudioProvenance provenance;
+  SoundCategory category{SoundCategory::k_sfx};
   std::optional<SoundEmitterState> emitter{};
   float previous_distance{-1.0F};
   float base_frequency_hz{0.0F};

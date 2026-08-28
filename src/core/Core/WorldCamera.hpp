@@ -32,6 +32,7 @@ class WorldCameraSystem {
   WorldCameraSystem() = default;
 
   void set_aspect_ratio(float aspect_ratio);
+  void set_clip_distance_metres(float distance);
   /// Supplies one requested live character attachment pose without coupling
   /// this presentation class to ScenarioManager or a gameplay runtime.
   void set_attachment_pose_provider(AttachmentPoseProvider provider);
@@ -114,10 +115,11 @@ class WorldCameraSystem {
 
   // OpenNomad preserves the retail 4:3-derived vertical FOV on widescreen,
   // allowing horizontal view to expand outside exact retail behavior.
+  float m_clip_distance_metres{Runtime::k_default_clip_distance_metres};
   Camera m_camera{Runtime::horizontal_4_3_to_vertical_fov(74.0F),
       1.0F,
       Runtime::k_default_near_inches,
-      Runtime::metres_to_inches(Runtime::k_default_clip_distance_metres)};
+      Runtime::metres_to_inches(m_clip_distance_metres)};
   Runtime::CameraView m_runtime_view{};
 
   WorldCameraPose m_current{};

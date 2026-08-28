@@ -19,16 +19,22 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <filesystem>
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
+#include <system_error>
 #include <utility>
+#include <vector>
 
 #include "Core/Audio/AudioSystem.hpp"
+#include "Core/Audio/AudioTypes.hpp"
 #include "Core/Debug/DebugContext.hpp"
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Debug/Metrics.hpp"
 #include "Core/Debug/RuntimeTimingDebug.hpp"
+#include "Core/DisplayConfiguration.hpp"
 #include "Core/FrameTiming.hpp"
 #include "Core/Input/ControlScheme.hpp"
 #include "Core/Input/HeldInputState.hpp"
@@ -40,6 +46,7 @@
 #include "Core/Log.hpp"
 #include "Core/LogCategory.hpp"
 #include "Core/MainLoopController.hpp"
+#include "Core/Resources.hpp"
 #include "Core/RuntimeActivityState.hpp"
 #include "Core/Scenario/ScenarioEngine.hpp"
 #include "Core/Scenario/ScenarioManager.hpp"
@@ -53,6 +60,7 @@
 #include "Core/Video/VideoScene.hpp"
 #include "Core/Window.hpp"
 #include "Core/WorldScene.hpp"
+#include "Settings/GameSettings.hpp"
 
 namespace App {
 
@@ -62,6 +70,92 @@ namespace {
 /// logged (ordering violations cannot occur in the fixed startup sequence).
 void swallow_expected(std::expected<void, std::string> result) {
   static_cast<void>(result);
+}
+
+void apply_audio_setting(const Settings::GameSettings& settings,
+    Audio::AudioSystem& audio,
+    const std::string_view stable_id) {
+  if (stable_id == "audio.dialogue_volume") {
+    audio.set_dialogue_gain(
+        Audio::normalized_settings_gain(settings.number_value(stable_id).value_or(100)));
+  } else if (stable_id == "audio.music_volume") {
+    audio.set_music_gain(
+        Audio::normalized_settings_gain(settings.number_value(stable_id).value_or(100)));
+  } else if (stable_id == "audio.sfx_volume") {
+    audio.set_sfx_gain(
+        Audio::normalized_settings_gain(settings.number_value(stable_id).value_or(100)));
+  } else if (stable_id == "audio.ambient_volume") {
+    audio.set_ambience_gain(
+        Audio::normalized_settings_gain(settings.number_value(stable_id).value_or(100)));
+  } else if (stable_id == "audio.spatial_audio") {
+    audio.set_spatial_audio_enabled(settings.choice_raw_value(stable_id).value_or(1) != 0);
+  }
+}
+
+void apply_display_setting(
+    Settings::GameSettings& settings, Window& window, const std::string_view stable_id) {
+  if (stable_id != "display.mode" && stable_id != "display.resolution") {
+    return;
+  }
+  DisplayMode mode{static_cast<DisplayMode>(settings.choice_raw_value("display.mode").value_or(1))};
+  DisplayResolution resolution{
+      unpack_display_resolution(settings.choice_raw_value("display.resolution").value_or(0))
+          .value_or(DisplayResolution{.width = 800, .height = 600})};
+  const DisplayMode previous_mode{window.reconcile_display_state()};
+  const DisplayResolution previous_resolution{window.actual_resolution()};
+  const DisplayModeCatalog catalog{window.display_mode_catalog()};
+  if (mode == DisplayMode::k_exclusive_fullscreen) {
+    const auto selected{select_exclusive_resolution(catalog, resolution)};
+    if (!selected.has_value()) {
+      App::Log::warn(LogCategory::Renderer,
+          "no exclusive display modes are available; falling back to Borderless Fullscreen");
+      mode = DisplayMode::k_borderless_fullscreen;
+    } else if (selected.value() != resolution) {
+      App::Log::warn(LogCategory::Renderer,
+          "saved exclusive resolution {} is unavailable; falling back to {}",
+          display_resolution_label(resolution),
+          display_resolution_label(selected.value()));
+      resolution = selected.value();
+      settings.set_choice_raw_value(
+          "display.resolution", pack_display_resolution(resolution).value_or(0), false);
+    }
+  }
+  if (window.apply_display_configuration(mode, resolution)) {
+    settings.set_choice_raw_value("display.mode", static_cast<std::int32_t>(mode), false);
+    if (mode != DisplayMode::k_borderless_fullscreen) {
+      const DisplayResolution actual{window.actual_resolution()};
+      settings.set_choice_raw_value(
+          "display.resolution", pack_display_resolution(actual).value_or(0), false);
+    }
+    if (mode != DisplayMode::k_windowed) {
+      settings.set_choice_raw_value(
+          "display.fullscreen_preference", static_cast<std::int32_t>(mode), false);
+    }
+    return;
+  }
+  if (mode == DisplayMode::k_exclusive_fullscreen &&
+      window.apply_display_configuration(DisplayMode::k_borderless_fullscreen, resolution)) {
+    App::Log::warn(
+        LogCategory::Renderer, "exclusive fullscreen failed; using Borderless Fullscreen");
+    mode = DisplayMode::k_borderless_fullscreen;
+  } else if (window.apply_display_configuration(DisplayMode::k_windowed, previous_resolution)) {
+    App::Log::warn(LogCategory::Renderer, "fullscreen change failed; using Windowed mode");
+    mode = DisplayMode::k_windowed;
+  } else {
+    static_cast<void>(window.apply_display_configuration(previous_mode, previous_resolution));
+    mode = window.reconcile_display_state();
+    App::Log::warn(LogCategory::Renderer, "display change failed; restored the previous mode");
+  }
+  settings.set_choice_raw_value("display.mode", static_cast<std::int32_t>(mode), false);
+  if (mode != DisplayMode::k_windowed) {
+    settings.set_choice_raw_value(
+        "display.fullscreen_preference", static_cast<std::int32_t>(mode), false);
+  }
+  if (mode != DisplayMode::k_borderless_fullscreen) {
+    const DisplayResolution actual{window.actual_resolution()};
+    settings.set_choice_raw_value(
+        "display.resolution", pack_display_resolution(actual).value_or(0), false);
+  }
 }
 
 /// Presents startup videos through a VideoScene. The debug UI is composited
@@ -108,6 +202,11 @@ class StartupVideoPresenter final : public Video::VideoPresenter {
 
 Application::Application(Application&& other) noexcept
     : m_window(std::move(other.m_window)),
+      m_game_settings(std::move(other.m_game_settings)),
+      m_audio_settings_listener_id(other.m_audio_settings_listener_id),
+      m_display_settings_listener_id(other.m_display_settings_listener_id),
+      m_settings_path(std::move(other.m_settings_path)),
+      m_settings_persistence_enabled(other.m_settings_persistence_enabled),
       m_audio(std::move(other.m_audio)),
       m_scenario_manager(std::move(other.m_scenario_manager)),
       m_scenario_engine(std::move(other.m_scenario_engine)),
@@ -142,7 +241,74 @@ std::expected<Application, std::string> Application::create(const std::string& t
 
   auto trace{std::make_unique<Startup::StartupTraceRecorder>()};
   auto coordinator{std::make_unique<Startup::StartupCoordinator>(*trace)};
-
+  auto game_settings{std::make_unique<Settings::GameSettings>()};
+  game_settings->ensure_number("audio.dialogue_volume", 0, 100, 10, 100);
+  game_settings->ensure_number("audio.music_volume", 0, 100, 10, 100);
+  game_settings->ensure_number("audio.sfx_volume", 0, 100, 10, 100);
+  game_settings->ensure_number("audio.ambient_volume", 0, 100, 10, 100);
+  game_settings->ensure_choice("audio.spatial_audio",
+      {Settings::SettingChoice{.label = "Off", .raw_value = 0},
+          Settings::SettingChoice{.label = "On", .raw_value = 1}},
+      1U);
+  game_settings->ensure_choice("enhancements.animation_interpolation",
+      {Settings::SettingChoice{.label = "Off", .raw_value = 0},
+          Settings::SettingChoice{.label = "On", .raw_value = 1}},
+      1U);
+  game_settings->ensure_choice("enhancements.menu_transition_style",
+      {Settings::SettingChoice{.label = "Modern", .raw_value = 0},
+          Settings::SettingChoice{.label = "Classic", .raw_value = 1},
+          Settings::SettingChoice{.label = "Reduced Motion", .raw_value = 2}},
+      0U);
+  game_settings->ensure_choice("display.mode",
+      {Settings::SettingChoice{.label = "Windowed", .raw_value = 0},
+          Settings::SettingChoice{.label = "Borderless Fullscreen", .raw_value = 1},
+          Settings::SettingChoice{.label = "Exclusive Fullscreen", .raw_value = 2}},
+      1U);
+  game_settings->ensure_choice("display.fullscreen_preference",
+      {Settings::SettingChoice{.label = "Borderless", .raw_value = 1},
+          Settings::SettingChoice{.label = "Exclusive", .raw_value = 2}},
+      0U);
+  game_settings->ensure_choice("video.clipping_distance",
+      {Settings::SettingChoice{.label = "25 m", .raw_value = 25},
+          Settings::SettingChoice{.label = "50 m", .raw_value = 50},
+          Settings::SettingChoice{.label = "100 m", .raw_value = 100},
+          Settings::SettingChoice{.label = "150 m", .raw_value = 150},
+          Settings::SettingChoice{.label = "200 m", .raw_value = 200}},
+      1U);
+  game_settings->ensure_choice("video.display_sky",
+      {Settings::SettingChoice{.label = "Off", .raw_value = 0},
+          Settings::SettingChoice{.label = "On", .raw_value = 1}},
+      1U);
+  game_settings->ensure_choice("video.display_shadow",
+      {Settings::SettingChoice{.label = "Off", .raw_value = 0},
+          Settings::SettingChoice{.label = "On", .raw_value = 1}},
+      1U);
+  game_settings->ensure_choice("video.street_activity",
+      {Settings::SettingChoice{.label = "0", .raw_value = 0},
+          Settings::SettingChoice{.label = "1", .raw_value = 1},
+          Settings::SettingChoice{.label = "2", .raw_value = 2},
+          Settings::SettingChoice{.label = "3", .raw_value = 3},
+          Settings::SettingChoice{.label = "4", .raw_value = 4}},
+      3U);
+  game_settings->ensure_choice("video.detail_level",
+      {Settings::SettingChoice{.label = "0", .raw_value = 0},
+          Settings::SettingChoice{.label = "1", .raw_value = 1},
+          Settings::SettingChoice{.label = "2", .raw_value = 2}},
+      1U);
+  game_settings->ensure_choice("game.fight_difficulty",
+      {Settings::SettingChoice{.label = "Easy", .raw_value = 0},
+          Settings::SettingChoice{.label = "Normal", .raw_value = 1},
+          Settings::SettingChoice{.label = "Hard", .raw_value = 2}},
+      1U);
+  game_settings->ensure_choice("game.shoot_difficulty",
+      {Settings::SettingChoice{.label = "Easy", .raw_value = 0},
+          Settings::SettingChoice{.label = "Normal", .raw_value = 1},
+          Settings::SettingChoice{.label = "Hard", .raw_value = 2}},
+      1U);
+  game_settings->ensure_choice("game.fight_camera",
+      {Settings::SettingChoice{.label = "Off", .raw_value = 0},
+          Settings::SettingChoice{.label = "On", .raw_value = 1}},
+      1U);
   App::Log::info(LogCategory::Core, "OpenNomad starting");
 
   // --- Phase 1: process bootstrap ---
@@ -153,6 +319,33 @@ std::expected<Application, std::string> Application::create(const std::string& t
         fmt::format("Can't initialize Omikron: SDL_Init failed: {}", SDL_GetError())};
   }
   App::Log::debug(LogCategory::Core, "SDL video driver: {}", SDL_GetCurrentVideoDriver());
+
+  const std::filesystem::path settings_path{Resources::get_user_config_path() / "settings.cfg"};
+  bool settings_persistence_enabled{true};
+  if (auto result{game_settings->load(settings_path)}; !result) {
+    std::error_code error;
+    if (std::filesystem::exists(settings_path, error) && !error) {
+      settings_persistence_enabled = false;
+      App::Log::warn(
+          LogCategory::Core, "native settings disabled for this session: {}", result.error());
+    }
+  }
+  const SDL_DisplayMode* primary_desktop{SDL_GetDesktopDisplayMode(SDL_GetPrimaryDisplay())};
+  const DisplayResolution default_resolution{
+      .width = primary_desktop == nullptr ? 800 : primary_desktop->w,
+      .height = primary_desktop == nullptr ? 600 : primary_desktop->h};
+  std::vector<Settings::SettingChoice> startup_resolutions{
+      Settings::SettingChoice{.label = display_resolution_label(default_resolution),
+          .raw_value = pack_display_resolution(default_resolution).value_or(0)}};
+  if (const auto saved{game_settings->loaded_choice_raw_value("display.resolution")};
+      saved.has_value()) {
+    if (const auto resolution{unpack_display_resolution(saved.value())};
+        resolution.has_value() && resolution.value() != default_resolution) {
+      startup_resolutions.push_back(Settings::SettingChoice{
+          .label = display_resolution_label(resolution.value()), .raw_value = saved.value()});
+    }
+  }
+  game_settings->ensure_choice("display.resolution", std::move(startup_resolutions), 0U);
 
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG);
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
@@ -169,7 +362,17 @@ std::expected<Application, std::string> Application::create(const std::string& t
 
   // --- Phase 2: create the application/render window ---
   swallow_expected(coordinator->begin(Startup::StartupPhase::k_create_windows));
-  auto window{Window::create(Window::Settings{.title = title, .start_fullscreen = true})};
+  const DisplayMode startup_mode{
+      static_cast<DisplayMode>(game_settings->choice_raw_value("display.mode").value_or(1))};
+  const DisplayResolution startup_resolution{
+      unpack_display_resolution(game_settings->choice_raw_value("display.resolution").value_or(0))
+          .value_or(DisplayResolution{.width = 800, .height = 600})};
+  auto window{Window::create(Window::Settings{.title = title,
+      .width = startup_resolution.width,
+      .height = startup_resolution.height,
+      .display_mode = startup_mode,
+      .resolution = startup_resolution,
+      .hidden = true})};
   if (!window) {
     SDL_Quit();
     return std::expected<Application, std::string>{
@@ -218,16 +421,78 @@ std::expected<Application, std::string> Application::create(const std::string& t
   // every failure path below lets ~Application release them.
   Application app;
   app.m_window = std::move(window).value();
+  app.m_game_settings = std::move(game_settings);
+  app.m_settings_path = settings_path;
+  app.m_settings_persistence_enabled = settings_persistence_enabled;
   app.m_trace = std::move(trace);
   app.m_coordinator = std::move(coordinator);
   app.m_scenario_manager = std::move(manager);
   app.m_scenario_engine = std::move(engine);
   if (audio) {
     app.m_audio = std::move(audio).value();
+    for (const std::string_view stable_id : {"audio.dialogue_volume",
+             "audio.music_volume",
+             "audio.sfx_volume",
+             "audio.ambient_volume",
+             "audio.spatial_audio"}) {
+      apply_audio_setting(*app.m_game_settings, *app.m_audio, stable_id);
+    }
+    Settings::GameSettings* const settings_ptr{app.m_game_settings.get()};
+    Audio::AudioSystem* const audio_ptr{app.m_audio.get()};
+    app.m_audio_settings_listener_id = settings_ptr->add_change_listener(
+        [settings_ptr, audio_ptr](const std::string_view stable_id) {
+          apply_audio_setting(*settings_ptr, *audio_ptr, stable_id);
+        });
     app.m_scenario_manager->set_audio_system(app.m_audio.get());
     app.m_scenario_engine->set_audio_system(app.m_audio.get());
   }
-  app.m_interface_manager = std::make_unique<Interface::InterfaceManager>();
+  app.m_interface_manager = std::make_unique<Interface::InterfaceManager>(*app.m_game_settings);
+  app.m_interface_manager->set_window(app.m_window.get());
+  Settings::GameSettings* const display_settings{app.m_game_settings.get()};
+  Window* const display_window{app.m_window.get()};
+  app.m_display_settings_listener_id = display_settings->add_change_listener(
+      [display_settings, display_window, manager = app.m_interface_manager.get()](
+          const std::string_view stable_id) {
+        apply_display_setting(*display_settings, *display_window, stable_id);
+        if (stable_id == "display.mode" || stable_id == "display.resolution") {
+          manager->refresh_display_options();
+        }
+      });
+  app.m_window->set_display_state_callback(
+      [display_settings, display_window, manager = app.m_interface_manager.get()](
+          const bool catalog_changed) {
+        const DisplayMode actual_mode{display_window->reconcile_display_state()};
+        display_settings->set_choice_raw_value(
+            "display.mode", static_cast<std::int32_t>(actual_mode), false);
+        if (actual_mode != DisplayMode::k_borderless_fullscreen) {
+          const DisplayResolution actual{display_window->actual_resolution()};
+          manager->refresh_display_options();
+          if (const auto packed{pack_display_resolution(actual)}; packed.has_value()) {
+            display_settings->set_choice_raw_value("display.resolution", packed.value(), false);
+          }
+        } else {
+          manager->refresh_display_options();
+        }
+        if (catalog_changed && actual_mode == DisplayMode::k_exclusive_fullscreen) {
+          apply_display_setting(*display_settings, *display_window, "display.resolution");
+          manager->refresh_display_options();
+        }
+      });
+  if (app.m_window->actual_display_mode() != startup_mode) {
+    App::Log::warn(LogCategory::Renderer,
+        "saved display mode {} was not established during window creation; reconciling",
+        display_mode_label(startup_mode));
+    apply_display_setting(*display_settings, *app.m_window, "display.mode");
+  }
+  static_cast<void>(app.m_window->show());
+  app.m_window->set_display_shortcut_callback([display_settings]() {
+    const DisplayMode actual{
+        static_cast<DisplayMode>(display_settings->choice_raw_value("display.mode").value_or(1))};
+    const DisplayMode preferred{static_cast<DisplayMode>(
+        display_settings->choice_raw_value("display.fullscreen_preference").value_or(1))};
+    display_settings->set_choice_raw_value(
+        "display.mode", static_cast<std::int32_t>(toggle_display_mode(actual, preferred)));
+  });
   if (app.m_audio != nullptr) {
     app.m_interface_manager->set_audio_system(app.m_audio.get());
   }
@@ -338,6 +603,18 @@ std::expected<Application, std::string> Application::create(const std::string& t
 
 Application::~Application() {
   APP_PROFILE_FUNCTION();
+
+  if (m_settings_persistence_enabled && m_game_settings != nullptr) {
+    if (auto result{m_game_settings->save(m_settings_path)}; !result) {
+      App::Log::warn(LogCategory::Core, "failed to save native settings: {}", result.error());
+    }
+  }
+  if (m_game_settings != nullptr && m_audio_settings_listener_id != 0) {
+    m_game_settings->remove_change_listener(m_audio_settings_listener_id);
+  }
+  if (m_game_settings != nullptr && m_display_settings_listener_id != 0) {
+    m_game_settings->remove_change_listener(m_display_settings_listener_id);
+  }
 
   // Release every GL-owning subsystem while the window's GL context is still
   // alive, then destroy the window (and its context) last. The interface
@@ -916,6 +1193,11 @@ void Application::process_event(const SDL_Event& event) {
   // Application-level termination.
   if (event.type == SDL_EVENT_QUIT || event.type == SDL_EVENT_TERMINATING) {
     stop();
+    return;
+  }
+
+  if (event.type >= SDL_EVENT_DISPLAY_FIRST && event.type <= SDL_EVENT_DISPLAY_LAST) {
+    m_window->notify_display_state_changed();
     return;
   }
 

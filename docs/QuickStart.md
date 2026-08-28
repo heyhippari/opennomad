@@ -71,7 +71,7 @@ The application currently starts in borderless fullscreen. Useful controls are:
 |---|---|
 | `Escape` | Skip a startup video; cancel in an interface where supported. |
 | Arrow keys / `Enter` | Navigate and confirm interface entries. |
-| `F11` or `Alt+Enter` | Toggle borderless fullscreen. |
+| `Alt+Enter` | Toggle between Windowed and the preferred fullscreen mode. |
 | `F12` | Release the captured mouse for the debug UI; click the scene to capture it again. |
 | `F3` | Toggle the performance overlay in a debug build. |
 

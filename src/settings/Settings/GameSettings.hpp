@@ -28,8 +28,8 @@ struct SettingChoice {
 /// Backend state for one discrete/enum setting.
 ///
 /// The UI never owns the selected index: interface rows only read/adjust this
-/// object. That keeps settings alive when interface 35 is closed and gives
-/// future configuration persistence and gameplay consumers one stable owner.
+/// object. The application-owned registry keeps settings alive when interface
+/// 35 is closed and gives engine consumers one stable source of truth.
 class ChoiceSetting {
  public:
   ChoiceSetting(std::vector<SettingChoice> choices, std::size_t selected_index);
@@ -114,6 +114,26 @@ class RuntimeControlBindings {
   Table m_joystick{};
 };
 
+struct GraphicsPreferences {
+  float clip_distance_metres{50.0F};
+  bool display_sky{true};
+  bool display_shadows{true};
+  std::uint8_t street_activity{3};
+  std::uint8_t detail_level{1};
+};
+
+enum class GameplayDifficulty : std::uint8_t {
+  k_easy = 0,
+  k_normal = 1,
+  k_hard = 2,
+};
+
+struct GameplayPreferences {
+  GameplayDifficulty melee_difficulty{GameplayDifficulty::k_normal};
+  GameplayDifficulty shooting_difficulty{GameplayDifficulty::k_normal};
+  bool combat_camera{true};
+};
+
 /// Process-lifetime OpenNomad settings registry.
 ///
 /// Choice and numeric values are owned here rather than by interface elements.
@@ -122,6 +142,7 @@ class RuntimeControlBindings {
 class GameSettings {
  public:
   using GameSettingChangeCallback = std::function<void(std::string_view stable_id)>;
+  using ListenerId = std::uint64_t;
 
   /// Defines a setting only when the stable ID is not already present.
   /// Reopening OPTIONS therefore preserves changes made earlier in the run.
@@ -129,7 +150,7 @@ class GameSettings {
       std::string stable_id, std::vector<SettingChoice> choices, std::size_t selected_index);
 
   /// Replaces a dynamic choice list. Used for values derived from the current
-  /// runtime environment (resolution / active renderer in Phase 2).
+  /// runtime environment (currently the placeholder Resolution row).
   void replace_choice(
       std::string stable_id, std::vector<SettingChoice> choices, std::size_t selected_index);
 
@@ -142,13 +163,27 @@ class GameSettings {
 
   bool adjust_choice(std::string_view stable_id, std::int32_t delta);
   bool adjust_number(std::string_view stable_id, std::int32_t delta);
+  bool set_choice_raw_value(std::string_view stable_id, std::int32_t raw_value, bool notify = true);
+  bool set_runtime_control_binding(
+      RuntimeControlDevice device, std::size_t group, std::size_t slot, std::uint32_t value);
+  void restore_runtime_keyboard_mouse_defaults();
+  void restore_runtime_joystick_defaults();
+
+  [[nodiscard]] GraphicsPreferences graphics_preferences() const;
+  [[nodiscard]] GameplayPreferences gameplay_preferences() const;
 
   [[nodiscard]] std::expected<void, std::string> load(const std::filesystem::path& path);
   [[nodiscard]] std::expected<void, std::string> save(const std::filesystem::path& path) const;
-  void set_change_callback(GameSettingChangeCallback callback);
+  [[nodiscard]] ListenerId add_change_listener(GameSettingChangeCallback callback);
+  void remove_change_listener(ListenerId listener_id);
 
   [[nodiscard]] std::string choice_label(std::string_view stable_id) const;
   [[nodiscard]] std::optional<std::int32_t> choice_raw_value(std::string_view stable_id) const;
+  /// Returns a loaded choice value even when its dynamic setting has not yet
+  /// been registered. This lets platform catalogs validate persisted values
+  /// after their runtime environment becomes available.
+  [[nodiscard]] std::optional<std::int32_t> loaded_choice_raw_value(
+      std::string_view stable_id) const;
   [[nodiscard]] std::optional<std::int32_t> number_value(std::string_view stable_id) const;
   [[nodiscard]] float number_fraction(std::string_view stable_id) const;
 
@@ -173,7 +208,8 @@ class GameSettings {
   std::map<std::string, std::int32_t, std::less<>> m_pending_choices;
   std::map<std::string, std::int32_t, std::less<>> m_pending_numbers;
   RuntimeControlBindings m_runtime_control_bindings;
-  GameSettingChangeCallback m_change_callback;
+  std::map<ListenerId, GameSettingChangeCallback> m_change_listeners;
+  ListenerId m_next_listener_id{1};
 };
 
 }  // namespace App::Settings

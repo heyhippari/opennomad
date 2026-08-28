@@ -2,6 +2,7 @@
 #include <imgui.h>
 
 #include <string>
+#include <string_view>
 
 #include "Core/Audio/AudioSystem.hpp"
 #include "Core/Audio/AudioTypes.hpp"
@@ -135,6 +136,8 @@ void DebugUI::show_audio_inspector() {
         ImGui::Indent();
         ImGui::Text("Provenance: %s",
             fmt::format("{}", Audio::audio_origin_name(voice.provenance.origin)).c_str());
+        const std::string_view category_name{Audio::sound_category_name(voice.category)};
+        ImGui::Text("Category: %.*s", static_cast<int>(category_name.size()), category_name.data());
         ImGui::Text("Scenario/source: %s -> SCX sound [%u] '%s' -> voice %u:%u -> owner %s",
             voice.scenario_name.empty() ? "unavailable" : voice.scenario_name.c_str(),
             voice.scenario_sound_index,
@@ -236,16 +239,28 @@ void DebugUI::show_audio_inspector() {
   ImGui::SeparatorText("Debug Overrides");
   ImGui::TextDisabled("Gain and transport controls modify live audio state.");
   float master{audio->master_gain()};
+  float dialogue{audio->dialogue_gain()};
   float sfx{audio->sfx_gain()};
+  float ambience{audio->ambience_gain()};
   float music{audio->music_gain()};
+  bool spatial_audio{audio->spatial_audio_enabled()};
   if (ImGui::SliderFloat("Master gain", &master, 0.0F, 2.0F)) {
     audio->set_master_gain(master);
   }
   if (ImGui::SliderFloat("SFX gain", &sfx, 0.0F, 2.0F)) {
     audio->set_sfx_gain(sfx);
   }
+  if (ImGui::SliderFloat("Dialogue gain", &dialogue, 0.0F, 2.0F)) {
+    audio->set_dialogue_gain(dialogue);
+  }
+  if (ImGui::SliderFloat("Ambience gain", &ambience, 0.0F, 2.0F)) {
+    audio->set_ambience_gain(ambience);
+  }
   if (ImGui::SliderFloat("Music gain", &music, 0.0F, 2.0F)) {
     audio->set_music_gain(music);
+  }
+  if (ImGui::Checkbox("Spatial audio", &spatial_audio)) {
+    audio->set_spatial_audio_enabled(spatial_audio);
   }
   if (ImGui::Button("Stop all SFX")) {
     audio->stop_all_sfx();

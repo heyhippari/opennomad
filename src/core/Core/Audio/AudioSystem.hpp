@@ -116,11 +116,17 @@ class AudioSystem {
   // --- Gains ---
 
   void set_master_gain(float gain);
+  void set_dialogue_gain(float gain);
   void set_sfx_gain(float gain);
+  void set_ambience_gain(float gain);
   void set_music_gain(float gain);
+  void set_spatial_audio_enabled(bool enabled);
   [[nodiscard]] float master_gain() const;
+  [[nodiscard]] float dialogue_gain() const;
   [[nodiscard]] float sfx_gain() const;
+  [[nodiscard]] float ambience_gain() const;
   [[nodiscard]] float music_gain() const;
+  [[nodiscard]] bool spatial_audio_enabled() const;
 
   // --- Music ---
 
@@ -177,6 +183,7 @@ class AudioSystem {
 
   /// Updates the snapshot after a frame.
   void rebuild_snapshot();
+  void refresh_voice_gains();
 
   void append_event(AudioEventSeverity severity, std::string message);
 
@@ -216,8 +223,11 @@ class AudioSystem {
   StopEventQueue m_stop_events;
 
   float m_master_gain{1.0F};
+  float m_dialogue_gain{1.0F};
   float m_sfx_gain{1.0F};
+  float m_ambience_gain{1.0F};
   float m_music_gain{1.0F};
+  bool m_spatial_audio_enabled{true};
 
   /// Omikron music-controller state (numeric track lookup, not the player).
   std::optional<std::int16_t> m_current_track_id;

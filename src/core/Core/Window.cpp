@@ -4,20 +4,29 @@
 #include <SDL3/SDL_events.h>
 #include <SDL3/SDL_keycode.h>
 #include <SDL3/SDL_mouse.h>
+#include <SDL3/SDL_stdinc.h>
 #include <SDL3/SDL_video.h>
 #include <glad/glad.h>
 #include <imgui.h>
 #include <imgui_impl_opengl3.h>
 #include <imgui_impl_sdl3.h>
 
+#include <cmath>
+#include <cstddef>
+#include <cstdint>
 #include <expected>
+#include <functional>
+#include <limits>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "Core/DPIHandler.hpp"
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Debug/Metrics.hpp"
+#include "Core/DisplayConfiguration.hpp"
 #include "Core/Log.hpp"
 #include "Core/LogCategory.hpp"
 #include "Core/Renderer.hpp"
@@ -66,16 +75,20 @@ Window::Window(const Settings& settings)
 
   // SDL_CreateWindow cannot be used in a member initializer (needs m_settings first).
   // NOLINTNEXTLINE(cppcoreguidelines-prefer-member-initializer)
-  SDL_WindowFlags window_flags{SDL_WINDOW_OPENGL | SDL_WINDOW_HIGH_PIXEL_DENSITY |
-                               SDL_WINDOW_RESIZABLE};
-  if (m_settings.start_fullscreen) {
-    window_flags |= SDL_WINDOW_FULLSCREEN;
-    m_window_mode = WindowMode::BorderlessFullscreen;
+  SDL_WindowFlags window_flags{
+      SDL_WINDOW_OPENGL | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_RESIZABLE};
+  if (m_settings.hidden) {
+    window_flags |= SDL_WINDOW_HIDDEN;
   }
-  m_window.reset(SDL_CreateWindow(
-      settings.title.c_str(), m_settings.width, m_settings.height, window_flags));
+  m_window.reset(
+      SDL_CreateWindow(settings.title.c_str(), m_settings.width, m_settings.height, window_flags));
 
   SDL_SetWindowMinimumSize(m_window.get(), 640, 480);
+  m_active_display_id = SDL_GetDisplayForWindow(m_window.get());
+
+  if (m_settings.display_mode != DisplayMode::k_windowed) {
+    static_cast<void>(apply_display_configuration(m_settings.display_mode, m_settings.resolution));
+  }
 
   // Seed the drawable size from SDL before the first resize event arrives.
   int pixel_width{0};
@@ -91,7 +104,9 @@ Window::Window(const Settings& settings)
     return;
   }
 
-  SDL_SetWindowPosition(m_window.get(), SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+  if (!m_settings.hidden) {
+    SDL_SetWindowPosition(m_window.get(), SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+  }
   // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast) Required by the glad loader API.
   gladLoadGLLoader(reinterpret_cast<GLADloadproc>(SDL_GL_GetProcAddress));
   SDL_GL_MakeCurrent(m_window.get(), m_gl_context.get());
@@ -273,9 +288,20 @@ void Window::on_event(const SDL_WindowEvent& event) {
       return;
     case SDL_EVENT_WINDOW_RESIZED:
       m_size.on_resized(event.data1, event.data2);
+      if (m_display_state_callback) {
+        m_display_state_callback(false);
+      }
       return;
     case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
       m_size.on_pixel_size_changed(event.data1, event.data2);
+      return;
+    case SDL_EVENT_WINDOW_MOVED:
+    case SDL_EVENT_WINDOW_DISPLAY_CHANGED:
+    case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
+      m_active_display_id = SDL_GetDisplayForWindow(m_window.get());
+      if (m_display_state_callback) {
+        m_display_state_callback(true);
+      }
       return;
     default:
       // Do nothing otherwise
@@ -283,25 +309,89 @@ void Window::on_event(const SDL_WindowEvent& event) {
   }
 }
 
-void Window::toggle_fullscreen() {
+bool Window::apply_display_configuration(
+    const DisplayMode mode, const DisplayResolution resolution) {
   APP_PROFILE_FUNCTION();
 
-  if (m_window_mode == WindowMode::Windowed) {
-    // Save the current windowed geometry so we can restore it later.
+  if (m_window == nullptr) {
+    return false;
+  }
+  m_active_display_id = SDL_GetDisplayForWindow(m_window.get());
+  if (m_actual_display_mode == DisplayMode::k_windowed && mode != DisplayMode::k_windowed) {
     SDL_GetWindowSize(m_window.get(), &m_windowed_width, &m_windowed_height);
     SDL_GetWindowPosition(m_window.get(), &m_window_pos_x, &m_window_pos_y);
-
-    SDL_SetWindowFullscreen(m_window.get(), true);
-    m_window_mode = WindowMode::BorderlessFullscreen;
-  } else {
-    // Set the desired windowed geometry *before* leaving fullscreen — this
-    // avoids a race where SDL3 auto-restores an unexpected size and then a
-    // subsequent SDL_SetWindowSize call is ignored by the window manager.
-    SDL_SetWindowSize(m_window.get(), m_windowed_width, m_windowed_height);
-    SDL_SetWindowPosition(m_window.get(), m_window_pos_x, m_window_pos_y);
-    SDL_SetWindowFullscreen(m_window.get(), false);
-    m_window_mode = WindowMode::Windowed;
   }
+
+  SDL_DisplayMode selected{};
+  const SDL_DisplayMode* selected_ptr{nullptr};
+  if (mode == DisplayMode::k_exclusive_fullscreen) {
+    int count{0};
+    SDL_DisplayMode** modes{SDL_GetFullscreenDisplayModes(m_active_display_id, &count)};
+    if (modes != nullptr) {
+      const SDL_DisplayMode* desktop{SDL_GetDesktopDisplayMode(m_active_display_id)};
+      float best_distance{std::numeric_limits<float>::max()};
+      for (int index{0}; index < count; ++index) {
+        const SDL_DisplayMode* candidate{modes[index]};
+        if (candidate == nullptr || candidate->w != resolution.width ||
+            candidate->h != resolution.height) {
+          continue;
+        }
+        const float distance{
+            desktop == nullptr ? 0.0F : std::abs(candidate->refresh_rate - desktop->refresh_rate)};
+        if (selected_ptr == nullptr || distance < best_distance) {
+          selected = *candidate;
+          selected_ptr = &selected;
+          best_distance = distance;
+        }
+      }
+      SDL_free(static_cast<void*>(modes));
+    }
+    if (selected_ptr == nullptr) {
+      App::Log::warn(LogCategory::Renderer,
+          "exclusive display mode unavailable: {}",
+          display_resolution_label(resolution));
+      return false;
+    }
+  }
+
+  if (!SDL_SetWindowFullscreenMode(m_window.get(), selected_ptr)) {
+    App::Log::warn(LogCategory::Renderer, "SDL_SetWindowFullscreenMode failed: {}", SDL_GetError());
+    return false;
+  }
+  if (mode == DisplayMode::k_windowed) {
+    if (!SDL_SetWindowFullscreen(m_window.get(), false)) {
+      App::Log::warn(LogCategory::Renderer, "SDL_SetWindowFullscreen failed: {}", SDL_GetError());
+      return false;
+    }
+    if (!SDL_SyncWindow(m_window.get())) {
+      App::Log::warn(LogCategory::Renderer, "SDL_SyncWindow failed: {}", SDL_GetError());
+    }
+    const int target_width{
+        m_actual_display_mode == DisplayMode::k_windowed ? resolution.width : m_windowed_width};
+    const int target_height{
+        m_actual_display_mode == DisplayMode::k_windowed ? resolution.height : m_windowed_height};
+    if (!SDL_SetWindowSize(m_window.get(), target_width, target_height)) {
+      App::Log::warn(
+          LogCategory::Renderer, "failed to restore windowed geometry: {}", SDL_GetError());
+      return false;
+    }
+    const char* video_driver{SDL_GetCurrentVideoDriver()};
+    if (m_actual_display_mode != DisplayMode::k_windowed &&
+      supports_toplevel_window_positioning(video_driver == nullptr ? "" : video_driver) &&
+      !SDL_SetWindowPosition(m_window.get(), m_window_pos_x, m_window_pos_y)) {
+      App::Log::warn(LogCategory::Renderer,
+        "failed to restore windowed position; continuing without it: {}",
+        SDL_GetError());
+    }
+  } else if (!SDL_SetWindowFullscreen(m_window.get(), true)) {
+    App::Log::warn(LogCategory::Renderer, "SDL_SetWindowFullscreen failed: {}", SDL_GetError());
+    return false;
+  }
+  if (!SDL_SyncWindow(m_window.get())) {
+    App::Log::warn(LogCategory::Renderer, "SDL_SyncWindow failed: {}", SDL_GetError());
+  }
+  refresh_actual_size();
+  return reconcile_display_state() == mode;
 }
 
 void Window::on_keyboard_event(const SDL_KeyboardEvent& event) {
@@ -311,12 +401,14 @@ void Window::on_keyboard_event(const SDL_KeyboardEvent& event) {
     return;
   }
 
-  // Alt+Enter or F11 toggles fullscreen.
+  // Alt+Enter is coordinated by Application so shortcuts and Options update
+  // the same persisted display setting.
   const bool alt_enter{(event.key == SDLK_RETURN) && ((event.mod & SDL_KMOD_ALT) != 0)};
-  const bool f11{event.key == SDLK_F11};
 
-  if (alt_enter || f11) {
-    toggle_fullscreen();
+  if (alt_enter) {
+    if (m_display_shortcut_callback) {
+      m_display_shortcut_callback();
+    }
     return;
   }
 
@@ -328,13 +420,113 @@ void Window::on_keyboard_event(const SDL_KeyboardEvent& event) {
   }
 }
 
+DisplayModeCatalog Window::display_mode_catalog() const {
+  const SDL_DisplayID display_id{SDL_GetDisplayForWindow(m_window.get())};
+  int count{0};
+  SDL_DisplayMode** modes{SDL_GetFullscreenDisplayModes(display_id, &count)};
+  std::vector<DisplayModeInfo> available;
+  if (modes != nullptr) {
+    available.reserve(static_cast<std::size_t>(count));
+    for (int index{0}; index < count; ++index) {
+      if (modes[index] != nullptr) {
+        available.push_back(
+            DisplayModeInfo{.resolution = {.width = modes[index]->w, .height = modes[index]->h},
+                .refresh_rate = modes[index]->refresh_rate,
+                .format = static_cast<std::uint32_t>(modes[index]->format),
+                .pixel_density = modes[index]->pixel_density});
+      }
+    }
+    SDL_free(static_cast<void*>(modes));
+  }
+  const SDL_DisplayMode* desktop{SDL_GetDesktopDisplayMode(display_id)};
+  const std::optional<DisplayResolution> desktop_resolution{
+      desktop == nullptr
+          ? std::nullopt
+          : std::optional<DisplayResolution>{{.width = desktop->w, .height = desktop->h}}};
+  return build_display_mode_catalog(available,
+      desktop_resolution,
+      m_actual_display_mode == DisplayMode::k_windowed
+          ? std::optional<DisplayResolution>{{.width = m_size.width, .height = m_size.height}}
+          : std::nullopt);
+}
+
+DisplayMode Window::actual_display_mode() const {
+  return m_actual_display_mode;
+}
+
+DisplayMode Window::reconcile_display_state() {
+  if (m_window == nullptr) {
+    return m_actual_display_mode;
+  }
+  m_active_display_id = SDL_GetDisplayForWindow(m_window.get());
+  const bool fullscreen{(SDL_GetWindowFlags(m_window.get()) & SDL_WINDOW_FULLSCREEN) != 0};
+  if (!fullscreen) {
+    m_actual_display_mode = DisplayMode::k_windowed;
+  } else {
+    m_actual_display_mode = SDL_GetWindowFullscreenMode(m_window.get()) == nullptr
+                                ? DisplayMode::k_borderless_fullscreen
+                                : DisplayMode::k_exclusive_fullscreen;
+  }
+  return m_actual_display_mode;
+}
+
+void Window::refresh_actual_size() {
+  if (m_window == nullptr) {
+    return;
+  }
+  int width{0};
+  int height{0};
+  if (SDL_GetWindowSize(m_window.get(), &width, &height) && width > 0 && height > 0) {
+    m_size.on_resized(width, height);
+  }
+  int pixel_width{0};
+  int pixel_height{0};
+  if (SDL_GetWindowSizeInPixels(m_window.get(), &pixel_width, &pixel_height) && pixel_width > 0 &&
+      pixel_height > 0) {
+    m_size.on_pixel_size_changed(pixel_width, pixel_height);
+  }
+}
+
+DisplayResolution Window::actual_resolution() const {
+  return {.width = m_size.width, .height = m_size.height};
+}
+
+SDL_DisplayID Window::active_display_id() const {
+  return SDL_GetDisplayForWindow(m_window.get());
+}
+
+void Window::set_display_shortcut_callback(std::function<void()> callback) {
+  m_display_shortcut_callback = std::move(callback);
+}
+
+void Window::set_display_state_callback(std::function<void(bool catalog_changed)> callback) {
+  m_display_state_callback = std::move(callback);
+}
+
+void Window::notify_display_state_changed() {
+  m_active_display_id = SDL_GetDisplayForWindow(m_window.get());
+  if (m_display_state_callback) {
+    m_display_state_callback(true);
+  }
+}
+
+bool Window::show() {
+  if (m_window == nullptr || !SDL_ShowWindow(m_window.get())) {
+    App::Log::warn(LogCategory::Renderer, "SDL_ShowWindow failed: {}", SDL_GetError());
+    return false;
+  }
+  return true;
+}
+
 SDL_Window* Window::get_native_window() const {
   APP_PROFILE_FUNCTION();
 
   return m_window.get();
 }
 
-Debug::DebugUI& Window::debug_ui() { return m_debug_ui; }
+Debug::DebugUI& Window::debug_ui() {
+  return m_debug_ui;
+}
 
 bool Window::set_relative_mouse_mode(const bool enabled) {
   APP_PROFILE_FUNCTION();

@@ -27,6 +27,7 @@ class VoiceOverPlayer {
   void shutdown();
   [[nodiscard]] bool play(std::string display_name, SDL_AudioSpec spec, VoiceOverSamples samples);
   void stop();
+  void set_gain(float gain);
   [[nodiscard]] bool is_playing() const;
 
  private:
@@ -34,6 +35,7 @@ class VoiceOverPlayer {
   MIX_Track* m_track{nullptr};
   VoiceOverSamples m_samples;
   std::string m_source_name;
+  float m_gain{1.0F};
 };
 
 }  // namespace App::Audio

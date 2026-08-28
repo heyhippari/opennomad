@@ -5,18 +5,18 @@
 #include <cstdint>
 #include <expected>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <string>
 #include <utility>
 
 #include "Core/Debug/DebugUI.hpp"
+#include "Core/DisplayConfiguration.hpp"
 #include "Core/Renderer.hpp"
 #include "Core/Resources.hpp"
 #include "Core/WindowSizeState.hpp"
 
 namespace App {
-
-enum class WindowMode : std::uint8_t { Windowed, BorderlessFullscreen };
 
 class Window {
  public:
@@ -24,9 +24,9 @@ class Window {
     std::string title;
     int width{800};
     int height{600};
-    /// Creates the window already fullscreen; F11 / Alt+Enter then restores
-    /// the windowed size.
-    bool start_fullscreen{false};
+    DisplayMode display_mode{DisplayMode::k_windowed};
+    DisplayResolution resolution{.width = 800, .height = 600};
+    bool hidden{false};
   };
 
   /// Creates the SDL window, GL context, ImGui backend and renderer state.
@@ -50,7 +50,16 @@ class Window {
   /// before swapping and bypasses the normal begin/end frame pair.
   void render_debug_ui_overlay(float delta_time);
 
-  void toggle_fullscreen();
+  [[nodiscard]] bool apply_display_configuration(DisplayMode mode, DisplayResolution resolution);
+  [[nodiscard]] DisplayModeCatalog display_mode_catalog() const;
+  [[nodiscard]] DisplayMode actual_display_mode() const;
+  DisplayMode reconcile_display_state();
+  [[nodiscard]] SDL_DisplayID active_display_id() const;
+  [[nodiscard]] DisplayResolution actual_resolution() const;
+  [[nodiscard]] bool show();
+  void set_display_shortcut_callback(std::function<void()> callback);
+  void set_display_state_callback(std::function<void(bool catalog_changed)> callback);
+  void notify_display_state_changed();
   void on_minimize();
   void on_shown();
   static void on_close();
@@ -109,6 +118,7 @@ class Window {
   };
 
   explicit Window(const Settings& settings);
+  void refresh_actual_size();
 
   const Settings m_settings;
   // Declaration order matters: members are destroyed in reverse order, so the
@@ -116,7 +126,10 @@ class Window {
   std::unique_ptr<SDL_Window, WindowDeleter> m_window;
   GlContext m_gl_context;
 
-  WindowMode m_window_mode{WindowMode::Windowed};
+  DisplayMode m_actual_display_mode{DisplayMode::k_windowed};
+  SDL_DisplayID m_active_display_id{0};
+  std::function<void()> m_display_shortcut_callback;
+  std::function<void(bool catalog_changed)> m_display_state_callback;
   bool m_minimized{false};
 
   /// Cached logical and drawable dimensions, updated from SDL resize events.

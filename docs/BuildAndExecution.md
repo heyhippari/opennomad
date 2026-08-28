@@ -122,7 +122,7 @@ all platforms. See [Quick start](QuickStart.md#3-point-opennomad-at-the-game-dat
 
 - `Escape` skips startup videos and acts as interface cancel where implemented.
 - Arrow keys and `Enter` navigate the current interface.
-- `F11` or `Alt+Enter` toggles borderless fullscreen.
+- `Alt+Enter` toggles between Windowed and the preferred fullscreen mode.
 - `F12` releases the mouse for the debug UI; clicking outside ImGui captures it again.
 - `F3` toggles the performance overlay in debug builds.
 

@@ -74,7 +74,7 @@ struct OptionsBindingPageDefinition {
   std::span<const OptionsBindingRowDefinition> bindings;
 };
 
-inline constexpr std::uint16_t k_options_interface_id{35};
+inline constexpr std::int32_t k_options_interface_id{35};
 inline constexpr char k_options_root_font_key{'S'};
 inline constexpr char k_options_value_font_key{'J'};
 inline constexpr std::uint32_t k_options_text_flags{0x80000010U};
@@ -137,7 +137,7 @@ inline constexpr std::array<OptionsRowDefinition, 6> k_options_root_rows{{
         .kind = OptionsRowKind::k_submenu,
         .choices = {},
         .default_choice = 0,
-        .literal_label = {},
+        .literal_label = "Graphics",
         .accent = false},
     {.stable_id = "audio",
         .runtime_option_index = 9,
@@ -145,7 +145,7 @@ inline constexpr std::array<OptionsRowDefinition, 6> k_options_root_rows{{
         .kind = OptionsRowKind::k_submenu,
         .choices = {},
         .default_choice = 0,
-        .literal_label = {},
+        .literal_label = "Audio",
         .accent = false},
     {.stable_id = "game",
         .runtime_option_index = 14,
@@ -153,7 +153,7 @@ inline constexpr std::array<OptionsRowDefinition, 6> k_options_root_rows{{
         .kind = OptionsRowKind::k_submenu,
         .choices = {},
         .default_choice = 0,
-        .literal_label = {},
+        .literal_label = "Gameplay",
         .accent = false},
     {.stable_id = "controls",
         .runtime_option_index = 19,
@@ -161,7 +161,7 @@ inline constexpr std::array<OptionsRowDefinition, 6> k_options_root_rows{{
         .kind = OptionsRowKind::k_submenu,
         .choices = {},
         .default_choice = 0,
-        .literal_label = {},
+        .literal_label = "Controls",
         .accent = false},
     {.stable_id = "enhancements",
         .runtime_option_index = -1,
@@ -177,7 +177,7 @@ inline constexpr std::array<OptionsRowDefinition, 6> k_options_root_rows{{
         .kind = OptionsRowKind::k_back,
         .choices = {},
         .default_choice = 0,
-        .literal_label = {},
+        .literal_label = "Back",
         .accent = false},
 }};
 inline constexpr OptionsPageDefinition k_options_root_page{
@@ -211,8 +211,8 @@ inline constexpr std::array<OptionsChoiceDefinition, 3> k_options_detail_choices
 }};
 
 inline constexpr std::array<OptionsChoiceDefinition, 2> k_options_3d_sound_choices{{
-    {.runtime_string_index = 62, .raw_value = 0, .literal_label = {}},
-    {.runtime_string_index = 63, .raw_value = 1, .literal_label = {}},
+    {.runtime_string_index = 62, .raw_value = 0, .literal_label = "Off"},
+    {.runtime_string_index = 63, .raw_value = 1, .literal_label = "On"},
 }};
 
 inline constexpr std::array<OptionsChoiceDefinition, 3> k_options_difficulty_choices{{
@@ -236,9 +236,15 @@ inline constexpr std::array<OptionsChoiceDefinition, 2> k_options_fight_camera_c
 ///   street activity = 3        (0x0090E726)
 ///   detail level = 1           (0x0090E727)
 ///
-/// Resolution and renderer are Runtime type-4 dynamic values. OpenNomad seeds
-/// those from the live window/OpenGL environment rather than inventing legacy
-/// DirectDraw device choices.
+inline constexpr std::array<OptionsChoiceDefinition, 3> k_options_display_mode_choices{{
+    {.runtime_string_index = -1, .raw_value = 0, .literal_label = "Windowed"},
+    {.runtime_string_index = -1, .raw_value = 1, .literal_label = "Borderless Fullscreen"},
+    {.runtime_string_index = -1, .raw_value = 2, .literal_label = "Exclusive Fullscreen"},
+}};
+
+/// Runtime descriptor 2 was a type-4 display selector containing legacy
+/// resolution/BPP information. OpenNomad preserves that provenance on the
+/// row but exposes modern SDL dimensions without BPP or refresh-rate values.
 inline constexpr std::array<OptionsRowDefinition, 9> k_options_video_rows{{
     {.stable_id = "video.title",
         .runtime_option_index = 1,
@@ -246,15 +252,23 @@ inline constexpr std::array<OptionsRowDefinition, 9> k_options_video_rows{{
         .kind = OptionsRowKind::k_submenu,
         .choices = {},
         .default_choice = 0,
-        .literal_label = {},
+        .literal_label = "Graphics",
         .accent = true},
-    {.stable_id = "video.resolution",
+    {.stable_id = "display.mode",
+        .runtime_option_index = -1,
+        .runtime_label_string_index = -1,
+        .kind = OptionsRowKind::k_enum,
+        .choices = std::span<const OptionsChoiceDefinition>{k_options_display_mode_choices},
+        .default_choice = 1,
+        .literal_label = "Display Mode",
+        .accent = false},
+    {.stable_id = "display.resolution",
         .runtime_option_index = 2,
         .runtime_label_string_index = 1,
-        .kind = OptionsRowKind::k_dynamic,
+        .kind = OptionsRowKind::k_enum,
         .choices = {},
         .default_choice = 0,
-        .literal_label = {},
+        .literal_label = "Resolution",
         .accent = false},
     {.stable_id = "video.clipping_distance",
         .runtime_option_index = 3,
@@ -262,7 +276,7 @@ inline constexpr std::array<OptionsRowDefinition, 9> k_options_video_rows{{
         .kind = OptionsRowKind::k_enum,
         .choices = std::span<const OptionsChoiceDefinition>{k_options_clipping_choices},
         .default_choice = 1,
-        .literal_label = {},
+        .literal_label = "Draw Distance",
         .accent = false},
     {.stable_id = "video.display_sky",
         .runtime_option_index = 4,
@@ -270,7 +284,7 @@ inline constexpr std::array<OptionsRowDefinition, 9> k_options_video_rows{{
         .kind = OptionsRowKind::k_enum,
         .choices = std::span<const OptionsChoiceDefinition>{k_options_yes_no_choices},
         .default_choice = 1,
-        .literal_label = {},
+        .literal_label = "Sky",
         .accent = false},
     {.stable_id = "video.display_shadow",
         .runtime_option_index = 5,
@@ -278,7 +292,7 @@ inline constexpr std::array<OptionsRowDefinition, 9> k_options_video_rows{{
         .kind = OptionsRowKind::k_enum,
         .choices = std::span<const OptionsChoiceDefinition>{k_options_yes_no_choices},
         .default_choice = 1,
-        .literal_label = {},
+        .literal_label = "Shadows",
         .accent = false},
     {.stable_id = "video.street_activity",
         .runtime_option_index = 6,
@@ -286,7 +300,7 @@ inline constexpr std::array<OptionsRowDefinition, 9> k_options_video_rows{{
         .kind = OptionsRowKind::k_enum,
         .choices = std::span<const OptionsChoiceDefinition>{k_options_street_activity_choices},
         .default_choice = 3,
-        .literal_label = {},
+        .literal_label = "Crowd Density",
         .accent = false},
     {.stable_id = "video.detail_level",
         .runtime_option_index = 7,
@@ -294,15 +308,7 @@ inline constexpr std::array<OptionsRowDefinition, 9> k_options_video_rows{{
         .kind = OptionsRowKind::k_enum,
         .choices = std::span<const OptionsChoiceDefinition>{k_options_detail_choices},
         .default_choice = 1,
-        .literal_label = {},
-        .accent = false},
-    {.stable_id = "video.renderer",
-        .runtime_option_index = 8,
-        .runtime_label_string_index = 67,
-        .kind = OptionsRowKind::k_dynamic,
-        .choices = {},
-        .default_choice = 0,
-        .literal_label = {},
+        .literal_label = "Detail Level",
         .accent = false},
     {.stable_id = "video.back",
         .runtime_option_index = 72,
@@ -310,7 +316,7 @@ inline constexpr std::array<OptionsRowDefinition, 9> k_options_video_rows{{
         .kind = OptionsRowKind::k_back,
         .choices = {},
         .default_choice = 0,
-        .literal_label = {},
+        .literal_label = "Back",
         .accent = false},
 }};
 inline constexpr OptionsPageDefinition k_options_video_page{
@@ -323,14 +329,14 @@ inline constexpr OptionsPageDefinition k_options_video_page{
 /// input handler changes them by 10 per left/right press and clamps at the
 /// endpoints. OMK_SAVE initializes the corresponding attenuation fields to
 /// zero, which the Runtime callbacks present as UI volume 100.
-inline constexpr std::array<OptionsRowDefinition, 6> k_options_audio_rows{{
+inline constexpr std::array<OptionsRowDefinition, 7> k_options_audio_rows{{
     {.stable_id = "audio.title",
         .runtime_option_index = 9,
         .runtime_label_string_index = 16,
         .kind = OptionsRowKind::k_submenu,
         .choices = {},
         .default_choice = 0,
-        .literal_label = {},
+        .literal_label = "Audio",
         .accent = true},
     {.stable_id = "audio.dialogue_volume",
         .runtime_option_index = 10,
@@ -338,15 +344,15 @@ inline constexpr std::array<OptionsRowDefinition, 6> k_options_audio_rows{{
         .kind = OptionsRowKind::k_slider,
         .choices = {},
         .default_choice = 0,
-        .literal_label = {},
+        .literal_label = "Dialogue Volume",
         .accent = false},
-    {.stable_id = "audio.ambient_volume",
-        .runtime_option_index = 11,
-        .runtime_label_string_index = 18,
+    {.stable_id = "audio.music_volume",
+        .runtime_option_index = -1,
+        .runtime_label_string_index = -1,
         .kind = OptionsRowKind::k_slider,
         .choices = {},
         .default_choice = 0,
-        .literal_label = {},
+        .literal_label = "Music Volume",
         .accent = false},
     {.stable_id = "audio.sfx_volume",
         .runtime_option_index = 12,
@@ -354,15 +360,23 @@ inline constexpr std::array<OptionsRowDefinition, 6> k_options_audio_rows{{
         .kind = OptionsRowKind::k_slider,
         .choices = {},
         .default_choice = 0,
-        .literal_label = {},
+        .literal_label = "Sound Effects Volume",
         .accent = false},
-    {.stable_id = "audio.3d_sound",
+    {.stable_id = "audio.ambient_volume",
+        .runtime_option_index = 11,
+        .runtime_label_string_index = 18,
+        .kind = OptionsRowKind::k_slider,
+        .choices = {},
+        .default_choice = 0,
+        .literal_label = "Ambience Volume",
+        .accent = false},
+    {.stable_id = "audio.spatial_audio",
         .runtime_option_index = 13,
         .runtime_label_string_index = 20,
         .kind = OptionsRowKind::k_enum,
         .choices = std::span<const OptionsChoiceDefinition>{k_options_3d_sound_choices},
         .default_choice = 1,
-        .literal_label = {},
+        .literal_label = "Spatial Audio",
         .accent = false},
     {.stable_id = "audio.back",
         .runtime_option_index = 72,
@@ -370,7 +384,7 @@ inline constexpr std::array<OptionsRowDefinition, 6> k_options_audio_rows{{
         .kind = OptionsRowKind::k_back,
         .choices = {},
         .default_choice = 0,
-        .literal_label = {},
+        .literal_label = "Back",
         .accent = false},
 }};
 inline constexpr OptionsPageDefinition k_options_audio_page{
@@ -385,7 +399,7 @@ inline constexpr std::array<OptionsRowDefinition, 5> k_options_game_rows{{
         .kind = OptionsRowKind::k_submenu,
         .choices = {},
         .default_choice = 0,
-        .literal_label = {},
+        .literal_label = "Gameplay",
         .accent = true},
     {.stable_id = "game.fight_difficulty",
         .runtime_option_index = 16,
@@ -393,7 +407,7 @@ inline constexpr std::array<OptionsRowDefinition, 5> k_options_game_rows{{
         .kind = OptionsRowKind::k_enum,
         .choices = std::span<const OptionsChoiceDefinition>{k_options_difficulty_choices},
         .default_choice = 1,
-        .literal_label = {},
+        .literal_label = "Melee Difficulty",
         .accent = false},
     {.stable_id = "game.shoot_difficulty",
         .runtime_option_index = 17,
@@ -401,7 +415,7 @@ inline constexpr std::array<OptionsRowDefinition, 5> k_options_game_rows{{
         .kind = OptionsRowKind::k_enum,
         .choices = std::span<const OptionsChoiceDefinition>{k_options_difficulty_choices},
         .default_choice = 1,
-        .literal_label = {},
+        .literal_label = "Shooting Difficulty",
         .accent = false},
     {.stable_id = "game.fight_camera",
         .runtime_option_index = 18,
@@ -409,7 +423,7 @@ inline constexpr std::array<OptionsRowDefinition, 5> k_options_game_rows{{
         .kind = OptionsRowKind::k_enum,
         .choices = std::span<const OptionsChoiceDefinition>{k_options_fight_camera_choices},
         .default_choice = 1,
-        .literal_label = {},
+        .literal_label = "Combat Camera",
         .accent = false},
     {.stable_id = "game.back",
         .runtime_option_index = 72,
@@ -417,7 +431,7 @@ inline constexpr std::array<OptionsRowDefinition, 5> k_options_game_rows{{
         .kind = OptionsRowKind::k_back,
         .choices = {},
         .default_choice = 0,
-        .literal_label = {},
+        .literal_label = "Back",
         .accent = false},
 }};
 inline constexpr OptionsPageDefinition k_options_game_page{
@@ -441,13 +455,13 @@ inline constexpr std::array<OptionsRowDefinition, 4> k_options_enhancements_rows
         .default_choice = 0,
         .literal_label = "Enhancements",
         .accent = true},
-    {.stable_id = "enhancements.menu_interpolation",
+    {.stable_id = "enhancements.animation_interpolation",
         .runtime_option_index = -1,
         .runtime_label_string_index = -1,
         .kind = OptionsRowKind::k_enum,
         .choices = std::span<const OptionsChoiceDefinition>{k_options_interpolation_choices},
         .default_choice = 1,
-        .literal_label = "Menu animation interpolation",
+        .literal_label = "Animation Interpolation",
         .accent = false},
     {.stable_id = "enhancements.menu_transition_style",
         .runtime_option_index = -1,
@@ -455,7 +469,7 @@ inline constexpr std::array<OptionsRowDefinition, 4> k_options_enhancements_rows
         .kind = OptionsRowKind::k_enum,
         .choices = std::span<const OptionsChoiceDefinition>{k_options_transition_style_choices},
         .default_choice = 0,
-        .literal_label = "Menu transition style",
+        .literal_label = "Menu Transitions",
         .accent = false},
     {.stable_id = "enhancements.back",
         .runtime_option_index = 72,
@@ -463,14 +477,14 @@ inline constexpr std::array<OptionsRowDefinition, 4> k_options_enhancements_rows
         .kind = OptionsRowKind::k_back,
         .choices = {},
         .default_choice = 0,
-        .literal_label = {},
+        .literal_label = "Back",
         .accent = false},
 }};
 inline constexpr OptionsPageDefinition k_options_enhancements_page{.stable_id = "enhancements",
     .rows = std::span<const OptionsRowDefinition>{k_options_enhancements_rows}};
 
 /// Runtime Controls root @ 0x004919E0. Descriptor 20 enters keyboard/mouse
-/// mode, 21 is reserved for future Gamepad controls, 22 Mouse Settings and
+/// mode, 21 is reserved for future controller controls, 22 Mouse and
 /// 72 returns to OPTIONS.
 inline constexpr std::array<OptionsRowDefinition, 5> k_options_controls_rows{{
     {.stable_id = "controls.title",
@@ -479,7 +493,7 @@ inline constexpr std::array<OptionsRowDefinition, 5> k_options_controls_rows{{
         .kind = OptionsRowKind::k_submenu,
         .choices = {},
         .default_choice = 0,
-        .literal_label = {},
+        .literal_label = "Controls",
         .accent = true},
     {.stable_id = "controls.keyboard_mouse",
         .runtime_option_index = 20,
@@ -487,7 +501,7 @@ inline constexpr std::array<OptionsRowDefinition, 5> k_options_controls_rows{{
         .kind = OptionsRowKind::k_submenu,
         .choices = {},
         .default_choice = 0,
-        .literal_label = {},
+        .literal_label = "Keyboard & Mouse",
         .accent = false},
     {.stable_id = "controls.gamepad",
         .runtime_option_index = 21,
@@ -495,7 +509,7 @@ inline constexpr std::array<OptionsRowDefinition, 5> k_options_controls_rows{{
         .kind = OptionsRowKind::k_submenu,
         .choices = {},
         .default_choice = 0,
-        .literal_label = "Gamepad controls",
+        .literal_label = "Controller",
         .accent = false},
     {.stable_id = "controls.mouse_settings",
         .runtime_option_index = 22,
@@ -503,7 +517,7 @@ inline constexpr std::array<OptionsRowDefinition, 5> k_options_controls_rows{{
         .kind = OptionsRowKind::k_submenu,
         .choices = {},
         .default_choice = 0,
-        .literal_label = {},
+        .literal_label = "Mouse",
         .accent = false},
     {.stable_id = "controls.back",
         .runtime_option_index = 72,
@@ -511,7 +525,7 @@ inline constexpr std::array<OptionsRowDefinition, 5> k_options_controls_rows{{
         .kind = OptionsRowKind::k_back,
         .choices = {},
         .default_choice = 0,
-        .literal_label = {},
+        .literal_label = "Back",
         .accent = false},
 }};
 inline constexpr OptionsPageDefinition k_options_controls_page{.stable_id = "controls",
@@ -527,7 +541,7 @@ inline constexpr std::array<OptionsRowDefinition, 6> k_options_keyboard_categori
         .kind = OptionsRowKind::k_submenu,
         .choices = {},
         .default_choice = 0,
-        .literal_label = {},
+        .literal_label = "Keyboard & Mouse",
         .accent = true},
     {.stable_id = "controls.keyboard.group0",
         .runtime_option_index = 28,
@@ -669,19 +683,19 @@ static_assert(runtime_options_row_y(
 static_assert(runtime_options_row_y(
                   5, k_options_root_rows.size(), OptionsInvocationMode::k_start_menu) == 380);
 
-// Nine Video rows use Runtime's 280-unit branch: start 120, step 32.
+// Nine Graphics rows use Runtime's 280-unit branch: start 120, step 32.
 static_assert(runtime_options_row_step(k_options_video_rows.size()) == 32);
 static_assert(runtime_options_row_y(
                   0, k_options_video_rows.size(), OptionsInvocationMode::k_start_menu) == 120);
 static_assert(runtime_options_row_y(
                   8, k_options_video_rows.size(), OptionsInvocationMode::k_start_menu) == 376);
 
-// Six Audio rows use a 52-unit step: 120,172,224,276,328,380.
-static_assert(runtime_options_row_step(k_options_audio_rows.size()) == 52);
+// Seven Audio rows use Runtime's 280-unit branch: start 120, step 43.
+static_assert(runtime_options_row_step(k_options_audio_rows.size()) == 43);
 static_assert(runtime_options_row_y(
                   0, k_options_audio_rows.size(), OptionsInvocationMode::k_start_menu) == 120);
 static_assert(runtime_options_row_y(
-                  5, k_options_audio_rows.size(), OptionsInvocationMode::k_start_menu) == 380);
+                  6, k_options_audio_rows.size(), OptionsInvocationMode::k_start_menu) == 378);
 
 // Five Game rows share the root page's 65-unit step: 120..380.
 static_assert(runtime_options_row_step(k_options_game_rows.size()) == 65);

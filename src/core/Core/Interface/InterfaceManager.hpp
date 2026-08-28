@@ -4,7 +4,6 @@
 #include <cstdint>
 #include <deque>
 #include <expected>
-#include <filesystem>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -15,6 +14,7 @@
 
 #include "Core/Audio/AudioTypes.hpp"
 #include "Core/Dialog/DialogRuntime.hpp"
+#include "Core/DisplayConfiguration.hpp"
 #include "Core/Interface/FontManager.hpp"
 #include "Core/Interface/I2DModel.hpp"
 #include "Core/Interface/I2DStateTransition.hpp"
@@ -33,6 +33,10 @@ struct InputSource;
 
 namespace App::Audio {
 class AudioSystem;
+}
+
+namespace App {
+class Window;
 }
 
 namespace App::Interface {
@@ -112,7 +116,7 @@ void commit_transition_destinations(std::span<const TransitionStateDestination> 
 /// stays alive), while only one instance receives navigation input.
 class InterfaceManager {
  public:
-  InterfaceManager();
+  explicit InterfaceManager(App::Settings::GameSettings& game_settings);
   ~InterfaceManager();
 
   InterfaceManager(const InterfaceManager&) = delete;
@@ -212,22 +216,23 @@ class InterfaceManager {
     return m_fonts;
   }
 
-  /// Runtime-independent settings backend used by OPTIONS rows and, later, by
-  /// gameplay/rendering consumers and persistence.
+  /// Application-owned settings backend used by OPTIONS rows.
   [[nodiscard]] App::Settings::GameSettings& game_settings() {
-    return m_game_settings;
+    return *m_game_settings;
   }
   [[nodiscard]] const App::Settings::GameSettings& game_settings() const {
-    return m_game_settings;
+    return *m_game_settings;
   }
-
-  /// Persists native OpenNomad settings when persistence is available.
-  void persist_game_settings();
 
   /// Sets the animated background's presentation mode (stepped or
   /// interpolated) for every resident instance. Debug/inspection helper.
   void set_background_interpolated(bool interpolated);
   void set_audio_system(Audio::AudioSystem* audio);
+  void set_window(Window* window);
+  void refresh_display_options();
+  [[nodiscard]] Window* window() const {
+    return m_window;
+  }
 
   /// Reads the background presentation mode from the first resident instance
   /// (interpolated when none). Debug/inspection helper.
@@ -300,10 +305,10 @@ class InterfaceManager {
 
   std::unique_ptr<I2DRenderer> m_renderer;
   Audio::AudioSystem* m_audio_system{nullptr};
+  Window* m_window{nullptr};
   FontManager m_fonts;
-  App::Settings::GameSettings m_game_settings;
-  std::filesystem::path m_settings_path;
-  bool m_settings_persistence_enabled{true};
+  App::Settings::GameSettings* m_game_settings{nullptr};
+  App::Settings::GameSettings::ListenerId m_settings_listener_id{0};
   /// Resident interfaces in opening order (presentation order).
   std::vector<std::unique_ptr<InterfaceInstance>> m_instances;
   /// Focused (input-receiving) instance; nullopt when none resident.

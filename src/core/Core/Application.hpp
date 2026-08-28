@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <expected>
+#include <filesystem>
 #include <memory>
 #include <optional>
 #include <string>
@@ -21,6 +22,7 @@
 #include "Core/Startup/StartupCoordinator.hpp"
 #include "Core/Startup/StartupTraceRecorder.hpp"
 #include "Core/Window.hpp"
+#include "Settings/GameSettings.hpp"
 
 namespace App {
 
@@ -139,6 +141,11 @@ class Application final : public Debug::RuntimeTimingDebugSource {
   static constexpr float kSplashDuration{5.0F};
 
   std::unique_ptr<Window> m_window{nullptr};
+  std::unique_ptr<Settings::GameSettings> m_game_settings{nullptr};
+  Settings::GameSettings::ListenerId m_audio_settings_listener_id{0};
+  Settings::GameSettings::ListenerId m_display_settings_listener_id{0};
+  std::filesystem::path m_settings_path;
+  bool m_settings_persistence_enabled{true};
   std::unique_ptr<Audio::AudioSystem> m_audio{nullptr};
   std::unique_ptr<ScenarioManager> m_scenario_manager{nullptr};
   /// Scenario-mode dispatcher (modes 0/1/2/3).

@@ -139,6 +139,29 @@ TEST_SUITE("Core::WorldCameraSystem") {
     CHECK(std::remainder(roll, 360.0F) == doctest::Approx(-7.5F).epsilon(0.01));
   }
 
+  TEST_CASE("runtime clip distance updates far plane without resetting pose or FOV") {
+    WorldCameraSystem camera;
+    WorldCameraCommand command{.camera_id = 2172,
+        .runtime_eye = {.x = 0.0F, .y = 0.0F, .z = 0.0F},
+        .runtime_target = {.x = 0.0F, .y = 0.0F, .z = 100.0F},
+        .duration_units = 0,
+        .horizontal_fov_degrees = static_cast<std::int32_t>(70.0F)};
+
+    camera.apply_command(command);
+    CHECK(camera.camera().get_far_plane() ==
+          doctest::Approx(App::Runtime::metres_to_inches(App::Runtime::k_default_clip_distance_metres)));
+
+    camera.set_clip_distance_metres(150.0F);
+    CHECK(camera.camera().get_far_plane() == doctest::Approx(App::Runtime::metres_to_inches(150.0F)));
+    CHECK(camera.pose().horizontal_fov_degrees == doctest::Approx(70.0F));
+    CHECK(camera.pose().eye.z == doctest::Approx(0.0F));
+
+    camera.apply_command(command);
+    CHECK(camera.camera().get_far_plane() == doctest::Approx(App::Runtime::metres_to_inches(150.0F)));
+    CHECK(camera.pose().horizontal_fov_degrees == doctest::Approx(70.0F));
+    CHECK(camera.pose().target.z == doctest::Approx(100.0F));
+  }
+
   TEST_CASE("Runtime dialogue camera pair snaps to A then travels to B") {
     WorldCameraSystem camera;
 

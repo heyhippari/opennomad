@@ -122,10 +122,35 @@ struct AudioProvenance {
   std::optional<std::uint32_t> function_id;
 };
 
+enum class SoundCategory : std::uint8_t {
+  k_sfx,
+  k_ambience,
+};
+
+[[nodiscard]] constexpr std::string_view sound_category_name(const SoundCategory category) {
+  return category == SoundCategory::k_ambience ? "Ambience" : "Sound Effects";
+}
+
+[[nodiscard]] constexpr float normalized_settings_gain(const std::int32_t value) {
+  const std::int32_t clamped{value < 0 ? 0 : (value > 100 ? 100 : value)};
+  return static_cast<float>(clamped) / 100.0F;
+}
+
+[[nodiscard]] constexpr float category_gain(
+    const SoundCategory category, const float sfx_gain, const float ambience_gain) {
+  return category == SoundCategory::k_ambience ? ambience_gain : sfx_gain;
+}
+
+[[nodiscard]] constexpr bool should_spatialize(
+    const bool spatial_audio_enabled, const bool nonspatial, const bool has_emitter) {
+  return spatial_audio_enabled && !nonspatial && has_emitter;
+}
+
 /// Typed play request submitted by script handlers to the audio system.
 /// Absent `emitter` means nonspatial (centered, full gain, normal pitch).
 struct SoundPlayRequest {
   SoundResourceId resource{};
+  SoundCategory category{SoundCategory::k_sfx};
   bool loop{false};
   std::optional<SoundEmitterState> emitter{};
   AudioOwnerToken owner{};
@@ -212,6 +237,7 @@ struct VoiceDebugInfo {
   std::string owner_description;
   std::string scenario_name;
   AudioProvenance provenance;
+  SoundCategory category{SoundCategory::k_sfx};
   bool looping{false};
   bool nonspatial{false};
   bool unknown_flag{false};
@@ -293,8 +319,11 @@ struct AudioDebugSnapshot {
   std::string requested_format;
   std::string negotiated_format;
   float master_gain{1.0F};
+  float dialogue_gain{1.0F};
   float sfx_gain{1.0F};
+  float ambience_gain{1.0F};
   float music_gain{1.0F};
+  bool spatial_audio_enabled{true};
   std::size_t active_voices{0};
   std::size_t free_voices{0};
   std::size_t cached_resources{0};
