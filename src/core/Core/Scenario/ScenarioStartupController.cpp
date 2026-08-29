@@ -408,9 +408,9 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
   }
   const Omikron::IamAreaRecord& area_record_view{*area_slot.primary};
   const std::size_t record_size{area_record_view.record_size()};
-  const std::uint32_t script_offset{area_record_view.script_offset()};
+  const std::uint32_t primary_event_offset{area_record_view.primary_event_offset()};
   record("IAM_AREA.RecordLoaded", fmt::format("id={} size={:#x}", area_id, record_size));
-  record("IAM_AREA.Parsed", fmt::format("scriptOffset={:#x}", script_offset));
+  record("IAM_AREA.Parsed", fmt::format("primaryEventOffset={:#x}", primary_event_offset));
 
   // 4. Dependencies in the original loader's order. The names are supplied
   // by the active IAM/AREA record; GRID is merely the value used by area 118,
@@ -462,8 +462,13 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
   // 5. Area script context: create, queue event/state 1, activate. The
   // first interpreter tick runs in tick().
   const std::size_t area_script_owner_slot{m_active_area_slot};
-  Script::AreaScriptRuntime& area_script{
-      m_area_scripts.at(area_script_owner_slot).emplace(area_record_view.script_bytes())};
+  if (primary_event_offset == 0U) {
+    return {};
+  }
+  const std::span<const std::byte> bytecode_pool{area_record_view.bytecode_pool()};
+  Script::AreaScriptRuntime& area_script{m_area_scripts.at(area_script_owner_slot)
+          .emplace(bytecode_pool.subspan(
+              primary_event_offset - area_record_view.bytecode_pool_offset()))};
   m_area_script_sequences.at(area_script_owner_slot) = m_next_area_script_sequence++;
   m_area_event_started_recorded.at(area_script_owner_slot) = false;
   m_area_waiting_recorded.at(area_script_owner_slot) = false;
@@ -843,12 +848,14 @@ std::expected<void, std::string> ScenarioStartupController::install_primary_area
 
   // A zero primary-event pointer is a legitimate resident AREA with no event-1
   // bytecode. Do not point AreaScriptRuntime at the beginning of the AREA header.
-  if (slot.primary->script_offset() == 0U) {
+  if (slot.primary->primary_event_offset() == 0U) {
     return {};
   }
 
-  Script::AreaScriptRuntime& script{
-      m_area_scripts.at(owner_slot).emplace(slot.primary->script_bytes())};
+  const std::span<const std::byte> bytecode_pool{slot.primary->bytecode_pool()};
+  Script::AreaScriptRuntime& script{m_area_scripts.at(owner_slot)
+          .emplace(bytecode_pool.subspan(
+              slot.primary->primary_event_offset() - slot.primary->bytecode_pool_offset()))};
   m_area_script_sequences.at(owner_slot) = m_next_area_script_sequence++;
   bind_scene_compact_services(script, owner_slot, false);
   script.set_area_transition_sink([this, owner_slot](const Script::AreaTransitionRequest& request) {

@@ -147,14 +147,6 @@ std::expected<IamAreaRecord, std::string> IamAreaRecord::load(
             k_header_size)};
   }
 
-  const std::uint32_t script_offset{read_u32_at(data, k_offset_script)};
-  if (script_offset > data.size()) {
-    return std::expected<IamAreaRecord, std::string>{std::unexpect,
-        fmt::format("IAM/AREA record: script offset {:#x} is outside the {:#x}-byte record",
-            script_offset,
-            data.size())};
-  }
-
   // Validate every table span whose stride is known; unresolved tables are
   // exposed as checked raw-byte views instead (see table_view).
   for (std::size_t index{0}; index < k_table_count; ++index) {
@@ -177,6 +169,59 @@ std::expected<IamAreaRecord, std::string> IamAreaRecord::load(
     }
   }
 
+  constexpr std::size_t k_camera_table_index{6};
+  constexpr std::size_t k_link_table_index{7};
+  constexpr std::size_t k_link_stride{0x08};
+  const std::uint32_t table6_offset{
+      read_u32_at(data, k_offset_table_offsets + (k_camera_table_index * sizeof(std::uint32_t)))};
+  const std::uint32_t table7_offset{
+      read_u32_at(data, k_offset_table_offsets + (k_link_table_index * sizeof(std::uint32_t)))};
+  const std::uint16_t table7_count{
+      read_u16_at(data, k_offset_table_counts + (k_link_table_index * sizeof(std::uint16_t)))};
+  const std::uint64_t bytecode_pool_start{
+      static_cast<std::uint64_t>(table7_offset) +
+      (static_cast<std::uint64_t>(table7_count) * k_link_stride)};
+  if (bytecode_pool_start > table6_offset) {
+    return std::expected<IamAreaRecord, std::string>{std::unexpect,
+        fmt::format("IAM/AREA record: bytecode pool [{:#x}, {:#x}) has reversed bounds",
+            bytecode_pool_start,
+            table6_offset)};
+  }
+
+  const auto validate_event_offset =
+      [&](const std::uint32_t event_offset,
+          const std::string_view source) -> std::expected<void, std::string> {
+    if (event_offset == 0U) {
+      return {};
+    }
+    if (event_offset < bytecode_pool_start || event_offset >= table6_offset) {
+      return std::expected<void, std::string>{std::unexpect,
+          fmt::format(
+              "IAM/AREA record: {} event offset {:#x} is outside bytecode pool [{:#x}, {:#x})",
+              source,
+              event_offset,
+              bytecode_pool_start,
+              table6_offset)};
+    }
+    return {};
+  };
+
+  const auto primary_event{
+      validate_event_offset(read_u32_at(data, k_offset_primary_event), "primary")};
+  if (!primary_event) {
+    return std::expected<IamAreaRecord, std::string>{std::unexpect, primary_event.error()};
+  }
+
+  const std::span<const std::byte> table7{
+      data.subspan(table7_offset, static_cast<std::size_t>(table7_count) * k_link_stride)};
+  for (std::size_t index{0}; index < table7_count; ++index) {
+    const auto program_event{validate_event_offset(
+        read_u32_at(table7, index * k_link_stride), fmt::format("table-7 program {}", index))};
+    if (!program_event) {
+      return std::expected<IamAreaRecord, std::string>{std::unexpect, program_event.error()};
+    }
+  }
+
   constexpr std::size_t k_zone_table_index{2};
   constexpr std::size_t k_zone_stride{0x44};
   const std::uint32_t zone_offset{
@@ -188,12 +233,10 @@ std::expected<IamAreaRecord, std::string> IamAreaRecord::load(
         data.subspan(zone_offset + (index * k_zone_stride), k_zone_stride)};
     for (std::size_t event{0}; event < 3U; ++event) {
       const std::uint32_t event_offset{read_u32_at(zone, event * sizeof(std::uint32_t))};
-      if (event_offset != 0U && event_offset >= data.size()) {
-        return std::expected<IamAreaRecord, std::string>{std::unexpect,
-            fmt::format("IAM/AREA record: zone {} event {} offset {:#x} is outside record",
-                index,
-                event + 1U,
-                event_offset)};
+      const auto valid_event{
+          validate_event_offset(event_offset, fmt::format("zone {} event {}", index, event + 1U))};
+      if (!valid_event) {
+        return std::expected<IamAreaRecord, std::string>{std::unexpect, valid_event.error()};
       }
     }
   }
@@ -241,8 +284,8 @@ std::uint32_t IamAreaRecord::runtime_context() const {
   return read_u32_at(m_bytes, k_offset_runtime_context);
 }
 
-std::uint32_t IamAreaRecord::script_offset() const {
-  return read_u32_at(m_bytes, k_offset_script);
+std::uint32_t IamAreaRecord::primary_event_offset() const {
+  return read_u32_at(m_bytes, k_offset_primary_event);
 }
 
 std::string IamAreaRecord::name_at(const std::size_t offset) const {
@@ -268,8 +311,19 @@ std::string IamAreaRecord::sky_3do_name() const {
   return name_at(k_offset_sky_3do_name);
 }
 
-std::span<const std::byte> IamAreaRecord::script_bytes() const {
-  return std::span<const std::byte>{m_bytes}.subspan(script_offset());
+std::span<const std::byte> IamAreaRecord::bytecode_pool() const {
+  constexpr std::size_t k_camera_table_index{6};
+  const std::size_t start{bytecode_pool_offset()};
+  const std::size_t end{table_offset(k_camera_table_index)};
+  return std::span<const std::byte>{m_bytes}.subspan(start, end - start);
+}
+
+std::uint32_t IamAreaRecord::bytecode_pool_offset() const {
+  constexpr std::size_t k_link_table_index{7};
+  constexpr std::size_t k_link_stride{0x08};
+  return static_cast<std::uint32_t>(
+      static_cast<std::size_t>(table_offset(k_link_table_index)) +
+      (static_cast<std::size_t>(table_count(k_link_table_index)) * k_link_stride));
 }
 
 std::uint32_t IamAreaRecord::table_offset(const std::size_t index) const {

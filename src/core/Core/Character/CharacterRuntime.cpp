@@ -355,6 +355,9 @@ std::expected<void, std::string> Runtime::preload_scene_characters(
         !result) {
       return result;
     }
+    if (auto result{set_presentation_enabled(placement.character_id, false)}; !result) {
+      return result;
+    }
   }
   return {};
 }

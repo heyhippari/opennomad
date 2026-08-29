@@ -43,8 +43,7 @@ App::Omikron::IamAreaRecord make_area() {
   constexpr std::size_t k_definition_offset{k_placement_offset + 0x14U};
   constexpr std::uint16_t k_state_bit_index{468};
   std::vector<std::byte> data(k_definition_offset + 0x114U, std::byte{});
-  write_u32(
-      data, App::Omikron::IamAreaRecord::k_offset_script, static_cast<std::uint32_t>(data.size()));
+  write_u32(data, App::Omikron::IamAreaRecord::k_offset_primary_event, 0U);
   write_u32(data, App::Omikron::IamAreaRecord::k_offset_table_offsets, k_placement_offset);
   write_u16(data, App::Omikron::IamAreaRecord::k_offset_table_counts, 1);
   write_i16(data, k_placement_offset + 0x00U, -1);
@@ -309,8 +308,8 @@ TEST_SUITE("Core::Character::Runtime") {
     CHECK_FALSE(character->presentation_enabled);
     CHECK_FALSE(character->renderable());
     REQUIRE(runtime.set_presentation_enabled(57, true).has_value());
-    CHECK_FALSE(character->presentation_enabled);
-    CHECK_FALSE(character->renderable());
+    CHECK(character->presentation_enabled);
+    CHECK(character->renderable());
     CHECK_EQ(character->transform.translation.x,
         static_cast<float>(App::Runtime::area_position_to_inches(49457)));
 

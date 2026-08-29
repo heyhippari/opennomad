@@ -2623,67 +2623,21 @@ it is not the start of all AREA bytecode
 
 ---
 
-# 82. Current OpenNomad parser differences
+# 82. Current OpenNomad parser status
 
-The current `IamAreaRecord` implementation is conservative and was designed
-before the full archive corpus analysis.
-
-Several parts should eventually be updated.
-
-## 82.1 `k_offset_script`
-
-Current meaning:
+`IamAreaRecord` now models the recovered structure directly:
 
 ```text
-byte offset of startup script
+k_offset_primary_event = +0x04
+bytecode_pool()         = [table7 end, table6 start)
+table 3 stride          = 0x18
+header +0x08 fields     = unresolved/neutral
 ```
 
-Better:
-
-```text
-primary/default event entry offset
-```
-
-## 82.2 `script_bytes()`
-
-Current behavior:
-
-```text
-[header +0x04, record end)
-```
-
-Correct structural bytecode pool:
-
-```text
-[table7 end, table6 start)
-```
-
-and event execution should begin at a selected record-relative entrypoint
-inside that pool.
-
-## 82.3 Header `+0x08`
-
-Current constant name:
-
-```text
-k_offset_related_area_ids
-```
-
-should be treated as provisional/incorrect until consumers are recovered.
-
-## 82.4 Table 3 stride
-
-Current OpenNomad:
-
-```text
-unknown
-```
-
-Retail corpus:
-
-```text
-0x18 confirmed
-```
+Nonzero primary, zone, and table-7 event offsets are checked against the
+bounded compact bytecode pool. A zero primary event remains legal when other
+entrypoints or bytecode exist. Camera records and trailing serialized data are
+never exposed as AREA VM instructions.
 
 ---
 
@@ -3345,27 +3299,13 @@ Pairwise IDs match in every supplied retail record.
 
 ---
 
-# 106. Highest-value implementation corrections exposed by this format work
+# 106. Implementation consequences of the recovered format
 
-The documentation pass reveals several concrete OpenNomad follow-ups.
-
-1. Rename/reinterpret header `+0x04` from `script_offset` to a primary event
-   entrypoint.
-2. Replace `script_bytes() = [+0x04, EOF)` with a true bytecode-pool span:
-   `[table7 end, table6 start)`.
-3. Allow AREA VM contexts to execute selected entry offsets within one shared
-   bytecode pool.
-4. Set table-3 stride to `0x18`.
-5. Replace `k_offset_related_area_ids` with neutral unknown-field naming.
-6. Add table-1/table-3 object access.
-7. Add table-2 zone access.
-8. Add table-5 address access.
-9. Add table-7 area-link access.
-10. Parse table-4 biography/personality offsets.
-11. Retain all unresolved numeric fields without speculative naming.
-
-These are implementation consequences of the recovered format, not reasons to
-change the serialized layout.
+OpenNomad now uses the bounded bytecode pool, neutral header naming, recovered
+table strides, and typed access for object, zone, address, area-link, camera,
+and character data. These are consequences of the recovered format, not
+changes to the serialized layout. Remaining unknown numeric fields stay
+opaque rather than receiving speculative semantics.
 
 ---
 

@@ -70,8 +70,8 @@ class IamAreaRecord {
 
   /// Header field offsets (serialized layout only).
   static constexpr std::size_t k_offset_runtime_context{0x00};
-  static constexpr std::size_t k_offset_script{0x04};
-  static constexpr std::size_t k_offset_related_area_ids{0x08};
+  static constexpr std::size_t k_offset_primary_event{0x04};
+  static constexpr std::size_t k_offset_unresolved_header_fields{0x08};
   static constexpr std::size_t k_offset_table_offsets{0x28};
   static constexpr std::size_t k_offset_table_counts{0x48};
   static constexpr std::size_t k_offset_model3do_name{0x58};
@@ -81,8 +81,8 @@ class IamAreaRecord {
   static constexpr std::size_t k_offset_animation_ani_name{0x7C};
   static constexpr std::size_t k_offset_sky_3do_name{0x85};
 
-  /// Parses an area record, validating the fixed header, the script offset
-  /// and every known table span. The record owns its byte copy.
+  /// Parses an area record, validating the fixed header, bounded bytecode
+  /// pool, record-relative event entries, and every known table span.
   [[nodiscard]] static std::expected<IamAreaRecord, std::string> load(
       std::span<const std::byte> data);
 
@@ -95,8 +95,9 @@ class IamAreaRecord {
   /// field rather than a pointer.
   [[nodiscard]] std::uint32_t runtime_context() const;
 
-  /// Byte offset of the startup script within the record (+0x04).
-  [[nodiscard]] std::uint32_t script_offset() const;
+  /// Record-relative primary/default event entrypoint (+0x04). Zero means
+  /// this AREA has no primary event.
+  [[nodiscard]] std::uint32_t primary_event_offset() const;
 
   /// Dependency names (+0x58..+0x8D), trimmed at the first NUL.
   [[nodiscard]] std::string model3do_name() const;
@@ -106,8 +107,12 @@ class IamAreaRecord {
   [[nodiscard]] std::string animation_ani_name() const;
   [[nodiscard]] std::string sky_3do_name() const;
 
-  /// The startup script bytes: `[scriptOffset, record end)`.
-  [[nodiscard]] std::span<const std::byte> script_bytes() const;
+  /// Compact bytecode pool `[table7 end, table6 offset)`. Camera table bytes
+  /// are never part of this span.
+  [[nodiscard]] std::span<const std::byte> bytecode_pool() const;
+
+  /// Record-relative start of the compact bytecode pool.
+  [[nodiscard]] std::uint32_t bytecode_pool_offset() const;
 
   /// Complete immutable serialized record used by record-relative zone events.
   [[nodiscard]] std::span<const std::byte> record_bytes() const {

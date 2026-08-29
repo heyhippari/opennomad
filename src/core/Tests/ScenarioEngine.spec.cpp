@@ -95,6 +95,8 @@ std::vector<std::byte> make_area_archive(const std::vector<std::byte>& prefix) {
   write_u32(data, entry + 4U, k_record_size);
 
   write_u32(data, k_record_offset + 0x04, 0x3FC);
+  write_u32(data, k_record_offset + 0x28U + (6U * 4U), 0x51CU);
+  write_u32(data, k_record_offset + 0x28U + (7U * 4U), 0x3FCU);
   write_name(data, k_record_offset + 0x58, "GRID");
   write_name(data, k_record_offset + 0x61, "GRID");
   constexpr std::size_t k_placement_offset{0x0B4};
@@ -133,6 +135,8 @@ std::vector<std::byte> make_transition_area_archive(const std::vector<std::byte>
   write_u32(data, source_entry, static_cast<std::uint32_t>(k_source_offset));
   write_u32(data, source_entry + 4U, k_source_size);
   write_u32(data, k_source_offset + 0x04, 0x3FC);
+  write_u32(data, k_source_offset + 0x28U + (6U * 4U), 0x51CU);
+  write_u32(data, k_source_offset + 0x28U + (7U * 4U), 0x3FCU);
   write_name(data, k_source_offset + 0x58, "GRID");
   write_name(data, k_source_offset + 0x61, "GRID");
   std::memcpy(data.data() + k_source_offset + 0x3FC, source_prefix.data(), source_prefix.size());
@@ -141,6 +145,8 @@ std::vector<std::byte> make_transition_area_archive(const std::vector<std::byte>
   write_u32(data, target_entry, static_cast<std::uint32_t>(k_target_offset));
   write_u32(data, target_entry + 4U, k_target_size);
   write_u32(data, k_target_offset + 0x04, 0x100);
+  write_u32(data, k_target_offset + 0x28U + (6U * 4U), 0x101U);
+  write_u32(data, k_target_offset + 0x28U + (7U * 4U), 0x100U);
   write_name(data, k_target_offset + 0x58, "AIMPASSE");
   write_name(data, k_target_offset + 0x61, "IMPASSE");
   write_name(data, k_target_offset + 0x85, "ASKY");
@@ -345,7 +351,7 @@ std::optional<std::uint32_t> seq_of(const App::Startup::StartupTraceRecorder& re
 }  // namespace
 
 TEST_SUITE("Core::Scenario::ScenarioEngine") {
-  TEST_CASE("mode order reproduces the recovered startup sequence and reaches the menu") {
+  TEST_CASE("[RUNTIME] mode order reaches the startup menu through AREA 118") {
     const TempDirectory temp;
     write_boot_fixtures(temp);
     const ScopedGameDataRoot root{temp.root()};
@@ -364,6 +370,8 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
     REQUIRE(engine.enter_mode(App::ScenarioMode::k_new_session, 0).has_value());
     REQUIRE(install_fake_current_character_loader(manager));
     REQUIRE(engine.enter_mode(App::ScenarioMode::k_tick, 0).has_value());
+    // [OPENNOMAD] The provisional 0x5C object bridge yields one coordinator turn.
+    REQUIRE(engine.update(1.0F / 30.0F).has_value());
 
     // State invariants.
     CHECK_EQ(engine.initial_area_id(), 118);
@@ -399,7 +407,7 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
     ordered("ScenarioState.Cleared", {}, "IAM_START.Loaded", {});
     ordered("IAM_START.Loaded", {}, "IAM_START.InitialArea", "id=118 linked=-1");
     ordered("IAM_START.InitialArea", {}, "IAM_AREA.RecordLoaded", "id=118");
-    ordered("IAM_AREA.RecordLoaded", {}, "IAM_AREA.Parsed", "scriptOffset=0x3fc");
+    ordered("IAM_AREA.RecordLoaded", {}, "IAM_AREA.Parsed", "primaryEventOffset=0x3fc");
     ordered("AreaDependency.Decor.Failed", {}, "AreaDependency.Scenario.Loaded", {});
     ordered("AreaDependency.Scenario.Loaded", {}, "AreaContext.Created", "area=118");
     ordered("AreaContext.Created", {}, "AreaContext.EventQueued", "event=1");
@@ -421,7 +429,7 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
         "id=29 arg2=-1 arg3=19");
     ordered("Interface.OpenRequested", {}, "MainMenu.Active", {});
     ordered("MainMenu.Active", {}, "AreaContext.Waiting", "state=6");
-    ordered("AreaContext.Waiting", {}, "ScenarioMode1.Complete", {});
+    ordered("ScenarioMode1.Complete", {}, "AreaContext.Waiting", "state=6");
   }
 
   TEST_CASE("a missing mandatory dependency stops mode 2 before area activation") {
@@ -467,7 +475,7 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
     CHECK_FALSE(engine.main_menu_active());
   }
 
-  TEST_CASE("GRID.3DO present is parsed before GRID.SCX and startup reaches the menu") {
+  TEST_CASE("[RUNTIME] GRID.3DO is parsed before GRID.SCX and startup reaches the menu") {
     const TempDirectory temp;
     write_boot_fixtures(temp);
     write_bytes(temp.root() / "MESHES" / "DECORS" / "GRID.3DO", make_minimal_3do());
@@ -487,6 +495,7 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
     REQUIRE(engine.enter_mode(App::ScenarioMode::k_new_session, 0).has_value());
     REQUIRE(install_fake_current_character_loader(manager));
     REQUIRE(engine.enter_mode(App::ScenarioMode::k_tick, 0).has_value());
+    REQUIRE(engine.update(1.0F / 30.0F).has_value());
 
     CHECK(engine.main_menu_active());
     const std::optional<std::uint32_t> decor{seq_of(recorder, "AreaDependency.Decor.Loaded")};
@@ -496,7 +505,7 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
     CHECK_LT(decor.value(), scenario.value());
   }
 
-  TEST_CASE("music 109 plays, interface 29 suspends the script, completion resumes 87") {
+  TEST_CASE("[RUNTIME] music 109 precedes interface 29 and completion resumes 87") {
     const TempDirectory temp;
     write_boot_fixtures(temp);
     const ScopedGameDataRoot root{temp.root()};
@@ -515,6 +524,7 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
     REQUIRE(engine.enter_mode(App::ScenarioMode::k_new_session, 0).has_value());
     REQUIRE(install_fake_current_character_loader(manager));
     REQUIRE(engine.enter_mode(App::ScenarioMode::k_tick, 0).has_value());
+    REQUIRE(engine.update(1.0F / 30.0F).has_value());
 
     REQUIRE(engine.area_script() != nullptr);
     CHECK(engine.area_script()->state() == AreaScriptState::k_waiting);
@@ -535,7 +545,7 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
     // New Game completes interface 29 with the active handle.
     const std::optional<App::InterfaceHandle> handle{engine.active_handle()};
     REQUIRE(handle.has_value());
-    engine.notify_interface_completion(App::InterfaceCompletion{.handle = *handle, .result = 0});
+    engine.notify_interface_completion(App::InterfaceCompletion{.handle = *handle, .result = 3});
     CHECK_FALSE(engine.main_menu_active());
 
     // The next per-frame update resumes the script and requests 87.

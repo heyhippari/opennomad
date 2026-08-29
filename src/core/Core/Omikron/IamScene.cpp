@@ -137,13 +137,33 @@ std::expected<IamSceneRecord, std::string> IamSceneRecord::load(
         std::unexpect, "IAM/SCENE record: table 6 cameras start before table 7/script region ends"};
   }
 
+  const std::size_t bytecode_pool_start{ends.at(7)};
+  const std::size_t bytecode_pool_end{offsets.at(6)};
+  const auto validate_event_offset =
+      [&](const std::uint32_t event_offset,
+          const std::string_view source) -> std::expected<void, std::string> {
+    if (event_offset == 0U) {
+      return {};
+    }
+    if (event_offset < bytecode_pool_start || event_offset >= bytecode_pool_end) {
+      return std::expected<void, std::string>{std::unexpect,
+          fmt::format("IAM/SCENE record: {} offset {:#x} is outside bytecode pool [{:#x}, {:#x})",
+              source,
+              event_offset,
+              bytecode_pool_start,
+              bytecode_pool_end)};
+    }
+    return {};
+  };
+
   const std::uint32_t script_offset{read_at<std::uint32_t>(data, k_offset_script)};
-  if (script_offset != 0U && (script_offset < ends.at(7) || script_offset > offsets.at(6))) {
+  if (script_offset != 0U &&
+      (script_offset < bytecode_pool_start || script_offset >= bytecode_pool_end)) {
     return std::expected<IamSceneRecord, std::string>{std::unexpect,
-        fmt::format("IAM/SCENE record: script offset {:#x} is outside [{:#x}, {:#x}]",
+        fmt::format("IAM/SCENE record: script offset {:#x} is outside [{:#x}, {:#x})",
             script_offset,
-            ends.at(7),
-            offsets.at(6))};
+            bytecode_pool_start,
+            bytecode_pool_end)};
   }
 
   const std::size_t definition_count{static_cast<std::size_t>(counts.at(4))};
@@ -177,12 +197,10 @@ std::expected<IamSceneRecord, std::string> IamSceneRecord::load(
     const std::size_t record_offset{offsets.at(2) + (index * 0x44U)};
     for (std::size_t event{0}; event < 3U; ++event) {
       const std::uint32_t event_offset{read_at<std::uint32_t>(data, record_offset + (event * 4U))};
-      if (event_offset != 0U && event_offset >= data.size()) {
-        return std::expected<IamSceneRecord, std::string>{std::unexpect,
-            fmt::format("IAM/SCENE record: zone {} event {} offset {:#x} is outside record",
-                index,
-                event + 1U,
-                event_offset)};
+      const auto valid_event{
+          validate_event_offset(event_offset, fmt::format("zone {} event {}", index, event + 1U))};
+      if (!valid_event) {
+        return std::expected<IamSceneRecord, std::string>{std::unexpect, valid_event.error()};
       }
     }
   }
@@ -190,11 +208,10 @@ std::expected<IamSceneRecord, std::string> IamSceneRecord::load(
   for (std::size_t index{0}; index < link_count; ++index) {
     const std::size_t record_offset{offsets.at(7) + (index * 0x08U)};
     const std::uint32_t program_offset{read_at<std::uint32_t>(data, record_offset)};
-    if (program_offset != 0U && program_offset >= data.size()) {
-      return std::expected<IamSceneRecord, std::string>{std::unexpect,
-          fmt::format("IAM/SCENE record: script link {} offset {:#x} is outside record",
-              index,
-              program_offset)};
+    const auto valid_event{
+        validate_event_offset(program_offset, fmt::format("script link {}", index))};
+    if (!valid_event) {
+      return std::expected<IamSceneRecord, std::string>{std::unexpect, valid_event.error()};
     }
   }
   const std::size_t camera_count{static_cast<std::size_t>(counts.at(6))};

@@ -37,12 +37,12 @@ std::vector<std::byte> valid_scene() {
   constexpr std::size_t k_table2{k_table1 + 0x18U};
   constexpr std::size_t k_table3{k_table2 + 0x44U};
   constexpr std::size_t k_table4{k_table3 + 0x18U};
-  constexpr std::size_t k_table7{k_table4 + 0x114U};
+  constexpr std::size_t k_signs{k_table4 + 0x114U};
+  constexpr std::size_t k_interests{k_signs + 16U};
+  constexpr std::size_t k_table7{k_interests + 16U};
   constexpr std::size_t k_script{k_table7 + 0x08U};
   constexpr std::size_t k_table6{k_script + 0x02U};
-  constexpr std::size_t k_signs{k_table6 + 0x2CU};
-  constexpr std::size_t k_interests{k_signs + 16U};
-  std::vector<std::byte> data(k_interests + 16U, std::byte{});
+  std::vector<std::byte> data(k_table6 + 0x2CU, std::byte{});
 
   table(data, 0, k_table0, 1);
   table(data, 1, k_table1, 1);
@@ -222,6 +222,14 @@ TEST_SUITE("Core::Omikron::IamSceneRecord") {
     const auto script_scene{IamSceneRecord::load(script)};
     REQUIRE_FALSE(script_scene.has_value());
     CHECK(script_scene.error().find("script offset") != std::string::npos);
+
+    auto camera_boundary{valid_scene()};
+    write(camera_boundary,
+        IamSceneRecord::k_offset_script,
+        static_cast<std::uint32_t>(camera_boundary.size() - 0x2CU));
+    const auto camera_boundary_scene{IamSceneRecord::load(camera_boundary)};
+    REQUIRE_FALSE(camera_boundary_scene.has_value());
+    CHECK(camera_boundary_scene.error().find("script offset") != std::string::npos);
   }
 
   TEST_CASE("Table-4 strings and program offsets are bounded and NUL terminated") {
@@ -234,11 +242,29 @@ TEST_SUITE("Core::Omikron::IamSceneRecord") {
     CHECK(string_scene.error().find("NUL") != std::string::npos);
 
     auto link{valid_scene()};
-    constexpr std::size_t k_table7{0x1E0};
+    constexpr std::size_t k_table7{0x200};
     write(link, k_table7, static_cast<std::uint32_t>(link.size()));
     const auto link_scene{IamSceneRecord::load(link)};
     REQUIRE_FALSE(link_scene.has_value());
     CHECK(link_scene.error().find("script link") != std::string::npos);
+  }
+
+  TEST_CASE("[OPENNOMAD] SCENE event entries cannot target the camera table") {
+    constexpr std::size_t k_table2_offset{0x70U};
+    constexpr std::size_t k_table7_offset{0x200U};
+    constexpr std::uint32_t k_table6_offset{0x20AU};
+
+    auto zone{valid_scene()};
+    write(zone, k_table2_offset, k_table6_offset);
+    const auto zone_scene{IamSceneRecord::load(zone)};
+    REQUIRE_FALSE(zone_scene.has_value());
+    CHECK(zone_scene.error().find("zone 0 event 1") != std::string::npos);
+
+    auto link{valid_scene()};
+    write(link, k_table7_offset, k_table6_offset);
+    const auto link_scene{IamSceneRecord::load(link)};
+    REQUIRE_FALSE(link_scene.has_value());
+    CHECK(link_scene.error().find("script link 0") != std::string::npos);
   }
 }
 

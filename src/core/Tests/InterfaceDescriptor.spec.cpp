@@ -12,7 +12,7 @@
 TEST_SUITE("Core::Interface::InterfaceDescriptor") {
   using App::Interface::descriptor_for_id;
 
-  TEST_CASE("interface 29 matches the recovered descriptor metadata") {
+  TEST_CASE("[RUNTIME] interface 29 matches recovered descriptor metadata") {
     const App::Interface::InterfaceDescriptor* descriptor{descriptor_for_id(29)};
     REQUIRE(descriptor != nullptr);
     CHECK_EQ(descriptor->id, 29);
@@ -28,7 +28,7 @@ TEST_SUITE("Core::Interface::InterfaceDescriptor") {
     CHECK(descriptor->sounds->cancel == "I2D/SOUNDS/men003.wav");
   }
 
-  TEST_CASE("interface 35 uses the recovered options sound slots") {
+  TEST_CASE("[RUNTIME] interface 35 uses recovered options sound slots") {
     const App::Interface::InterfaceDescriptor* descriptor{descriptor_for_id(35)};
     REQUIRE(descriptor != nullptr);
     REQUIRE(descriptor->sounds.has_value());
@@ -37,31 +37,34 @@ TEST_SUITE("Core::Interface::InterfaceDescriptor") {
     CHECK(descriptor->sounds->cancel == "I2D/SOUNDS/SNK003.wav");
   }
 
-  TEST_CASE("interface 29 opts into OpenNomad lifecycle presentation hints") {
+  TEST_CASE("[OPENNOMAD] interface 29 presentation is separate from Runtime metadata") {
     const App::Interface::InterfaceDescriptor* descriptor{descriptor_for_id(29)};
     REQUIRE(descriptor != nullptr);
     REQUIRE(descriptor->presentation_hints.enter_fade.has_value());
 
     const auto enter{descriptor->presentation_hints.enter_fade.value_or(
         App::Interface::InterfaceFadePresentationHint{})};
-    CHECK(enter.duration_seconds == doctest::Approx(0.30F));
-    CHECK(enter.easing == App::Interface::InterfacePresentationEasing::k_smoothstep);
+    CHECK(enter.duration_seconds == doctest::Approx(0.50F));
+    CHECK(enter.easing == App::Interface::InterfacePresentationEasing::k_quadratic_in);
     CHECK(enter.color.at(0) == doctest::Approx(0.0F));
 
     REQUIRE_EQ(descriptor->presentation_hints.completion_transitions.size(), 1U);
     const auto& new_game{descriptor->presentation_hints.completion_transitions.front()};
     CHECK_EQ(new_game.result, 3);
-    CHECK(new_game.pre_delay_seconds == doctest::Approx(0.12F));
-    CHECK(new_game.fade.duration_seconds == doctest::Approx(0.18F));
-    CHECK(new_game.fade.easing == App::Interface::InterfacePresentationEasing::k_smoothstep);
+    CHECK(new_game.pre_delay_seconds == doctest::Approx(0.25F));
+    CHECK(new_game.fade.duration_seconds == doctest::Approx(0.25F));
+    CHECK(new_game.fade.easing == App::Interface::InterfacePresentationEasing::k_quadratic_in);
     CHECK(new_game.fade.color.at(0) == doctest::Approx(1.0F));
     CHECK(new_game.fade.color.at(1) == doctest::Approx(1.0F));
     CHECK(new_game.fade.color.at(2) == doctest::Approx(1.0F));
   }
 
-  TEST_CASE("an unknown interface has no descriptor") {
+  TEST_CASE("[RUNTIME] DIVERS is known metadata even without an OpenNomad implementation") {
     CHECK(descriptor_for_id(7) == nullptr);
-    CHECK(descriptor_for_id(28) == nullptr);
+    const App::Interface::InterfaceDescriptor* divers{descriptor_for_id(28)};
+    REQUIRE(divers != nullptr);
+    CHECK(divers->name == "DIVERS");
+    CHECK(divers->init == nullptr);
   }
 
   TEST_CASE("root layout reproduces the recovered text entries") {

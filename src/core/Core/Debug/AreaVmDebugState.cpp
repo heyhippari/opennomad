@@ -217,7 +217,7 @@ AreaVmRegistryDebugState build_area_vm_registry_debug_state(const ScenarioEngine
 
     const Omikron::IamAreaRecord& record{slot->primary.value()};
     const std::int32_t area_id{slot->primary_area_id};
-    const std::uint32_t primary_event_offset{record.script_offset()};
+    const std::uint32_t primary_event_offset{record.primary_event_offset()};
     std::array<std::optional<std::uint32_t>, 3> event_entries{};
     // Primary resident contexts currently model the AREA header's default/event
     // 1 entry only. Event 2/3 source mappings remain deliberately absent.

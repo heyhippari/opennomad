@@ -21,7 +21,7 @@ The repository currently defines:
 |---|---|---|---|
 | Configure/build | `debug` | Linux | Ninja Debug build in `build/debug`. |
 | Configure/build | `release` | Linux | Ninja Release build in `build/release`; the build preset targets `App`. |
-| Configure/build | `debug-sanitized` | Linux | Debug build in `build/debug-sanitized` with AddressSanitizer and UndefinedBehaviorSanitizer. |
+| Configure/build | `linux-sanitize` | Linux | Debug build in `build/linux-sanitize` with AddressSanitizer and UndefinedBehaviorSanitizer. |
 | Configure/build | `quality` | Linux | Debug build with the pinned clang-tidy and clang-format tools. |
 | Configure/build | `xcode-debug` | macOS | Xcode Debug build in `build/xcode-debug`. |
 | Configure/build | `xcode-release` | macOS | Xcode Release build in `build/xcode-release`; the build preset targets `App`. |
@@ -57,16 +57,16 @@ Debug is the normal development configuration. It:
 Use the explicit validation configurations when needed:
 
 ```shell
-cmake --preset debug-sanitized
-cmake --build --preset debug-sanitized
-ctest --preset sanitized
+cmake --preset linux-sanitize
+cmake --build --preset linux-sanitize
+ctest --preset linux-sanitize
 
 cmake --preset quality
 cmake --build --preset quality
 cmake --build --preset quality --target check-format
 ```
 
-`quality` requires clang-format and clang-tidy major version `20`. This is checked at configure time; set
+`quality` requires clang-format and clang-tidy version `22.1.8`. This is checked at configure time; set
 `OPENNOMAD_CLANG_TOOLS_MAJOR` only for an intentional local toolchain-policy change. `format` modifies C++ files;
 `check-format` is the non-mutating validation target. Clang-tidy diagnostics are build failures.
 
@@ -86,7 +86,8 @@ test target manually if a release-mode test is needed.
 | `DEBUG` | `OFF` | Enables debug definitions and profiling outside a Debug build. |
 | `ENABLE_DEBUG_UI` | `ON` | Enables the ImGui development UI when debug definitions are active. |
 | `OPENNOMAD_GAME_DATA_TESTS` | `OFF` | Registers tests that inspect original game data. |
-| `OPENNOMAD_ENABLE_SANITIZERS` | `OFF` | Enables ASan and UBSan on project targets. Prefer `debug-sanitized`. |
+| `OPENNOMAD_ENABLE_ASAN` | `OFF` | Enables AddressSanitizer on project targets. Prefer `linux-sanitize`. |
+| `OPENNOMAD_ENABLE_UBSAN` | `OFF` | Enables UndefinedBehaviorSanitizer on project targets. Prefer `linux-sanitize`. |
 | `OPENNOMAD_ENABLE_CLANG_TIDY` | `OFF` | Runs the pinned clang-tidy on project targets. Prefer `quality`. |
 | `OPENNOMAD_ENABLE_FORMAT_TARGETS` | `OFF` | Creates `format` and `check-format`. Prefer `quality`. |
 

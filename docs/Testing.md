@@ -11,9 +11,9 @@ it inexpensive to build or run one area at a time.
 Configure and build the Debug tree first:
 
 ```shell
-cmake --preset debug
-cmake --build build/debug
-ctest --test-dir build/debug --output-on-failure
+cmake --preset linux-debug
+cmake --build --preset linux-debug
+ctest --preset linux-debug --output-on-failure
 ```
 
 The default suite uses generated fixtures and does not need copyrighted game data.
@@ -23,38 +23,54 @@ The default suite uses generated fixtures and does not need copyrighted game dat
 Build the narrow target, then select its exact CTest name:
 
 ```shell
-cmake --build build/debug --target Model3DOTest
-ctest --test-dir build/debug -R '^Model3DOTest$' --output-on-failure
+cmake --build --preset linux-debug --target Model3DOTest
+ctest --preset linux-debug -R '^Model3DOTest$' --output-on-failure
 ```
 
 List registered tests with:
 
 ```shell
-ctest --test-dir build/debug --show-only
+ctest --preset linux-debug --show-only
 ```
 
 ## Sanitizer and quality checks
 
-The normal Debug configuration has no implicit sanitizers or static analysis. Use `debug-sanitized` to run the suite
+The normal Debug configuration has no implicit sanitizers or static analysis. Use `linux-sanitize` to run the suite
 with AddressSanitizer and UndefinedBehaviorSanitizer:
 
 ```shell
-cmake --preset debug-sanitized
-cmake --build --preset debug-sanitized
-ctest --preset sanitized
+cmake --preset linux-sanitize
+cmake --build --preset linux-sanitize
+ctest --preset linux-sanitize
 ```
 
 Some environments cannot run LeakSanitizer under a debugger or ptrace-based harness even after every assertion passes.
 If that infrastructure issue is the only failure, this command can confirm the test result without leak detection:
 
 ```shell
-ASAN_OPTIONS=detect_leaks=0 ctest --preset sanitized -R '^Model3DOTest$'
+ASAN_OPTIONS=detect_leaks=0 ctest --preset linux-sanitize -R '^Model3DOTest$'
 ```
 
 Disabling leak detection is a diagnostic workaround, not a clean LeakSanitizer result, and should be reported as such.
 
-The `quality` preset runs clang-tidy major version `20`; diagnostics are errors, including include-cleaner and the
+The `quality` preset requires the canonical LLVM `22.1.8` toolchain. Diagnostics are errors, including include-cleaner and the
 checks configured in `.clang-tidy`. It also provides `format` and non-mutating `check-format` targets.
+
+See [Toolchain.md](Toolchain.md) for the complete host-preset and quality-tool contract.
+
+## Test provenance
+
+Runtime-facing tests state what kind of truth they encode in the test name or an adjacent concise comment:
+
+- `[RUNTIME]` is established from Runtime.exe behavior or static data.
+- `[RETAIL]` is a direct property of original shipped files.
+- `[FORMAT]` is a recovered serialization invariant supported by the retail corpus or RE documentation.
+- `[OPENNOMAD]` is an intentional safety, platform, scheduler, or presentation policy of the reimplementation.
+- `[PROVISIONAL]` is a useful reconstruction whose exact Runtime semantics remain unresolved.
+
+Current production behavior is not independent evidence for a Runtime-facing assertion. Layout source-of-truth tests
+write recovered offsets as literals and separately pin production constants so producer and parser cannot drift together.
+Unknown and provisional fields retain neutral names until stronger evidence exists.
 
 ## Add a test
 
@@ -101,17 +117,17 @@ All includes must be direct: Debug builds enforce include-cleaner in tests as we
 Tests that inspect the original files are registered only when `OPENNOMAD_GAME_DATA_TESTS` is enabled:
 
 ```shell
-cmake --preset debug -DOPENNOMAD_GAME_DATA_TESTS=ON
-cmake --build build/debug
+cmake --preset linux-debug -DOPENNOMAD_GAME_DATA_TESTS=ON
+cmake --build --preset linux-debug
 ```
 
 Set `OPENNOMAD_GAME_DATA_ROOT` to the original game directory and run the integration tests:
 
 ```shell
 OPENNOMAD_GAME_DATA_ROOT="/path/to/Omikron" \
-  ctest --test-dir build/debug -R 'IntegrationTest$' --output-on-failure
+  ctest --preset linux-debug -R 'IntegrationTest$' --output-on-failure
 ```
 
-The registered integration executables currently cover SCX structure, 3DO/3DT resources, sprite resources, and QD ADP
-audio. Individual cases emit a warning and return without checking data that is unavailable, so always confirm the
-environment variable and expected files when interpreting a passing integration run.
+The registered integration executables cover START, AREA, SCENE, GLOBAL, CTL, DIALOG, SCX, 3DO/3DT, sprite, font, SFX,
+and QD ADP data. Enabling these tests without the expected retail files is a test failure, not a skip or false positive.
+Ordinary builds leave them unregistered and never depend on copyrighted data.

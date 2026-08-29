@@ -92,7 +92,33 @@ void populate_current_character(std::vector<std::byte>& data) {
 }  // namespace
 
 TEST_SUITE("Core::Omikron::IamStart") {
-  TEST_CASE("START validates canonical region geometry and exposes every recovered region") {
+  TEST_CASE("[FORMAT] START constants independently pin the recovered retail layout") {
+    CHECK_EQ(IamStart::k_retail_size, 0x1636U);
+    CHECK_EQ(IamStart::k_format_revision_offset, 0x00U);
+    CHECK_EQ(IamStart::k_build_date_offset, 0x04U);
+    CHECK_EQ(IamStart::k_global_variables_begin_offset, 0x08U);
+    CHECK_EQ(IamStart::k_global_variables_end_offset, 0x0CU);
+    CHECK_EQ(IamStart::k_packed_state_offset, 0x10U);
+    CHECK_EQ(IamStart::k_character_flags_offset, 0x14U);
+    CHECK_EQ(IamStart::k_address_flags_begin_offset, 0x18U);
+    CHECK_EQ(IamStart::k_address_flags_end_offset, 0x1CU);
+    CHECK_EQ(IamStart::k_saved_position_offset, 0x2CU);
+    CHECK_EQ(IamStart::k_saved_orientation_offset, 0x38U);
+    CHECK_EQ(IamStart::k_current_character_offset, 0x3CU);
+    CHECK_EQ(IamStart::k_current_character_size, 0x114U);
+    CHECK_EQ(IamStart::k_signs_offset, 0x150U);
+    CHECK_EQ(IamStart::k_interests_offset, 0x250U);
+    CHECK_EQ(IamStart::k_object_collection_0_offset, 0x350U);
+    CHECK_EQ(IamStart::k_object_collection_0_capacity, 18U);
+    CHECK_EQ(IamStart::k_object_collection_1_offset, 0x374U);
+    CHECK_EQ(IamStart::k_object_collection_1_capacity, 256U);
+    CHECK_EQ(IamStart::k_object_collection_2_offset, 0x574U);
+    CHECK_EQ(IamStart::k_object_collection_2_capacity, 9U);
+    CHECK_EQ(IamStart::k_initial_area_offset, 0x586U);
+    CHECK_EQ(IamStart::k_linked_area_offset, 0x588U);
+  }
+
+  TEST_CASE("[RETAIL] START validates canonical geometry and every recovered region") {
     const std::vector<std::byte> data{App::Tests::make_canonical_start()};
     const auto start{IamStart::load(data)};
     REQUIRE(start.has_value());

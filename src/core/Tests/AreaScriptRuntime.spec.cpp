@@ -1097,7 +1097,7 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     CHECK_EQ(runtime.variable(7), std::optional<std::int32_t>{1});
   }
 
-  TEST_CASE("Queueing event 1 runs the prefix, plays 109 and opens interface 29") {
+  TEST_CASE("[RETAIL] event 1 runs the prefix, plays 109 and opens interface 29") {
     const Buffer bytes{make_startup_prefix()};
     AreaScriptRuntime runtime{bytes.data()};
     SharedGlobalStore globals;
@@ -1114,6 +1114,12 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
 
     runtime.queue_event(1);
     runtime.activate();
+
+    // [OPENNOMAD] The provisional nonblocking 0x5C object bridge yields one
+    // coordinator turn; the exact Runtime native-operation policy is unresolved.
+    CHECK(runtime.run() == AreaScriptState::k_running);
+    CHECK(runtime.last_run_yielded());
+    CHECK_EQ(runtime.instruction_pointer(), 17U);
     const AreaScriptState state{runtime.run()};
 
     CHECK(state == AreaScriptState::k_waiting);
@@ -1137,7 +1143,7 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     CHECK_EQ(runtime.instruction_pointer(), 45U);
   }
 
-  TEST_CASE("The startup prefix advances using the exact instruction boundaries") {
+  TEST_CASE("[RETAIL] startup prefix advances using exact instruction boundaries") {
     const Buffer bytes{make_startup_prefix()};
     AreaScriptRuntime runtime{bytes.data()};
     SharedGlobalStore globals;
@@ -1145,6 +1151,7 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     wire_startup_character_sinks(runtime);
     runtime.queue_event(1);
     runtime.activate();
+    static_cast<void>(runtime.run());
     static_cast<void>(runtime.run());
 
     const std::array<std::size_t, 10> expected{0, 3, 7, 10, 13, 14, 17, 22, 29, 38};
@@ -1740,6 +1747,7 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
 
     runtime.queue_event(1);
     runtime.activate();
+    REQUIRE(runtime.run() == AreaScriptState::k_running);
     REQUIRE(runtime.run() == AreaScriptState::k_waiting);
     REQUIRE(runtime.complete_interface_wait(InterfaceCompletion{.handle = menu_handle, .result = 0})
             .has_value());
@@ -1765,6 +1773,9 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     REQUIRE(runtime.last_camera_request().has_value());
     CHECK_EQ(runtime.last_camera_request()->camera_id, 2153U);
 
+    // [OPENNOMAD] The provisional object-753 bridge yields before submitting
+    // the tracked camera operation.
+    REQUIRE(runtime.run() == AreaScriptState::k_running);
     REQUIRE(runtime.run() == AreaScriptState::k_waiting);
     CHECK(runtime.wait_info().kind == AreaWaitKind::k_camera);
     REQUIRE(runtime.last_camera_request().has_value());
@@ -1830,6 +1841,7 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
 
     runtime.queue_event(1);
     runtime.activate();
+    REQUIRE(runtime.run() == AreaScriptState::k_running);
     REQUIRE(runtime.run() == AreaScriptState::k_waiting);
 
     REQUIRE(runtime.complete_interface_wait(InterfaceCompletion{.handle = menu_handle, .result = 3})

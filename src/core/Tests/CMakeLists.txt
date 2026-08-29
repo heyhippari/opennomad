@@ -308,4 +308,29 @@ if(OPENNOMAD_GAME_DATA_TESTS)
       QdAdpIntegration.spec.cpp $<TARGET_OBJECTS:TestRunner>)
   add_test(NAME QdAdpIntegrationTest COMMAND QdAdpIntegrationTest)
   target_link_libraries(QdAdpIntegrationTest PRIVATE doctest::doctest Core)
+
+    add_executable(IamStartIntegrationTest
+      IamStartIntegration.spec.cpp $<TARGET_OBJECTS:TestRunner>)
+    add_test(NAME IamStartIntegrationTest COMMAND IamStartIntegrationTest)
+    target_link_libraries(IamStartIntegrationTest PRIVATE doctest::doctest Core)
+
+    add_executable(IamAreaIntegrationTest
+      IamAreaIntegration.spec.cpp $<TARGET_OBJECTS:TestRunner>)
+    add_test(NAME IamAreaIntegrationTest COMMAND IamAreaIntegrationTest)
+    target_link_libraries(IamAreaIntegrationTest PRIVATE doctest::doctest Core)
+
+    add_executable(IamSceneIntegrationTest
+      IamSceneIntegration.spec.cpp $<TARGET_OBJECTS:TestRunner>)
+    add_test(NAME IamSceneIntegrationTest COMMAND IamSceneIntegrationTest)
+    target_link_libraries(IamSceneIntegrationTest PRIVATE doctest::doctest Core)
+
+    add_executable(IamGlobalIntegrationTest
+      IamGlobalIntegration.spec.cpp $<TARGET_OBJECTS:TestRunner>)
+    add_test(NAME IamGlobalIntegrationTest COMMAND IamGlobalIntegrationTest)
+    target_link_libraries(IamGlobalIntegrationTest PRIVATE doctest::doctest Core)
+
+    add_executable(CtlControlSetIntegrationTest
+      CtlControlSetIntegration.spec.cpp $<TARGET_OBJECTS:TestRunner>)
+    add_test(NAME CtlControlSetIntegrationTest COMMAND CtlControlSetIntegrationTest)
+    target_link_libraries(CtlControlSetIntegrationTest PRIVATE doctest::doctest Core)
 endif()

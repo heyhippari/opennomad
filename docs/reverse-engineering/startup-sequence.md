@@ -1688,10 +1688,10 @@ Area **118** is therefore the next data-driven startup node.
 The relevant startup record currently parses as:
 
 ```text
-area ID:       118
-record size:   0x9C0
-fixed header:  0x0B4
-scriptOffset:  0x3FC
+area ID:             118
+record size:         0x9C0
+fixed header:        0x0B4
+primaryEventOffset:  0x3FC
 ```
 
 Known dependency names in the record are:
@@ -1769,16 +1769,18 @@ This distinction is important because merely loading an SCX file must not mean â
 
 # Phase 12 â€” startup area script and event processing
 
-The area load creates a script context rooted at:
+The area load creates a compact context over the shared AREA bytecode pool and
+selects the record-relative primary entrypoint:
 
 ```text
-areaRecord + scriptOffset
+bytecode pool:       [0x3FC, 0x51C)
+primary event:       0x3FC
 ```
 
 For area 118:
 
 ```text
-scriptOffset = 0x3FC
+primaryEventOffset = 0x3FC
 ```
 
 The startup process activates/queues the area's startup event, currently identified as:
@@ -2572,11 +2574,12 @@ Unknown:
 For record 118 known:
 
 ```text
-size         = 0x9C0
-header       = 0xB4
-scriptOffset = 0x3FC
-model        = GRID
-scenario     = GRID
+size               = 0x9C0
+header             = 0xB4
+primaryEventOffset = 0x3FC
+bytecodePool       = [0x3FC, 0x51C)
+model              = GRID
+scenario           = GRID
 ```
 
 Still missing:

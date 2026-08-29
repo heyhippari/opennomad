@@ -37,15 +37,15 @@ Debug builds enable profiling and the in-app debug UI. Sanitizers and clang tool
 the normal edit-build-test loop stays predictable:
 
 ```shell
-cmake --preset debug-sanitized
-cmake --build --preset debug-sanitized
-ctest --preset sanitized
+cmake --preset linux-sanitize
+cmake --build --preset linux-sanitize
+ctest --preset linux-sanitize
 
 cmake --preset quality
 cmake --build --preset quality --target check-format
 ```
 
-The `quality` preset requires clang-format and clang-tidy major version `20`. For a Release build:
+The `quality` preset requires the canonical LLVM `22.1.8` clang-format and clang-tidy tools. For a Release build:
 
 ```shell
 cmake --preset release

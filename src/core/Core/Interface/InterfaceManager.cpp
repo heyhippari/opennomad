@@ -138,6 +138,16 @@ const InterfaceDescriptor* descriptor_for_id(const std::int32_t id) {
   // Static registry mirroring Runtime's interface-descriptor table.
   // Descriptor #29 is at 0x004CC0AC; descriptor #35 is at 0x004CC2D4.
   static const std::vector<InterfaceDescriptor> k_descriptors{
+      InterfaceDescriptor{.id = 28,
+          .name = "DIVERS",
+          .bitmap_name = "",
+          .string_table_name = "",
+          .companion_interface = std::nullopt,
+          .sounds = std::nullopt,
+          .init = nullptr,
+          .destroy = nullptr,
+          .runtime_flags = 0U,
+          .presentation_hints = InterfacePresentationHints{}},
       InterfaceDescriptor{.id = 29,
           .name = "OMK START MENU",
           .bitmap_name = "gfxint.bmp",

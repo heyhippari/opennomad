@@ -69,7 +69,7 @@ std::vector<std::byte> make_area_object(
   constexpr std::size_t k_placement{IamAreaRecord::k_header_size};
   constexpr std::size_t k_definition{k_placement + 0x18U};
   std::vector<std::byte> data(k_definition + 0x18U, std::byte{});
-  write(data, IamAreaRecord::k_offset_script, static_cast<std::uint32_t>(data.size()));
+  write(data, IamAreaRecord::k_offset_primary_event, 0U);
   write(data,
       IamAreaRecord::k_offset_table_offsets + (1U * 4U),
       static_cast<std::uint32_t>(k_placement));
