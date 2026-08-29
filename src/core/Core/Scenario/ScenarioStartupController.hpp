@@ -96,6 +96,7 @@ struct ZoneContactContext {
   std::int32_t area_id{-1};
   std::int32_t scene_id{-1};
   Omikron::IamZoneRecord zone;
+  std::uint32_t program_record_origin{0};
   std::unique_ptr<Script::AreaScriptRuntime> script;
   bool overlapping{true};
   bool departure_queued{false};
@@ -170,7 +171,8 @@ class ScenarioStartupController {
   /// Executes one area-script interpreter tick (mode 1).
   [[nodiscard]] std::expected<void, std::string> tick(float delta_seconds = 0.0F);
 
-  /// True once the new session has been initialized (area script exists).
+  /// True once the new session has completed initialization. The initial AREA
+  /// may legitimately have no primary compact context.
   [[nodiscard]] bool initialized() const {
     return m_initialized;
   }

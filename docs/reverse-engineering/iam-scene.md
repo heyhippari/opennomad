@@ -73,6 +73,12 @@ scene creates a separate context over the SCENE script span, queues event 1,
 and activates it for normal scheduler service. It is never run recursively by
 the attach opcode, and an unsupported SCENE opcode pauses only that context.
 
+The top-level and zone contexts can see only `script_bytes()`:
+`[script_offset, table6_offset)`. Their serialized record-relative event
+offsets are range-checked before rebasing by `script_offset`; no context uses
+the complete SCENE record as VM storage, so table-6 cameras cannot execute as
+compact instructions.
+
 OpenNomad has two resident AREA slots. Each owns an AREA plus optional attached
 SCENE record/ID and SCENE compact context. `secondary_area_id` remains the
 START linked-AREA relationship; it is not a SCENE ID.

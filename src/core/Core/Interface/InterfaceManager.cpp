@@ -135,19 +135,9 @@ std::string_view text_label(const InterfaceInstance& instance, const I2DTextElem
 }  // namespace
 
 const InterfaceDescriptor* descriptor_for_id(const std::int32_t id) {
-  // Static registry mirroring Runtime's interface-descriptor table.
-  // Descriptor #29 is at 0x004CC0AC; descriptor #35 is at 0x004CC2D4.
+  // Runnable OpenNomad registry. Runtime-known metadata is cataloged
+  // independently by runtime_interface_metadata_for_id().
   static const std::vector<InterfaceDescriptor> k_descriptors{
-      InterfaceDescriptor{.id = 28,
-          .name = "DIVERS",
-          .bitmap_name = "",
-          .string_table_name = "",
-          .companion_interface = std::nullopt,
-          .sounds = std::nullopt,
-          .init = nullptr,
-          .destroy = nullptr,
-          .runtime_flags = 0U,
-          .presentation_hints = InterfacePresentationHints{}},
       InterfaceDescriptor{.id = 29,
           .name = "OMK START MENU",
           .bitmap_name = "gfxint.bmp",
@@ -182,6 +172,20 @@ const InterfaceDescriptor* descriptor_for_id(const std::int32_t id) {
     }
   }
   return nullptr;
+}
+
+const RuntimeInterfaceMetadata* runtime_interface_metadata_for_id(const std::int32_t id) {
+  static constexpr std::array<RuntimeInterfaceMetadata, 6> k_runtime_interfaces{{
+      {.id = 28, .name = "DIVERS"},
+      {.id = 29, .name = "OMK START MENU"},
+      {.id = 30, .name = "SAVE GAME"},
+      {.id = 31, .name = "PAUSE GAME"},
+      {.id = 35, .name = "OPTIONS"},
+      {.id = 36, .name = "HIGH-SCORE"},
+  }};
+  const RuntimeInterfaceMetadata* const found{
+      std::ranges::find(k_runtime_interfaces, id, &RuntimeInterfaceMetadata::id)};
+  return found == k_runtime_interfaces.end() ? nullptr : &*found;
 }
 
 void commit_transition_destinations(const std::span<const TransitionStateDestination> destinations,

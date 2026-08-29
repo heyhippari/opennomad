@@ -8,6 +8,7 @@
 #include "Core/Interface/InterfaceDescriptor.hpp"
 #include "Core/Interface/InterfaceManager.hpp"
 #include "Core/Interface/StartMenuLayout.hpp"
+#include "Settings/GameSettings.hpp"
 
 TEST_SUITE("Core::Interface::InterfaceDescriptor") {
   using App::Interface::descriptor_for_id;
@@ -59,12 +60,24 @@ TEST_SUITE("Core::Interface::InterfaceDescriptor") {
     CHECK(new_game.fade.color.at(2) == doctest::Approx(1.0F));
   }
 
-  TEST_CASE("[RUNTIME] DIVERS is known metadata even without an OpenNomad implementation") {
-    CHECK(descriptor_for_id(7) == nullptr);
-    const App::Interface::InterfaceDescriptor* divers{descriptor_for_id(28)};
+  TEST_CASE("[RUNTIME] DIVERS is present in the recovered interface catalog") {
+    const App::Interface::RuntimeInterfaceMetadata* divers{
+        App::Interface::runtime_interface_metadata_for_id(28)};
     REQUIRE(divers != nullptr);
-    CHECK(divers->name == "DIVERS");
-    CHECK(divers->init == nullptr);
+    CHECK_EQ(divers->id, 28);
+    CHECK_EQ(divers->name, "DIVERS");
+    CHECK(App::Interface::runtime_interface_metadata_for_id(7) == nullptr);
+  }
+
+  TEST_CASE("[OPENNOMAD] DIVERS is not runnable and fails without partial residency") {
+    CHECK(descriptor_for_id(28) == nullptr);
+    App::Settings::GameSettings settings;
+    App::Interface::InterfaceManager manager{settings};
+    const auto opened{manager.open(App::InterfaceOpenRequest{.interface_id = 28})};
+    REQUIRE_FALSE(opened.has_value());
+    CHECK(opened.error().find("unsupported") != std::string::npos);
+    CHECK_EQ(manager.instance_count(), 0U);
+    CHECK_FALSE(manager.focused_handle().has_value());
   }
 
   TEST_CASE("root layout reproduces the recovered text entries") {

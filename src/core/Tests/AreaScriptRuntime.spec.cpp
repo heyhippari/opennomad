@@ -18,6 +18,8 @@
 #include "Core/Interface/InterfaceDispatcher.hpp"
 #include "Core/Script/AreaScriptOpcode.hpp"
 #include "Core/Script/AreaScriptRuntime.hpp"
+#include "Core/Script/CompactProgramView.hpp"
+#include "IamArea118TestData.hpp"
 #include "OmikronTestBuffer.hpp"
 
 namespace {
@@ -81,22 +83,6 @@ struct SharedGlobalStore {
   std::vector<std::int32_t> values;
 };
 
-/// The confirmed area-118 startup prefix (script-relative offsets 0..0x2C).
-Buffer make_startup_prefix() {
-  Buffer bytes;
-  bytes.u8(0x0D).u16(175);                     // 0D AF 00
-  bytes.u8(0x0E).u16(170).u8(50);              // 0E AA 00 32
-  bytes.u8(0x38).u16(136);                     // 38 88 00
-  bytes.u8(0x4F).u16(0xFFFF);                  // 4F FF FF
-  bytes.u8(0x68);                              // 68
-  bytes.u8(0x5C).u16(997);                     // 5C E5 03
-  bytes.u8(0x83).u16(0).u16(1);                // 83 00 00 01 00
-  bytes.u8(0x67).u16(109).u16(1).u16(1);       // 67 6D 00 01 00 01 00
-  bytes.u8(0x76).u32(0).u16(0).u16(0);         // 76 00 00 00 00 00 00 00 00
-  bytes.u8(0x46).u16(29).u16(0xFFFF).u16(19);  // 46 1D 00 FF FF 13 00
-  return bytes;
-}
-
 /// A full two-music-opcode script: 0x67 (109,1,1), 0x46 (29,-1,19), 0x67 (87,1,1).
 Buffer make_menu_music_script() {
   Buffer bytes;
@@ -108,7 +94,7 @@ Buffer make_menu_music_script() {
 
 /// Retail area-118 path through New Game up to the first event terminator.
 Buffer make_new_game_event_script() {
-  Buffer bytes{make_startup_prefix()};
+  Buffer bytes{App::Tests::make_area_118_startup_prefix()};
   bytes.u8(0x67).u16(87).u16(1).u16(1);  // +0x2D
   bytes.u8(0x84);                        // +0x34 letterbox
   bytes.u8(0x07).u8(0);                  // +0x35 push 0
@@ -168,6 +154,47 @@ void wire_startup_character_sinks(AreaScriptRuntime& runtime) {
 }  // namespace
 
 TEST_SUITE("Core::Script::AreaScriptRuntime") {
+  TEST_CASE("[FORMAT] record-relative IAM entries are checked before rebasing") {
+    const std::array<std::byte, 8> bytes{};
+    const auto program{App::Script::CompactProgramView::create(bytes, 0x100U)};
+    REQUIRE(program.has_value());
+    CHECK_FALSE(program->rebase_entry(0U, "missing")->has_value());
+    CHECK_EQ(program->rebase_entry(0x104U, "valid").value(), std::optional<std::size_t>{4U});
+    CHECK_FALSE(program->rebase_entry(0xFFU, "before").has_value());
+    CHECK_FALSE(program->rebase_entry(0x108U, "end").has_value());
+  }
+
+  TEST_CASE("[FORMAT] AREA primary entry selects within the full bounded pool") {
+    Buffer bytes;
+    bytes.u8(0x0D).u16(61).u8(0x03);  // Earlier event at record offset 0x100.
+    bytes.zeros(8U);
+    bytes.u8(0x0D).u16(62).u8(0x03);  // Primary event at record offset 0x10C.
+
+    const auto program{App::Script::CompactProgramView::create(bytes.data(), 0x100U)};
+    REQUIRE(program.has_value());
+    const auto earlier{program->rebase_entry(0x100U, "earlier event")};
+    const auto primary{program->rebase_entry(0x10CU, "primary event")};
+    REQUIRE(earlier.has_value());
+    REQUIRE(primary.has_value());
+
+    AreaScriptRuntime runtime{program->bytes()};
+    SharedGlobalStore globals;
+    globals.bind(runtime);
+    REQUIRE(runtime
+            .set_event_entries(App::Script::AreaScriptEventEntries{
+                .event1 = primary.value(), .event2 = earlier.value(), .event3 = std::nullopt})
+            .has_value());
+    runtime.queue_event(1U);
+    runtime.activate();
+    CHECK(runtime.run() == AreaScriptState::k_ready);
+    CHECK_EQ(globals.values.at(61), 0);
+    CHECK_EQ(globals.values.at(62), 1);
+
+    runtime.queue_event(2U);
+    CHECK(runtime.run() == AreaScriptState::k_ready);
+    CHECK_EQ(globals.values.at(61), 1);
+  }
+
   TEST_CASE("AREA and SCENE compact contexts share one global-variable store") {
     Buffer area_bytes;
     area_bytes.u8(0x0D).u16(123).u8(0x03);
@@ -1052,7 +1079,7 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
   }
 
   TEST_CASE("Scripts remain inactive until an event is queued") {
-    const Buffer bytes{make_startup_prefix()};
+    const Buffer bytes{App::Tests::make_area_118_startup_prefix()};
     AreaScriptRuntime runtime{bytes.data()};
 
     CHECK(runtime.state() == AreaScriptState::k_ready);
@@ -1098,7 +1125,7 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
   }
 
   TEST_CASE("[RETAIL] event 1 runs the prefix, plays 109 and opens interface 29") {
-    const Buffer bytes{make_startup_prefix()};
+    const Buffer bytes{App::Tests::make_area_118_startup_prefix()};
     AreaScriptRuntime runtime{bytes.data()};
     SharedGlobalStore globals;
     globals.bind(runtime);
@@ -1144,7 +1171,7 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
   }
 
   TEST_CASE("[RETAIL] startup prefix advances using exact instruction boundaries") {
-    const Buffer bytes{make_startup_prefix()};
+    const Buffer bytes{App::Tests::make_area_118_startup_prefix()};
     AreaScriptRuntime runtime{bytes.data()};
     SharedGlobalStore globals;
     globals.bind(runtime);

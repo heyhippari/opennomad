@@ -2706,15 +2706,9 @@ while the raw bytes remain owned by the record.
 
 ---
 
-# 85. Recommended event representation
+# 85. Runtime event representation
 
-Instead of:
-
-```cpp
-AreaScriptRuntime(area.script_bytes())
-```
-
-prefer conceptually:
+OpenNomad now represents AREA execution conceptually as:
 
 ```cpp
 AreaBytecodePool pool{
@@ -2727,8 +2721,12 @@ AreaEventContext ctx{
 };
 ```
 
-Zone/link events can then reuse the same immutable pool with different
-entrypoints.
+Every `AreaScriptRuntime` receives the complete bounded bytecode pool, never a
+whole AREA record or only the tail beginning at one entrypoint. Serialized
+record-relative primary and zone entries are validated against the pool before
+subtracting its record origin. Zero maps to no entry. Zone/link events can
+therefore reuse the same immutable pool with different VM-local entrypoints,
+and diagnostics recover record-relative offsets by adding the program origin.
 
 This mirrors the serialized architecture far more closely.
 

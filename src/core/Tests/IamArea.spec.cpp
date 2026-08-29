@@ -18,6 +18,7 @@
 
 #include "Core/Omikron/IamArea.hpp"
 #include "Core/Omikron/IamCharacterDefinition.hpp"
+#include "IamArea118TestData.hpp"
 
 namespace {
 
@@ -49,14 +50,11 @@ void write_name(
 
 /// [RETAIL] Builds AREA 118's independently pinned header/pool geometry.
 std::vector<std::byte> make_area_118() {
-  std::vector<std::byte> data(0x9C0, std::byte{});
-  write_u32(data, 0x04U, 0x3FCU);
-  constexpr std::array<std::uint32_t, 8> k_table_offsets{
-      0x0B4U, 0x0DCU, 0x0DCU, 0x0DCU, 0x0DCU, 0x3ECU, 0x51CU, 0x3FCU};
-  constexpr std::array<std::uint16_t, 8> k_table_counts{2U, 0U, 0U, 0U, 2U, 1U, 27U, 0U};
-  for (std::size_t index{0}; index < k_table_offsets.size(); ++index) {
-    write_u32(data, 0x28U + (index * 4U), k_table_offsets.at(index));
-    write_u16(data, 0x48U + (index * 2U), k_table_counts.at(index));
+  std::vector<std::byte> data(App::Tests::K_AREA_118_RECORD_SIZE, std::byte{});
+  write_u32(data, 0x04U, App::Tests::K_AREA_118_PRIMARY_EVENT);
+  for (std::size_t index{0}; index < App::Tests::K_AREA_118_TABLE_OFFSETS.size(); ++index) {
+    write_u32(data, 0x28U + (index * 4U), App::Tests::K_AREA_118_TABLE_OFFSETS.at(index));
+    write_u16(data, 0x48U + (index * 2U), App::Tests::K_AREA_118_TABLE_COUNTS.at(index));
   }
   write_name(data, IamAreaRecord::k_offset_model3do_name, "GRID");
   write_name(data, IamAreaRecord::k_offset_scenario_scx_name, "GRID");
@@ -67,7 +65,7 @@ std::vector<std::byte> make_area_118() {
   write_i32(data, 0x0B4U + 0x0CU, -816);
   write_i16(data, 0x0B4U + 0x10U, 4084);
   write_i16(data, 0x0C8U + 0x02U, 136);
-  data.at(0x51CU) = std::byte{0xFF};
+  data.at(App::Tests::K_AREA_118_BYTECODE_POOL_END) = std::byte{0xFF};
   return data;
 }
 
@@ -78,18 +76,16 @@ TEST_SUITE("Core::Omikron::IamAreaRecord") {
     const std::vector<std::byte> data{make_area_118()};
     const auto record{IamAreaRecord::load(data)};
     REQUIRE(record.has_value());
-    CHECK_EQ(record->record_size(), 0x9C0U);
-    CHECK_EQ(record->primary_event_offset(), 0x3FCU);
+    CHECK_EQ(record->record_size(), App::Tests::K_AREA_118_RECORD_SIZE);
+    CHECK_EQ(record->primary_event_offset(), App::Tests::K_AREA_118_PRIMARY_EVENT);
     CHECK_EQ(record->model3do_name(), "GRID");
     CHECK_EQ(record->scenario_scx_name(), "GRID");
-    CHECK_EQ(record->bytecode_pool_offset(), 0x3FCU);
-    CHECK_EQ(record->bytecode_pool().size(), 0x51CU - 0x3FCU);
-    constexpr std::array<std::uint32_t, 8> k_table_offsets{
-        0x0B4U, 0x0DCU, 0x0DCU, 0x0DCU, 0x0DCU, 0x3ECU, 0x51CU, 0x3FCU};
-    constexpr std::array<std::uint16_t, 8> k_table_counts{2U, 0U, 0U, 0U, 2U, 1U, 27U, 0U};
-    for (std::size_t index{0}; index < k_table_offsets.size(); ++index) {
-      CHECK_EQ(record->table_offset(index), k_table_offsets.at(index));
-      CHECK_EQ(record->table_count(index), k_table_counts.at(index));
+    CHECK_EQ(record->bytecode_pool_offset(), App::Tests::K_AREA_118_BYTECODE_POOL_START);
+    CHECK_EQ(record->bytecode_pool().size(),
+        App::Tests::K_AREA_118_BYTECODE_POOL_END - App::Tests::K_AREA_118_BYTECODE_POOL_START);
+    for (std::size_t index{0}; index < App::Tests::K_AREA_118_TABLE_OFFSETS.size(); ++index) {
+      CHECK_EQ(record->table_offset(index), App::Tests::K_AREA_118_TABLE_OFFSETS.at(index));
+      CHECK_EQ(record->table_count(index), App::Tests::K_AREA_118_TABLE_COUNTS.at(index));
     }
     CHECK_EQ(record->map_mpt_name(), "");
     CHECK_EQ(record->options_opt_name(), "");
@@ -100,7 +96,7 @@ TEST_SUITE("Core::Omikron::IamAreaRecord") {
         std::array<std::int32_t, 3>{-2588, -271, -816});
     CHECK_EQ(record->character_by_id(310)->orientation_units, 4084);
     CHECK(record->character_by_id(136).has_value());
-    CHECK_EQ(record->record_bytes()[0x51CU], std::byte{0xFF});
+    CHECK_EQ(record->record_bytes()[App::Tests::K_AREA_118_BYTECODE_POOL_END], std::byte{0xFF});
     CHECK_NE(record->bytecode_pool().back(), std::byte{0xFF});
   }
 

@@ -2,6 +2,8 @@
 
 // NOLINTBEGIN(misc-use-anonymous-namespace, cppcoreguidelines-avoid-do-while)
 
+#include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -38,6 +40,15 @@ TEST_CASE("[RETAIL] IAM/START matches the recovered retail layout") {
   CHECK_EQ(start->build_date(), 19'991'004U);
   CHECK_EQ(start->initial_area_id(), 118);
   CHECK_EQ(start->linked_area_id(), -1);
+  CHECK_EQ(start->saved_position(), std::array<std::int32_t, 3>{-1, -1, -1});
+  CHECK_EQ(start->saved_orientation(), -1);
+  const std::span<const std::byte> current_character_bytes{bytes.subspan(0x3CU, 0x114U)};
+  CHECK(std::ranges::all_of(current_character_bytes, [](const std::byte value) {
+    return value == std::byte{0xFF};
+  }));
+  const auto current_character{start->current_character()};
+  REQUIRE(current_character.has_value());
+  CHECK_FALSE(current_character->has_value());
   CHECK_EQ(start->global_variables()->size(), 694U * sizeof(std::int32_t));
   CHECK_EQ(start->area_mappings()->size(), 260U * sizeof(std::int16_t));
   CHECK_EQ(start->packed_state_bytes()->size(), 168U);

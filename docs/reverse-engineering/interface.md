@@ -1514,6 +1514,17 @@ subjective enough that presentation improvements can otherwise erase RE facts.
 
 # 56. Current OpenNomad descriptor model
 
+OpenNomad separates the recovered Runtime catalog from runnable interface
+implementations. `RuntimeInterfaceMetadata` records only established identity
+facts such as `28 = DIVERS`; unknown resources, callbacks, and flags are not
+filled with default values and presented as recovered data.
+
+`runtime_interface_metadata_for_id()` answers whether Runtime is known to
+contain an ID. `descriptor_for_id()` instead returns only a runnable OpenNomad
+implementation descriptor. Consequently interface 28 is known in the Runtime
+catalog but currently returns no runnable descriptor and fails cleanly as
+unsupported when opened.
+
 Current modern type:
 
 ```cpp
@@ -1578,7 +1589,9 @@ modern transition overlays
 
 # 58. Current implementation gap: descriptor coverage
 
-Only interface 29 is currently substantially implemented.
+Interfaces 29 and 35 currently have runnable OpenNomad descriptors. Interface
+28 and other cataloged IDs remain metadata-only until their required resources
+and callbacks are recovered and implemented.
 
 Runtime has many more interface descriptors.
 
@@ -1587,7 +1600,6 @@ High-value future interfaces include:
 ```text
 30 SAVE GAME
 31 PAUSE GAME
-35 OPTIONS
 36 HIGH-SCORE
 ```
 

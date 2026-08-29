@@ -128,6 +128,10 @@ OPENNOMAD_GAME_DATA_ROOT="/path/to/Omikron" \
   ctest --preset linux-debug -R 'IntegrationTest$' --output-on-failure
 ```
 
+Retail tests load required files through `App::load_game_file()`, the same
+case-insensitive resource path used by the application. There is no separate
+test-only data-root variable or fallback directory.
+
 The registered integration executables cover START, AREA, SCENE, GLOBAL, CTL, DIALOG, SCX, 3DO/3DT, sprite, font, SFX,
 and QD ADP data. Enabling these tests without the expected retail files is a test failure, not a skip or false positive.
 Ordinary builds leave them unregistered and never depend on copyrighted data.

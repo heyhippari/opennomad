@@ -4,25 +4,18 @@
 // misc-include-cleaner, cppcoreguidelines-pro-bounds-constant-array-index,
 // cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
 
-#include <SDL3/SDL_iostream.h>
-#include <SDL3/SDL_stdinc.h>
-
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <cstdlib>
-#include <cstring>
-#include <filesystem>
 #include <optional>
 #include <span>
-#include <string>
 #include <string_view>
 #include <vector>
 
+#include "Core/GameDataLoader.hpp"
 #include "Core/Omikron/Model3DO.hpp"
 #include "Core/Omikron/SCX.hpp"
 #include "Core/Omikron/Texture3DT.hpp"
-#include "Core/Resources.hpp"
 
 namespace {
 
@@ -33,29 +26,6 @@ constexpr std::string_view K_CHARACTER_TEXTURES{"MESHES/PERSOS/KIL2_FN.3dt"};
 constexpr std::string_view K_GRID_MODEL{"MESHES/DECORS/GRID.3DO"};
 constexpr std::string_view K_GRID_TEXTURES{"MESHES/DECORS/GRID.3DT"};
 constexpr std::string_view K_SCX_PATH{"SCPTDATA/aventure.SCX"};
-
-/// Loads a game file from the data root set via the OPENNOMAD_GAME_DATA_ROOT
-/// environment variable. Returns nullopt when the data is unavailable.
-std::optional<std::vector<std::byte>> load_game_file(const std::filesystem::path& relative_path) {
-  // NOLINTNEXTLINE(concurrency-mt-unsafe)
-  const char* root{std::getenv("OPENNOMAD_GAME_DATA_ROOT")};
-  if (root == nullptr) {
-    return std::nullopt;
-  }
-  const std::filesystem::path resolved{
-      App::Resources::resolve_case_insensitive(std::filesystem::path{root} / relative_path)};
-  std::size_t size{0};
-  void* raw{SDL_LoadFile(resolved.string().c_str(), &size)};
-  if (raw == nullptr) {
-    return std::nullopt;
-  }
-  std::vector<std::byte> bytes(size);
-  if (size > 0) {
-    std::memcpy(bytes.data(), raw, size);
-  }
-  SDL_free(raw);
-  return bytes;
-}
 
 /// Checks the material trailer shared by every observed record: an 8-bit
 /// 256x256 texture whose runtime page/slot fields are unallocated (0xFFFF)
@@ -72,22 +42,16 @@ void check_common_material_fields(const App::Omikron::Material& material) {
   CHECK_EQ(material.atlas_v_offset, 0U);
 }
 
-/// Decodes a .3DO model and its .3DT sidecar. Returns nullopt (after a
-/// diagnostic) when either the game data or one of the decoders is missing.
-std::optional<App::Omikron::Model3DOData> decode_model(
-    const std::optional<std::vector<std::byte>>& model_file,
-    const std::optional<std::vector<std::byte>>& texture_file,
+/// Decodes a required .3DO model and its .3DT sidecar.
+std::optional<App::Omikron::Model3DOData> decode_model(const std::span<const std::byte> model_file,
+    const std::span<const std::byte> texture_file,
     const std::string_view name) {
-  if (!model_file.has_value() || !texture_file.has_value()) {
-    MESSAGE("OPENNOMAD_GAME_DATA_ROOT is not set or ", name, " is missing; test skipped");
-    return std::nullopt;
-  }
-  auto model{App::Omikron::Model3DO::load(*model_file)};
+  auto model{App::Omikron::Model3DO::load(model_file)};
   if (!model) {
     MESSAGE("Failed to decode ", name, ": ", model.error());
     return std::nullopt;
   }
-  auto images{App::Omikron::Texture3DT::load(*texture_file, model->materials)};
+  auto images{App::Omikron::Texture3DT::load(texture_file, model->materials)};
   if (!images) {
     MESSAGE("Failed to decode ", name, " textures: ", images.error());
     return std::nullopt;
@@ -99,13 +63,13 @@ std::optional<App::Omikron::Model3DOData> decode_model(
 }  // namespace
 
 TEST_SUITE("Core::Omikron::GameData3DOTextureIntegration") {
-  TEST_CASE("Decodes the Anekbah level model and its textures") {
-    const auto model_file{load_game_file(K_LEVEL_MODEL)};
-    const auto texture_file{load_game_file(K_LEVEL_TEXTURES)};
-    const auto model{decode_model(model_file, texture_file, K_LEVEL_MODEL)};
-    if (!model.has_value()) {
-      return;
-    }
+  TEST_CASE("[RETAIL] decodes the Anekbah level model and its textures") {
+    const auto model_file{App::load_game_file(K_LEVEL_MODEL)};
+    const auto texture_file{App::load_game_file(K_LEVEL_TEXTURES)};
+    REQUIRE_MESSAGE(model_file.has_value(), model_file.error());
+    REQUIRE_MESSAGE(texture_file.has_value(), texture_file.error());
+    const auto model{decode_model(model_file->bytes, texture_file->bytes, K_LEVEL_MODEL)};
+    REQUIRE(model.has_value());
 
     CHECK_EQ(
         std::string_view{model->header.signature.data(), model->header.signature.size()}, "OD3X");
@@ -131,13 +95,13 @@ TEST_SUITE("Core::Omikron::GameData3DOTextureIntegration") {
     CHECK_FALSE(groups->empty());
   }
 
-  TEST_CASE("Decodes the KIL2_FN character model and its textures") {
-    const auto model_file{load_game_file(K_CHARACTER_MODEL)};
-    const auto texture_file{load_game_file(K_CHARACTER_TEXTURES)};
-    const auto model{decode_model(model_file, texture_file, K_CHARACTER_MODEL)};
-    if (!model.has_value()) {
-      return;
-    }
+  TEST_CASE("[RETAIL] decodes the KIL2_FN character model and its textures") {
+    const auto model_file{App::load_game_file(K_CHARACTER_MODEL)};
+    const auto texture_file{App::load_game_file(K_CHARACTER_TEXTURES)};
+    REQUIRE_MESSAGE(model_file.has_value(), model_file.error());
+    REQUIRE_MESSAGE(texture_file.has_value(), texture_file.error());
+    const auto model{decode_model(model_file->bytes, texture_file->bytes, K_CHARACTER_MODEL)};
+    REQUIRE(model.has_value());
 
     REQUIRE_EQ(model->materials.size(), std::size_t{2});
     const auto& first{model->materials.at(0)};
@@ -158,16 +122,14 @@ TEST_SUITE("Core::Omikron::GameData3DOTextureIntegration") {
     REQUIRE(groups.has_value());
   }
 
-  TEST_CASE("GRID preserves its top-level portal sibling chain and scrolling materials") {
-    const auto model_file{load_game_file(K_GRID_MODEL)};
-    const auto texture_file{load_game_file(K_GRID_TEXTURES)};
-    if (!model_file.has_value() || !texture_file.has_value()) {
-      WARN("OPENNOMAD_GAME_DATA_ROOT is not set or GRID assets are missing; test skipped");
-      return;
-    }
+  TEST_CASE("[RETAIL] GRID preserves its portal sibling chain and scrolling materials") {
+    const auto model_file{App::load_game_file(K_GRID_MODEL)};
+    const auto texture_file{App::load_game_file(K_GRID_TEXTURES)};
+    REQUIRE_MESSAGE(model_file.has_value(), model_file.error());
+    REQUIRE_MESSAGE(texture_file.has_value(), texture_file.error());
 
-    const auto model{App::Omikron::Model3DO::load(*model_file)};
-    REQUIRE(model.has_value());
+    const auto model{App::Omikron::Model3DO::load(model_file->bytes)};
+    REQUIRE_MESSAGE(model.has_value(), model.error());
     REQUIRE_EQ(model->meshes.size(), std::size_t{3});
     REQUIRE_EQ(model->materials.size(), std::size_t{2});
     CHECK_EQ(model->header.root_mesh_id, 0U);
@@ -219,8 +181,8 @@ TEST_SUITE("Core::Omikron::GameData3DOTextureIntegration") {
     CHECK_EQ(model->materials.at(1).name, "SPACY");
     CHECK_EQ(model->materials.at(1).width, 256U);
     CHECK_EQ(model->materials.at(1).height, 256U);
-    const auto images{App::Omikron::Texture3DT::load(*texture_file, model->materials)};
-    REQUIRE(images.has_value());
+    const auto images{App::Omikron::Texture3DT::load(texture_file->bytes, model->materials)};
+    REQUIRE_MESSAGE(images.has_value(), images.error());
     REQUIRE_EQ(images->size(), std::size_t{2});
     CHECK_EQ(images->at(1).width, 256U);
     CHECK_EQ(images->at(1).height, 256U);
@@ -239,21 +201,18 @@ TEST_SUITE("Core::Omikron::GameData3DOTextureIntegration") {
     CHECK(has_circle2_group);
   }
 
-  TEST_CASE("Decodes EFFECTS2_SMOKE2.3DO (parser correctness, not animation)") {
-    const auto scx_file{load_game_file(K_SCX_PATH)};
-    if (!scx_file.has_value()) {
-      WARN("OPENNOMAD_GAME_DATA_ROOT is not set or aventure.SCX is missing; test skipped");
-      return;
-    }
+  TEST_CASE("[RETAIL] decodes EFFECTS2_SMOKE2.3DO without animation claims") {
+    const auto scx_file{App::load_game_file(K_SCX_PATH)};
+    REQUIRE_MESSAGE(scx_file.has_value(), scx_file.error());
 
-    const auto scx{App::Omikron::SCX::load(*scx_file)};
-    REQUIRE(scx.has_value());
+    const auto scx{App::Omikron::SCX::load(scx_file->bytes)};
+    REQUIRE_MESSAGE(scx.has_value(), scx.error());
     REQUIRE_EQ(scx->models.size(), scx->sprites.size());
     REQUIRE_FALSE(scx->sprites.empty());
 
     CHECK_EQ(scx->sprites.at(0).name, "EFFECTS2_SMOKE2.3DO");
     const App::Omikron::ScxModelResource& resource{scx->models.at(0)};
-    const std::span<const std::byte> all{*scx_file};
+    const std::span<const std::byte> all{scx_file->bytes};
 
     const auto model{
         App::Omikron::Model3DO::load(all.subspan(resource.core_offset, resource.core_size))};

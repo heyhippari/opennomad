@@ -5,24 +5,19 @@
 // cppcoreguidelines-pro-bounds-avoid-unchecked-container-access,
 // readability-magic-numbers)
 
-#include <SDL3/SDL_iostream.h>
-#include <SDL3/SDL_stdinc.h>
 #include <fmt/format.h>
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <cstdlib>
 #include <cstring>
-#include <filesystem>
-#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include "Core/GameDataLoader.hpp"
 #include "Core/Omikron/QdAdp.hpp"
-#include "Core/Resources.hpp"
 
 namespace {
 
@@ -185,42 +180,17 @@ constexpr std::array<std::uint32_t, 64> K_SHA256_K{0x428a2f98,
   return hex;
 }
 
-/// Loads TRACKS/109.ADP from the game-data root, or nullopt when absent.
-std::optional<std::vector<std::byte>> load_adp_file() {
-  // NOLINTNEXTLINE(concurrency-mt-unsafe)
-  const char* root{std::getenv("OPENNOMAD_GAME_DATA_ROOT")};
-  if (root == nullptr) {
-    return std::nullopt;
-  }
-  const std::filesystem::path resolved{App::Resources::resolve_case_insensitive(
-      std::filesystem::path{root} / std::filesystem::path{K_ADP_RELATIVE_PATH})};
-  std::size_t size{0};
-  void* raw{SDL_LoadFile(resolved.string().c_str(), &size)};
-  if (raw == nullptr) {
-    return std::nullopt;
-  }
-  std::vector<std::byte> bytes(size);
-  if (size > 0) {
-    std::memcpy(bytes.data(), raw, size);
-  }
-  SDL_free(raw);
-  return bytes;
-}
-
 }  // namespace
 
 TEST_SUITE("Core::Omikron::QdAdpIntegration") {
-  TEST_CASE("Matches the verified 109.ADP facts and PCM oracle") {
-    const auto file{load_adp_file()};
-    if (!file.has_value()) {
-      WARN("OPENNOMAD_GAME_DATA_ROOT is not set or 109.ADP is missing; test skipped");
-      return;
-    }
+  TEST_CASE("[RETAIL] 109.ADP matches verified facts and PCM oracle") {
+    const auto file{App::load_game_file(K_ADP_RELATIVE_PATH)};
+    REQUIRE_MESSAGE(file.has_value(), file.error());
 
-    CHECK_EQ(file->size(), K_PAYLOAD_SIZE + 0x10U);
+    CHECK_EQ(file->bytes.size(), K_PAYLOAD_SIZE + 0x10U);
 
-    auto decoder{App::Omikron::QdAdpDecoder::create(*file)};
-    REQUIRE(decoder.has_value());
+    auto decoder{App::Omikron::QdAdpDecoder::create(file->bytes)};
+    REQUIRE_MESSAGE(decoder.has_value(), decoder.error());
     CHECK_EQ(decoder->channels(), 2);
     CHECK_EQ(decoder->sample_rate(), static_cast<int>(K_SAMPLE_RATE));
     CHECK_EQ(decoder->total_frames(), K_TOTAL_FRAMES);

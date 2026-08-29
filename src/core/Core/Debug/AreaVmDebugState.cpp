@@ -236,7 +236,7 @@ AreaVmRegistryDebugState build_area_vm_registry_debug_state(const ScenarioEngine
             .zone_id = std::nullopt,
             .source_primary_event_offset = primary_event_offset,
             .source_event_entry_offsets = event_entries,
-            .open_nomad_execution_base_offset = primary_event_offset})};
+            .open_nomad_execution_base_offset = record.bytecode_pool_offset()})};
     context.source.identity =
         context_identity(AreaVmContextSourceType::k_area, owner_slot, area_id);
     attach_tracked_script(context, engine, owner_slot);
@@ -288,7 +288,7 @@ AreaVmRegistryDebugState build_area_vm_registry_debug_state(const ScenarioEngine
             .source_event_entry_offsets = {contact->zone.event_offsets.at(0),
                 contact->zone.event_offsets.at(1),
                 contact->zone.event_offsets.at(2)},
-            .open_nomad_execution_base_offset = 0U})};
+            .open_nomad_execution_base_offset = contact->program_record_origin})};
     attach_tracked_script(zone, engine, contact->resident_slot);
     result.contexts.push_back(std::move(zone));
   }

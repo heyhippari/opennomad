@@ -27,10 +27,18 @@ struct InterfaceSoundSet {
   std::string_view cancel;
 };
 
-/// Static engine metadata describing one interface. The original Runtime
-/// keeps a static table of these (interface 29's descriptor is at
-/// 0x004CC0AC); OpenNomad models only the fields it currently needs and is
-/// structured so further recovered fields can be added later.
+/// Recovered Runtime catalog entry. This records only established static
+/// identity and does not imply that OpenNomad can instantiate the interface.
+struct RuntimeInterfaceMetadata {
+  std::int32_t id{-1};
+  std::string_view name;
+};
+
+[[nodiscard]] const RuntimeInterfaceMetadata* runtime_interface_metadata_for_id(std::int32_t id);
+
+/// Runnable OpenNomad interface descriptor. Recovered fields are retained
+/// where known; callbacks and presentation policy describe implemented
+/// OpenNomad behavior.
 struct InterfaceDescriptor {
   std::int32_t id{-1};
   std::string_view name;

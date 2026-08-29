@@ -29,6 +29,7 @@
 #include "Core/Scenario/ScenarioRuntime.hpp"
 #include "Core/Script/AreaScriptRuntime.hpp"
 #include "Core/Startup/StartupTraceRecorder.hpp"
+#include "IamArea118TestData.hpp"
 #include "IamStartTestData.hpp"
 #include "OmikronTestBuffer.hpp"
 
@@ -66,17 +67,7 @@ void write_bytes(const std::filesystem::path& path, const std::vector<std::byte>
 /// The confirmed area-118 startup prefix bytes, extended with the music 87
 /// instruction that follows interface 29 (the milestone's resume target).
 std::vector<std::byte> make_prefix() {
-  Buffer bytes;
-  bytes.u8(0x0D).u16(175);
-  bytes.u8(0x0E).u16(170).u8(50);
-  bytes.u8(0x38).u16(136);
-  bytes.u8(0x4F).u16(0xFFFF);
-  bytes.u8(0x68);
-  bytes.u8(0x5C).u16(997);
-  bytes.u8(0x83).u16(0).u16(1);
-  bytes.u8(0x67).u16(109).u16(1).u16(1);
-  bytes.u8(0x76).u32(0).u16(0).u16(0);
-  bytes.u8(0x46).u16(29).u16(0xFFFF).u16(19);
+  Buffer bytes{App::Tests::make_area_118_startup_prefix()};
   bytes.u8(0x67).u16(87).u16(1).u16(1);
   return bytes.data();
 }
@@ -87,16 +78,16 @@ std::vector<std::byte> make_start() {
 
 std::vector<std::byte> make_area_archive(const std::vector<std::byte>& prefix) {
   constexpr std::size_t k_record_offset{0x800};
-  constexpr std::uint32_t k_record_size{0x9C0};
+  constexpr std::uint32_t k_record_size{App::Tests::K_AREA_118_RECORD_SIZE};
 
   std::vector<std::byte> data(k_record_offset + k_record_size, std::byte{});
   const std::size_t entry{118U * 8U};
   write_u32(data, entry, static_cast<std::uint32_t>(k_record_offset));
   write_u32(data, entry + 4U, k_record_size);
 
-  write_u32(data, k_record_offset + 0x04, 0x3FC);
-  write_u32(data, k_record_offset + 0x28U + (6U * 4U), 0x51CU);
-  write_u32(data, k_record_offset + 0x28U + (7U * 4U), 0x3FCU);
+  write_u32(data, k_record_offset + 0x04, App::Tests::K_AREA_118_PRIMARY_EVENT);
+  write_u32(data, k_record_offset + 0x28U + (6U * 4U), App::Tests::K_AREA_118_BYTECODE_POOL_END);
+  write_u32(data, k_record_offset + 0x28U + (7U * 4U), App::Tests::K_AREA_118_BYTECODE_POOL_START);
   write_name(data, k_record_offset + 0x58, "GRID");
   write_name(data, k_record_offset + 0x61, "GRID");
   constexpr std::size_t k_placement_offset{0x0B4};
@@ -120,7 +111,9 @@ std::vector<std::byte> make_area_archive(const std::vector<std::byte>& prefix) {
       k_model_name.data(),
       k_model_name.size());
   write_u16(data, k_record_offset + k_definition_offset + 0x110U, 136);
-  std::memcpy(data.data() + k_record_offset + 0x3FC, prefix.data(), prefix.size());
+  std::memcpy(data.data() + k_record_offset + App::Tests::K_AREA_118_PRIMARY_EVENT,
+      prefix.data(),
+      prefix.size());
   return data;
 }
 

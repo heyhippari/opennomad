@@ -4,67 +4,32 @@
 // misc-include-cleaner, cppcoreguidelines-pro-bounds-constant-array-index,
 // cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
 
-#include <SDL3/SDL_iostream.h>
-#include <SDL3/SDL_stdinc.h>
-
 #include <cstddef>
 #include <cstdint>
-#include <cstdlib>
-#include <cstring>
-#include <filesystem>
-#include <optional>
 #include <span>
-#include <string>
 #include <string_view>
-#include <vector>
 
+#include "Core/GameDataLoader.hpp"
 #include "Core/Omikron/SCX.hpp"
-#include "Core/Resources.hpp"
 #include "Core/Sprite/SpriteResource.hpp"
 
 namespace {
 
 constexpr std::string_view K_SCX_PATH{"SCPTDATA/aventure.SCX"};
 
-/// Loads a game file from the data root set via the OPENNOMAD_GAME_DATA_ROOT
-/// environment variable. Returns nullopt when the data is unavailable.
-std::optional<std::vector<std::byte>> load_game_file(const std::filesystem::path& relative_path) {
-  // NOLINTNEXTLINE(concurrency-mt-unsafe)
-  const char* root{std::getenv("OPENNOMAD_GAME_DATA_ROOT")};
-  if (root == nullptr) {
-    return std::nullopt;
-  }
-  const std::filesystem::path resolved{
-      App::Resources::resolve_case_insensitive(std::filesystem::path{root} / relative_path)};
-  std::size_t size{0};
-  void* raw{SDL_LoadFile(resolved.string().c_str(), &size)};
-  if (raw == nullptr) {
-    return std::nullopt;
-  }
-  std::vector<std::byte> bytes(size);
-  if (size > 0) {
-    std::memcpy(bytes.data(), raw, size);
-  }
-  SDL_free(raw);
-  return bytes;
-}
-
 }  // namespace
 
 TEST_SUITE("Core::Sprite::GameDataSpriteIntegration") {
-  TEST_CASE("Frame tables of all 20 embedded effect resources resolve") {
-    const auto scx_file{load_game_file(K_SCX_PATH)};
-    if (!scx_file.has_value()) {
-      WARN("OPENNOMAD_GAME_DATA_ROOT is not set or aventure.SCX is missing; test skipped");
-      return;
-    }
+  TEST_CASE("[RETAIL] frame tables of all 20 embedded effect resources resolve") {
+    const auto scx_file{App::load_game_file(K_SCX_PATH)};
+    REQUIRE_MESSAGE(scx_file.has_value(), scx_file.error());
 
-    const auto scx{App::Omikron::SCX::load(*scx_file)};
-    REQUIRE(scx.has_value());
+    const auto scx{App::Omikron::SCX::load(scx_file->bytes)};
+    REQUIRE_MESSAGE(scx.has_value(), scx.error());
     REQUIRE_EQ(scx->models.size(), scx->sprites.size());
     REQUIRE_FALSE(scx->models.empty());
 
-    const std::span<const std::byte> bytes{*scx_file};
+    const std::span<const std::byte> bytes{scx_file->bytes};
     for (std::size_t index{0}; index < scx->models.size(); ++index) {
       CAPTURE(index);
       const auto resource{App::Sprite::SpriteResource::create(
@@ -113,20 +78,17 @@ TEST_SUITE("Core::Sprite::GameDataSpriteIntegration") {
     }
   }
 
-  TEST_CASE("EFFECTS2_SMOKE2.3DO provides a spawnable frame table") {
-    const auto scx_file{load_game_file(K_SCX_PATH)};
-    if (!scx_file.has_value()) {
-      WARN("OPENNOMAD_GAME_DATA_ROOT is not set or aventure.SCX is missing; test skipped");
-      return;
-    }
+  TEST_CASE("[RETAIL] EFFECTS2_SMOKE2.3DO provides a spawnable frame table") {
+    const auto scx_file{App::load_game_file(K_SCX_PATH)};
+    REQUIRE_MESSAGE(scx_file.has_value(), scx_file.error());
 
-    const auto scx{App::Omikron::SCX::load(*scx_file)};
-    REQUIRE(scx.has_value());
+    const auto scx{App::Omikron::SCX::load(scx_file->bytes)};
+    REQUIRE_MESSAGE(scx.has_value(), scx.error());
     REQUIRE_FALSE(scx->sprites.empty());
     CHECK_EQ(scx->sprites.at(0).name, "EFFECTS2_SMOKE2.3DO");
 
     const auto resource{App::Sprite::SpriteResource::create(
-        std::span<const std::byte>{*scx_file}, scx->models.at(0), scx->sprites.at(0))};
+        std::span<const std::byte>{scx_file->bytes}, scx->models.at(0), scx->sprites.at(0))};
     REQUIRE(resource.has_value());
 
     const std::size_t object{resource->default_object_index()};

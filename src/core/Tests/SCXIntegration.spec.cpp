@@ -4,24 +4,17 @@
 // misc-include-cleaner, cppcoreguidelines-pro-bounds-constant-array-index,
 // cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
 
-#include <SDL3/SDL_iostream.h>
-#include <SDL3/SDL_stdinc.h>
-
 #include <cstddef>
 #include <cstdint>
-#include <cstdlib>
-#include <cstring>
-#include <filesystem>
-#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include "Core/GameDataLoader.hpp"
 #include "Core/Omikron/Model3DO.hpp"
 #include "Core/Omikron/SCX.hpp"
 #include "Core/Omikron/Texture3DT.hpp"
-#include "Core/Resources.hpp"
 
 namespace {
 
@@ -30,66 +23,17 @@ constexpr std::string_view K_GRID_SCX_RELATIVE_PATH{"SCPTDATA/Grid.SCX"};
 /// The embedded effect model the application displays.
 constexpr std::string_view K_SELECTED_MODEL{"EFFECTS2_SMOKE2.3DO"};
 
-/// Loads aventure.SCX from the game-data root set via the
-/// OPENNOMAD_GAME_DATA_ROOT environment variable. Returns nullopt when the
-/// original data is unavailable.
-std::optional<std::vector<std::byte>> load_scx_file() {
-  // NOLINTNEXTLINE(concurrency-mt-unsafe)
-  const char* root{std::getenv("OPENNOMAD_GAME_DATA_ROOT")};
-  if (root == nullptr) {
-    return std::nullopt;
-  }
-  const std::filesystem::path resolved{App::Resources::resolve_case_insensitive(
-      std::filesystem::path{root} / std::filesystem::path{K_SCX_RELATIVE_PATH})};
-  std::size_t size{0};
-  void* raw{SDL_LoadFile(resolved.string().c_str(), &size)};
-  if (raw == nullptr) {
-    return std::nullopt;
-  }
-  std::vector<std::byte> bytes(size);
-  if (size > 0) {
-    std::memcpy(bytes.data(), raw, size);
-  }
-  SDL_free(raw);
-  return bytes;
-}
-
-/// Loads Grid.SCX from the game-data root (mirrors load_scx_file).
-std::optional<std::vector<std::byte>> load_grid_file() {
-  // NOLINTNEXTLINE(concurrency-mt-unsafe)
-  const char* root{std::getenv("OPENNOMAD_GAME_DATA_ROOT")};
-  if (root == nullptr) {
-    return std::nullopt;
-  }
-  const std::filesystem::path resolved{App::Resources::resolve_case_insensitive(
-      std::filesystem::path{root} / std::filesystem::path{K_GRID_SCX_RELATIVE_PATH})};
-  std::size_t size{0};
-  void* raw{SDL_LoadFile(resolved.string().c_str(), &size)};
-  if (raw == nullptr) {
-    return std::nullopt;
-  }
-  std::vector<std::byte> bytes(size);
-  if (size > 0) {
-    std::memcpy(bytes.data(), raw, size);
-  }
-  SDL_free(raw);
-  return bytes;
-}
-
 }  // namespace
 
 TEST_SUITE("Core::Omikron::SCXIntegration") {
-  TEST_CASE("Matches the verified aventure.SCX facts") {
-    const auto file{load_scx_file()};
-    if (!file.has_value()) {
-      WARN("OPENNOMAD_GAME_DATA_ROOT is not set or aventure.SCX is missing; test skipped");
-      return;
-    }
+  TEST_CASE("[RETAIL] aventure.SCX matches verified facts") {
+    const auto file{App::load_game_file(K_SCX_RELATIVE_PATH)};
+    REQUIRE_MESSAGE(file.has_value(), file.error());
 
-    CHECK_EQ(file->size(), 3078193U);
+    CHECK_EQ(file->bytes.size(), 3078193U);
 
-    const auto scx{App::Omikron::SCX::load(*file)};
-    REQUIRE(scx.has_value());
+    const auto scx{App::Omikron::SCX::load(file->bytes)};
+    REQUIRE_MESSAGE(scx.has_value(), scx.error());
 
     CHECK_EQ(scx->header.magic, 0x00DEAD00U);
     CHECK_EQ(scx->header.version, 5U);
@@ -108,7 +52,7 @@ TEST_SUITE("Core::Omikron::SCXIntegration") {
 
     // The twentieth model package ends exactly at the end of the file.
     const App::Omikron::ScxModelResource& last{scx->models.at(19)};
-    CHECK_EQ(last.auxiliary_offset + last.auxiliary_size, file->size());
+    CHECK_EQ(last.auxiliary_offset + last.auxiliary_size, file->bytes.size());
 
     // Selection diagnostics: full sprite and model metadata, in file order.
     for (std::size_t index{0}; index < scx->sprites.size(); ++index) {
@@ -133,18 +77,15 @@ TEST_SUITE("Core::Omikron::SCXIntegration") {
     }
   }
 
-  TEST_CASE("Decodes every embedded model (selection diagnostic)") {
-    const auto file{load_scx_file()};
-    if (!file.has_value()) {
-      WARN("OPENNOMAD_GAME_DATA_ROOT is not set or aventure.SCX is missing; test skipped");
-      return;
-    }
+  TEST_CASE("[RETAIL] every embedded aventure model decodes") {
+    const auto file{App::load_game_file(K_SCX_RELATIVE_PATH)};
+    REQUIRE_MESSAGE(file.has_value(), file.error());
 
-    const auto scx{App::Omikron::SCX::load(*file)};
-    REQUIRE(scx.has_value());
+    const auto scx{App::Omikron::SCX::load(file->bytes)};
+    REQUIRE_MESSAGE(scx.has_value(), scx.error());
     REQUIRE_EQ(scx->models.size(), scx->sprites.size());
 
-    const std::span<const std::byte> all{*file};
+    const std::span<const std::byte> all{file->bytes};
     std::size_t decoded_count{0};
     bool selected_model_decoded{false};
     for (std::size_t index{0}; index < scx->models.size(); ++index) {
@@ -188,15 +129,12 @@ TEST_SUITE("Core::Omikron::SCXIntegration") {
     CHECK(selected_model_decoded);
   }
 
-  TEST_CASE("Parses the DEAD0002 script section (selection diagnostic)") {
-    const auto file{load_scx_file()};
-    if (!file.has_value()) {
-      WARN("OPENNOMAD_GAME_DATA_ROOT is not set or aventure.SCX is missing; test skipped");
-      return;
-    }
+  TEST_CASE("[RETAIL] aventure DEAD0002 script section parses") {
+    const auto file{App::load_game_file(K_SCX_RELATIVE_PATH)};
+    REQUIRE_MESSAGE(file.has_value(), file.error());
 
-    const auto scx{App::Omikron::SCX::load(*file)};
-    REQUIRE(scx.has_value());
+    const auto scx{App::Omikron::SCX::load(file->bytes)};
+    REQUIRE_MESSAGE(scx.has_value(), scx.error());
 
     // Order-of-magnitude diagnostics, not hardcoded parsing constants.
     CHECK_EQ(scx->scripts.size(), 22U);
@@ -256,20 +194,14 @@ TEST_SUITE("Core::Omikron::SCXIntegration") {
     }
   }
 
-  TEST_CASE("Grid.SCX parses through the same loader and reports its inventory") {
-    const auto file{load_grid_file()};
-    if (!file.has_value()) {
-      WARN("OPENNOMAD_GAME_DATA_ROOT is not set or Grid.SCX is missing; test skipped");
-      return;
-    }
+  TEST_CASE("[RETAIL] Grid.SCX parses through the shared loader") {
+    const auto file{App::load_game_file(K_GRID_SCX_RELATIVE_PATH)};
+    REQUIRE_MESSAGE(file.has_value(), file.error());
 
-    CHECK_EQ(file->size(), 1315472U);
+    CHECK_EQ(file->bytes.size(), 1315472U);
 
-    const auto scx{App::Omikron::SCX::load(*file)};
-    CHECK_MESSAGE(scx.has_value(), scx.error());
-    if (!scx) {
-      return;
-    }
+    const auto scx{App::Omikron::SCX::load(file->bytes)};
+    REQUIRE_MESSAGE(scx.has_value(), scx.error());
 
     CHECK_EQ(scx->header.magic, 0x00DEAD00U);
     CHECK_EQ(scx->header.version, 5U);
