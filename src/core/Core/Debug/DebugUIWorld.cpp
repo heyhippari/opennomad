@@ -91,26 +91,26 @@ void DebugUI::show_world_inspector() {
     }
     ImGui::TextDisabled("Session ownership is independent of CTL controller enablement.");
     if (m_context.scenario_engine != nullptr &&
-      m_context.scenario_engine->current_character_trigger_proxy().has_value()) {
+        m_context.scenario_engine->current_character_trigger_proxy().has_value()) {
       const CurrentCharacterTriggerProxy& proxy{
-        m_context.scenario_engine->current_character_trigger_proxy().value()};
+          m_context.scenario_engine->current_character_trigger_proxy().value()};
       ImGui::Text("Trigger proxy: %s | owner character %d, world %u | generation %llu",
-        proxy.registered ? "registered" : "unregistered",
-        proxy.owner.character_id,
-        proxy.owner.world_scene_id,
-        static_cast<unsigned long long>(proxy.generation));
-        ImGui::Text("Proxy contact readiness: %s", proxy.contact_ready ? "ready" : "armed");
+          proxy.registered ? "registered" : "unregistered",
+          proxy.owner.character_id,
+          proxy.owner.world_scene_id,
+          static_cast<unsigned long long>(proxy.generation));
+      ImGui::Text("Proxy contact readiness: %s", proxy.contact_ready ? "ready" : "armed");
       ImGui::Text("Proxy XYZ: %.3f, %.3f, %.3f | radius %.3f | heading %.3f deg",
-        static_cast<double>(proxy.position.x),
-        static_cast<double>(proxy.position.y),
-        static_cast<double>(proxy.position.z),
-        static_cast<double>(proxy.radius),
-        static_cast<double>(proxy.heading_degrees));
-        ImGui::Text("Proxy overlapping zone contacts: %zu", proxy.overlapping_zone_count);
+          static_cast<double>(proxy.position.x),
+          static_cast<double>(proxy.position.y),
+          static_cast<double>(proxy.position.z),
+          static_cast<double>(proxy.radius),
+          static_cast<double>(proxy.heading_degrees));
+      ImGui::Text("Proxy overlapping zone contacts: %zu", proxy.overlapping_zone_count);
       ImGui::Text("Proxy synchronization: %s%s%s",
-        proxy.synchronization_suspended ? "frozen" : "ordinary actor update",
-        proxy.suspension_reason.empty() ? "" : " - ",
-        proxy.suspension_reason.c_str());
+          proxy.synchronization_suspended ? "frozen" : "ordinary actor update",
+          proxy.suspension_reason.empty() ? "" : " - ",
+          proxy.suspension_reason.c_str());
     } else {
       ImGui::TextUnformatted("Trigger proxy: not registered");
     }
@@ -419,8 +419,7 @@ void DebugUI::show_world_inspector() {
             character.ctl_move_name.c_str());
         ImGui::Text("State: %d, animation key: %s",
             static_cast<int>(character.ctl_state_id.value_or(0)),
-            character.ctl_animation_key.empty() ? "<none>"
-                                                : character.ctl_animation_key.c_str());
+            character.ctl_animation_key.empty() ? "<none>" : character.ctl_animation_key.c_str());
         ImGui::Text("Phase: %.3f -> %.3f (end %.3f)",
             static_cast<double>(character.ctl_previous_progress),
             static_cast<double>(character.ctl_current_progress),
@@ -450,29 +449,60 @@ void DebugUI::show_world_inspector() {
           static_cast<double>(character.bounds_radius));
       if (!character.selected_object.empty()) {
         ImGui::SeparatorText("Animation");
+        const auto show_object_translation = [&character](const char* object_label,
+                                                 const std::size_t object_index) {
+          if (object_index >= character.object_poses.size()) {
+            return;
+          }
+          const Debug::RuntimeCharacterObjectPoseDebugState& object{
+              character.object_poses.at(object_index)};
+          ImGui::Text("%s local: %.3f, %.3f, %.3f",
+              object_label,
+              static_cast<double>(object.local_offset.at(0)),
+              static_cast<double>(object.local_offset.at(1)),
+              static_cast<double>(object.local_offset.at(2)));
+          ImGui::Text("%s model: %.3f, %.3f, %.3f",
+              object_label,
+              static_cast<double>(object.model_translation.at(0)),
+              static_cast<double>(object.model_translation.at(1)),
+              static_cast<double>(object.model_translation.at(2)));
+          ImGui::Text("%s world: %.3f, %.3f, %.3f",
+              object_label,
+              static_cast<double>(object.presentation_translation.at(0)),
+              static_cast<double>(object.presentation_translation.at(1)),
+              static_cast<double>(object.presentation_translation.at(2)));
+        };
         ImGui::TextUnformatted("Source / selection");
         ImGui::Text("Selected: %s (mesh %u, script %u, %s)",
             character.selected_object.c_str(),
             character.selected_mesh_id,
             character.selected_script_id,
             character.selected_is_root ? "root" : "non-root");
-          ImGui::Text("Selected polygons: %u triangles + %u rectangles = %u",
+        ImGui::Text("Selected polygons: %u triangles + %u rectangles = %u",
             character.selected_triangle_count,
             character.selected_rectangle_count,
             character.selected_triangle_count + character.selected_rectangle_count);
-          ImGui::Text("Hierarchy root: [%zu] %s",
+        ImGui::Text("Hierarchy root: [%zu] %s",
             character.hierarchy_root_index.value_or(0U),
             character.hierarchy_root_name.empty() ? "<none>"
-                                : character.hierarchy_root_name.c_str());
-          ImGui::Text("Actor object: [%zu] %s | %u triangles + %u rectangles = %u",
+                                                  : character.hierarchy_root_name.c_str());
+        ImGui::Text("Actor object: [%zu] %s | %u triangles + %u rectangles = %u",
             character.actor_object_index.value_or(0U),
             character.actor_object_name.empty() ? "<none>" : character.actor_object_name.c_str(),
             character.actor_object_triangle_count,
             character.actor_object_rectangle_count,
             character.actor_object_triangle_count + character.actor_object_rectangle_count);
-          ImGui::Text("Selected == hierarchy root: %s | selected == actor object: %s",
+        ImGui::Text("Selected == hierarchy root: %s | selected == actor object: %s",
             character.selected_is_root ? "yes" : "no",
             character.selected_is_actor_object ? "yes" : "no");
+        ImGui::Text("Logical actor XYZ: %.3f, %.3f, %.3f",
+            static_cast<double>(character.runtime_position.at(0)),
+            static_cast<double>(character.runtime_position.at(1)),
+            static_cast<double>(character.runtime_position.at(2)));
+        show_object_translation("Selected visual", character.selected_object_index);
+        if (character.hierarchy_root_index.has_value()) {
+          show_object_translation("Hierarchy root", character.hierarchy_root_index.value());
+        }
         ImGui::Text("Animation: [%u] %s (id %u, max %u)",
             character.animation_descriptor_index,
             character.animation_name.c_str(),
@@ -504,13 +534,20 @@ void DebugUI::show_world_inspector() {
             static_cast<double>(character.final_anchor.at(1)),
             static_cast<double>(character.final_anchor.at(2)));
         ImGui::TextUnformatted("Root motion");
-        ImGui::Text("Delta: %.3f, %.3f, %.3f (accum %.3f, %.3f, %.3f)",
+        ImGui::Text("Visual delta: %.3f, %.3f, %.3f (accum %.3f, %.3f, %.3f)",
             static_cast<double>(character.root_motion_delta.at(0)),
             static_cast<double>(character.root_motion_delta.at(1)),
             static_cast<double>(character.root_motion_delta.at(2)),
-            static_cast<double>(character.accumulated_root_translation.at(0)),
-            static_cast<double>(character.accumulated_root_translation.at(1)),
-            static_cast<double>(character.accumulated_root_translation.at(2)));
+            static_cast<double>(character.accumulated_visual_translation.at(0)),
+            static_cast<double>(character.accumulated_visual_translation.at(1)),
+            static_cast<double>(character.accumulated_visual_translation.at(2)));
+        ImGui::Text("Logical actor delta: %.3f, %.3f, %.3f (accum %.3f, %.3f, %.3f)",
+            static_cast<double>(character.logical_actor_delta.at(0)),
+            static_cast<double>(character.logical_actor_delta.at(1)),
+            static_cast<double>(character.logical_actor_delta.at(2)),
+            static_cast<double>(character.accumulated_logical_actor_translation.at(0)),
+            static_cast<double>(character.accumulated_logical_actor_translation.at(1)),
+            static_cast<double>(character.accumulated_logical_actor_translation.at(2)));
         if (ImGui::TreeNode("Object pose")) {
           for (std::size_t pose_index{0}; pose_index < character.object_poses.size();
               ++pose_index) {
@@ -528,6 +565,18 @@ void DebugUI::show_world_inspector() {
                   static_cast<double>(pose.quaternion.at(1)),
                   static_cast<double>(pose.quaternion.at(2)),
                   static_cast<double>(pose.quaternion.at(3)));
+              ImGui::Text("local offset: %.3f, %.3f, %.3f",
+                  static_cast<double>(pose.local_offset.at(0)),
+                  static_cast<double>(pose.local_offset.at(1)),
+                  static_cast<double>(pose.local_offset.at(2)));
+              ImGui::Text("model/world translation: %.3f, %.3f, %.3f",
+                  static_cast<double>(pose.model_translation.at(0)),
+                  static_cast<double>(pose.model_translation.at(1)),
+                  static_cast<double>(pose.model_translation.at(2)));
+              ImGui::Text("presentation/world XYZ: %.3f, %.3f, %.3f",
+                  static_cast<double>(pose.presentation_translation.at(0)),
+                  static_cast<double>(pose.presentation_translation.at(1)),
+                  static_cast<double>(pose.presentation_translation.at(2)));
               ImGui::Text("local matrix: [%.3f %.3f %.3f] [%.3f %.3f %.3f] [%.3f %.3f %.3f]",
                   static_cast<double>(pose.local_matrix.at(0)),
                   static_cast<double>(pose.local_matrix.at(1)),
@@ -798,10 +847,10 @@ void DebugUI::show_sprite_instances_tab(
     ScenarioRuntime& runtime, SceneDebugView* const scene_view, const float delta_time) {
   Sprite::SpritePool& pool{runtime.sprite_pool()};
 
-  ImGui::Text("Pool: %lu live / %lu capacity / %lu attached",
-      static_cast<unsigned long>(pool.live_count()),
-      static_cast<unsigned long>(pool.capacity()),
-      static_cast<unsigned long>(pool.attached_count()));
+  ImGui::Text("Pool: %zu live / %zu capacity / %zu attached",
+      pool.live_count(),
+      pool.capacity(),
+      pool.attached_count());
 
   if (ImGui::BeginChild("##SpriteInstances", ImVec2(0.0F, 120.0F), ImGuiChildFlags_Borders)) {
     for (auto head{pool.render_list_head()}; head.has_value();

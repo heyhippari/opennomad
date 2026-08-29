@@ -4,9 +4,11 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <span>
@@ -433,24 +435,58 @@ std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state
       std::size_t group_count{0};
       float bounds_radius{0.0F};
       if (model_resource != nullptr) {
-        bounds_center =
-            Runtime::transform_point(model_resource->bounds_center, character.transform);
         group_count = character.posed_groups.size();
-        bounds_radius = model_resource->bounds_radius;
+        Runtime::Vec3 minimum{.x = std::numeric_limits<float>::max(),
+            .y = std::numeric_limits<float>::max(),
+            .z = std::numeric_limits<float>::max()};
+        Runtime::Vec3 maximum{.x = std::numeric_limits<float>::lowest(),
+            .y = std::numeric_limits<float>::lowest(),
+            .z = std::numeric_limits<float>::lowest()};
+        bool has_vertices{false};
+        for (const Omikron::MaterialGroup& group : character.posed_groups) {
+          for (const Vertex& vertex : group.vertices) {
+            const Runtime::Vec3 world{
+                Runtime::transform_point(Runtime::Vec3{.x = vertex.position.at(0),
+                                             .y = vertex.position.at(1),
+                                             .z = vertex.position.at(2)},
+                    character.presentation_transform())};
+            minimum.x = std::min(minimum.x, world.x);
+            minimum.y = std::min(minimum.y, world.y);
+            minimum.z = std::min(minimum.z, world.z);
+            maximum.x = std::max(maximum.x, world.x);
+            maximum.y = std::max(maximum.y, world.y);
+            maximum.z = std::max(maximum.z, world.z);
+            has_vertices = true;
+          }
+        }
+        if (has_vertices) {
+          bounds_center = {.x = (minimum.x + maximum.x) * 0.5F,
+              .y = (minimum.y + maximum.y) * 0.5F,
+              .z = (minimum.z + maximum.z) * 0.5F};
+          const float extent_x{maximum.x - minimum.x};
+          const float extent_y{maximum.y - minimum.y};
+          const float extent_z{maximum.z - minimum.z};
+          bounds_radius = 0.5F * std::sqrt((extent_x * extent_x) + (extent_y * extent_y) +
+                                           (extent_z * extent_z));
+        } else {
+          bounds_center = Runtime::transform_point(
+              model_resource->bounds_center, character.presentation_transform());
+          bounds_radius = model_resource->bounds_radius;
+        }
       }
       const Character::BodyAnimationPlayback& animation{character.body_animation};
       std::uint32_t selected_mesh_id{0};
       std::uint32_t selected_script_id{0};
-        std::uint32_t selected_triangle_count{0};
-        std::uint32_t selected_rectangle_count{0};
+      std::uint32_t selected_triangle_count{0};
+      std::uint32_t selected_rectangle_count{0};
       bool selected_is_root{false};
-        bool selected_is_actor_object{false};
-        std::optional<std::size_t> hierarchy_root_index;
-        std::string hierarchy_root_name;
-        std::optional<std::size_t> actor_object_index;
-        std::string actor_object_name;
-        std::uint32_t actor_object_triangle_count{0};
-        std::uint32_t actor_object_rectangle_count{0};
+      bool selected_is_actor_object{false};
+      std::optional<std::size_t> hierarchy_root_index;
+      std::string hierarchy_root_name;
+      std::optional<std::size_t> actor_object_index;
+      std::string actor_object_name;
+      std::uint32_t actor_object_triangle_count{0};
+      std::uint32_t actor_object_rectangle_count{0};
       if (model_resource != nullptr &&
           animation.selected_object_index < model_resource->model.meshes.size()) {
         const Omikron::MeshDescriptor& selected{
@@ -465,8 +501,7 @@ std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state
             model_resource->actor_object_index == animation.selected_object_index;
         if (model_resource->model.root_mesh_index >= 0) {
           hierarchy_root_index = static_cast<std::size_t>(model_resource->model.root_mesh_index);
-          hierarchy_root_name =
-              model_resource->model.meshes.at(hierarchy_root_index.value()).name;
+          hierarchy_root_name = model_resource->model.meshes.at(hierarchy_root_index.value()).name;
         }
         actor_object_index = model_resource->actor_object_index;
         if (actor_object_index.has_value()) {
@@ -498,6 +533,7 @@ std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state
           .bounds_radius = bounds_radius,
           .body_animation_active = animation.active,
           .body_animation_completed = animation.completed,
+          .selected_object_index = animation.selected_object_index,
           .selected_object = animation.selected_object_name,
           .selected_mesh_id = selected_mesh_id,
           .selected_script_id = selected_script_id,
@@ -535,9 +571,16 @@ std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state
           .root_motion_delta = {animation.root_motion_delta.x,
               animation.root_motion_delta.y,
               animation.root_motion_delta.z},
-          .accumulated_root_translation = {animation.accumulated_root_translation.x,
-              animation.accumulated_root_translation.y,
-              animation.accumulated_root_translation.z},
+          .logical_actor_delta = {animation.logical_actor_delta.x,
+              animation.logical_actor_delta.y,
+              animation.logical_actor_delta.z},
+          .accumulated_visual_translation = {animation.accumulated_visual_translation.x,
+              animation.accumulated_visual_translation.y,
+              animation.accumulated_visual_translation.z},
+          .accumulated_logical_actor_translation =
+              {animation.accumulated_logical_actor_translation.x,
+                  animation.accumulated_logical_actor_translation.y,
+                  animation.accumulated_logical_actor_translation.z},
           .object_poses = {},
           .pose_owner = {},
           .has_controller = false,
@@ -609,6 +652,8 @@ std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state
           const Character::BodyAnimationObjectPose& pose{character.object_poses.at(index)};
           const Omikron::Model3DOData::RuntimeObjectState& object{
               character.runtime_objects.at(index)};
+          const std::optional<Runtime::Transform> presentation{
+              character.object_world_transform(index)};
           debug_character.object_poses.push_back(Debug::RuntimeCharacterObjectPoseDebugState{
               .object_name = model.meshes.at(index).name,
               .script_id = model.meshes.at(index).script_id,
@@ -619,6 +664,15 @@ std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state
                   pose.current_quaternion.x,
                   pose.current_quaternion.y,
                   pose.current_quaternion.z},
+              .local_offset = {object.local_offset.x, object.local_offset.y, object.local_offset.z},
+              .model_translation = {object.world_translation.x,
+                  object.world_translation.y,
+                  object.world_translation.z},
+              .presentation_translation = presentation.has_value()
+                                              ? std::array<float, 3>{presentation->translation.x,
+                                                    presentation->translation.y,
+                                                    presentation->translation.z}
+                                              : std::array<float, 3>{},
               .local_matrix = object.animation_matrix.value_or(object.local_matrix).values,
               .world_matrix = object.world_matrix.values});
         }

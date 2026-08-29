@@ -233,8 +233,8 @@ std::size_t Runtime::trigger(const std::int32_t type, const std::int32_t id) {
 }
 
 void Runtime::emit_definition(const std::int32_t definition_id,
-  const App::Runtime::Vec3 position,
-  EmissionProvenance provenance) {
+    const App::Runtime::Vec3 position,
+    EmissionProvenance provenance) {
   const auto found{m_definition_indices.find(definition_id)};
   if (found == m_definition_indices.end()) {
     App::Log::warn(LogCategory::Scenario, "Cin-SFX definition ID {} does not exist", definition_id);
@@ -423,13 +423,13 @@ void Runtime::service_node(const std::size_t node_index) {
   }
   if (definition != nullptr) {
     enqueue_request(*definition,
-      node.current_position,
-      EmissionProvenance{.origin = EmissionOriginKind::k_node,
-        .node_id = source.node_id,
-        .structured_script_trigger_id = std::nullopt,
-        .animation_id = std::nullopt,
-        .animation_name = {},
-        .cin_channel = std::nullopt});
+        node.current_position,
+        EmissionProvenance{.origin = EmissionOriginKind::k_node,
+            .node_id = source.node_id,
+            .structured_script_trigger_id = std::nullopt,
+            .animation_id = std::nullopt,
+            .animation_name = {},
+            .cin_channel = std::nullopt});
   }
 
   node.elapsed += 1.0F;
@@ -453,8 +453,8 @@ void Runtime::service_node(const std::size_t node_index) {
 }
 
 void Runtime::enqueue_request(const Omikron::SfxDefinition& definition,
-  const App::Runtime::Vec3 position,
-  EmissionProvenance provenance) {
+    const App::Runtime::Vec3 position,
+    EmissionProvenance provenance) {
   if (m_requests.size() >= k_request_capacity) {
     if (!m_request_capacity_warned) {
       m_request_capacity_warned = true;

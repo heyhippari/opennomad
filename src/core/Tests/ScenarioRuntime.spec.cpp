@@ -124,30 +124,31 @@ std::shared_ptr<const App::Character::ModelResource> make_split_actor_model_reso
   resource->name = "SPLIT";
   resource->model.materials.push_back(App::Omikron::Material{});
   resource->model.meshes.push_back(App::Omikron::MeshDescriptor{.mesh_id = 100,
-    .script_id = 2,
-    .name = "RootBody",
-    .parent_id = -1,
-    .first_child_id = -1,
-    .next_sibling_id = 200,
-    .triangle_count = 10});
+      .script_id = 2,
+      .name = "RootBody",
+      .parent_id = -1,
+      .first_child_id = 200,
+      .next_sibling_id = -1,
+      .triangle_count = 10});
   resource->model.meshes.push_back(App::Omikron::MeshDescriptor{.mesh_id = 200,
-    .script_id = 3,
-    .name = "Child",
-    .parent_id = -1,
-    .first_child_id = -1,
-    .next_sibling_id = -1,
-    .triangle_count = 60,
-    .rectangle_count = 40});
+      .script_id = 3,
+      .name = "Child",
+      .parent_id = 100,
+      .first_child_id = -1,
+      .next_sibling_id = -1,
+      .triangle_count = 60,
+      .rectangle_count = 40,
+      .bone_position = {.x = 2.0F}});
   resource->model.polygons.resize(2);
   resource->model.root_mesh_index = 0;
   resource->actor_object_index = App::Character::actor_object_index(resource->model);
-  resource->model.hierarchy_parent_index = {-1, -1};
-  resource->model.hierarchy_first_child_index = {-1, -1};
-  resource->model.hierarchy_next_sibling_index = {1, -1};
+  resource->model.hierarchy_parent_index = {-1, 0};
+  resource->model.hierarchy_first_child_index = {1, -1};
+  resource->model.hierarchy_next_sibling_index = {-1, -1};
   resource->model.hierarchy_reachable = {1, 1};
-  resource->model.skin_parent_index = {-1, -1};
+  resource->model.skin_parent_index = {-1, 0};
   resource->model.runtime_objects = {App::Omikron::Model3DOData::RuntimeObjectState{},
-    App::Omikron::Model3DOData::RuntimeObjectState{}};
+      App::Omikron::Model3DOData::RuntimeObjectState{.local_offset = {.x = 2.0F}}};
   resource->groups.push_back(App::Omikron::MaterialGroup{});
   return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
 }
@@ -157,10 +158,9 @@ struct BodyResourcesFixture {
   std::vector<std::byte> bytes;
 };
 
-BodyResourcesFixture make_body_resources(
-  const App::Runtime::Vec3 reference = {},
-  const App::Runtime::Vec3 root_motion = {.x = 10.0F},
-  const bool child_translation = false) {
+BodyResourcesFixture make_body_resources(const App::Runtime::Vec3 reference = {},
+    const App::Runtime::Vec3 root_motion = {.x = 10.0F},
+    const bool child_translation = false) {
   Buffer path;
   path.u32(1).chars("UBas.p1", 20).u32(2).u32(3);
   for (std::uint32_t key{0}; key < 3U; ++key) {
@@ -825,7 +825,9 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
     CHECK_EQ(character->transform.translation.x, doctest::Approx(107.071068F).epsilon(0.0001F));
     CHECK_EQ(character->transform.translation.y, doctest::Approx(-50.0F));
     CHECK_EQ(character->transform.translation.z, doctest::Approx(32.071068F).epsilon(0.0001F));
-    CHECK_EQ(character->body_animation.accumulated_root_translation.z,
+    CHECK_EQ(character->body_animation.accumulated_visual_translation.z,
+        doctest::Approx(7.0710678F).epsilon(0.0001F));
+    CHECK_EQ(character->body_animation.accumulated_logical_actor_translation.z,
         doctest::Approx(7.0710678F).epsilon(0.0001F));
     CHECK_EQ(character->principal_orientation_degrees.x, doctest::Approx(0.0F));
     CHECK_EQ(character->principal_orientation_degrees.y, doctest::Approx(90.0F));
@@ -849,7 +851,9 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
     CHECK_EQ(character->body_animation.final_anchor.x, doctest::Approx(100.0F));
     CHECK_EQ(character->transform.translation.x, doctest::Approx(100.0F).epsilon(0.0001));
     CHECK_EQ(character->transform.translation.z, doctest::Approx(35.0F).epsilon(0.0001));
-    CHECK_EQ(character->body_animation.accumulated_root_translation.z,
+    CHECK_EQ(character->body_animation.accumulated_visual_translation.z,
+        doctest::Approx(10.0F).epsilon(0.0001));
+    CHECK_EQ(character->body_animation.accumulated_logical_actor_translation.z,
         doctest::Approx(10.0F).epsilon(0.0001));
     CHECK_EQ(character->body_animation.root_motion_delta.x, doctest::Approx(0.0F).epsilon(0.0001F));
 
@@ -886,15 +890,15 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
 
     const auto make_runtime = [&resources, &loader]() {
       auto runtime{std::make_unique<App::ScenarioRuntime>()};
-      REQUIRE(runtime->initialize(resources.scx, resources.bytes, "split", nullptr, false)
-            .has_value());
+      REQUIRE(
+          runtime->initialize(resources.scx, resources.bytes, "split", nullptr, false).has_value());
       runtime->character_runtime().set_model_loader(loader);
       REQUIRE(runtime
-            ->activate_character(118,
-              make_character_area(),
-              App::Script::AreaCharacterActivationRequest{
-                .character_id = 310, .apply_area_transform = true})
-            .has_value());
+              ->activate_character(118,
+                  make_character_area(),
+                  App::Script::AreaCharacterActivationRequest{
+                      .character_id = 310, .apply_area_transform = true})
+              .has_value());
       return runtime;
     };
 
@@ -904,25 +908,36 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
     visual->transform.translation = {.x = 7000.0F, .y = -120.0F, .z = 3040.0F};
     visual->set_principal_orientation({});
     const App::Script::BodyAnimationRequest root_request{.character_id = 310,
-      .object_binding = "RootBody",
-      .animation_index = 0,
-      .previous_progress = 0.0F,
-      .current_progress = 1.0F,
-      .body_animation_vector = {},
-      .authored_offset = {},
-      .first_tick = true,
-      .execution_count = 0,
-      .execution_limit = 1};
+        .object_binding = "RootBody",
+        .animation_index = 0,
+        .previous_progress = 0.0F,
+        .current_progress = 1.0F,
+        .body_animation_vector = {},
+        .authored_offset = {},
+        .first_tick = true,
+        .execution_count = 0,
+        .execution_limit = 1};
     REQUIRE(visual_runtime->select_body_animation(root_request).has_value());
     CHECK_EQ(visual->transform.translation.x, doctest::Approx(7000.0F));
     CHECK_EQ(visual->transform.translation.y, doctest::Approx(-120.0F));
     CHECK_EQ(visual->transform.translation.z, doctest::Approx(3040.0F));
-    CHECK_EQ(visual->transform.translation.x + visual->runtime_objects.at(0).world_translation.x,
-      doctest::Approx(110.0F));
-    CHECK_EQ(visual->transform.translation.y + visual->runtime_objects.at(0).world_translation.y,
-      doctest::Approx(-44.0F));
-    CHECK_EQ(visual->transform.translation.z + visual->runtime_objects.at(0).world_translation.z,
-      doctest::Approx(25.0F));
+    const auto visual_root{visual->object_world_transform(0U)};
+    const auto visual_child{visual->object_world_transform(1U)};
+    REQUIRE(visual_root.has_value());
+    REQUIRE(visual_child.has_value());
+    CHECK_EQ(visual_root->translation.x, doctest::Approx(110.0F));
+    CHECK_EQ(visual_root->translation.y, doctest::Approx(-44.0F));
+    CHECK_EQ(visual_root->translation.z, doctest::Approx(25.0F));
+    CHECK_EQ(visual_child->translation.x - visual_root->translation.x, doctest::Approx(-2.0F));
+    CHECK_EQ(visual_child->translation.y, doctest::Approx(-44.0F));
+    CHECK_EQ(visual->body_animation.logical_actor_delta.x, doctest::Approx(0.0F));
+    CHECK_EQ(visual->body_animation.accumulated_visual_translation.x, doctest::Approx(10.0F));
+
+    REQUIRE(visual_runtime->select_body_animation(root_request).has_value());
+    const auto reseeded_root{visual->object_world_transform(0U)};
+    REQUIRE(reseeded_root.has_value());
+    CHECK_EQ(visual->transform.translation.x, doctest::Approx(7000.0F));
+    CHECK_EQ(reseeded_root->translation.x, doctest::Approx(110.0F));
 
     auto actor_runtime{make_runtime()};
     App::Character::RuntimeCharacter* actor{actor_runtime->character_runtime().find(310)};
@@ -935,14 +950,21 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
     CHECK_EQ(actor->transform.translation.x, doctest::Approx(110.0F));
     CHECK_EQ(actor->transform.translation.y, doctest::Approx(-50.0F));
     CHECK_EQ(actor->transform.translation.z, doctest::Approx(25.0F));
-    CHECK_EQ(actor->transform.translation.y + actor->runtime_objects.at(1).world_translation.y,
-      doctest::Approx(-44.0F));
+    const auto actor_visual{actor->object_world_transform(1U)};
+    REQUIRE(actor_visual.has_value());
+    CHECK_EQ(actor_visual->translation.x, doctest::Approx(110.0F));
+    CHECK_EQ(actor_visual->translation.y, doctest::Approx(-44.0F));
+    CHECK_EQ(actor_visual->translation.z, doctest::Approx(25.0F));
+    CHECK_EQ(actor->body_animation.logical_actor_delta.x, doctest::Approx(10.0F));
+    CHECK_EQ(actor->body_animation.logical_actor_delta.y, doctest::Approx(0.0F));
+    CHECK_EQ(actor->body_animation.accumulated_visual_translation.y, doctest::Approx(6.0F));
+    CHECK_EQ(actor->body_animation.accumulated_logical_actor_translation.y, doctest::Approx(0.0F));
   }
 
   TEST_CASE("Body root motion keeps logical Y fixed and moves the visual root") {
     BodyResourcesFixture resources{
         make_body_resources(App::Runtime::Vec3{.x = 100.0F, .y = -50.0F, .z = 25.0F},
-        App::Runtime::Vec3{.x = 10.0F, .y = 6.0F, .z = 0.0F})};
+            App::Runtime::Vec3{.x = 10.0F, .y = 6.0F, .z = 0.0F})};
     resources.scx.section0_records.clear();
     resources.scx.section0_resources.clear();
     const std::shared_ptr<const App::Character::ModelResource> shared{make_body_model_resource()};
@@ -1060,7 +1082,7 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
     // even when the selected hierarchy object is parented.
     CHECK_EQ(child->body_animation.final_anchor.x, doctest::Approx(3.93700778F));
     CHECK_EQ(child->transform.translation.x + child->runtime_objects.at(1).world_translation.x,
-      doctest::Approx(3.93700778F));
+        doctest::Approx(3.93700778F));
     CHECK_EQ(child->transform.translation.x, doctest::Approx(character_x_before_child));
     CHECK_EQ(child->body_animation.root_motion_delta.x, doctest::Approx(0.0F));
   }

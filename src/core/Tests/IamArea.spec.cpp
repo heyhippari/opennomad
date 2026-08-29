@@ -37,9 +37,8 @@ void write_u32(std::vector<std::byte>& data, const std::size_t offset, const std
   std::memcpy(data.data() + offset, &value, sizeof(value));
 }
 
-void write_bytecode_pool_bounds(std::vector<std::byte>& data,
-    const std::size_t start,
-    const std::size_t end) {
+void write_bytecode_pool_bounds(
+    std::vector<std::byte>& data, const std::size_t start, const std::size_t end) {
   write_u32(data,
       IamAreaRecord::k_offset_table_offsets + (6U * sizeof(std::uint32_t)),
       static_cast<std::uint32_t>(end));

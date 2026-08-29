@@ -32,6 +32,27 @@
 
 namespace App::Character {
 
+std::optional<App::Runtime::Transform> RuntimeCharacter::object_model_transform(
+    const std::size_t object_index) const {
+  if (object_index >= runtime_objects.size()) {
+    return std::nullopt;
+  }
+  const Omikron::Model3DOData::RuntimeObjectState& object{runtime_objects.at(object_index)};
+  return App::Runtime::Transform{.matrix = object.world_matrix,
+      .translation = object.world_translation,
+      .scale = object.scale};
+}
+
+std::optional<App::Runtime::Transform> RuntimeCharacter::object_world_transform(
+    const std::size_t object_index) const {
+  const std::optional<App::Runtime::Transform> model_transform{
+      object_model_transform(object_index)};
+  if (!model_transform.has_value()) {
+    return std::nullopt;
+  }
+  return App::Runtime::compose(model_transform.value(), presentation_transform());
+}
+
 namespace {
 
 constexpr std::string_view K_CHARACTER_MODEL_DIRECTORY{"MESHES/PERSOS"};

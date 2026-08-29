@@ -940,6 +940,7 @@ TEST_SUITE("Core::Character::CtlController") {
     character.pose_owner = App::Character::PoseOwner::k_script_animation;
     character.runtime_objects[0].local_offset = {.x = 7.0F, .y = 7.0F, .z = 7.0F};
     character.posed_groups.clear();
+    character.transform.translation = {.x = 500.0F, .y = 600.0F, .z = 700.0F};
     const std::uint64_t revision{character.pose_revision};
 
     // The initialized-but-disabled controller leaves the pose untouched until
@@ -954,6 +955,12 @@ TEST_SUITE("Core::Character::CtlController") {
     CHECK(character.pose_revision > revision);
     CHECK(character.runtime_objects[0].local_offset.x == doctest::Approx(0.0F));
     CHECK_EQ(character.object_poses[0].channel_id, std::optional<std::uint32_t>{2U});
+    CHECK_EQ(character.transform.translation.x, doctest::Approx(500.0F));
+    const auto root_world{character.object_world_transform(0U)};
+    REQUIRE(root_world.has_value());
+    CHECK_EQ(root_world->translation.x, doctest::Approx(500.0F));
+    CHECK_EQ(root_world->translation.y, doctest::Approx(600.0F));
+    CHECK_EQ(root_world->translation.z, doctest::Approx(700.0F));
   }
 
   TEST_CASE("segmented animation modes fail safely without sampling") {

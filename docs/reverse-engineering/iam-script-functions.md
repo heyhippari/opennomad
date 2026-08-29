@@ -977,10 +977,9 @@ arg4-6 additive XYZ Euler orientation offsets (degrees)
 arg7-9 authored non-path anchor offset (floats)
 ```
 
-It operates on the explicitly character-bound SCX instance. On an execution boundary it binds 3DA channels to the selected 3DO hierarchy by numeric `script_id`, seeds the absolute anchor from the first 3DA position stream's key
-+zero plus the authored centimetre-to-inch offset, and then uses the shared 3DA rotation/root-motion playback path. `arg2`/`arg3` reset to `0`/`1` on command reinitialization.
+It operates on the explicitly character-bound SCX instance. On an execution boundary it binds 3DA channels to the selected 3DO hierarchy by numeric `script_id`, seeds the absolute anchor from the selected object's bound 3DA position key zero plus the authored centimetre-to-inch offset, and then uses the shared 3DA rotation/root-motion playback path. `arg2`/`arg3` reset to `0`/`1` on command reinitialization.
 
-Runtime stores `arg4-6` separately from the actor's base Euler orientation and adds them when building the effective body orientation. Integrated 3DA root motion is transformed through that effective orientation. Its X/Z components advance the logical character position; the full XYZ displacement is applied to the visual root, so vertical body motion does not rewrite logical actor Y.
+Runtime stores `arg4-6` separately from the actor's base Euler orientation and adds them when building the effective body orientation. Integrated 3DA root motion is transformed through that effective orientation. The selected visual object receives the full XYZ displacement. Its X/Z components advance logical actor position only when the selected object is the actor representative stored at `actor+0x08`; vertical body motion does not rewrite logical actor Y. Absolute selected-object placement likewise changes logical actor XYZ only under that exact identity match.
 
 Unlike `SelectRelativeBodyAnimation`, it does not resolve a 3DP path or subpath. Both commands remain group-active while their 30 Hz script-frame progression has not reached the animation endpoint.
 

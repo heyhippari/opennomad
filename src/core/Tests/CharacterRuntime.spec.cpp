@@ -150,8 +150,33 @@ std::shared_ptr<const App::Character::ModelResource> fake_morph_resource(
 }  // namespace
 
 TEST_SUITE("Core::Character::Runtime") {
+  TEST_CASE("visual object world transform composes instance state with the logical actor") {
+    App::Character::RuntimeCharacter character;
+    character.transform.translation = {.x = 100.0F, .y = 200.0F, .z = 300.0F};
+    character.set_principal_orientation({.y = 90.0F});
+    character.runtime_objects.push_back(App::Omikron::Model3DOData::RuntimeObjectState{
+        .world_translation = {.x = 10.0F, .y = 20.0F, .z = 30.0F}});
+
+    const auto model_transform{character.object_model_transform(0U)};
+    REQUIRE(model_transform.has_value());
+    CHECK_EQ(model_transform->translation.x, 10.0F);
+    CHECK_EQ(model_transform->translation.y, 20.0F);
+    CHECK_EQ(model_transform->translation.z, 30.0F);
+
+    const auto world_transform{character.object_world_transform(0U)};
+    REQUIRE(world_transform.has_value());
+    const App::Runtime::Vec3 expected{App::Runtime::transform_point(
+        model_transform->translation, character.presentation_transform())};
+    CHECK_EQ(world_transform->translation.x, doctest::Approx(expected.x));
+    CHECK_EQ(world_transform->translation.y, doctest::Approx(expected.y));
+    CHECK_EQ(world_transform->translation.z, doctest::Approx(expected.z));
+    CHECK_FALSE(character.object_world_transform(1U).has_value());
+  }
+
   TEST_CASE("actor object uses first mesh with the greatest polygon total") {
     App::Omikron::Model3DOData model;
+    CHECK_FALSE(App::Character::actor_object_index(model).has_value());
+
     model.meshes = {App::Omikron::MeshDescriptor{.triangle_count = 6, .rectangle_count = 4},
         App::Omikron::MeshDescriptor{.triangle_count = 8, .rectangle_count = 2},
         App::Omikron::MeshDescriptor{.triangle_count = 20, .rectangle_count = 1}};
@@ -160,6 +185,15 @@ TEST_SUITE("Core::Character::Runtime") {
     model.meshes.at(2).triangle_count = 10;
     model.meshes.at(2).rectangle_count = 0;
     CHECK_EQ(App::Character::actor_object_index(model), std::optional<std::size_t>{0U});
+
+    model.root_mesh_index = 0;
+    model.meshes.at(1).parent_id = 1;
+    model.meshes.at(1).triangle_count = 11;
+    CHECK_EQ(App::Character::actor_object_index(model), std::optional<std::size_t>{1U});
+    CHECK_NE(model.root_mesh_index, 1);
+
+    model.meshes.at(2).triangle_count = 11;
+    CHECK_EQ(App::Character::actor_object_index(model), std::optional<std::size_t>{1U});
   }
   TEST_CASE("AREA 118 character materialization uses shared transform helpers and model data") {
     const App::Omikron::IamAreaRecord area{make_area()};

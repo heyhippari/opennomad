@@ -27,14 +27,16 @@
 namespace {
 
 class FakeHost final : public App::Sfx::Host {
+ public:
   [[nodiscard]] std::string_view sfx_scenario_name() const override {
     return "test-scenario";
   }
 
-  [[nodiscard]] std::string_view sfx_sound_name(const std::int32_t) const override {
+  [[nodiscard]] std::string_view sfx_sound_name(
+      [[maybe_unused]] const std::int32_t authored_h_id) const override {
     return "test-sound";
   }
- public:
+
   FakeHost() {
     sprite_ids.emplace(9U, 90U);
     sprite_ids.emplace(10U, 100U);

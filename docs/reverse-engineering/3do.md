@@ -273,7 +273,7 @@ unknown regions.
 `root+0xB4` is not merely an optional hint.
 
 Runtime resolves the value against serialized object `meshID` fields and keeps
-the corresponding runtime object as the distinguished root.
+the corresponding runtime object as the distinguished hierarchy/traversal root.
 
 Current evidence supports:
 
@@ -286,6 +286,9 @@ resolved runtime root object
 ```
 
 Failure to resolve the requested root is a load error in the recovered path.
+
+This object is not necessarily the logical actor representative stored at
+`actor+0x08`; see section 14.1.
 
 Do not replace this with:
 
@@ -831,6 +834,26 @@ These are **runtime-only pointers** and must not be added to the file schema.
 
 A modern implementation should instead construct stable indices/references in a
 separate runtime representation.
+
+## 14.1 Character actor representative is independent of the hierarchy root
+
+Runtime character construction around `0x0041A730` walks the expanded runtime
+objects and computes `triangleCount + rectangleCount` from object fields
+`+0x44/+0x48`. The first object with the greatest polygon total is retained;
+equal later totals do not replace it. Around `0x0041A7FD`, Runtime writes that
+object pointer to `actor+0x08`.
+
+Helper `0x0041C300` finds an actor by exact identity against `actor+0x08`.
+This representative is independent of `Serialized3DORootV4+0xB4` and may be a
+child. Retail examples demonstrate the distinction:
+
+```text
+HO1_FN.3DO:  hierarchy root UBassin [2], actor representative UTete [17]
+HO1_FNM.3DO: hierarchy root UBassin [2], actor representative UVisage [19]
+```
+
+OpenNomad represents these identities as `Model3DOData::root_mesh_index` and
+`ModelResource::actor_object_index`, respectively. They are not aliases.
 
 ---
 

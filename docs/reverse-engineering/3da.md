@@ -23,8 +23,9 @@
 >   recovered body-animation path;
 > - position keys after key 0 are per-frame **root-motion increments**, not
 >   absolute positions;
-> - only the top/root hierarchy object contributes position motion in the
->   recovered body-animation path.
+> - positional anchoring and root-motion integration use the selected object's
+>   bound positional channel; logical actor updates additionally require exact
+>   actor-representative identity.
 >
 > This file is authoritative for the 3DA binary format and its currently
 > recovered Runtime semantics.
@@ -960,7 +961,7 @@ both establish that key 0 should not contribute to motion accumulation.
 
 ---
 
-# 20. Root motion applies only to the top hierarchy object
+# 20. Position motion belongs to the selected animated object
 
 Runtime body-animation application around:
 
@@ -974,13 +975,9 @@ does two conceptually separate things:
 hierarchy traversal:
     apply rotation tracks to bound objects
 
-top/root object only:
-    integrate position/root motion
+selected animated object:
+    integrate its bound position/root-motion channel
 ```
-
-The routine checks the runtime object's parent pointer and invokes position
-integration only when the animated object is at the top of the relevant
-hierarchy.
 
 Thus:
 
@@ -989,11 +986,12 @@ rotation:
     can exist on many body/object tracks
 
 position/root motion:
-    comes from the top/root animation track in the recovered body path
+    comes from the selected object's bound animation track
 ```
 
-This matches the inspected `Grid.SCX` animations, where only `UBassin` carries a
-non-null position stream.
+This matches the inspected `Grid.SCX` animations, where selected `UBassin`
+carries the relevant non-null position stream. It must not be generalized into
+an unconditional lookup through the serialized 3DO hierarchy root.
 
 ---
 
@@ -1017,23 +1015,30 @@ The multiplication uses Runtime's row-vector convention:
 worldDelta = integrated3DADelta * liveRootOrientation
 ```
 
-The body-animation caller supplies the live top/root object orientation. This
-is the actor's current world-facing basis; it is distinct from the animation
+The body-animation caller supplies the actor's live world-facing basis. It is
+distinct from the animation
 quaternion sampled for the current 3DA frame. Runtime writes that quaternion to
 object animation state separately.
 
-In OpenNomad the original top-level object state is split: actor/world placement
-and orientation live in `RuntimeCharacter::transform`, while the 3DO hierarchy
-keeps model/object animation state. The equivalent root-motion operation is:
+Runtime then applies the transformed interval through `0x00469450`. That helper
+looks up the selected object with `0x0041C300`:
 
-```cpp
-rootDelta =
-    Runtime::transform_vector(integratedDelta, character.transform.matrix);
+```text
+selected visual object:
+    receives full XYZ delta unconditionally
 
-character.transform.translation += rootDelta;
+logical actor:
+    receives X/Z only when selected object == actor+0x08
 ```
 
-Do not multiply the current root `animation_matrix` into this transform.
+Absolute placement follows the same identity split. `0x004370A0` places the
+selected visual object, then `0x00469500` updates logical actor XYZ only when
+`0x0041C300(selectedObject)` returns an actor. OpenNomad therefore keeps logical
+placement in `RuntimeCharacter::transform`, instance-local visual hierarchy in
+`runtime_objects`, and actor identity in `ModelResource::actor_object_index`.
+Do not multiply the selected object's current `animation_matrix` into the
+root-motion orientation or substitute `root_mesh_index` for representative
+identity.
 
 ## 21.1 Absolute reseeding across executions
 

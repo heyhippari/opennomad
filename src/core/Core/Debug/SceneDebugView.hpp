@@ -89,6 +89,9 @@ struct RuntimeCharacterObjectPoseDebugState {
   std::uint32_t channel_id{0};
   std::string channel_name;
   std::array<float, 4> quaternion{};
+  std::array<float, 3> local_offset{};
+  std::array<float, 3> model_translation{};
+  std::array<float, 3> presentation_translation{};
   std::array<float, 9> local_matrix{};
   std::array<float, 9> world_matrix{};
 };
@@ -114,6 +117,7 @@ struct RuntimeCharacterDebugState {
   float bounds_radius{0.0F};
   bool body_animation_active{false};
   bool body_animation_completed{false};
+  std::size_t selected_object_index{0};
   std::string selected_object;
   std::uint32_t selected_mesh_id{0};
   std::uint32_t selected_script_id{0};
@@ -143,7 +147,9 @@ struct RuntimeCharacterDebugState {
   std::array<float, 3> authored_offset{};
   std::array<float, 3> final_anchor{};
   std::array<float, 3> root_motion_delta{};
-  std::array<float, 3> accumulated_root_translation{};
+  std::array<float, 3> logical_actor_delta{};
+  std::array<float, 3> accumulated_visual_translation{};
+  std::array<float, 3> accumulated_logical_actor_translation{};
   std::vector<RuntimeCharacterObjectPoseDebugState> object_poses;
 
   /// Which subsystem owns the visible base pose (model defaults / scripted

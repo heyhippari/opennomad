@@ -119,7 +119,7 @@ std::vector<std::byte> make_area_archive(const std::vector<std::byte>& prefix) {
 }
 
 std::vector<std::byte> make_transition_area_archive(
-  const std::vector<std::byte>& source_prefix, const bool target_has_primary = true) {
+    const std::vector<std::byte>& source_prefix, const bool target_has_primary = true) {
   constexpr std::size_t k_source_offset{0x800};
   constexpr std::uint32_t k_source_size{0x9C0};
   constexpr std::size_t k_target_offset{0x1200};
@@ -303,8 +303,8 @@ void write_dialog_boot_fixtures(const TempDirectory& temp, const bool action_cho
 }
 
 void write_transition_boot_fixtures(const TempDirectory& temp,
-  const bool include_target_scx,
-  const bool target_has_primary = true) {
+    const bool include_target_scx,
+    const bool target_has_primary = true) {
   Buffer script;
   script.u8(0x2F).u16(222).u16(0xFFFF).u16(0xFFFF);
   script.u8(0x47).u16(222).u16(55).u8(0x03);
@@ -772,7 +772,8 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
     CHECK_FALSE(target_area_context_found);
     REQUIRE(scene_context != nullptr);
     CHECK_EQ(scene_context->source.owner_area_slot, std::optional<std::uint8_t>{1U});
-    CHECK_EQ(scene_context->source.source_primary_event_offset, std::optional<std::uint32_t>{0x44U});
+    CHECK_EQ(
+        scene_context->source.source_primary_event_offset, std::optional<std::uint32_t>{0x44U});
     CHECK_EQ(scene_context->source.open_nomad_execution_base_offset, 0x44U);
   }
 

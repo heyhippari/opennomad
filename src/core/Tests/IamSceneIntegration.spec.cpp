@@ -29,8 +29,7 @@ TEST_CASE("[RETAIL] all 71 IAM/SCENE records satisfy recovered geometry") {
     const std::uint32_t pool_start{scene->bytecode_pool_offset()};
     const std::uint32_t pool_end{scene->table_offset(6U)};
     CHECK_EQ(pool_start,
-        scene->table_offset(7U) +
-            (static_cast<std::uint32_t>(scene->table_count(7U)) * 0x08U));
+        scene->table_offset(7U) + (static_cast<std::uint32_t>(scene->table_count(7U)) * 0x08U));
     CHECK_EQ(scene->bytecode_pool().size(), pool_end - pool_start);
     CHECK_LE(pool_start, pool_end);
 

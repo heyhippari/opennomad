@@ -118,9 +118,8 @@ class Runtime {
   void tick(float real_delta_seconds);
   void step();
   [[nodiscard]] std::size_t trigger(std::int32_t type, std::int32_t id);
-  void emit_definition(std::int32_t definition_id,
-      App::Runtime::Vec3 position,
-      EmissionProvenance provenance = {});
+  void emit_definition(
+      std::int32_t definition_id, App::Runtime::Vec3 position, EmissionProvenance provenance = {});
   [[nodiscard]] Diagnostics diagnostics() const;
   [[nodiscard]] std::span<const NodeState> nodes() const;
   [[nodiscard]] std::span<const SoundStartDiagnostic> sound_start_diagnostics() const {

@@ -44,8 +44,7 @@ struct ModelResource {
 };
 
 /// Runtime actor-object selection: first mesh maximizing triangles + rectangles.
-[[nodiscard]] std::optional<std::size_t> actor_object_index(
-  const Omikron::Model3DOData& model);
+[[nodiscard]] std::optional<std::size_t> actor_object_index(const Omikron::Model3DOData& model);
 
 struct BodyAnimationObjectPose {
   std::optional<std::uint32_t> channel_index;
@@ -76,7 +75,9 @@ struct BodyAnimationPlayback {
   App::Runtime::Vec3 authored_offset{};
   App::Runtime::Vec3 final_anchor{};
   App::Runtime::Vec3 root_motion_delta{};
-  App::Runtime::Vec3 accumulated_root_translation{};
+  App::Runtime::Vec3 logical_actor_delta{};
+  App::Runtime::Vec3 accumulated_visual_translation{};
+  App::Runtime::Vec3 accumulated_logical_actor_translation{};
   /// Runtime Script_Select*BodyAnimation arguments 4/5/6. Each invocation
   /// overwrites the actor's principal XYZ Euler orientation after integrating
   /// the current root-motion interval through the previous live orientation.
@@ -195,6 +196,16 @@ struct RuntimeCharacter {
     result.matrix = principal_orientation();
     return result;
   }
+
+  /// Instance-local visual 3DO object transform, before logical actor
+  /// presentation is applied.
+  [[nodiscard]] std::optional<App::Runtime::Transform> object_model_transform(
+      std::size_t object_index) const;
+
+  /// Final rendered transform for one visual 3DO object. Runtime object state
+  /// and logical actor state are composed exactly once in row-vector order.
+  [[nodiscard]] std::optional<App::Runtime::Transform> object_world_transform(
+      std::size_t object_index) const;
 
   [[nodiscard]] bool renderable() const {
     return active && area_present && presentation_enabled && model_resource != nullptr &&

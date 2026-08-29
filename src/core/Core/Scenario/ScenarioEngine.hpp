@@ -132,8 +132,8 @@ class ScenarioEngine {
       const std::size_t resident_slot) const {
     return m_startup.area_script(resident_slot);
   }
-  [[nodiscard]] const std::optional<CurrentCharacterTriggerProxy>&
-  current_character_trigger_proxy() const {
+  [[nodiscard]] const std::optional<CurrentCharacterTriggerProxy>& current_character_trigger_proxy()
+      const {
     return m_startup.current_character_trigger_proxy();
   }
   [[nodiscard]] std::size_t zone_contact_count() const {
