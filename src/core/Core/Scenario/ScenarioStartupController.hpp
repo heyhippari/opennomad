@@ -50,7 +50,7 @@ struct RuntimeAreaSlot {
   /// Stable ScenarioManager world-scene identity owned by this resident slot.
   /// This is not an IAM AREA ID or an array index.
   std::uint32_t world_scene_id{0};
-  /// Independent compact IAM context for the attached SCENE primary event.
+  /// Independent compact IAM context for the attached SCENE top-level script.
   std::optional<Script::AreaScriptRuntime> scene_script;
 };
 
@@ -96,7 +96,7 @@ struct ZoneContactContext {
   std::int32_t area_id{-1};
   std::int32_t scene_id{-1};
   Omikron::IamZoneRecord zone;
-  std::uint32_t program_record_origin{0};
+  std::size_t program_record_origin{0};
   std::unique_ptr<Script::AreaScriptRuntime> script;
   bool overlapping{true};
   bool departure_queued{false};
@@ -171,8 +171,7 @@ class ScenarioStartupController {
   /// Executes one area-script interpreter tick (mode 1).
   [[nodiscard]] std::expected<void, std::string> tick(float delta_seconds = 0.0F);
 
-  /// True once the new session has completed initialization. The initial AREA
-  /// may legitimately have no primary compact context.
+  /// True once the new session has been initialized (area script exists).
   [[nodiscard]] bool initialized() const {
     return m_initialized;
   }
@@ -244,8 +243,8 @@ class ScenarioStartupController {
   [[nodiscard]] const ZoneContactContext* zone_contact(std::size_t index) const {
     return index < m_zone_contacts.size() ? m_zone_contacts.at(index).get() : nullptr;
   }
-  [[nodiscard]] const std::optional<CurrentCharacterTriggerProxy>& current_character_trigger_proxy()
-      const {
+  [[nodiscard]] const std::optional<CurrentCharacterTriggerProxy>&
+  current_character_trigger_proxy() const {
     return m_current_character_trigger_proxy;
   }
   [[nodiscard]] bool area_transition_pending() const {
@@ -406,10 +405,10 @@ class ScenarioStartupController {
   [[nodiscard]] bool zone_contact_spatially_matches(const ZoneContactContext& contact) const;
   [[nodiscard]] bool zone_contact_reporting_enabled(const ZoneContactContext& contact) const;
   [[nodiscard]] bool zone_contact_reporting_enabled(const ActiveZoneRef& active_zone) const;
-  void register_current_character_trigger_proxy(
-      const ControlledCharacterRef& owner, const Character::RuntimeCharacter& character);
-  void service_current_character_trigger_proxy();
-  [[nodiscard]] bool current_character_structured_script_active(
+    void register_current_character_trigger_proxy(const ControlledCharacterRef& owner,
+      const Character::RuntimeCharacter& character);
+    void service_current_character_trigger_proxy();
+    [[nodiscard]] bool current_character_structured_script_active(
       const ControlledCharacterRef& owner) const;
   [[nodiscard]] std::expected<void, std::string> create_zone_contact(
       const ActiveZoneRef& active_zone);

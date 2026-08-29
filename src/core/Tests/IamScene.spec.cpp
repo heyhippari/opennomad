@@ -247,9 +247,7 @@ TEST_SUITE("Core::Omikron::IamSceneRecord") {
     CHECK(table5_scene.error().find("table 5") != std::string::npos);
 
     auto primary{valid_scene()};
-    write(primary,
-        IamSceneRecord::k_offset_primary_event,
-        static_cast<std::uint32_t>(primary.size()));
+    write(primary, IamSceneRecord::k_offset_primary_event, static_cast<std::uint32_t>(primary.size()));
     const auto primary_scene{IamSceneRecord::load(primary)};
     REQUIRE_FALSE(primary_scene.has_value());
     CHECK(primary_scene.error().find("primary event") != std::string::npos);

@@ -441,15 +441,41 @@ std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state
       const Character::BodyAnimationPlayback& animation{character.body_animation};
       std::uint32_t selected_mesh_id{0};
       std::uint32_t selected_script_id{0};
+        std::uint32_t selected_triangle_count{0};
+        std::uint32_t selected_rectangle_count{0};
       bool selected_is_root{false};
+        bool selected_is_actor_object{false};
+        std::optional<std::size_t> hierarchy_root_index;
+        std::string hierarchy_root_name;
+        std::optional<std::size_t> actor_object_index;
+        std::string actor_object_name;
+        std::uint32_t actor_object_triangle_count{0};
+        std::uint32_t actor_object_rectangle_count{0};
       if (model_resource != nullptr &&
           animation.selected_object_index < model_resource->model.meshes.size()) {
         const Omikron::MeshDescriptor& selected{
             model_resource->model.meshes.at(animation.selected_object_index)};
         selected_mesh_id = selected.mesh_id;
         selected_script_id = selected.script_id;
+        selected_triangle_count = selected.triangle_count;
+        selected_rectangle_count = selected.rectangle_count;
         selected_is_root =
             std::cmp_equal(animation.selected_object_index, model_resource->model.root_mesh_index);
+        selected_is_actor_object =
+            model_resource->actor_object_index == animation.selected_object_index;
+        if (model_resource->model.root_mesh_index >= 0) {
+          hierarchy_root_index = static_cast<std::size_t>(model_resource->model.root_mesh_index);
+          hierarchy_root_name =
+              model_resource->model.meshes.at(hierarchy_root_index.value()).name;
+        }
+        actor_object_index = model_resource->actor_object_index;
+        if (actor_object_index.has_value()) {
+          const Omikron::MeshDescriptor& actor_object{
+              model_resource->model.meshes.at(actor_object_index.value())};
+          actor_object_name = actor_object.name;
+          actor_object_triangle_count = actor_object.triangle_count;
+          actor_object_rectangle_count = actor_object.rectangle_count;
+        }
       }
       Debug::RuntimeCharacterDebugState debug_character{.instance_id = character.instance_id,
           .character_id = character.character_id,
@@ -475,7 +501,16 @@ std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state
           .selected_object = animation.selected_object_name,
           .selected_mesh_id = selected_mesh_id,
           .selected_script_id = selected_script_id,
+          .selected_triangle_count = selected_triangle_count,
+          .selected_rectangle_count = selected_rectangle_count,
           .selected_is_root = selected_is_root,
+          .selected_is_actor_object = selected_is_actor_object,
+          .hierarchy_root_index = hierarchy_root_index,
+          .hierarchy_root_name = hierarchy_root_name,
+          .actor_object_index = actor_object_index,
+          .actor_object_name = actor_object_name,
+          .actor_object_triangle_count = actor_object_triangle_count,
+          .actor_object_rectangle_count = actor_object_rectangle_count,
           .animation_descriptor_index = animation.animation_descriptor_index,
           .animation_name = animation.animation_name,
           .animation_id = animation.animation_id,

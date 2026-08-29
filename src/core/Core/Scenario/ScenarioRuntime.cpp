@@ -172,10 +172,27 @@ struct BodyAnimationBinding {
     const std::size_t selected_index,
     const Runtime::Vec3& target_world) {
   const Omikron::Model3DOData& model{character.model_resource->model};
+  const bool selected_is_actor{
+      character.model_resource->actor_object_index == selected_index};
+  if (selected_is_actor) {
+    character.transform.translation = target_world;
+  }
+
+  auto actor_inverse{inverse_runtime_matrix(character.principal_orientation())};
+  if (!actor_inverse) {
+    return std::expected<void, BodyAnimationFailure>{std::unexpect,
+        body_animation_failure(
+            Script::BodyAnimationApplyError::k_resource_resolution,
+            std::move(actor_inverse).error())};
+  }
+  const Runtime::Vec3 actor_relative_world{.x = target_world.x - character.transform.translation.x,
+      .y = target_world.y - character.transform.translation.y,
+      .z = target_world.z - character.transform.translation.z};
+  const Runtime::Vec3 target_model{
+      Runtime::transform_vector(actor_relative_world, actor_inverse.value())};
   const std::int32_t parent_index{model.hierarchy_parent_index.at(selected_index)};
   if (parent_index < 0) {
-    character.transform.translation = target_world;
-    character.runtime_objects.at(selected_index).local_offset = Runtime::Vec3{};
+    character.runtime_objects.at(selected_index).local_offset = target_model;
     return {};
   }
   if (static_cast<std::size_t>(parent_index) >= character.runtime_objects.size()) {
@@ -192,9 +209,9 @@ struct BodyAnimationBinding {
         body_animation_failure(
             Script::BodyAnimationApplyError::k_resource_resolution, std::move(inverse).error())};
   }
-  const Runtime::Vec3 relative_world{.x = target_world.x - parent.world_translation.x,
-      .y = target_world.y - parent.world_translation.y,
-      .z = target_world.z - parent.world_translation.z};
+    const Runtime::Vec3 relative_world{.x = target_model.x - parent.world_translation.x,
+      .y = target_model.y - parent.world_translation.y,
+      .z = target_model.z - parent.world_translation.z};
   character.runtime_objects.at(selected_index).local_offset =
       Runtime::transform_vector(relative_world, inverse.value());
   return {};
@@ -206,9 +223,39 @@ void begin_body_animation(Character::RuntimeCharacter& character,
     const Omikron::Animation3DA& animation,
     const std::uint32_t animation_index,
     const Runtime::Vec3& authored_offset,
-    const Runtime::Vec3& anchor) {
+    const Runtime::Vec3& anchor,
+    const bool log_identity) {
   const Omikron::MeshDescriptor& selected{
       character.model_resource->model.meshes.at(binding.selected_index)};
+  const Omikron::Model3DOData& model{character.model_resource->model};
+  const auto describe_object = [&model](const std::optional<std::size_t> index) {
+    if (!index.has_value() || index.value() >= model.meshes.size()) {
+      return std::string{"none"};
+    }
+    const Omikron::MeshDescriptor& mesh{model.meshes.at(index.value())};
+    return fmt::format("index={} name='{}' script={} triangles={} rectangles={} polygons={}",
+        index.value(),
+        mesh.name,
+        mesh.script_id,
+        mesh.triangle_count,
+        mesh.rectangle_count,
+        static_cast<std::uint64_t>(mesh.triangle_count) + mesh.rectangle_count);
+  };
+  const std::optional<std::size_t> hierarchy_root{
+      model.root_mesh_index < 0
+          ? std::nullopt
+          : std::optional<std::size_t>{static_cast<std::size_t>(model.root_mesh_index)}};
+  if (log_identity) {
+    App::Log::info(LogCategory::Script,
+        "BodyAnimationObjectIdentity — animation='{}' selected=[{}] hierarchyRoot=[{}] "
+        "actorObject=[{}] selectedIsRoot={} selectedIsActor={}",
+        descriptor.name,
+        describe_object(binding.selected_index),
+        describe_object(hierarchy_root),
+        describe_object(character.model_resource->actor_object_index),
+        hierarchy_root == binding.selected_index,
+        character.model_resource->actor_object_index == binding.selected_index);
+  }
   Character::BodyAnimationPlayback& playback{character.body_animation};
   playback = Character::BodyAnimationPlayback{};
   playback.active = true;
@@ -258,13 +305,12 @@ void begin_body_animation(Character::RuntimeCharacter& character,
   }
 
   Runtime::Vec3 root_delta{};
-  std::optional<std::size_t> root_index;
-  if (model.root_mesh_index >= 0) {
-    root_index = static_cast<std::size_t>(model.root_mesh_index);
-    const Character::BodyAnimationObjectPose& root_pose{character.object_poses.at(*root_index)};
-    if (root_pose.channel_index.has_value()) {
+  const std::size_t selected_index{character.body_animation.selected_object_index};
+  const Character::BodyAnimationObjectPose& selected_pose{
+      character.object_poses.at(selected_index)};
+  if (selected_pose.channel_index.has_value()) {
       const Omikron::Animation3DAChannel& root_channel{
-          animation.channels.at(root_pose.channel_index.value())};
+          animation.channels.at(selected_pose.channel_index.value())};
       const std::optional<Runtime::Vec3> integrated{
           root_channel.integrate_translation(previous, current)};
       if (integrated.has_value()) {
@@ -273,7 +319,6 @@ void begin_body_animation(Character::RuntimeCharacter& character,
         // 4/5/6 replace native +0x1A0/+0x1A4/+0x1A8.
         root_delta = Runtime::transform_vector(integrated.value(), root_motion_orientation);
       }
-    }
   }
 
   // Native 0x00469420 overwrites the principal XYZ orientation after root
@@ -281,25 +326,44 @@ void begin_body_animation(Character::RuntimeCharacter& character,
   character.set_principal_orientation(principal_orientation_degrees);
   const Runtime::Matrix3 presentation_orientation{character.live_root_orientation()};
 
-  // Runtime advances the logical actor in X/Z only, while the complete XYZ
-  // displacement reaches the visual root. X/Z already flow through the actor
-  // transform in OpenNomad, so retain only the visual world-Y residual locally.
-  character.transform.translation.x += root_delta.x;
-  character.transform.translation.z += root_delta.z;
-  if (root_delta.y != 0.0F && root_index.has_value()) {
+  const bool selected_is_actor{
+      character.model_resource->actor_object_index == selected_index};
+  if (selected_is_actor) {
+    character.transform.translation.x += root_delta.x;
+    character.transform.translation.z += root_delta.z;
+  }
+
+  Runtime::Vec3 visual_world_delta{root_delta};
+  if (selected_is_actor) {
+    visual_world_delta.x = 0.0F;
+    visual_world_delta.z = 0.0F;
+  }
+  if (visual_world_delta.x != 0.0F || visual_world_delta.y != 0.0F ||
+      visual_world_delta.z != 0.0F) {
     auto inverse{inverse_runtime_matrix(presentation_orientation)};
     if (!inverse) {
       return std::expected<void, BodyAnimationFailure>{std::unexpect,
           body_animation_failure(
               Script::BodyAnimationApplyError::k_resource_resolution, std::move(inverse).error())};
     }
-    const Runtime::Vec3 local_residual{Runtime::transform_vector(
-        Runtime::Vec3{.x = 0.0F, .y = root_delta.y, .z = 0.0F}, inverse.value())};
-    Omikron::Model3DOData::RuntimeObjectState& root_object{
-        character.runtime_objects.at(root_index.value())};
-    root_object.local_offset.x += local_residual.x;
-    root_object.local_offset.y += local_residual.y;
-    root_object.local_offset.z += local_residual.z;
+    Runtime::Vec3 local_residual{
+      Runtime::transform_vector(visual_world_delta, inverse.value())};
+    const std::int32_t parent_index{model.hierarchy_parent_index.at(selected_index)};
+    if (parent_index >= 0) {
+      const auto parent_inverse{inverse_runtime_matrix(
+        character.runtime_objects.at(static_cast<std::size_t>(parent_index)).world_matrix)};
+      if (!parent_inverse) {
+      return std::expected<void, BodyAnimationFailure>{std::unexpect,
+        body_animation_failure(Script::BodyAnimationApplyError::k_resource_resolution,
+          std::move(parent_inverse).error())};
+      }
+      local_residual = Runtime::transform_vector(local_residual, parent_inverse.value());
+    }
+    Omikron::Model3DOData::RuntimeObjectState& selected_object{
+      character.runtime_objects.at(selected_index)};
+    selected_object.local_offset.x += local_residual.x;
+    selected_object.local_offset.y += local_residual.y;
+    selected_object.local_offset.z += local_residual.z;
   }
 
   if (auto resolved{Omikron::Model3DO::resolve_runtime_transforms(
@@ -360,6 +424,7 @@ std::expected<void, std::string> ScenarioRuntime::initialize(const Omikron::ScxD
   m_sfx_runtime.reset();
   m_sfx_data.reset();
   m_cin_sfx_bindings.clear();
+  m_logged_body_animation_identities.clear();
 
   const std::size_t count{m_scx.models.size()};
   m_sprite_resources.resize(count);
@@ -985,11 +1050,13 @@ void ScenarioRuntime::service_cin_sfx(
   const std::size_t record_index{m_cin_sfx_bindings.at(animation_index).value_or(0U)};
   const Omikron::SfxCinAnimationRecord& record{m_sfx_data.value().records_b.at(record_index)};
   const float elapsed{character.body_animation.previous_progress};
-  const auto emit_channel = [this, &character, elapsed](const bool enabled,
+  const auto emit_channel = [this, &character, &record, elapsed, animation_index](
+                                const bool enabled,
                                 const std::int32_t definition_id,
                                 const float start,
                                 const float end,
-                                const std::int32_t object_reference) {
+                                const std::int32_t object_reference,
+                                const std::uint8_t cin_channel) {
     if (!enabled || elapsed < start || elapsed > end) {
       return;
     }
@@ -1013,20 +1080,44 @@ void ScenarioRuntime::service_cin_sfx(
     const Runtime::Vec3 rotated{
         Runtime::transform_vector(local_position, character.principal_orientation())};
     m_sfx_runtime->emit_definition(definition_id,
-        Runtime::Vec3{.x = character.transform.translation.x + rotated.x,
+      Runtime::Vec3{.x = character.transform.translation.x + rotated.x,
             .y = character.transform.translation.y + rotated.y,
-            .z = character.transform.translation.z + rotated.z});
+        .z = character.transform.translation.z + rotated.z},
+      Sfx::EmissionProvenance{.origin = Sfx::EmissionOriginKind::k_cin_sfx,
+        .node_id = std::nullopt,
+        .structured_script_trigger_id = std::nullopt,
+            .animation_id = m_scx.animations.at(animation_index).animation_id,
+        .animation_name = m_scx.animations.at(animation_index).name,
+        .cin_channel = cin_channel});
   };
   emit_channel(record.channel1_enabled(),
       record.channel1_definition_id,
       record.channel1_start,
       record.channel1_end,
-      record.channel1_object_ref);
+      record.channel1_object_ref,
+      1U);
   emit_channel(record.channel2_enabled(),
       record.channel2_definition_id,
       record.channel2_start,
       record.channel2_end,
-      record.channel2_object_ref);
+      record.channel2_object_ref,
+      2U);
+}
+
+    std::string_view ScenarioRuntime::sfx_sound_name(const std::int32_t authored_h_id) const {
+      const auto sound{std::ranges::find(
+      m_scx.sounds, authored_h_id, &Omikron::ScxSoundRecord::h_id)};
+      return sound == m_scx.sounds.end() ? std::string_view{} : std::string_view{sound->name};
+    }
+
+bool ScenarioRuntime::should_log_body_animation_identity(const std::int16_t character_id,
+    const std::uint32_t animation_index,
+    const std::size_t selected_object_index) {
+  const std::uint64_t key{
+      (static_cast<std::uint64_t>(static_cast<std::uint16_t>(character_id)) << 48U) |
+      (static_cast<std::uint64_t>(animation_index) << 16U) |
+      static_cast<std::uint64_t>(selected_object_index)};
+  return m_logged_body_animation_identities.emplace(key).second;
 }
 
 std::expected<Script::BodyAnimationResult, Script::BodyAnimationFailure>
@@ -1079,7 +1170,9 @@ ScenarioRuntime::select_body_animation(const Script::BodyAnimationRequest& reque
         animation,
         request.animation_index,
         authored,
-        anchor);
+        anchor,
+        should_log_body_animation_identity(
+          request.character_id, request.animation_index, binding->selected_index));
   }
   if (auto applied{apply_body_animation(*character,
           animation,
@@ -1166,7 +1259,9 @@ ScenarioRuntime::select_relative_body_animation(
         animation,
         request.animation_index,
         authored,
-        anchor);
+        anchor,
+        should_log_body_animation_identity(
+          request.character_id, request.animation_index, binding->selected_index));
     Character::BodyAnimationPlayback& playback{character->body_animation};
     playback.path_index = request.path_index;
     playback.path_name = m_scx.section0_records.at(request.path_index).name;

@@ -27,6 +27,13 @@
 namespace {
 
 class FakeHost final : public App::Sfx::Host {
+  [[nodiscard]] std::string_view sfx_scenario_name() const override {
+    return "test-scenario";
+  }
+
+  [[nodiscard]] std::string_view sfx_sound_name(const std::int32_t) const override {
+    return "test-sound";
+  }
  public:
   FakeHost() {
     sprite_ids.emplace(9U, 90U);
@@ -252,6 +259,44 @@ TEST_SUITE("Core::Sfx::Runtime") {
     unavailable->step();
     CHECK(unavailable_host.pool.live_count() == 1U);
     CHECK(unavailable_host.sound_requests.size() == 1U);
+  }
+
+  TEST_CASE("same-tick Cin-SFX starts aggregate diagnostics without suppressing playback") {
+    FakeHost host;
+    auto data{basic_data()};
+    data.definitions.front().sound_id = 50;
+    auto runtime{create_runtime(data, host)};
+    const App::Sfx::EmissionProvenance provenance{.origin = App::Sfx::EmissionOriginKind::k_cin_sfx,
+        .node_id = std::nullopt,
+        .structured_script_trigger_id = 77U,
+        .animation_id = 12U,
+        .animation_name = "CIN.3DA",
+        .cin_channel = 2U};
+    runtime->emit_definition(1, {.x = 1.0F, .y = 2.0F, .z = 3.0F}, provenance);
+    runtime->emit_definition(1, {.x = 1.0F, .y = 2.0F, .z = 3.0F}, provenance);
+
+    runtime->step();
+
+    REQUIRE_EQ(host.sound_requests.size(), 3U);  // Startup node plus both Cin-SFX requests.
+    REQUIRE_EQ(runtime->sound_start_diagnostics().size(), 2U);
+    const auto cin_it{std::ranges::find(runtime->sound_start_diagnostics(),
+        App::Sfx::EmissionOriginKind::k_cin_sfx,
+        [](const App::Sfx::SoundStartDiagnostic& diagnostic) {
+          return diagnostic.provenance.origin;
+        })};
+    REQUIRE(cin_it != runtime->sound_start_diagnostics().end());
+    const App::Sfx::SoundStartDiagnostic& cin{*cin_it};
+    CHECK(cin.scenario == "test-scenario");
+    CHECK_EQ(cin.definition_id, 1);
+    CHECK(cin.definition_name == "test");
+    CHECK_EQ(cin.sound_h_id, 50);
+    CHECK(cin.sound_name == "test-sound");
+    CHECK(cin.provenance.origin == App::Sfx::EmissionOriginKind::k_cin_sfx);
+    CHECK_EQ(cin.provenance.structured_script_trigger_id, std::optional<std::uint16_t>{77U});
+    CHECK_EQ(cin.provenance.animation_id, std::optional<std::uint32_t>{12U});
+    CHECK_EQ(cin.provenance.cin_channel, std::optional<std::uint8_t>{2U});
+    CHECK_EQ(cin.repeat_count, 2U);
+    CHECK_EQ(cin.logical_tick, 1U);
   }
 
   TEST_CASE("finite repetition terminates while sentinel 999 stays active at repeat index one") {

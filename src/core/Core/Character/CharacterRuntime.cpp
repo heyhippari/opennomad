@@ -86,7 +86,26 @@ void resolve_bounds(ModelResource& resource) {
       0.5F * std::sqrt((extent_x * extent_x) + (extent_y * extent_y) + (extent_z * extent_z));
 }
 
+void resolve_actor_object(ModelResource& resource) {
+  resource.actor_object_index = actor_object_index(resource.model);
+}
+
 }  // namespace
+
+std::optional<std::size_t> actor_object_index(const Omikron::Model3DOData& model) {
+  std::optional<std::size_t> selected;
+  std::uint64_t greatest_polygon_count{0};
+  for (std::size_t index{0}; index < model.meshes.size(); ++index) {
+    const Omikron::MeshDescriptor& mesh{model.meshes.at(index)};
+    const std::uint64_t polygon_count{static_cast<std::uint64_t>(mesh.triangle_count) +
+                                      static_cast<std::uint64_t>(mesh.rectangle_count)};
+    if (!selected.has_value() || polygon_count > greatest_polygon_count) {
+      selected = index;
+      greatest_polygon_count = polygon_count;
+    }
+  }
+  return selected;
+}
 
 Runtime::Runtime() : Runtime{load_model_resource} {}
 
@@ -212,6 +231,7 @@ std::expected<std::shared_ptr<const ModelResource>, std::string> Runtime::load_m
   resource->model = std::move(model).value();
   resource->groups = std::move(groups).value();
   resource->images = std::move(images).value();
+  resolve_actor_object(*resource);
   resolve_bounds(*resource);
   return std::shared_ptr<const ModelResource>{std::move(resource)};
 }

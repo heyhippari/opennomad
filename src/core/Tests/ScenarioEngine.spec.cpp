@@ -119,7 +119,7 @@ std::vector<std::byte> make_area_archive(const std::vector<std::byte>& prefix) {
 }
 
 std::vector<std::byte> make_transition_area_archive(
-    const std::vector<std::byte>& source_prefix, const bool target_has_primary = true) {
+  const std::vector<std::byte>& source_prefix, const bool target_has_primary = true) {
   constexpr std::size_t k_source_offset{0x800};
   constexpr std::uint32_t k_source_size{0x9C0};
   constexpr std::size_t k_target_offset{0x1200};
@@ -303,8 +303,8 @@ void write_dialog_boot_fixtures(const TempDirectory& temp, const bool action_cho
 }
 
 void write_transition_boot_fixtures(const TempDirectory& temp,
-    const bool include_target_scx,
-    const bool target_has_primary = true) {
+  const bool include_target_scx,
+  const bool target_has_primary = true) {
   Buffer script;
   script.u8(0x2F).u16(222).u16(0xFFFF).u16(0xFFFF);
   script.u8(0x47).u16(222).u16(55).u8(0x03);
@@ -394,6 +394,10 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
                              const std::string_view after_detail) {
       const std::optional<std::uint32_t> first{seq_of(recorder, before, before_detail)};
       const std::optional<std::uint32_t> second{seq_of(recorder, after, after_detail)};
+      CAPTURE(before);
+      CAPTURE(before_detail);
+      CAPTURE(after);
+      CAPTURE(after_detail);
       REQUIRE(first.has_value());
       REQUIRE(second.has_value());
       CHECK_LT(first.value(), second.value());
@@ -608,7 +612,7 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
     CHECK(manager.dialog_runtime().active());
     CHECK(engine.area_script()->state() == AreaScriptState::k_running);
     CHECK_EQ(engine.area_script()->runtime_state(), 1U);
-    CHECK_EQ(engine.area_script()->instruction_pointer(), 3U);
+    CHECK_EQ(engine.area_script()->instruction_pointer(), 0x3FFU);
     CHECK(engine.area_script()->last_run_yielded());
     CHECK(engine.area_script()->wait_info().kind == App::Script::AreaWaitKind::k_none);
 
@@ -617,28 +621,28 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
     REQUIRE(engine.enter_mode(App::ScenarioMode::k_tick, 0).has_value());
     REQUIRE(engine.update(1.0F / 30.0F).has_value());
     REQUIRE(engine.update(1.0F / 30.0F).has_value());
-    CHECK_EQ(engine.area_script()->instruction_pointer(), 3U);
+    CHECK_EQ(engine.area_script()->instruction_pointer(), 0x3FFU);
     REQUIRE_EQ(engine.area_script()->trace().size(), 1U);
 
     REQUIRE(manager.dialog_runtime().acknowledge_line().has_value());
     CHECK(manager.dialog_runtime().completed());
 
     // Completion is consumed at the start of the next update. The same AREA
-    // context resumes at +3, executes 0x68, then reaches its event terminator;
+    // context resumes at record offset 0x3FF, executes 0x68, then reaches its terminator;
     // 0x3D is not dispatched a second time.
     REQUIRE(engine.update(1.0F / 30.0F).has_value());
     CHECK_FALSE(engine.dialog_takeover_active());
     CHECK_FALSE(manager.dialog_runtime().active());
     CHECK_FALSE(manager.dialog_runtime().completed());
     CHECK(engine.area_script()->state() == AreaScriptState::k_ready);
-    CHECK_EQ(engine.area_script()->instruction_pointer(), 5U);
+    CHECK_EQ(engine.area_script()->instruction_pointer(), 0x401U);
     REQUIRE_EQ(engine.area_script()->trace().size(), 3U);
     CHECK_EQ(engine.area_script()->trace().at(0).opcode, 0x3DU);
     CHECK_EQ(engine.area_script()->trace().at(1).opcode, 0x68U);
     CHECK_EQ(engine.area_script()->trace().at(2).opcode, 0x03U);
     CHECK(seq_of(recorder, "DialogTakeover.Entered", "id=0").has_value());
     CHECK(seq_of(recorder, "DialogTakeover.Completed", "id=0").has_value());
-    CHECK(seq_of(recorder, "AreaScript.ResumedAfterDialog", "ip=0x3").has_value());
+    CHECK(seq_of(recorder, "AreaScript.ResumedAfterDialog", "ip=0x3ff").has_value());
   }
 
   TEST_CASE("a dialog failure during takeover remains fatal and keeps AREA stopped") {
@@ -654,7 +658,7 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
     REQUIRE(engine.enter_mode(App::ScenarioMode::k_new_session, 0).has_value());
     REQUIRE(engine.enter_mode(App::ScenarioMode::k_tick, 0).has_value());
     REQUIRE(engine.area_script() != nullptr);
-    CHECK_EQ(engine.area_script()->instruction_pointer(), 3U);
+    CHECK_EQ(engine.area_script()->instruction_pointer(), 0x3FFU);
 
     REQUIRE(manager.dialog_runtime().acknowledge_line().has_value());
     REQUIRE_FALSE(manager.dialog_runtime().select_choice(0).has_value());
@@ -663,7 +667,7 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
     CHECK(update.error().find("dialog takeover failed") != std::string::npos);
     CHECK(update.error().find("action bytecode execution is unsupported") != std::string::npos);
     CHECK(engine.dialog_takeover_active());
-    CHECK_EQ(engine.area_script()->instruction_pointer(), 3U);
+    CHECK_EQ(engine.area_script()->instruction_pointer(), 0x3FFU);
     REQUIRE_EQ(engine.area_script()->trace().size(), 1U);
   }
 
@@ -685,7 +689,7 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
     CHECK_EQ(engine.active_area_id(), 118);
     CHECK(engine.area_script()->state() == AreaScriptState::k_waiting);
     CHECK_EQ(engine.area_script()->runtime_state(), 10U);
-    CHECK_EQ(engine.area_script()->instruction_pointer(), 7U);
+    CHECK_EQ(engine.area_script()->instruction_pointer(), 0x403U);
     CHECK(engine.area_script()->wait_info().kind == App::Script::AreaWaitKind::k_area_transition);
     REQUIRE(engine.runtime_area_slot(0) != nullptr);
     REQUIRE(engine.runtime_area_slot(1) != nullptr);
@@ -723,7 +727,7 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
     CHECK_EQ(engine.area_mapping(222), std::optional<std::int32_t>{55});
     CHECK(seq_of(recorder, "AreaTransition.Accepted", "target=222").has_value());
     CHECK(seq_of(recorder, "AreaTransition.TargetPrepared", "model='AIMPASSE'").has_value());
-    CHECK(seq_of(recorder, "AreaTransition.Prepared", "resumeIp=0x7").has_value());
+    CHECK(seq_of(recorder, "AreaTransition.Prepared", "resumeIp=0x403").has_value());
 
     const std::size_t trace_size{engine.area_script()->trace().size()};
     REQUIRE(engine.update(1.0F / 30.0F).has_value());
@@ -768,8 +772,7 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
     CHECK_FALSE(target_area_context_found);
     REQUIRE(scene_context != nullptr);
     CHECK_EQ(scene_context->source.owner_area_slot, std::optional<std::uint8_t>{1U});
-    CHECK_EQ(
-        scene_context->source.source_primary_event_offset, std::optional<std::uint32_t>{0x44U});
+    CHECK_EQ(scene_context->source.source_primary_event_offset, std::optional<std::uint32_t>{0x44U});
     CHECK_EQ(scene_context->source.open_nomad_execution_base_offset, 0x44U);
   }
 
@@ -787,7 +790,7 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
 
     REQUIRE(engine.area_script() != nullptr);
     CHECK(engine.area_transition_pending());
-    CHECK_EQ(engine.area_script()->instruction_pointer(), 7U);
+    CHECK_EQ(engine.area_script()->instruction_pointer(), 0x403U);
 
     const auto update{engine.update(1.0F / 30.0F)};
     REQUIRE_FALSE(update.has_value());
@@ -805,7 +808,7 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
     CHECK(manager.world_contexts()[1].residency == WorldSceneResidencyState::Free);
     CHECK(engine.area_script()->state() == AreaScriptState::k_waiting);
     CHECK_EQ(engine.area_script()->runtime_state(), 10U);
-    CHECK_EQ(engine.area_script()->instruction_pointer(), 7U);
+    CHECK_EQ(engine.area_script()->instruction_pointer(), 0x403U);
 
     // A failed coordinator is sticky: later ticks surface the same failure
     // without redispatching 0x2F or mutating the source.

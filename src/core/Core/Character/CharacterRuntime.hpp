@@ -34,11 +34,18 @@ struct ModelResource {
   std::string resolved_model_path;
   std::string resolved_texture_path;
   Omikron::Model3DOData model;
+  /// First runtime object maximizing triangle_count + rectangle_count.
+  /// Independent from the serialized hierarchy root.
+  std::optional<std::size_t> actor_object_index;
   std::vector<Omikron::MaterialGroup> groups;
   std::vector<Omikron::Texture3DTImage> images;
   App::Runtime::Vec3 bounds_center{};
   float bounds_radius{0.0F};
 };
+
+/// Runtime actor-object selection: first mesh maximizing triangles + rectangles.
+[[nodiscard]] std::optional<std::size_t> actor_object_index(
+  const Omikron::Model3DOData& model);
 
 struct BodyAnimationObjectPose {
   std::optional<std::uint32_t> channel_index;

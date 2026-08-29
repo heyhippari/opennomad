@@ -9,6 +9,7 @@
 #include <random>
 #include <span>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -37,6 +38,34 @@ class Host {
       std::int32_t packed_reference_id) const = 0;
   [[nodiscard]] virtual std::expected<void, std::string> play_sfx_sound(
       std::int32_t authored_h_id, App::Runtime::Vec3 position) = 0;
+  [[nodiscard]] virtual std::string_view sfx_scenario_name() const = 0;
+  [[nodiscard]] virtual std::string_view sfx_sound_name(std::int32_t authored_h_id) const = 0;
+};
+
+enum class EmissionOriginKind : std::uint8_t {
+  k_node,
+  k_cin_sfx,
+};
+
+struct EmissionProvenance {
+  EmissionOriginKind origin{EmissionOriginKind::k_node};
+  std::optional<std::int32_t> node_id;
+  std::optional<std::uint16_t> structured_script_trigger_id;
+  std::optional<std::uint32_t> animation_id;
+  std::string animation_name;
+  std::optional<std::uint8_t> cin_channel;
+};
+
+struct SoundStartDiagnostic {
+  std::uint64_t logical_tick{0};
+  std::string scenario;
+  std::int32_t definition_id{0};
+  std::string definition_name;
+  std::int32_t sound_h_id{0};
+  std::string sound_name;
+  EmissionProvenance provenance;
+  App::Runtime::Vec3 position{};
+  std::size_t repeat_count{0};
 };
 
 struct NodeState {
@@ -89,9 +118,14 @@ class Runtime {
   void tick(float real_delta_seconds);
   void step();
   [[nodiscard]] std::size_t trigger(std::int32_t type, std::int32_t id);
-  void emit_definition(std::int32_t definition_id, App::Runtime::Vec3 position);
+  void emit_definition(std::int32_t definition_id,
+      App::Runtime::Vec3 position,
+      EmissionProvenance provenance = {});
   [[nodiscard]] Diagnostics diagnostics() const;
   [[nodiscard]] std::span<const NodeState> nodes() const;
+  [[nodiscard]] std::span<const SoundStartDiagnostic> sound_start_diagnostics() const {
+    return m_sound_start_diagnostics;
+  }
 
  private:
   struct EmissionRequest;
@@ -103,7 +137,10 @@ class Runtime {
   void service_node(std::size_t node_index);
   void service_requests();
   void service_particles();
-  void enqueue_request(const Omikron::SfxDefinition& definition, App::Runtime::Vec3 position);
+  void enqueue_request(const Omikron::SfxDefinition& definition,
+      App::Runtime::Vec3 position,
+      EmissionProvenance provenance);
+  void record_sound_start(const EmissionRequest& request);
   void emit_burst(const Omikron::SfxDefinition& definition, App::Runtime::Vec3 position);
   void create_particle(const Omikron::SfxDefinition& definition, App::Runtime::Vec3 position);
   [[nodiscard]] App::Runtime::Vec3 evaluate_point(
@@ -124,6 +161,8 @@ class Runtime {
   std::vector<std::size_t> m_definition_sprite_resources;
   std::vector<EmissionRequest> m_requests;
   std::vector<Particle> m_particles;
+  std::vector<SoundStartDiagnostic> m_sound_start_diagnostics;
+  std::uint64_t m_logical_tick{0};
   float m_accumulator{0.0F};
   bool m_request_capacity_warned{false};
   bool m_particle_capacity_warned{false};

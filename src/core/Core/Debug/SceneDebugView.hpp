@@ -117,7 +117,16 @@ struct RuntimeCharacterDebugState {
   std::string selected_object;
   std::uint32_t selected_mesh_id{0};
   std::uint32_t selected_script_id{0};
+  std::uint32_t selected_triangle_count{0};
+  std::uint32_t selected_rectangle_count{0};
   bool selected_is_root{false};
+  bool selected_is_actor_object{false};
+  std::optional<std::size_t> hierarchy_root_index;
+  std::string hierarchy_root_name;
+  std::optional<std::size_t> actor_object_index;
+  std::string actor_object_name;
+  std::uint32_t actor_object_triangle_count{0};
+  std::uint32_t actor_object_rectangle_count{0};
   std::uint32_t animation_descriptor_index{0};
   std::string animation_name;
   std::uint32_t animation_id{0};

@@ -150,6 +150,17 @@ std::shared_ptr<const App::Character::ModelResource> fake_morph_resource(
 }  // namespace
 
 TEST_SUITE("Core::Character::Runtime") {
+  TEST_CASE("actor object uses first mesh with the greatest polygon total") {
+    App::Omikron::Model3DOData model;
+    model.meshes = {App::Omikron::MeshDescriptor{.triangle_count = 6, .rectangle_count = 4},
+        App::Omikron::MeshDescriptor{.triangle_count = 8, .rectangle_count = 2},
+        App::Omikron::MeshDescriptor{.triangle_count = 20, .rectangle_count = 1}};
+    CHECK_EQ(App::Character::actor_object_index(model), std::optional<std::size_t>{2U});
+
+    model.meshes.at(2).triangle_count = 10;
+    model.meshes.at(2).rectangle_count = 0;
+    CHECK_EQ(App::Character::actor_object_index(model), std::optional<std::size_t>{0U});
+  }
   TEST_CASE("AREA 118 character materialization uses shared transform helpers and model data") {
     const App::Omikron::IamAreaRecord area{make_area()};
     std::string requested_model;

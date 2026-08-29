@@ -25,13 +25,13 @@
 #include "Core/Character/CharacterRuntime.hpp"
 #include "Core/GameState.hpp"
 #include "Core/Omikron/CtlControlSet.hpp"
+#include "Core/Omikron/IamArea.hpp"
 #include "Core/Omikron/Model3DO.hpp"
 #include "Core/Scenario/ScenarioManager.hpp"
 #include "Core/Scenario/ScenarioRuntime.hpp"
 #include "Core/Scenario/ScenarioStartupController.hpp"
 #include "Core/Script/AreaScriptRuntime.hpp"
 #include "Core/Script/ScriptRuntime.hpp"
-#include "IamArea118TestData.hpp"
 #include "IamStartTestData.hpp"
 #include "OmikronTestBuffer.hpp"
 
@@ -52,19 +52,25 @@ void write_u32(std::vector<std::byte>& data, const std::size_t offset, const std
   std::memcpy(data.data() + offset, &value, sizeof(value));
 }
 
+void write_area_bytecode_pool_bounds(std::vector<std::byte>& data,
+  const std::size_t record_offset,
+  const std::size_t start,
+  const std::size_t end) {
+  write_u32(data,
+    record_offset + App::Omikron::IamAreaRecord::k_offset_table_offsets +
+      (6U * sizeof(std::uint32_t)),
+    static_cast<std::uint32_t>(end));
+  write_u32(data,
+    record_offset + App::Omikron::IamAreaRecord::k_offset_table_offsets +
+      (7U * sizeof(std::uint32_t)),
+    static_cast<std::uint32_t>(start));
+}
+
 void write_name(
     std::vector<std::byte>& data, const std::size_t offset, const std::string_view name) {
   for (std::size_t index{0}; index < 9U; ++index) {
     data[offset + index] = index < name.size() ? static_cast<std::byte>(name[index]) : std::byte{};
   }
-}
-
-void write_area_bytecode_geometry(std::vector<std::byte>& data,
-    const std::size_t record_offset,
-    const std::uint32_t pool_start,
-    const std::uint32_t pool_end) {
-  write_u32(data, record_offset + 0x28U + (6U * 4U), pool_end);
-  write_u32(data, record_offset + 0x28U + (7U * 4U), pool_start);
 }
 
 constexpr std::uint16_t K_NAMESPACE_CAMERA_ID{42};
@@ -124,9 +130,25 @@ void write_bytes(const std::filesystem::path& path, const std::vector<std::byte>
       reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size()));
 }
 
+/// The confirmed area-118 startup prefix bytes.
+std::vector<std::byte> make_prefix() {
+  Buffer bytes;
+  bytes.u8(0x0D).u16(175);
+  bytes.u8(0x0E).u16(170).u8(50);
+  bytes.u8(0x38).u16(136);
+  bytes.u8(0x4F).u16(0xFFFF);
+  bytes.u8(0x68);
+  bytes.u8(0x5C).u16(997);
+  bytes.u8(0x83).u16(0).u16(1);
+  bytes.u8(0x67).u16(109).u16(1).u16(1);
+  bytes.u8(0x76).u32(0).u16(0).u16(0);
+  bytes.u8(0x46).u16(29).u16(0xFFFF).u16(19);
+  return bytes.data();
+}
+
 std::vector<std::byte> make_new_game_script() {
   Buffer bytes;
-  const std::vector<std::byte> prefix{App::Tests::make_area_118_startup_prefix().data()};
+  const std::vector<std::byte> prefix{make_prefix()};
   for (const std::byte value : prefix) {
     bytes.u8(std::to_integer<std::uint8_t>(value));
   }
@@ -167,18 +189,15 @@ std::vector<std::byte> make_start() {
 std::vector<std::byte> make_area_archive() {
   const std::vector<std::byte> script{make_new_game_script()};
   constexpr std::size_t k_record_offset{0x800};
-  constexpr std::uint32_t k_record_size{App::Tests::K_AREA_118_RECORD_SIZE};
+  constexpr std::uint32_t k_record_size{0x9C0};
 
   std::vector<std::byte> data(k_record_offset + k_record_size, std::byte{});
   const std::size_t entry{118U * 8U};
   write_u32(data, entry, static_cast<std::uint32_t>(k_record_offset));
   write_u32(data, entry + 4U, k_record_size);
 
-  write_u32(data, k_record_offset + 0x04, App::Tests::K_AREA_118_PRIMARY_EVENT);
-  write_area_bytecode_geometry(data,
-      k_record_offset,
-      App::Tests::K_AREA_118_BYTECODE_POOL_START,
-      App::Tests::K_AREA_118_BYTECODE_POOL_END);
+  write_u32(data, k_record_offset + 0x04, 0x3FC);  // Primary event.
+  write_area_bytecode_pool_bounds(data, k_record_offset, 0x3FC, k_record_size);
   write_name(data, k_record_offset + 0x58, "GRID");
   write_name(data, k_record_offset + 0x61, "GRID");
 
@@ -302,16 +321,14 @@ void install_stub_ctl_loader(App::ScenarioRuntime& runtime) {
 /// toggles the controller off and ends.
 std::vector<std::byte> make_zone_contact_area_archive(const bool starts_dialog = false,
     const bool self_disables = true,
-    const bool enable_controller = true,
-    const std::int16_t zone_id = 3795,
-    const bool controller_off_before_wait = false,
-    const bool place_before_activation = false,
-    const std::uint32_t initial_xz = 50U,
-    const std::int16_t orientation_center_units = 4090,
-    const std::int16_t orientation_span_units = 0,
-    const bool launch_fire_and_forget = false,
-    const bool camera_opcode_trap = false,
-    const bool zero_primary_event = false) {
+  const bool enable_controller = true,
+  const std::int16_t zone_id = 3795,
+  const bool controller_off_before_wait = false,
+  const bool place_before_activation = false,
+  const std::uint32_t initial_xz = 50U,
+  const std::int16_t orientation_center_units = 4090,
+  const std::int16_t orientation_span_units = 0,
+  const bool launch_fire_and_forget = false) {
   Buffer top_level;
   top_level.u8(0x38).u16(136);
   if (launch_fire_and_forget) {
@@ -327,9 +344,7 @@ std::vector<std::byte> make_zone_contact_area_archive(const bool starts_dialog =
   top_level.u8(0x03);
 
   Buffer zone_event;
-  if (camera_opcode_trap) {
-    zone_event.u8(0x0D).u16(60);
-  } else if (starts_dialog) {
+  if (starts_dialog) {
     zone_event.u8(0x3D).u16(272);
   } else {
     zone_event.u8(0x3F).u16(100);
@@ -345,13 +360,9 @@ std::vector<std::byte> make_zone_contact_area_archive(const bool starts_dialog =
       zone_event.u8(0x69);
     }
   }
-  if (!camera_opcode_trap) {
-    zone_event.u8(0x03);
-  }
+  zone_event.u8(0x03);
   Buffer departure_event;
-  if (!camera_opcode_trap) {
-    departure_event.u8(0x03);
-  }
+  departure_event.u8(0x03);
 
   constexpr std::size_t k_record_offset{0x800};
   constexpr std::size_t k_table0_offset{0x0B4};
@@ -361,16 +372,12 @@ std::vector<std::byte> make_zone_contact_area_archive(const bool starts_dialog =
   const std::size_t k_script_offset{k_table5_offset + (place_before_activation ? 0x10U : 0U)};
   const std::size_t zone_event_offset{k_script_offset + top_level.data().size()};
   const std::size_t departure_event_offset{zone_event_offset + zone_event.data().size()};
-  const std::size_t bytecode_pool_end{departure_event_offset + departure_event.data().size()};
-  const std::size_t record_size{bytecode_pool_end + (camera_opcode_trap ? 0x2CU : 0U)};
+  const std::size_t record_size{departure_event_offset + departure_event.data().size()};
   std::vector<std::byte> data(k_record_offset + record_size, std::byte{});
   write_u32(data, 118U * 8U, static_cast<std::uint32_t>(k_record_offset));
   write_u32(data, (118U * 8U) + 4U, static_cast<std::uint32_t>(record_size));
-  write_u32(data, k_record_offset + 0x04U, zero_primary_event ? 0U : k_script_offset);
-  write_area_bytecode_geometry(data,
-      k_record_offset,
-      static_cast<std::uint32_t>(k_script_offset),
-      static_cast<std::uint32_t>(bytecode_pool_end));
+  write_u32(data, k_record_offset + 0x04U, k_script_offset);
+  write_area_bytecode_pool_bounds(data, k_record_offset, k_script_offset, record_size);
   write_name(data, k_record_offset + 0x61U, "GRID");
 
   write_u32(data, k_record_offset + 0x28U, k_table0_offset);
@@ -386,11 +393,9 @@ std::vector<std::byte> make_zone_contact_area_archive(const bool starts_dialog =
   write_u32(data, k_record_offset + 0x28U + (2U * 4U), k_table2_offset);
   write_u16(data, k_record_offset + 0x48U + (2U * 2U), 1);
   write_u32(data, k_record_offset + k_table2_offset, static_cast<std::uint32_t>(zone_event_offset));
-  if (!departure_event.data().empty()) {
-    write_u32(data,
-        k_record_offset + k_table2_offset + 0x08U,
-        static_cast<std::uint32_t>(departure_event_offset));
-  }
+  write_u32(data,
+      k_record_offset + k_table2_offset + 0x08U,
+      static_cast<std::uint32_t>(departure_event_offset));
   // Four X/Y/Z vertices; the Y slab contains the zero-radius synthetic actor.
   constexpr std::array<std::array<std::uint32_t, 3>, 4> k_vertices = {
       {{0U, 900U, 0U}, {100U, 1100U, 0U}, {100U, 1100U, 100U}, {0U, 900U, 100U}}};
@@ -401,13 +406,15 @@ std::vector<std::byte> make_zone_contact_area_archive(const bool starts_dialog =
           k_vertices.at(index).at(coordinate));
     }
   }
-  write_u16(data,
+    write_u16(data,
       k_record_offset + k_table2_offset + 0x3CU,
       static_cast<std::uint16_t>(orientation_center_units));
-  write_u16(data,
+    write_u16(data,
       k_record_offset + k_table2_offset + 0x3EU,
       static_cast<std::uint16_t>(orientation_span_units));
-  write_u16(data, k_record_offset + k_table2_offset + 0x40U, static_cast<std::uint16_t>(zone_id));
+  write_u16(data,
+      k_record_offset + k_table2_offset + 0x40U,
+      static_cast<std::uint16_t>(zone_id));
   write_u16(data, k_record_offset + k_table2_offset + 0x42U, 0xFFFF);
 
   write_u32(data, k_record_offset + 0x28U + (4U * 4U), k_table4_offset);
@@ -440,13 +447,9 @@ std::vector<std::byte> make_zone_contact_area_archive(const bool starts_dialog =
   std::memcpy(data.data() + k_record_offset + zone_event_offset,
       zone_event.data().data(),
       zone_event.data().size());
-  std::memcpy(data.data() + k_record_offset + departure_event_offset,
+    std::memcpy(data.data() + k_record_offset + departure_event_offset,
       departure_event.data().data(),
       departure_event.data().size());
-  if (camera_opcode_trap) {
-    write_u16(data, k_record_offset + 0x48U + (6U * 2U), 1U);
-    write_u32(data, k_record_offset + bytecode_pool_end, 0x00003D0DU);
-  }
   return data;
 }
 
@@ -478,10 +481,8 @@ std::vector<std::byte> make_handoff_area_archive() {
   write_u32(data, 118U * 8U, static_cast<std::uint32_t>(k_source_offset));
   write_u32(data, (118U * 8U) + 4U, static_cast<std::uint32_t>(source_record_size));
   write_u32(data, k_source_offset + 0x04U, k_source_script_offset);
-  write_area_bytecode_geometry(data,
-      k_source_offset,
-      static_cast<std::uint32_t>(k_source_script_offset),
-      static_cast<std::uint32_t>(source_record_size));
+  write_area_bytecode_pool_bounds(
+      data, k_source_offset, k_source_script_offset, source_record_size);
   write_name(data, k_source_offset + 0x61U, "GRID");
   write_u32(data, k_source_offset + 0x28U, k_source_placement_offset);
   write_u16(data, k_source_offset + 0x48U, 1);
@@ -512,7 +513,8 @@ std::vector<std::byte> make_handoff_area_archive() {
 
   write_u32(data, 222U * 8U, static_cast<std::uint32_t>(k_target_offset));
   write_u32(data, (222U * 8U) + 4U, k_target_record_size);
-  write_area_bytecode_geometry(data, k_target_offset, k_target_record_size, k_target_record_size);
+  write_area_bytecode_pool_bounds(
+      data, k_target_offset, k_target_record_size, k_target_record_size);
   write_name(data, k_target_offset + 0x61U, "DEST");
   write_u32(data, k_target_offset + 0x28U + (2U * 4U), k_target_zone_offset);
   write_u16(data, k_target_offset + 0x48U + (2U * 2U), 2);
@@ -540,12 +542,12 @@ std::vector<std::byte> make_handoff_scene_archive() {
   constexpr std::size_t k_table0_offset{0x44};
   constexpr std::size_t k_table2_offset{k_table0_offset + 0x14U};
   constexpr std::size_t k_table4_offset{k_table2_offset + 0x44U};
-  constexpr std::size_t k_bytecode_pool_offset{k_table4_offset + 0x114U};
-  const std::size_t table6_offset{k_bytecode_pool_offset + script.data().size()};
+  constexpr std::size_t k_script_offset{k_table4_offset + 0x114U};
+  const std::size_t table6_offset{k_script_offset + script.data().size()};
   std::vector<std::byte> data(k_record_offset + table6_offset, std::byte{});
   write_u32(data, 0, static_cast<std::uint32_t>(k_record_offset));
   write_u32(data, 4, static_cast<std::uint32_t>(table6_offset));
-  write_u32(data, k_record_offset + 0x04U, static_cast<std::uint32_t>(k_bytecode_pool_offset));
+  write_u32(data, k_record_offset + 0x04U, static_cast<std::uint32_t>(k_script_offset));
   write_u32(data, k_record_offset + 0x08U, static_cast<std::uint32_t>(k_table0_offset));
   write_u16(data, k_record_offset + 0x28U, 1);
   write_u32(data, k_record_offset + 0x08U + (1U * 4U), static_cast<std::uint32_t>(k_table2_offset));
@@ -558,9 +560,7 @@ std::vector<std::byte> make_handoff_scene_archive() {
   write_u16(data, k_record_offset + 0x28U + (2U * 2U), 1);
   write_u16(data, k_record_offset + 0x28U + (4U * 2U), 1);
   write_u32(data, k_record_offset + 0x08U + (6U * 4U), static_cast<std::uint32_t>(table6_offset));
-  write_u32(data,
-      k_record_offset + 0x08U + (7U * 4U),
-      static_cast<std::uint32_t>(k_bytecode_pool_offset));
+  write_u32(data, k_record_offset + 0x08U + (7U * 4U), static_cast<std::uint32_t>(k_script_offset));
 
   write_u16(data, k_record_offset + k_table0_offset + 0x00U, 0xFFFF);
   write_u16(data, k_record_offset + k_table0_offset + 0x02U, 57);
@@ -568,9 +568,8 @@ std::vector<std::byte> make_handoff_scene_archive() {
   write_u32(data, k_record_offset + k_table0_offset + 0x08U, static_cast<std::uint32_t>(-511));
   write_u32(data, k_record_offset + k_table0_offset + 0x0CU, 19386U);
   write_u16(data, k_record_offset + k_table0_offset + 0x10U, 4073);
-  write_u32(data,
-      k_record_offset + k_table2_offset + 0x00U,
-      static_cast<std::uint32_t>(k_bytecode_pool_offset));
+  write_u32(
+      data, k_record_offset + k_table2_offset + 0x00U, static_cast<std::uint32_t>(k_script_offset));
   write_u16(data, k_record_offset + k_table2_offset + 0x40U, 5);
   constexpr std::string_view k_name{"LOCAL CHARACTER"};
   constexpr std::string_view k_model{"DE1_FN"};
@@ -579,9 +578,8 @@ std::vector<std::byte> make_handoff_scene_archive() {
   std::memcpy(
       data.data() + k_record_offset + k_table4_offset + 0x90U, k_model.data(), k_model.size());
   write_u16(data, k_record_offset + k_table4_offset + 0x110U, 57);
-  std::memcpy(data.data() + k_record_offset + k_bytecode_pool_offset,
-      script.data().data(),
-      script.data().size());
+  std::memcpy(
+      data.data() + k_record_offset + k_script_offset, script.data().data(), script.data().size());
   return data;
 }
 
@@ -599,35 +597,36 @@ std::vector<std::byte> make_camera_namespace_area_archive(const CameraNamespaceF
   constexpr std::size_t k_target_offset{0xC00U};
   constexpr std::size_t k_header_size{0xB4U};
   constexpr std::size_t k_camera_size{0x2CU};
-  constexpr std::size_t source_script_offset{k_header_size};
-  const std::size_t source_camera_offset{source_script_offset + script.data().size()};
-  const std::size_t source_size{source_camera_offset + (fixture.slot_0_area ? k_camera_size : 0U)};
+    constexpr std::size_t k_source_script_offset{k_header_size};
+    const std::size_t source_camera_offset{k_source_script_offset + script.data().size()};
+    const std::size_t source_size{
+      source_camera_offset + (fixture.slot_0_area ? k_camera_size : 0U)};
+    constexpr std::size_t k_target_camera_offset{k_header_size};
   const std::size_t target_size{k_header_size + (fixture.slot_1_area ? k_camera_size : 0U)};
   std::vector<std::byte> data(k_target_offset + target_size, std::byte{});
 
   write_u32(data, 118U * 8U, k_source_offset);
   write_u32(data, (118U * 8U) + 4U, static_cast<std::uint32_t>(source_size));
-  write_u32(data, k_source_offset + 0x04U, static_cast<std::uint32_t>(source_script_offset));
-  write_area_bytecode_geometry(data,
-      k_source_offset,
-      static_cast<std::uint32_t>(source_script_offset),
-      static_cast<std::uint32_t>(source_camera_offset));
+  write_u32(data, k_source_offset + 0x04U, static_cast<std::uint32_t>(k_source_script_offset));
+  write_area_bytecode_pool_bounds(
+      data, k_source_offset, k_source_script_offset, source_camera_offset);
   write_name(data, k_source_offset + 0x61U, "GRID");
   write_u16(data, k_source_offset + 0x48U + (6U * 2U), fixture.slot_0_area ? 1U : 0U);
   if (fixture.slot_0_area) {
     write_camera_record(data, k_source_offset + source_camera_offset, 100);
   }
-  std::memcpy(data.data() + k_source_offset + source_script_offset,
+  std::memcpy(data.data() + k_source_offset + k_source_script_offset,
       script.data().data(),
       script.data().size());
 
   write_u32(data, 222U * 8U, k_target_offset);
   write_u32(data, (222U * 8U) + 4U, static_cast<std::uint32_t>(target_size));
-  write_area_bytecode_geometry(data, k_target_offset, k_header_size, k_header_size);
+  write_area_bytecode_pool_bounds(
+      data, k_target_offset, k_target_camera_offset, k_target_camera_offset);
   write_name(data, k_target_offset + 0x61U, "DEST");
   write_u16(data, k_target_offset + 0x48U + (6U * 2U), fixture.slot_1_area ? 1U : 0U);
   if (fixture.slot_1_area) {
-    write_camera_record(data, k_target_offset + k_header_size, 300);
+    write_camera_record(data, k_target_offset + k_target_camera_offset, 300);
   }
   return data;
 }
@@ -690,7 +689,7 @@ std::vector<std::byte> make_kayl_arrives_scx(const std::uint16_t script_id = 1) 
   descriptor.u32(0).u32(0);                  // field34 and runtime field38.
   descriptor.zeros(3U * 4U).zeros(3U * 4U);  // Binding-table header fields.
   descriptor.u32(0).u32(0).zeros(8);         // Related/runtime placeholders and tail.
-  descriptor.u32(2).f32(0.0F).f32(0.0F);     // Wait duration and elapsed time.
+  descriptor.u32(2).f32(0.0F).f32(0.0F);    // Wait duration and elapsed time.
   descriptor.u8(0);                          // No related script.
   descriptor.u32(0x06000017U).u32(2).u32(0).u32(0xFFFFFFFFU).u32(1).u32(0);
   descriptor.u32(0).u32(0);  // Empty binding tables A and B.
@@ -922,30 +921,31 @@ void write_boot_fixtures(const TempDirectory& temp) {
 }
 
 void write_zone_contact_fixtures(const TempDirectory& temp,
-    const bool enable_controller = true,
-    const std::int16_t zone_id = 3795,
-    const bool controller_off_before_wait = false,
-    const bool place_before_activation = false,
-    const std::uint32_t initial_xz = 50U,
-    const std::int16_t orientation_center_units = 4090,
-    const std::int16_t orientation_span_units = 0,
-    const bool launch_fire_and_forget = false) {
+  const bool enable_controller = true,
+  const std::int16_t zone_id = 3795,
+  const bool controller_off_before_wait = false,
+  const bool place_before_activation = false,
+  const std::uint32_t initial_xz = 50U,
+  const std::int16_t orientation_center_units = 4090,
+  const std::int16_t orientation_span_units = 0,
+  const bool launch_fire_and_forget = false) {
   write_bytes(temp.root() / "IAM" / "START", make_start());
   write_bytes(temp.root() / "IAM" / "GLOBAL", make_camera_namespace_global(true));
-  write_bytes(temp.root() / "IAM" / "AREA",
-      make_zone_contact_area_archive(false,
-          true,
-          enable_controller,
-          zone_id,
-          controller_off_before_wait,
-          place_before_activation,
-          initial_xz,
-          orientation_center_units,
+    write_bytes(temp.root() / "IAM" / "AREA",
+      make_zone_contact_area_archive(
+        false,
+        true,
+        enable_controller,
+        zone_id,
+        controller_off_before_wait,
+        place_before_activation,
+        initial_xz,
+        orientation_center_units,
           orientation_span_units,
           launch_fire_and_forget));
   write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
-  write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX",
-      launch_fire_and_forget ? make_kayl_arrives_scx(221) : make_minimal_scx());
+        write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX",
+        launch_fire_and_forget ? make_kayl_arrives_scx(221) : make_minimal_scx());
 }
 
 void write_live_zone_contact_fixtures(const TempDirectory& temp) {
@@ -1034,131 +1034,6 @@ void write_camera_namespace_fixtures(
   write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
   write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_minimal_scx());
   write_bytes(temp.root() / "SCPTDATA" / "DEST.SCX", make_minimal_scx());
-}
-
-void write_area_zone_boundary_fixtures(const TempDirectory& temp, const bool zero_primary_event) {
-  auto start{make_start()};
-  if (zero_primary_event) {
-    start.at(0x13FCU) = std::byte{0x20};  // ZONE 5 enabled in retail bit order.
-  }
-  write_bytes(temp.root() / "IAM" / "START", start);
-  write_bytes(temp.root() / "IAM" / "GLOBAL", App::Tests::make_empty_iam_global());
-  write_bytes(temp.root() / "IAM" / "AREA",
-      make_zone_contact_area_archive(
-          false, true, false, 5, false, false, 50U, 4090, 0, false, true, zero_primary_event));
-  write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
-  write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_minimal_scx());
-}
-
-void install_empty_character_model_loader(App::ScenarioRuntime& runtime) {
-  runtime.character_runtime().set_model_loader(
-      [](const std::string_view name)
-          -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
-        auto resource{std::make_shared<App::Character::ModelResource>()};
-        resource->name = name;
-        resource->groups.push_back(App::Omikron::MaterialGroup{});
-        return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
-      });
-}
-
-std::vector<std::byte> make_scene_zone_boundary_area_archive() {
-  std::vector<std::byte> data{make_area_archive()};
-  Buffer script;
-  script.u8(0x38).u16(136);
-  script.u8(0x47).u16(118).u16(0);
-  script.u8(0x40).u16(5);
-  script.u8(0x03);
-  std::memcpy(data.data() + 0x800U + 0x3FCU, script.data().data(), script.data().size());
-  return data;
-}
-
-std::vector<std::byte> make_scene_zone_boundary_archive(const bool zero_primary_event) {
-  constexpr std::size_t k_record_offset{0x800U};
-  constexpr std::size_t k_table2_offset{0x44U};
-  constexpr std::size_t k_table7_offset{k_table2_offset + 0x44U};
-  constexpr std::size_t k_pool_offset{k_table7_offset + 0x08U};
-  constexpr std::size_t k_zone_event_offset{k_pool_offset + 0x04U};
-  constexpr std::size_t k_link_event_offset{k_pool_offset + 0x0AU};
-  constexpr std::size_t k_primary_event_offset{k_pool_offset + 0x10U};
-  constexpr std::size_t k_camera_offset{k_pool_offset + 0x20U};
-  constexpr std::size_t k_zone_boundary_write{k_camera_offset - 3U};
-  constexpr std::size_t k_record_size{k_camera_offset + 0x2CU};
-  std::vector<std::byte> data(k_record_offset + k_record_size, std::byte{});
-  write_u32(data, 0U, k_record_offset);
-  write_u32(data, 4U, k_record_size);
-  write_u32(data,
-      k_record_offset + 0x04U,
-      zero_primary_event ? 0U : static_cast<std::uint32_t>(k_primary_event_offset));
-  write_u32(data, k_record_offset + 0x08U + (2U * 4U), k_table2_offset);
-  write_u16(data, k_record_offset + 0x28U + (2U * 2U), 1U);
-  write_u32(data, k_record_offset + 0x08U + (6U * 4U), k_camera_offset);
-  write_u16(data, k_record_offset + 0x28U + (6U * 2U), 1U);
-  write_u32(data, k_record_offset + 0x08U + (7U * 4U), k_table7_offset);
-  write_u16(data, k_record_offset + 0x28U + (7U * 2U), 1U);
-  write_u32(data, k_record_offset + k_table2_offset, k_zone_event_offset);
-  constexpr std::array<std::array<std::uint32_t, 3>, 4> k_vertices = {
-      {{0U, 0U, 0U}, {400U, 400U, 0U}, {400U, 400U, 400U}, {0U, 0U, 400U}}};
-  for (std::size_t vertex{0}; vertex < k_vertices.size(); ++vertex) {
-    for (std::size_t coordinate{0}; coordinate < k_vertices.at(vertex).size(); ++coordinate) {
-      write_u32(data,
-          k_record_offset + k_table2_offset + 0x0CU + ((vertex * 3U + coordinate) * 4U),
-          k_vertices.at(vertex).at(coordinate));
-    }
-  }
-  write_u16(data, k_record_offset + k_table2_offset + 0x3CU, 4090U);
-  write_u16(data, k_record_offset + k_table2_offset + 0x40U, 5U);
-  write_u32(data, k_record_offset + k_table7_offset, k_link_event_offset);
-  data.at(k_record_offset + k_zone_event_offset) = std::byte{0x0D};
-  write_u16(data, k_record_offset + k_zone_event_offset + 1U, 70U);
-  data.at(k_record_offset + k_zone_event_offset + 3U) = std::byte{0x04};
-  write_u16(data,
-      k_record_offset + k_zone_event_offset + 4U,
-      static_cast<std::uint16_t>(k_zone_boundary_write - (k_zone_event_offset + 6U)));
-  data.at(k_record_offset + k_link_event_offset) = std::byte{0x0D};
-  write_u16(data, k_record_offset + k_link_event_offset + 1U, 73U);
-  data.at(k_record_offset + k_link_event_offset + 3U) = std::byte{0x03};
-  data.at(k_record_offset + k_primary_event_offset) = std::byte{0x0D};
-  write_u16(data, k_record_offset + k_primary_event_offset + 1U, 72U);
-  data.at(k_record_offset + k_primary_event_offset + 3U) = std::byte{0x03};
-  data.at(k_record_offset + k_zone_boundary_write) = std::byte{0x0D};
-  write_u16(data, k_record_offset + k_zone_boundary_write + 1U, 74U);
-  write_u32(data, k_record_offset + k_camera_offset, 0x0000470DU);
-  return data;
-}
-
-void write_scene_zone_boundary_fixtures(
-    const TempDirectory& temp, const bool zero_primary_event = false) {
-  write_bytes(temp.root() / "IAM" / "START", make_start());
-  write_bytes(temp.root() / "IAM" / "GLOBAL", App::Tests::make_empty_iam_global());
-  write_bytes(temp.root() / "IAM" / "AREA", make_scene_zone_boundary_area_archive());
-  write_bytes(temp.root() / "IAM" / "SCENE", make_scene_zone_boundary_archive(zero_primary_event));
-  write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
-  write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_minimal_scx());
-}
-
-void write_offset_primary_fixtures(const TempDirectory& temp) {
-  constexpr std::size_t k_record_offset{0x800U};
-  constexpr std::size_t k_pool_start{0x3FCU};
-  constexpr std::size_t k_primary_event{0x408U};
-  constexpr std::size_t k_pool_end{0x420U};
-  std::vector<std::byte> area{make_area_archive()};
-  std::fill(area.begin() + static_cast<std::ptrdiff_t>(k_record_offset + k_pool_start),
-      area.begin() + static_cast<std::ptrdiff_t>(k_record_offset + k_pool_end),
-      std::byte{});
-  write_u32(area, k_record_offset + 0x04U, k_primary_event);
-  write_area_bytecode_geometry(area, k_record_offset, k_pool_start, k_pool_end);
-  area.at(k_record_offset + k_pool_start) = std::byte{0x0D};
-  write_u16(area, k_record_offset + k_pool_start + 1U, 61U);
-  area.at(k_record_offset + k_pool_start + 3U) = std::byte{0x03};
-  area.at(k_record_offset + k_primary_event) = std::byte{0x0D};
-  write_u16(area, k_record_offset + k_primary_event + 1U, 62U);
-  area.at(k_record_offset + k_primary_event + 3U) = std::byte{0x03};
-
-  write_bytes(temp.root() / "IAM" / "START", make_start());
-  write_bytes(temp.root() / "IAM" / "GLOBAL", App::Tests::make_empty_iam_global());
-  write_bytes(temp.root() / "IAM" / "AREA", area);
-  write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
-  write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_minimal_scx());
 }
 
 }  // namespace
@@ -1318,135 +1193,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK(owner->scene_script->state() == AreaScriptState::k_ready);
   }
 
-  TEST_CASE("[FORMAT] AREA zone execution cannot enter table 6") {
-    const TempDirectory temp;
-    write_area_zone_boundary_fixtures(temp, false);
-    const ScopedGameDataRoot root{temp.root()};
-
-    App::ScenarioManager manager;
-    App::ScenarioStartupController controller;
-    REQUIRE(controller.initialize(manager).has_value());
-    App::ScenarioRuntime* runtime{manager.world_runtime(0)};
-    REQUIRE(runtime != nullptr);
-    install_empty_character_model_loader(*runtime);
-    install_stub_ctl_loader(*runtime);
-
-    for (std::size_t tick{0}; tick < 6U; ++tick) {
-      REQUIRE(controller.tick(1.0F / 30.0F).has_value());
-    }
-    REQUIRE(manager.game_state() != nullptr);
-    CHECK_EQ(manager.game_state()->global_variable(60).value(), 1);
-    CHECK_EQ(manager.game_state()->global_variable(61).value(), 0);
-  }
-
-  TEST_CASE("[FORMAT] AREA primary event is rebased within the full bounded pool") {
-    const TempDirectory temp;
-    write_offset_primary_fixtures(temp);
-    const ScopedGameDataRoot root{temp.root()};
-
-    App::ScenarioManager manager;
-    App::ScenarioStartupController controller;
-    REQUIRE(controller.initialize(manager).has_value());
-    const App::Script::AreaScriptRuntime* area_script{controller.area_script()};
-    REQUIRE(area_script != nullptr);
-    CHECK_EQ(area_script->event_entries().event1, std::optional<std::size_t>{0x0CU});
-    REQUIRE(controller.tick().has_value());
-    REQUIRE(manager.game_state() != nullptr);
-    CHECK_EQ(manager.game_state()->global_variable(61).value(), 0);
-    CHECK_EQ(manager.game_state()->global_variable(62).value(), 1);
-  }
-
-  TEST_CASE("[FORMAT] SCENE zone execution cannot enter table 6") {
-    const TempDirectory temp;
-    write_scene_zone_boundary_fixtures(temp);
-    const ScopedGameDataRoot root{temp.root()};
-
-    App::ScenarioManager manager;
-    App::ScenarioStartupController controller;
-    REQUIRE(controller.initialize(manager).has_value());
-    App::ScenarioRuntime* runtime{manager.world_runtime(0)};
-    REQUIRE(runtime != nullptr);
-    install_empty_character_model_loader(*runtime);
-
-    for (std::size_t tick{0}; tick < 8U; ++tick) {
-      REQUIRE(controller.tick(1.0F / 30.0F).has_value());
-    }
-    const App::RuntimeAreaSlot* const slot{controller.runtime_area_slot(0)};
-    REQUIRE(slot != nullptr);
-    REQUIRE(slot->scene.has_value());
-    REQUIRE(slot->scene_script.has_value());
-    CHECK_EQ(slot->scene->bytecode_pool_offset(), 0x90U);
-    CHECK_EQ(slot->scene->primary_event_offset(), 0xA0U);
-    CHECK_EQ(slot->scene_script->event_entries().event1, std::optional<std::size_t>{0x10U});
-    REQUIRE(manager.game_state() != nullptr);
-    CHECK_EQ(manager.game_state()->global_variable(70).value(), 1);
-    CHECK_EQ(manager.game_state()->global_variable(71).value(), 0);
-    CHECK_EQ(manager.game_state()->global_variable(72).value(), 1);
-    CHECK_EQ(manager.game_state()->global_variable(74).value(), 1);
-  }
-
-  TEST_CASE("[FORMAT] zero-primary SCENE retains its pool and services zone events") {
-    const TempDirectory temp;
-    write_scene_zone_boundary_fixtures(temp, true);
-    const ScopedGameDataRoot root{temp.root()};
-
-    App::ScenarioManager manager;
-    App::ScenarioStartupController controller;
-    REQUIRE(controller.initialize(manager).has_value());
-    App::ScenarioRuntime* runtime{manager.world_runtime(0)};
-    REQUIRE(runtime != nullptr);
-    install_empty_character_model_loader(*runtime);
-
-    for (std::size_t tick{0}; tick < 8U; ++tick) {
-      REQUIRE(controller.tick(1.0F / 30.0F).has_value());
-    }
-    const App::RuntimeAreaSlot* const slot{controller.runtime_area_slot(0)};
-    REQUIRE(slot != nullptr);
-    REQUIRE(slot->scene.has_value());
-    CHECK_EQ(slot->scene->primary_event_offset(), 0U);
-    CHECK_EQ(slot->scene->bytecode_pool_offset(), 0x90U);
-    CHECK_FALSE(slot->scene->bytecode_pool().empty());
-    CHECK_FALSE(slot->scene_script.has_value());
-    REQUIRE(manager.game_state() != nullptr);
-    CHECK_EQ(manager.game_state()->global_variable(70).value(), 1);
-    CHECK_EQ(manager.game_state()->global_variable(71).value(), 0);
-    CHECK_EQ(manager.game_state()->global_variable(72).value(), 0);
-    CHECK_EQ(manager.game_state()->global_variable(74).value(), 1);
-  }
-
-  TEST_CASE("[FORMAT] zero-primary AREA completes startup and launches a resident zone event") {
-    const TempDirectory temp;
-    write_area_zone_boundary_fixtures(temp, true);
-    const ScopedGameDataRoot root{temp.root()};
-
-    App::ScenarioManager manager;
-    App::ScenarioStartupController controller;
-    REQUIRE(controller.initialize(manager).has_value());
-    CHECK(controller.initialized());
-    CHECK(controller.area_script() == nullptr);
-    REQUIRE_EQ(controller.active_zones().size(), 1U);
-    CHECK_EQ(controller.active_zones().front().zone.zone_id, 5);
-
-    App::ScenarioRuntime* runtime{manager.world_runtime(0)};
-    REQUIRE(runtime != nullptr);
-    install_empty_character_model_loader(*runtime);
-    REQUIRE(controller.area_record() != nullptr);
-    REQUIRE(runtime->character_runtime()
-            .ensure_area_character(118, *controller.area_record(), 136)
-            .has_value());
-    manager.set_controlled_character(
-        App::ControlledCharacterRef{.character_id = 136, .world_scene_id = 0});
-
-    for (std::size_t tick{0}; tick < 6U; ++tick) {
-      REQUIRE(controller.tick(1.0F / 30.0F).has_value());
-    }
-    REQUIRE(manager.game_state() != nullptr);
-    CHECK_EQ(manager.game_state()->global_variable(60).value(), 1);
-    CHECK_EQ(manager.game_state()->global_variable(61).value(), 0);
-    CHECK(controller.area_script() == nullptr);
-  }
-
-  TEST_CASE("[RUNTIME] AREA zone contact runs event one through self-deactivation") {
+  TEST_CASE("AREA-shaped zone contact runs record-relative event one through self-deactivation") {
     const TempDirectory temp;
     write_zone_contact_fixtures(temp);
     const ScopedGameDataRoot root{temp.root()};
@@ -1497,7 +1244,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK_EQ(controller.zone_contact_count(), 0U);
   }
 
-  TEST_CASE("[OPENNOMAD] registered proxy permits contact while controller is disabled") {
+  TEST_CASE("registered proxy permits fresh contact while controller is disabled") {
     constexpr std::int16_t k_zone_id{12};
     const TempDirectory temp;
     write_zone_contact_fixtures(temp, false, k_zone_id);
@@ -1527,7 +1274,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(controller.tick(1.0F / 30.0F).has_value());
     REQUIRE(controller.current_character_trigger_proxy().has_value());
     const App::CurrentCharacterTriggerProxy proxy{
-        controller.current_character_trigger_proxy().value()};
+      controller.current_character_trigger_proxy().value()};
     CHECK(proxy.registered);
     CHECK_EQ(proxy.owner.character_id, 136);
     CHECK_EQ(proxy.owner.world_scene_id, 0U);
@@ -1540,7 +1287,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK_EQ(controller.current_character_trigger_proxy()->position.z, proxy.position.z);
   }
 
-  TEST_CASE("[RUNTIME] active zone work survives controller-off inside its event") {
+  TEST_CASE("zone contact in progress survives controller-off inside its event") {
     constexpr std::int16_t k_zone_id{13};
     const TempDirectory temp;
     write_zone_contact_fixtures(temp, true, k_zone_id, true);
@@ -1570,6 +1317,8 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK_FALSE(character->controller_enabled);
     CHECK_FALSE(character->ctl_controller->direct_control_active());
     CHECK_EQ(controller.zone_contact_count(), 1U);
+    REQUIRE(controller.current_character_trigger_proxy().has_value());
+    CHECK(controller.current_character_trigger_proxy()->registered);
 
     const App::ZoneContactContext* contact{controller.zone_contact(0)};
     REQUIRE(contact != nullptr);
@@ -1578,7 +1327,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK(contact->script->wait_info().kind == App::Script::AreaWaitKind::k_camera);
   }
 
-  TEST_CASE("[OPENNOMAD] compact address placement suspends trigger-proxy synchronization") {
+  TEST_CASE("compact address placement does not synchronize the trigger proxy") {
     constexpr std::int16_t k_zone_id{14};
     const TempDirectory temp;
     write_zone_contact_fixtures(temp, false, k_zone_id, false, true);
@@ -1606,13 +1355,11 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK_EQ(character->serialized_area_position.at(0), 500);
     CHECK_EQ(controller.current_character_trigger_proxy()->position.x,
         App::Runtime::area_position_to_inches(50));
-    // The proxy suspension is an OpenNomad coordinator mechanism; the live
-    // address placement itself is the Runtime-facing behavior.
     CHECK(controller.current_character_trigger_proxy()->synchronization_suspended);
     CHECK_EQ(controller.zone_contact_count(), 0U);
   }
 
-  TEST_CASE("[OPENNOMAD] ordinary proxy sync may create contact while controller is disabled") {
+  TEST_CASE("ordinary proxy synchronization may create contact while controller is disabled") {
     constexpr std::int16_t k_zone_id{15};
     const TempDirectory temp;
     write_zone_contact_fixtures(temp, false, k_zone_id, false, false, 500U);
@@ -1647,7 +1394,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK(character->controller_enabled);
   }
 
-  TEST_CASE("[RUNTIME] zone qualification uses live heading instead of placement yaw") {
+  TEST_CASE("proxy qualification uses live degree heading instead of placement yaw") {
     constexpr std::int16_t k_zone_id{16};
     constexpr std::int16_t k_quarter_turn_units{1024};
     const TempDirectory temp;
@@ -1679,13 +1426,16 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     character->set_principal_orientation(App::Runtime::Vec3{.x = 0.0F, .y = 90.0F, .z = 0.0F});
 
     REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+    REQUIRE(controller.current_character_trigger_proxy().has_value());
+    CHECK_EQ(controller.current_character_trigger_proxy()->heading_degrees, 90.0F);
     CHECK_EQ(controller.zone_contact_count(), 1U);
   }
 
-  TEST_CASE("[OPENNOMAD] structured character script freezes proxy synchronization") {
+  TEST_CASE("fire-and-forget current-character script freezes proxy synchronization") {
     constexpr std::int16_t k_zone_id{17};
     const TempDirectory temp;
-    write_zone_contact_fixtures(temp, false, k_zone_id, false, false, 50U, 4090, 0, true);
+    write_zone_contact_fixtures(
+        temp, false, k_zone_id, false, false, 50U, 4090, 0, true);
     const ScopedGameDataRoot root{temp.root()};
 
     App::ScenarioManager manager;
@@ -1715,12 +1465,12 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(controller.tick(1.0F / 30.0F).has_value());
     CHECK(controller.current_character_trigger_proxy()->synchronization_suspended);
     CHECK_EQ(controller.current_character_trigger_proxy()->suspension_reason,
-        "current-character structured script active");
+      "current-character structured script active");
     CHECK_FALSE(controller.current_character_trigger_proxy()->contact_ready);
     CHECK_EQ(controller.zone_contact_count(), 0U);
   }
 
-  TEST_CASE("[RUNTIME] zone contact follows live position instead of AREA placement") {
+  TEST_CASE("zone contact follows live runtime position instead of the AREA placement snapshot") {
     const TempDirectory temp;
     write_live_zone_contact_fixtures(temp);
     const ScopedGameDataRoot root{temp.root()};
@@ -2016,15 +1766,15 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
 
     REQUIRE(controller.current_character_trigger_proxy().has_value());
     const App::Runtime::Vec3 frozen_position{
-        controller.current_character_trigger_proxy()->position};
+      controller.current_character_trigger_proxy()->position};
     CHECK(controller.current_character_trigger_proxy()->synchronization_suspended);
     App::Character::RuntimeCharacter* mutable_destination_character{
-        destination_runtime->character_runtime().find(57)};
+      destination_runtime->character_runtime().find(57)};
     REQUIRE(mutable_destination_character != nullptr);
     mutable_destination_character->transform.translation.x += 100.0F;
 
-    // [OPENNOMAD] Compact servicing observes the still-active structured child
-    // and leaves the proxy frozen despite visible/logical actor movement.
+    // Compact servicing observes the still-active structured child and leaves
+    // the proxy frozen despite visible/logical actor movement.
     REQUIRE(controller.tick(1.0F / 30.0F).has_value());
     CHECK_EQ(controller.current_character_trigger_proxy()->position.x, frozen_position.x);
     CHECK(controller.current_character_trigger_proxy()->synchronization_suspended);
@@ -2037,7 +1787,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(controller.tick(1.0F / 30.0F).has_value());
     CHECK_FALSE(controller.current_character_trigger_proxy()->synchronization_suspended);
     CHECK_EQ(controller.current_character_trigger_proxy()->position.x,
-        mutable_destination_character->transform.translation.x);
+      mutable_destination_character->transform.translation.x);
   }
 
   TEST_CASE("Startup reaches the main menu through START, AREA 118 and interface 29") {
@@ -2125,7 +1875,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK(result.error().find("negative") != std::string::npos);
   }
 
-  TEST_CASE("[RUNTIME] New Game tracked 1KaylArrives completes and reaches dialog 272") {
+  TEST_CASE("New Game tracked 1KaylArrives completes and reaches dialog 272") {
     const TempDirectory temp;
     write_boot_fixtures(temp);
     write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_complete_kayl_arrives_scx());
@@ -2149,21 +1899,22 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
             -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
           auto resource{std::make_shared<App::Character::ModelResource>()};
           resource->name = name;
+          resource->model.materials.push_back(App::Omikron::Material{});
           resource->model.meshes.push_back(App::Omikron::MeshDescriptor{.mesh_id = 1U,
               .script_id = 1U,
               .name = "UBassin",
               .parent_id = -1,
               .first_child_id = -1,
               .next_sibling_id = -1});
+            resource->model.polygons.resize(1U);
           resource->model.root_mesh_index = 0;
+          resource->actor_object_index = 0U;
           resource->model.hierarchy_parent_index = {-1};
           resource->model.hierarchy_first_child_index = {-1};
           resource->model.hierarchy_next_sibling_index = {-1};
           resource->model.hierarchy_reachable = {1U};
           resource->model.skin_parent_index = {-1};
           resource->model.runtime_objects = {App::Omikron::Model3DOData::RuntimeObjectState{}};
-          resource->model.materials.push_back(App::Omikron::Material{});
-          resource->model.polygons.push_back(App::Omikron::MeshPolygons{});
           resource->groups.push_back(App::Omikron::MaterialGroup{});
           return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
         });
@@ -2204,7 +1955,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(area_script != nullptr);
     CHECK(area_script->state() == App::Script::AreaScriptState::k_waiting);
     CHECK_EQ(area_script->runtime_state(), 4U);
-    CHECK_EQ(area_script->instruction_pointer(), 0x9CU);
+    CHECK_EQ(area_script->instruction_pointer(), 0x498U);
     CHECK(area_script->wait_info().kind == App::Script::AreaWaitKind::k_character_script);
     REQUIRE(area_script->wait_info().character_script_instance.has_value());
     REQUIRE(area_script->last_character_script_request().has_value());
@@ -2242,17 +1993,17 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     context->runtime->tick(1.0F / 30.0F);
     CHECK(instance->completed);
 
-    // Startup polls the exact completed child, resumes at +0x9C, launches
+    // Startup polls the exact completed child, resumes at record offset 0x498, launches
     // script 310/6 once, yields for presentation, then enters DIALOG 272.
     REQUIRE(controller.tick().has_value());
-    CHECK_EQ(area_script->instruction_pointer(), 0xACU);
+    CHECK_EQ(area_script->instruction_pointer(), 0x4A8U);
     REQUIRE_EQ(script_runtime->instances().size(), 2U);
     REQUIRE(controller.tick().has_value());
     CHECK(controller.dialog_takeover_active());
     CHECK_EQ(controller.dialog_takeover_id(), std::optional<std::int16_t>{272});
     CHECK(manager.dialog_runtime().active());
     CHECK_EQ(area_script->runtime_state(), 1U);
-    CHECK_EQ(area_script->instruction_pointer(), 0xAFU);
+    CHECK_EQ(area_script->instruction_pointer(), 0x4ABU);
     CHECK(area_script->wait_info().kind == App::Script::AreaWaitKind::k_none);
   }
 

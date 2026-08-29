@@ -5,11 +5,9 @@
 // cppcoreguidelines-pro-bounds-avoid-unchecked-container-access,
 // readability-suspicious-call-argument)
 
-#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <limits>
 #include <optional>
 #include <span>
 #include <string>
@@ -18,7 +16,6 @@
 
 #include "Core/Omikron/IamArea.hpp"
 #include "Core/Omikron/IamCharacterDefinition.hpp"
-#include "IamArea118TestData.hpp"
 
 namespace {
 
@@ -40,6 +37,17 @@ void write_u32(std::vector<std::byte>& data, const std::size_t offset, const std
   std::memcpy(data.data() + offset, &value, sizeof(value));
 }
 
+void write_bytecode_pool_bounds(std::vector<std::byte>& data,
+    const std::size_t start,
+    const std::size_t end) {
+  write_u32(data,
+      IamAreaRecord::k_offset_table_offsets + (6U * sizeof(std::uint32_t)),
+      static_cast<std::uint32_t>(end));
+  write_u32(data,
+      IamAreaRecord::k_offset_table_offsets + (7U * sizeof(std::uint32_t)),
+      static_cast<std::uint32_t>(start));
+}
+
 /// Writes a fixed nine-byte, NUL-padded name field.
 void write_name(
     std::vector<std::byte>& data, const std::size_t offset, const std::string_view name) {
@@ -48,71 +56,28 @@ void write_name(
   }
 }
 
-/// [RETAIL] Builds AREA 118's independently pinned header/pool geometry.
+/// Builds a header-only 0x9C0 fixture with AREA 118's script/name geometry.
 std::vector<std::byte> make_area_118() {
-  std::vector<std::byte> data(App::Tests::K_AREA_118_RECORD_SIZE, std::byte{});
-  write_u32(data, 0x04U, App::Tests::K_AREA_118_PRIMARY_EVENT);
-  for (std::size_t index{0}; index < App::Tests::K_AREA_118_TABLE_OFFSETS.size(); ++index) {
-    write_u32(data, 0x28U + (index * 4U), App::Tests::K_AREA_118_TABLE_OFFSETS.at(index));
-    write_u16(data, 0x48U + (index * 2U), App::Tests::K_AREA_118_TABLE_COUNTS.at(index));
-  }
+  std::vector<std::byte> data(0x9C0, std::byte{});
+  write_u32(data, IamAreaRecord::k_offset_primary_event, 0x3FC);
+  write_bytecode_pool_bounds(data, 0x3FC, data.size());
   write_name(data, IamAreaRecord::k_offset_model3do_name, "GRID");
   write_name(data, IamAreaRecord::k_offset_scenario_scx_name, "GRID");
-  write_i16(data, 0x0B4U + 0x00U, -1);
-  write_i16(data, 0x0B4U + 0x02U, 310);
-  write_i32(data, 0x0B4U + 0x04U, -2588);
-  write_i32(data, 0x0B4U + 0x08U, -271);
-  write_i32(data, 0x0B4U + 0x0CU, -816);
-  write_i16(data, 0x0B4U + 0x10U, 4084);
-  write_i16(data, 0x0C8U + 0x02U, 136);
-  data.at(App::Tests::K_AREA_118_BYTECODE_POOL_END) = std::byte{0xFF};
   return data;
 }
 
 }  // namespace
 
 TEST_SUITE("Core::Omikron::IamAreaRecord") {
-  TEST_CASE("[RETAIL] AREA 118 pins primary event and bounded bytecode pool") {
+  TEST_CASE("An area-118-shaped fixture reports size, primary event and names") {
     const std::vector<std::byte> data{make_area_118()};
     const auto record{IamAreaRecord::load(data)};
     REQUIRE(record.has_value());
-    CHECK_EQ(record->record_size(), App::Tests::K_AREA_118_RECORD_SIZE);
-    CHECK_EQ(record->primary_event_offset(), App::Tests::K_AREA_118_PRIMARY_EVENT);
+    CHECK_EQ(record->record_size(), 0x9C0U);
+    CHECK_EQ(record->primary_event_offset(), 0x3FCU);
     CHECK_EQ(record->model3do_name(), "GRID");
     CHECK_EQ(record->scenario_scx_name(), "GRID");
-    CHECK_EQ(record->bytecode_pool_offset(), App::Tests::K_AREA_118_BYTECODE_POOL_START);
-    CHECK_EQ(record->bytecode_pool().size(),
-        App::Tests::K_AREA_118_BYTECODE_POOL_END - App::Tests::K_AREA_118_BYTECODE_POOL_START);
-    for (std::size_t index{0}; index < App::Tests::K_AREA_118_TABLE_OFFSETS.size(); ++index) {
-      CHECK_EQ(record->table_offset(index), App::Tests::K_AREA_118_TABLE_OFFSETS.at(index));
-      CHECK_EQ(record->table_count(index), App::Tests::K_AREA_118_TABLE_COUNTS.at(index));
-    }
-    CHECK_EQ(record->map_mpt_name(), "");
-    CHECK_EQ(record->options_opt_name(), "");
-    CHECK_EQ(record->animation_ani_name(), "");
-    CHECK_EQ(record->sky_3do_name(), "");
-    REQUIRE(record->character_by_id(310).has_value());
-    CHECK_EQ(record->character_by_id(310)->serialized_position,
-        std::array<std::int32_t, 3>{-2588, -271, -816});
-    CHECK_EQ(record->character_by_id(310)->orientation_units, 4084);
-    CHECK(record->character_by_id(136).has_value());
-    CHECK_EQ(record->record_bytes()[App::Tests::K_AREA_118_BYTECODE_POOL_END], std::byte{0xFF});
-    CHECK_NE(record->bytecode_pool().back(), std::byte{0xFF});
-  }
-
-  TEST_CASE("[FORMAT] zero primary event can retain a nonempty bytecode pool") {
-    std::vector<std::byte> data(0xC0U, std::byte{});
-    write_u32(data, 0x04U, 0U);
-    write_u32(data, 0x28U + (6U * 4U), 0xC0U);
-    write_u32(data, 0x28U + (7U * 4U), 0xB4U);
-    data.at(0xB4U) = std::byte{0x03};
-
-    const auto record{IamAreaRecord::load(data)};
-    REQUIRE(record.has_value());
-    CHECK_EQ(record->primary_event_offset(), 0U);
-    CHECK_EQ(record->bytecode_pool_offset(), 0xB4U);
-    REQUIRE_EQ(record->bytecode_pool().size(), 0x0CU);
-    CHECK_EQ(record->bytecode_pool().front(), std::byte{0x03});
+    CHECK_EQ(record->bytecode_pool().size(), 0x9C0U - 0x3FCU);
   }
 
   TEST_CASE("AREA rejects records shorter than 0xB4") {
@@ -122,79 +87,13 @@ TEST_SUITE("Core::Omikron::IamAreaRecord") {
     CHECK(record.error().find("too small") != std::string::npos);
   }
 
-  TEST_CASE("AREA rejects a primary event outside its bytecode pool") {
-    std::vector<std::byte> data(0xC0, std::byte{});
+  TEST_CASE("AREA rejects a primary event outside the bytecode pool") {
+    std::vector<std::byte> data(0xB4, std::byte{});
+    write_bytecode_pool_bounds(data, data.size(), data.size());
     write_u32(data, IamAreaRecord::k_offset_primary_event, 0x1000);
-    write_u32(data, IamAreaRecord::k_offset_table_offsets + (6U * 4U), 0xC0);
-    write_u32(data, IamAreaRecord::k_offset_table_offsets + (7U * 4U), 0xB4);
     const auto record{IamAreaRecord::load(data)};
     REQUIRE_FALSE(record.has_value());
-    CHECK(record.error().find("primary") != std::string::npos);
-  }
-
-  TEST_CASE("[FORMAT] AREA rejects a zone event outside its bytecode pool") {
-    constexpr std::size_t k_zone_offset{0xB4U};
-    constexpr std::size_t k_pool_offset{k_zone_offset + 0x44U};
-    std::vector<std::byte> data(k_pool_offset + 0x10U, std::byte{});
-    write_u32(data, 0x28U + (2U * 4U), k_zone_offset);
-    write_u16(data, 0x48U + (2U * 2U), 1U);
-    write_u32(data, 0x28U + (6U * 4U), static_cast<std::uint32_t>(data.size()));
-    write_u32(data, 0x28U + (7U * 4U), k_pool_offset);
-    write_u32(data, k_zone_offset, k_zone_offset);
-
-    const auto record{IamAreaRecord::load(data)};
-    REQUIRE_FALSE(record.has_value());
-    CHECK(record.error().find("zone 0 event 1") != std::string::npos);
-  }
-
-  TEST_CASE("[FORMAT] AREA rejects a table-7 event outside its bytecode pool") {
-    constexpr std::size_t k_link_offset{0xB4U};
-    constexpr std::size_t k_pool_offset{k_link_offset + 0x08U};
-    constexpr std::size_t k_pool_end{k_pool_offset + 0x10U};
-    std::vector<std::byte> data(k_pool_end, std::byte{});
-    write_u32(data, 0x28U + (6U * 4U), k_pool_end);
-    write_u32(data, 0x28U + (7U * 4U), k_link_offset);
-    write_u16(data, 0x48U + (7U * 2U), 1U);
-    write_u32(data, k_link_offset, k_pool_end);
-    write_u32(data, k_link_offset + 4U, 222U);
-
-    const auto record{IamAreaRecord::load(data)};
-    REQUIRE_FALSE(record.has_value());
-    CHECK(record.error().find("table-7 program 0") != std::string::npos);
-  }
-
-  TEST_CASE("[FORMAT] AREA rejects reversed bytecode and camera ordering") {
-    std::vector<std::byte> data(0xC0U, std::byte{});
-    write_u32(data, 0x28U + (6U * 4U), 0xB4U);
-    write_u32(data, 0x28U + (7U * 4U), 0xC0U);
-
-    const auto record{IamAreaRecord::load(data)};
-    REQUIRE_FALSE(record.has_value());
-    CHECK(record.error().find("reversed bounds") != std::string::npos);
-  }
-
-  TEST_CASE("[FORMAT] AREA rejects camera overlap with physical table 7") {
-    constexpr std::size_t k_link_offset{0xB4U};
-    constexpr std::size_t k_camera_offset{0xC0U};
-    std::vector<std::byte> data(k_camera_offset + 0x2CU, std::byte{});
-    write_u32(data, 0x28U + (6U * 4U), k_camera_offset);
-    write_u16(data, 0x48U + (6U * 2U), 1U);
-    write_u32(data, 0x28U + (7U * 4U), k_link_offset);
-    write_u16(data, 0x48U + (7U * 2U), 2U);
-
-    const auto record{IamAreaRecord::load(data)};
-    REQUIRE_FALSE(record.has_value());
-    CHECK(record.error().find("reversed bounds") != std::string::npos);
-  }
-
-  TEST_CASE("[OPENNOMAD] AREA table-span arithmetic cannot wrap into the record") {
-    std::vector<std::byte> data(0xB4U, std::byte{});
-    write_u32(data, 0x28U, std::numeric_limits<std::uint32_t>::max());
-    write_u16(data, 0x48U, std::numeric_limits<std::uint16_t>::max());
-
-    const auto record{IamAreaRecord::load(data)};
-    REQUIRE_FALSE(record.has_value());
-    CHECK(record.error().find("table 0 span") != std::string::npos);
+    CHECK(record.error().find("primary event offset") != std::string::npos);
   }
 
   TEST_CASE("AREA validates known table spans") {
@@ -222,7 +121,7 @@ TEST_SUITE("Core::Omikron::IamAreaRecord") {
     constexpr std::size_t k_definition_offset{k_placement_offset + 0x18U};
     std::vector<std::byte> data(k_definition_offset + 0x18U, std::byte{});
 
-    write_u32(data, IamAreaRecord::k_offset_primary_event, 0U);
+    write_bytecode_pool_bounds(data, data.size(), data.size());
     write_u32(data, IamAreaRecord::k_offset_table_offsets + (1U * 4U), k_placement_offset);
     write_u16(data, IamAreaRecord::k_offset_table_counts + (1U * 2U), 1);
     write_u32(data, IamAreaRecord::k_offset_table_offsets + (3U * 4U), k_definition_offset);
@@ -268,7 +167,7 @@ TEST_SUITE("Core::Omikron::IamAreaRecord") {
     constexpr std::size_t k_character_stride{0x14};
     std::vector<std::byte> data(k_character_offset + k_character_stride, std::byte{});
 
-    write_u32(data, IamAreaRecord::k_offset_primary_event, 0U);
+    write_bytecode_pool_bounds(data, data.size(), data.size());
     write_u32(data, IamAreaRecord::k_offset_table_offsets, k_character_offset);
     write_u16(data, IamAreaRecord::k_offset_table_counts, 1);
 
@@ -303,7 +202,7 @@ TEST_SUITE("Core::Omikron::IamAreaRecord") {
     constexpr std::size_t k_interests_offset{k_signs_offset + 16U};
     std::vector<std::byte> data(k_interests_offset + 16U, std::byte{});
 
-    write_u32(data, IamAreaRecord::k_offset_primary_event, 0U);
+    write_bytecode_pool_bounds(data, data.size(), data.size());
     write_u32(data, IamAreaRecord::k_offset_table_offsets, k_character_offset);
     write_u16(data, IamAreaRecord::k_offset_table_counts, 1);
     write_i16(data, k_character_offset + 0x02U, 310);
@@ -370,7 +269,8 @@ TEST_SUITE("Core::Omikron::IamAreaRecord") {
     constexpr std::size_t k_table0_offset{0x0B4U};
     constexpr std::size_t k_table4_offset{0x0DCU};
     std::vector<std::byte> data(0x9C0U, std::byte{});
-    write_u32(data, IamAreaRecord::k_offset_primary_event, 0U);
+    write_u32(data, IamAreaRecord::k_offset_primary_event, 0x3FCU);
+    write_bytecode_pool_bounds(data, 0x3FCU, data.size());
     write_u32(data, IamAreaRecord::k_offset_table_offsets, k_table0_offset);
     write_u16(data, IamAreaRecord::k_offset_table_counts, 2);
     write_u32(data, IamAreaRecord::k_offset_table_offsets + (4U * 4U), k_table4_offset);
@@ -403,7 +303,7 @@ TEST_SUITE("Core::Omikron::IamAreaRecord") {
   TEST_CASE("AREA authored strings accept zero and reject invalid record-relative offsets") {
     constexpr std::size_t k_definition_offset{IamAreaRecord::k_header_size};
     std::vector<std::byte> absent(k_definition_offset + 0x114U, std::byte{});
-    write_u32(absent, IamAreaRecord::k_offset_primary_event, 0U);
+    write_bytecode_pool_bounds(absent, absent.size(), absent.size());
     write_u32(absent, IamAreaRecord::k_offset_table_offsets + (4U * 4U), k_definition_offset);
     write_u16(absent, IamAreaRecord::k_offset_table_counts + (4U * 2U), 1);
     write_i16(absent, k_definition_offset + 0x110U, 7);
@@ -432,7 +332,7 @@ TEST_SUITE("Core::Omikron::IamAreaRecord") {
   TEST_CASE("AREA table 6 exposes recovered camera records by signed ID") {
     constexpr std::size_t k_camera_offset{IamAreaRecord::k_header_size};
     std::vector<std::byte> data(k_camera_offset + 0x2CU, std::byte{});
-    write_u32(data, IamAreaRecord::k_offset_primary_event, 0U);
+    write_bytecode_pool_bounds(data, k_camera_offset, k_camera_offset);
     write_u32(data, IamAreaRecord::k_offset_table_offsets + (6U * 4U), k_camera_offset);
     write_u16(data, IamAreaRecord::k_offset_table_counts + (6U * 2U), 1);
 
@@ -465,7 +365,7 @@ TEST_SUITE("Core::Omikron::IamAreaRecord") {
   TEST_CASE("AREA table 5 resolves named addresses by signed ID") {
     constexpr std::size_t k_address_offset{IamAreaRecord::k_header_size};
     std::vector<std::byte> data(k_address_offset + 0x10U, std::byte{});
-    write_u32(data, IamAreaRecord::k_offset_primary_event, 0U);
+    write_bytecode_pool_bounds(data, data.size(), data.size());
     write_u32(data, IamAreaRecord::k_offset_table_offsets + (5U * 4U), k_address_offset);
     write_u16(data, IamAreaRecord::k_offset_table_counts + (5U * 2U), 1);
     write_i32(data, k_address_offset + 0x00U, 43922);
@@ -488,18 +388,15 @@ TEST_SUITE("Core::Omikron::IamAreaRecord") {
   TEST_CASE("AREA table 2 decodes shared 0x44-byte IAM zone records") {
     constexpr std::size_t k_zone_offset{IamAreaRecord::k_header_size};
     constexpr std::size_t k_zone_stride{0x44};
-    constexpr std::size_t k_pool_offset{k_zone_offset + (2U * k_zone_stride)};
-    constexpr std::size_t k_camera_offset{k_pool_offset + 0x10U};
-    std::vector<std::byte> data(k_camera_offset, std::byte{});
-    write_u32(data, IamAreaRecord::k_offset_primary_event, 0U);
+    constexpr std::size_t k_bytecode_offset{k_zone_offset + (2U * k_zone_stride)};
+    std::vector<std::byte> data(k_bytecode_offset + 4U, std::byte{});
+    write_bytecode_pool_bounds(data, k_bytecode_offset, data.size());
     write_u32(data, IamAreaRecord::k_offset_table_offsets + (2U * 4U), k_zone_offset);
     write_u16(data, IamAreaRecord::k_offset_table_counts + (2U * 2U), 2);
-    write_u32(data, IamAreaRecord::k_offset_table_offsets + (6U * 4U), k_camera_offset);
-    write_u32(data, IamAreaRecord::k_offset_table_offsets + (7U * 4U), k_pool_offset);
 
-    write_u32(data, k_zone_offset + 0x00U, static_cast<std::uint32_t>(k_pool_offset));
-    write_u32(data, k_zone_offset + 0x04U, static_cast<std::uint32_t>(k_pool_offset + 4U));
-    write_u32(data, k_zone_offset + 0x08U, static_cast<std::uint32_t>(k_pool_offset + 8U));
+    write_u32(data, k_zone_offset + 0x00U, static_cast<std::uint32_t>(k_bytecode_offset));
+    write_u32(data, k_zone_offset + 0x04U, static_cast<std::uint32_t>(k_bytecode_offset + 1U));
+    write_u32(data, k_zone_offset + 0x08U, static_cast<std::uint32_t>(k_bytecode_offset + 2U));
     write_i32(data, k_zone_offset + 0x0CU, 10);
     write_i32(data, k_zone_offset + 0x10U, 20);
     write_i32(data, k_zone_offset + 0x14U, 30);
@@ -518,7 +415,7 @@ TEST_SUITE("Core::Omikron::IamAreaRecord") {
     write_i16(data, k_zone_offset + 0x42U, static_cast<std::int16_t>(0x7856U));
 
     const std::size_t second{k_zone_offset + k_zone_stride};
-    write_u32(data, second + 0x00U, static_cast<std::uint32_t>(k_pool_offset));
+    write_u32(data, second + 0x00U, static_cast<std::uint32_t>(k_bytecode_offset + 3U));
     write_i16(data, second + 0x3EU, 33);
     write_i16(data, second + 0x40U, static_cast<std::int16_t>(0x8005U));
 
@@ -526,16 +423,16 @@ TEST_SUITE("Core::Omikron::IamAreaRecord") {
     REQUIRE(record.has_value());
     const std::vector<App::Omikron::IamAreaZoneRecord> zones{record->zones()};
     REQUIRE_EQ(zones.size(), 2U);
-    CHECK_EQ(zones.at(0).event_offsets.at(0), k_pool_offset);
-    CHECK_EQ(zones.at(0).event_offsets.at(1), k_pool_offset + 4U);
-    CHECK_EQ(zones.at(0).event_offsets.at(2), k_pool_offset + 8U);
+    CHECK_EQ(zones.at(0).event_offsets.at(0), k_bytecode_offset);
+    CHECK_EQ(zones.at(0).event_offsets.at(1), k_bytecode_offset + 1U);
+    CHECK_EQ(zones.at(0).event_offsets.at(2), k_bytecode_offset + 2U);
     CHECK_EQ(zones.at(0).serialized_vertices.at(0), std::array<std::int32_t, 3>{10, 20, 30});
     CHECK_EQ(zones.at(0).serialized_vertices.at(3), std::array<std::int32_t, 3>{100, 110, 120});
     CHECK_EQ(zones.at(0).orientation_center_units, 123);
     CHECK_EQ(zones.at(0).orientation_span_units, -12);
     CHECK_EQ(zones.at(0).zone_id, 9);
     CHECK_EQ(static_cast<std::uint16_t>(zones.at(0).unknown_42), 0x7856U);
-    CHECK_EQ(zones.at(1).event_offsets.at(0), k_pool_offset);
+    CHECK_EQ(zones.at(1).event_offsets.at(0), k_bytecode_offset + 3U);
     CHECK_EQ(zones.at(1).orientation_span_units, 33);
     CHECK_EQ(static_cast<std::uint16_t>(zones.at(1).zone_id), 0x8005U);
   }

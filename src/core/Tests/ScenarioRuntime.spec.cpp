@@ -107,6 +107,7 @@ std::shared_ptr<const App::Character::ModelResource> make_body_model_resource() 
       .bone_position = {.x = 2.0F, .y = 0.0F, .z = 0.0F}});
   resource->model.polygons.resize(2);
   resource->model.root_mesh_index = 0;
+  resource->actor_object_index = 0U;
   resource->model.hierarchy_parent_index = {-1, 0};
   resource->model.hierarchy_first_child_index = {1, -1};
   resource->model.hierarchy_next_sibling_index = {-1, -1};
@@ -118,13 +119,48 @@ std::shared_ptr<const App::Character::ModelResource> make_body_model_resource() 
   return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
 }
 
+std::shared_ptr<const App::Character::ModelResource> make_split_actor_model_resource() {
+  auto resource{std::make_shared<App::Character::ModelResource>()};
+  resource->name = "SPLIT";
+  resource->model.materials.push_back(App::Omikron::Material{});
+  resource->model.meshes.push_back(App::Omikron::MeshDescriptor{.mesh_id = 100,
+    .script_id = 2,
+    .name = "RootBody",
+    .parent_id = -1,
+    .first_child_id = -1,
+    .next_sibling_id = 200,
+    .triangle_count = 10});
+  resource->model.meshes.push_back(App::Omikron::MeshDescriptor{.mesh_id = 200,
+    .script_id = 3,
+    .name = "Child",
+    .parent_id = -1,
+    .first_child_id = -1,
+    .next_sibling_id = -1,
+    .triangle_count = 60,
+    .rectangle_count = 40});
+  resource->model.polygons.resize(2);
+  resource->model.root_mesh_index = 0;
+  resource->actor_object_index = App::Character::actor_object_index(resource->model);
+  resource->model.hierarchy_parent_index = {-1, -1};
+  resource->model.hierarchy_first_child_index = {-1, -1};
+  resource->model.hierarchy_next_sibling_index = {1, -1};
+  resource->model.hierarchy_reachable = {1, 1};
+  resource->model.skin_parent_index = {-1, -1};
+  resource->model.runtime_objects = {App::Omikron::Model3DOData::RuntimeObjectState{},
+    App::Omikron::Model3DOData::RuntimeObjectState{}};
+  resource->groups.push_back(App::Omikron::MaterialGroup{});
+  return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
+}
+
 struct BodyResourcesFixture {
   App::Omikron::ScxData scx;
   std::vector<std::byte> bytes;
 };
 
 BodyResourcesFixture make_body_resources(
-    const App::Runtime::Vec3 reference = {}, const App::Runtime::Vec3 root_motion = {.x = 10.0F}) {
+  const App::Runtime::Vec3 reference = {},
+  const App::Runtime::Vec3 root_motion = {.x = 10.0F},
+  const bool child_translation = false) {
   Buffer path;
   path.u32(1).chars("UBas.p1", 20).u32(2).u32(3);
   for (std::uint32_t key{0}; key < 3U; ++key) {
@@ -139,8 +175,11 @@ BodyResourcesFixture make_body_resources(
   }
 
   constexpr std::uint32_t descriptor_end{8U + (2U * 0x28U)};
-  constexpr std::uint32_t root_rotation_offset{descriptor_end + (4U * 12U)};
-  constexpr std::uint32_t child_rotation_offset{root_rotation_offset + (4U * 16U)};
+  constexpr std::uint32_t root_translation_size{4U * 12U};
+  const std::uint32_t child_translation_offset{descriptor_end + root_translation_size};
+  const std::uint32_t root_rotation_offset{
+      child_translation_offset + (child_translation ? root_translation_size : 0U)};
+  const std::uint32_t child_rotation_offset{root_rotation_offset + (4U * 16U)};
   Buffer animation;
   animation.u32(3).u32(2);
   animation.u32(2)
@@ -150,13 +189,24 @@ BodyResourcesFixture make_body_resources(
       .u32(4)
       .u32(root_rotation_offset);
   // mesh_id is 200, but the animation must bind this channel by script_id 3.
-  animation.u32(3).chars("Child", 20).u32(4).u32(0).u32(4).u32(child_rotation_offset);
+  animation.u32(3)
+      .chars("Child", 20)
+      .u32(4)
+      .u32(child_translation ? child_translation_offset : 0U)
+      .u32(4)
+      .u32(child_rotation_offset);
   // Translation sample zero is the reference position; each later sample is
   // an interval-local root-motion vector. Keep the vectors uniform so a
   // fractional interval is an unambiguous fraction of root_motion.
   animation.f32(reference.x).f32(reference.y).f32(reference.z);
   for (std::uint32_t frame{1}; frame < 4U; ++frame) {
     animation.f32(root_motion.x).f32(root_motion.y).f32(root_motion.z);
+  }
+  if (child_translation) {
+    animation.f32(reference.x).f32(reference.y).f32(reference.z);
+    for (std::uint32_t frame{1}; frame < 4U; ++frame) {
+      animation.f32(root_motion.x).f32(root_motion.y).f32(root_motion.z);
+    }
   }
   animation.f32(1.0F).f32(0.0F).f32(0.0F).f32(0.0F);
   animation.f32(0.0F).f32(0.0F).f32(0.0F).f32(1.0F);
@@ -818,10 +868,81 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
     CHECK_EQ(character->transform.translation.z, doctest::Approx(36.811024F));
   }
 
+  TEST_CASE("body animation separates hierarchy-root visuals from actor-object logic") {
+    BodyResourcesFixture resources{
+        make_body_resources(App::Runtime::Vec3{.x = 100.0F, .y = -50.0F, .z = 25.0F},
+            App::Runtime::Vec3{.x = 10.0F, .y = 6.0F, .z = 0.0F},
+            true)};
+    resources.scx.section0_records.clear();
+    resources.scx.section0_resources.clear();
+    const std::shared_ptr<const App::Character::ModelResource> shared{
+        make_split_actor_model_resource()};
+    REQUIRE_EQ(shared->model.root_mesh_index, 0);
+    REQUIRE_EQ(shared->actor_object_index, std::optional<std::size_t>{1U});
+    const auto loader = [shared](const std::string_view)
+        -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
+      return shared;
+    };
+
+    const auto make_runtime = [&resources, &loader]() {
+      auto runtime{std::make_unique<App::ScenarioRuntime>()};
+      REQUIRE(runtime->initialize(resources.scx, resources.bytes, "split", nullptr, false)
+            .has_value());
+      runtime->character_runtime().set_model_loader(loader);
+      REQUIRE(runtime
+            ->activate_character(118,
+              make_character_area(),
+              App::Script::AreaCharacterActivationRequest{
+                .character_id = 310, .apply_area_transform = true})
+            .has_value());
+      return runtime;
+    };
+
+    auto visual_runtime{make_runtime()};
+    App::Character::RuntimeCharacter* visual{visual_runtime->character_runtime().find(310)};
+    REQUIRE(visual != nullptr);
+    visual->transform.translation = {.x = 7000.0F, .y = -120.0F, .z = 3040.0F};
+    visual->set_principal_orientation({});
+    const App::Script::BodyAnimationRequest root_request{.character_id = 310,
+      .object_binding = "RootBody",
+      .animation_index = 0,
+      .previous_progress = 0.0F,
+      .current_progress = 1.0F,
+      .body_animation_vector = {},
+      .authored_offset = {},
+      .first_tick = true,
+      .execution_count = 0,
+      .execution_limit = 1};
+    REQUIRE(visual_runtime->select_body_animation(root_request).has_value());
+    CHECK_EQ(visual->transform.translation.x, doctest::Approx(7000.0F));
+    CHECK_EQ(visual->transform.translation.y, doctest::Approx(-120.0F));
+    CHECK_EQ(visual->transform.translation.z, doctest::Approx(3040.0F));
+    CHECK_EQ(visual->transform.translation.x + visual->runtime_objects.at(0).world_translation.x,
+      doctest::Approx(110.0F));
+    CHECK_EQ(visual->transform.translation.y + visual->runtime_objects.at(0).world_translation.y,
+      doctest::Approx(-44.0F));
+    CHECK_EQ(visual->transform.translation.z + visual->runtime_objects.at(0).world_translation.z,
+      doctest::Approx(25.0F));
+
+    auto actor_runtime{make_runtime()};
+    App::Character::RuntimeCharacter* actor{actor_runtime->character_runtime().find(310)};
+    REQUIRE(actor != nullptr);
+    actor->transform.translation = {.x = 7000.0F, .y = -120.0F, .z = 3040.0F};
+    actor->set_principal_orientation({});
+    App::Script::BodyAnimationRequest actor_request{root_request};
+    actor_request.object_binding = "Child";
+    REQUIRE(actor_runtime->select_body_animation(actor_request).has_value());
+    CHECK_EQ(actor->transform.translation.x, doctest::Approx(110.0F));
+    CHECK_EQ(actor->transform.translation.y, doctest::Approx(-50.0F));
+    CHECK_EQ(actor->transform.translation.z, doctest::Approx(25.0F));
+    CHECK_EQ(actor->transform.translation.y + actor->runtime_objects.at(1).world_translation.y,
+      doctest::Approx(-44.0F));
+  }
+
   TEST_CASE("Body root motion keeps logical Y fixed and moves the visual root") {
     BodyResourcesFixture resources{
         make_body_resources(App::Runtime::Vec3{.x = 100.0F, .y = -50.0F, .z = 25.0F},
-            App::Runtime::Vec3{.x = 10.0F, .y = 6.0F, .z = 0.0F})};
+        App::Runtime::Vec3{.x = 10.0F, .y = 6.0F, .z = 0.0F})};
     resources.scx.section0_records.clear();
     resources.scx.section0_resources.clear();
     const std::shared_ptr<const App::Character::ModelResource> shared{make_body_model_resource()};
@@ -938,7 +1059,8 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
     // Ordinary anchoring always uses the 3DA reference (zero in this fixture),
     // even when the selected hierarchy object is parented.
     CHECK_EQ(child->body_animation.final_anchor.x, doctest::Approx(3.93700778F));
-    CHECK_EQ(child->runtime_objects.at(1).world_translation.x, doctest::Approx(3.93700778F));
+    CHECK_EQ(child->transform.translation.x + child->runtime_objects.at(1).world_translation.x,
+      doctest::Approx(3.93700778F));
     CHECK_EQ(child->transform.translation.x, doctest::Approx(character_x_before_child));
     CHECK_EQ(child->body_animation.root_motion_delta.x, doctest::Approx(0.0F));
   }

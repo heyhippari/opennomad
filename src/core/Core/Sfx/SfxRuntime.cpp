@@ -73,6 +73,7 @@ struct Runtime::EmissionRequest {
   App::Runtime::Vec3 position{};
   float sound_countdown{0.0F};
   float emission_countdown{0.0F};
+  EmissionProvenance provenance;
 };
 
 struct Runtime::Particle {
@@ -231,13 +232,15 @@ std::size_t Runtime::trigger(const std::int32_t type, const std::int32_t id) {
   return activated;
 }
 
-void Runtime::emit_definition(const std::int32_t definition_id, const App::Runtime::Vec3 position) {
+void Runtime::emit_definition(const std::int32_t definition_id,
+  const App::Runtime::Vec3 position,
+  EmissionProvenance provenance) {
   const auto found{m_definition_indices.find(definition_id)};
   if (found == m_definition_indices.end()) {
     App::Log::warn(LogCategory::Scenario, "Cin-SFX definition ID {} does not exist", definition_id);
     return;
   }
-  enqueue_request(m_data.definitions.at(found->second), position);
+  enqueue_request(m_data.definitions.at(found->second), position, std::move(provenance));
 }
 
 // Retail activation recursively follows node references; the stack guard
@@ -419,7 +422,14 @@ void Runtime::service_node(const std::size_t node_index) {
     }
   }
   if (definition != nullptr) {
-    enqueue_request(*definition, node.current_position);
+    enqueue_request(*definition,
+      node.current_position,
+      EmissionProvenance{.origin = EmissionOriginKind::k_node,
+        .node_id = source.node_id,
+        .structured_script_trigger_id = std::nullopt,
+        .animation_id = std::nullopt,
+        .animation_name = {},
+        .cin_channel = std::nullopt});
   }
 
   node.elapsed += 1.0F;
@@ -442,8 +452,9 @@ void Runtime::service_node(const std::size_t node_index) {
   }
 }
 
-void Runtime::enqueue_request(
-    const Omikron::SfxDefinition& definition, const App::Runtime::Vec3 position) {
+void Runtime::enqueue_request(const Omikron::SfxDefinition& definition,
+  const App::Runtime::Vec3 position,
+  EmissionProvenance provenance) {
   if (m_requests.size() >= k_request_capacity) {
     if (!m_request_capacity_warned) {
       m_request_capacity_warned = true;
@@ -454,7 +465,56 @@ void Runtime::enqueue_request(
   m_requests.push_back(EmissionRequest{.definition = &definition,
       .position = position,
       .sound_countdown = definition.sound_delay,
-      .emission_countdown = definition.emission_delay});
+      .emission_countdown = definition.emission_delay,
+      .provenance = std::move(provenance)});
+}
+
+void Runtime::record_sound_start(const EmissionRequest& request) {
+  const auto same_start = [this, &request](const SoundStartDiagnostic& diagnostic) {
+    return diagnostic.logical_tick == m_logical_tick &&
+           diagnostic.definition_id == request.definition->definition_id &&
+           diagnostic.sound_h_id == request.definition->sound_id &&
+           diagnostic.provenance.origin == request.provenance.origin &&
+           diagnostic.provenance.node_id == request.provenance.node_id &&
+           diagnostic.provenance.animation_id == request.provenance.animation_id &&
+           diagnostic.provenance.cin_channel == request.provenance.cin_channel;
+  };
+  const auto found{std::ranges::find_if(m_sound_start_diagnostics, same_start)};
+  if (found != m_sound_start_diagnostics.end()) {
+    ++found->repeat_count;
+    return;
+  }
+  if (m_sound_start_diagnostics.size() >= 256U) {
+    m_sound_start_diagnostics.erase(m_sound_start_diagnostics.begin());
+  }
+  m_sound_start_diagnostics.push_back(SoundStartDiagnostic{.logical_tick = m_logical_tick,
+      .scenario = std::string{m_host.sfx_scenario_name()},
+      .definition_id = request.definition->definition_id,
+      .definition_name = request.definition->name,
+      .sound_h_id = request.definition->sound_id,
+      .sound_name = std::string{m_host.sfx_sound_name(request.definition->sound_id)},
+      .provenance = request.provenance,
+      .position = request.position,
+      .repeat_count = 1U});
+  const SoundStartDiagnostic& diagnostic{m_sound_start_diagnostics.back()};
+  App::Log::info(LogCategory::Audio,
+      "SfxSoundStarted — scenario='{}' definition={}:'{}' sound={}:'{}' origin={} node={} "
+      "scriptTrigger={} animation={}:'{}' cinChannel={} xyz=({:.3f},{:.3f},{:.3f}) tick={} count=1",
+      diagnostic.scenario,
+      diagnostic.definition_id,
+      diagnostic.definition_name,
+      diagnostic.sound_h_id,
+      diagnostic.sound_name,
+      diagnostic.provenance.origin == EmissionOriginKind::k_node ? "node" : "cin-sfx",
+      diagnostic.provenance.node_id.value_or(-1),
+      diagnostic.provenance.structured_script_trigger_id.value_or(0U),
+      diagnostic.provenance.animation_id.value_or(0U),
+      diagnostic.provenance.animation_name,
+      diagnostic.provenance.cin_channel.value_or(0U),
+      diagnostic.position.x,
+      diagnostic.position.y,
+      diagnostic.position.z,
+      diagnostic.logical_tick);
 }
 
 void Runtime::service_requests() {
@@ -464,6 +524,7 @@ void Runtime::service_requests() {
       request.sound_countdown -= 1.0F;
       if (request.sound_countdown < 0.0F && request.definition->sound_id != 0x0000FFFF &&
           request.definition->sound_id != -1) {
+        record_sound_start(request);
         auto played{m_host.play_sfx_sound(request.definition->sound_id, request.position)};
         if (!played) {
           App::Log::warn(LogCategory::Audio,
@@ -647,6 +708,7 @@ void Runtime::service_particles() {
 }
 
 void Runtime::step() {
+  ++m_logical_tick;
   for (std::size_t index{0}; index < m_nodes.size(); ++index) {
     service_node(index);
   }
