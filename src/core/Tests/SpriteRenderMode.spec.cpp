@@ -1,9 +1,9 @@
+#include "Core/Sprite/SpriteRenderMode.hpp"
+
 #include <doctest/doctest.h>
 
 #include <array>
 #include <cstdint>
-
-#include "Core/Sprite/SpriteRenderMode.hpp"
 
 // NOLINTBEGIN(misc-use-anonymous-namespace, cppcoreguidelines-avoid-do-while, cert-err33-c,
 // misc-include-cleaner, cppcoreguidelines-pro-bounds-constant-array-index,
@@ -26,13 +26,26 @@ struct ExpectedState {
 
 /// The proven mode table (values are the original numeric render modes).
 const std::array<std::pair<SpriteRenderMode, ExpectedState>, 9> k_modes{{
-    {SpriteRenderMode::k_default, {false, BlendFactor::k_one, BlendFactor::k_zero, true, false, true}},
-    {SpriteRenderMode::k_cutout, {false, BlendFactor::k_one, BlendFactor::k_zero, true, true, true}},
+    {SpriteRenderMode::k_default,
+        {false, BlendFactor::k_one, BlendFactor::k_zero, true, false, true}},
+    {SpriteRenderMode::k_cutout,
+        {false, BlendFactor::k_one, BlendFactor::k_zero, true, true, true}},
     {SpriteRenderMode::k_alpha,
-        {true, BlendFactor::k_source_alpha, BlendFactor::k_one_minus_source_alpha, false, false, false}},
+        {true,
+            BlendFactor::k_source_alpha,
+            BlendFactor::k_one_minus_source_alpha,
+            false,
+            false,
+            false}},
     {SpriteRenderMode::k_alpha_cutout,
-        {true, BlendFactor::k_source_alpha, BlendFactor::k_one_minus_source_alpha, false, true, false}},
-    {SpriteRenderMode::k_additive, {true, BlendFactor::k_one, BlendFactor::k_one, false, false, false}},
+        {true,
+            BlendFactor::k_source_alpha,
+            BlendFactor::k_one_minus_source_alpha,
+            false,
+            true,
+            false}},
+    {SpriteRenderMode::k_additive,
+        {true, BlendFactor::k_one, BlendFactor::k_one, false, false, false}},
     {SpriteRenderMode::k_additive_cutout,
         {true, BlendFactor::k_one, BlendFactor::k_one, false, true, false}},
     {SpriteRenderMode::k_darken,
@@ -74,7 +87,8 @@ TEST_SUITE("Core::Sprite::SpriteRenderMode") {
   TEST_CASE("Modes 1 and 8 stay distinct with shared renderer behaviour") {
     CHECK(static_cast<std::uint16_t>(SpriteRenderMode::k_cutout) !=
           static_cast<std::uint16_t>(SpriteRenderMode::k_alternate_cutout));
-    const App::Sprite::SpriteRenderState cutout{App::Sprite::render_state(SpriteRenderMode::k_cutout)};
+    const App::Sprite::SpriteRenderState cutout{
+        App::Sprite::render_state(SpriteRenderMode::k_cutout)};
     const App::Sprite::SpriteRenderState alternate{
         App::Sprite::render_state(SpriteRenderMode::k_alternate_cutout)};
     CHECK_EQ(cutout.blend_enabled, alternate.blend_enabled);

@@ -17,8 +17,7 @@ using App::InterfaceDispatcher;
 using App::InterfaceHandle;
 using App::InterfaceOpenRequest;
 
-constexpr InterfaceOpenRequest k_menu_request{
-    .interface_id = 29, .operand_b = -1, .operand_c = 19};
+constexpr InterfaceOpenRequest k_menu_request{.interface_id = 29, .operand_b = -1, .operand_c = 19};
 
 }  // namespace
 
@@ -36,8 +35,8 @@ TEST_SUITE("Core::Interface::InterfaceDispatcher") {
     std::vector<InterfaceOpenRequest> received;
     const InterfaceHandle handle{.interface_id = 29, .generation = 3};
     dispatcher.set_interface_open_sink(
-        [&received, handle](const InterfaceOpenRequest& request)
-            -> std::expected<InterfaceHandle, std::string> {
+        [&received, handle](
+            const InterfaceOpenRequest& request) -> std::expected<InterfaceHandle, std::string> {
           received.push_back(request);
           return handle;
         });
@@ -54,10 +53,10 @@ TEST_SUITE("Core::Interface::InterfaceDispatcher") {
 
   TEST_CASE("a failing sink reports its error") {
     InterfaceDispatcher dispatcher;
-    dispatcher.set_interface_open_sink([](const InterfaceOpenRequest& /*request*/)
-                                           -> std::expected<InterfaceHandle, std::string> {
-      return std::expected<InterfaceHandle, std::string>{std::unexpect, "open failed"};
-    });
+    dispatcher.set_interface_open_sink(
+        [](const InterfaceOpenRequest& /*request*/) -> std::expected<InterfaceHandle, std::string> {
+          return std::expected<InterfaceHandle, std::string>{std::unexpect, "open failed"};
+        });
 
     const auto result{dispatcher.open(k_menu_request)};
     REQUIRE_FALSE(result.has_value());
@@ -68,8 +67,8 @@ TEST_SUITE("Core::Interface::InterfaceDispatcher") {
     InterfaceDispatcher dispatcher;
     std::uint16_t received_id{0};
     dispatcher.set_interface_open_sink(
-        [&received_id](const InterfaceOpenRequest& request)
-            -> std::expected<InterfaceHandle, std::string> {
+        [&received_id](
+            const InterfaceOpenRequest& request) -> std::expected<InterfaceHandle, std::string> {
           received_id = request.interface_id;
           return InterfaceHandle{.interface_id = request.interface_id, .generation = 1};
         });
@@ -82,10 +81,9 @@ TEST_SUITE("Core::Interface::InterfaceDispatcher") {
   TEST_CASE("a completion is forwarded to the completion sink verbatim") {
     InterfaceDispatcher dispatcher;
     std::vector<InterfaceCompletion> completions;
-    dispatcher.set_interface_completion_sink(
-        [&completions](const InterfaceCompletion& completion) {
-          completions.push_back(completion);
-        });
+    dispatcher.set_interface_completion_sink([&completions](const InterfaceCompletion& completion) {
+      completions.push_back(completion);
+    });
 
     const InterfaceCompletion completion{
         .handle = InterfaceHandle{.interface_id = 29, .generation = 5}, .result = 0};
@@ -97,9 +95,8 @@ TEST_SUITE("Core::Interface::InterfaceDispatcher") {
 
   TEST_CASE("a completion without a wired sink is a harmless no-op") {
     InterfaceDispatcher dispatcher;
-    dispatcher.notify_completion(
-        InterfaceCompletion{.handle = InterfaceHandle{.interface_id = 29, .generation = 1},
-            .result = 0});
+    dispatcher.notify_completion(InterfaceCompletion{
+        .handle = InterfaceHandle{.interface_id = 29, .generation = 1}, .result = 0});
   }
 }
 

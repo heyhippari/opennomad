@@ -110,11 +110,11 @@ struct FrameTimingState {
 ///   provisionally the original FUN_004200f0.
 template <typename ClockNow, typename PollInput, typename RunEngineFrame>
 void run_timed_frame(FrameTimingState& timing,
-                     const bool reset_frame_clock,
-                     const bool skip_engine_frame,
-                     ClockNow clock_now,
-                     PollInput poll_input,
-                     RunEngineFrame run_engine_frame) {
+    const bool reset_frame_clock,
+    const bool skip_engine_frame,
+    ClockNow clock_now,
+    PollInput poll_input,
+    RunEngineFrame run_engine_frame) {
   if (reset_frame_clock) {
     // The loop was blocked (inactive or suspended) since the previous
     // frame: re-baseline the frame clock so the inactive interval is not

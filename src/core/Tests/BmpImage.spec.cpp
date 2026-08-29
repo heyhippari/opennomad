@@ -1,3 +1,5 @@
+#include "Core/Omikron/BmpImage.hpp"
+
 #include <doctest/doctest.h>
 
 #include <array>
@@ -5,7 +7,6 @@
 #include <cstdint>
 #include <vector>
 
-#include "Core/Omikron/BmpImage.hpp"
 #include "OmikronTestBuffer.hpp"
 
 // NOLINTBEGIN(misc-use-anonymous-namespace, cppcoreguidelines-avoid-do-while, cert-err33-c)
@@ -22,14 +23,13 @@ constexpr std::array<std::uint8_t, 3> K_WHITE{255, 255, 255};
 /// positive height the first row is the bottom row of the image (bottom-up
 /// storage), with a negative height it is the top row (top-down storage).
 Buffer make_bmp(const std::int32_t width,
-                const std::int32_t height,
-                const std::vector<std::vector<std::array<std::uint8_t, 3>>>& rows) {
+    const std::int32_t height,
+    const std::vector<std::vector<std::array<std::uint8_t, 3>>>& rows) {
   const std::size_t row_bytes{static_cast<std::size_t>(width) * 3U};
   const std::size_t row_stride{((row_bytes + 3U) / 4U) * 4U};
   const std::size_t absolute_height{
       height < 0 ? static_cast<std::size_t>(-height) : static_cast<std::size_t>(height)};
-  const std::uint32_t pixel_data_size{
-      static_cast<std::uint32_t>(row_stride * absolute_height)};
+  const std::uint32_t pixel_data_size{static_cast<std::uint32_t>(row_stride * absolute_height)};
 
   Buffer file;
   file.chars("BM", 2)
@@ -44,10 +44,10 @@ Buffer make_bmp(const std::int32_t width,
       .u16(24)      // Bits per pixel.
       .u32(0)       // BI_RGB.
       .u32(pixel_data_size)
-      .i32(0)  // x pixels per metre.
-      .i32(0)  // y pixels per metre.
-      .u32(0)  // Colours used.
-      .u32(0); // Colours important.
+      .i32(0)   // x pixels per metre.
+      .i32(0)   // y pixels per metre.
+      .u32(0)   // Colours used.
+      .u32(0);  // Colours important.
   for (const auto& row : rows) {
     for (const auto& pixel : row) {
       file.u8(pixel.at(0)).u8(pixel.at(1)).u8(pixel.at(2));
@@ -60,10 +60,22 @@ Buffer make_bmp(const std::int32_t width,
 /// Expected RGBA8 of the shared 2x2 test image: bottom row red/green, top
 /// row blue/white, stored bottom-up to match glTexImage2D's row order.
 const std::vector<std::uint8_t>& expected_rgba8() {
-  static const std::vector<std::uint8_t> k_expected{255, 0, 0, 255,      // Bottom-left red.
-                                                    0, 255, 0, 255,      // Bottom-right green.
-                                                    0, 0, 255, 255,      // Top-left blue.
-                                                    255, 255, 255, 255}; // Top-right white.
+  static const std::vector<std::uint8_t> k_expected{255,
+      0,
+      0,
+      255,  // Bottom-left red.
+      0,
+      255,
+      0,
+      255,  // Bottom-right green.
+      0,
+      0,
+      255,
+      255,  // Top-left blue.
+      255,
+      255,
+      255,
+      255};  // Top-right white.
   return k_expected;
 }
 

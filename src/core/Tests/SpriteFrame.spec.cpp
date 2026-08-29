@@ -1,3 +1,5 @@
+#include "Core/Sprite/SpriteFrame.hpp"
+
 #include <doctest/doctest.h>
 
 #include <cstddef>
@@ -5,7 +7,6 @@
 #include <string>
 
 #include "Core/Omikron/Model3DO.hpp"
-#include "Core/Sprite/SpriteFrame.hpp"
 
 // NOLINTBEGIN(misc-use-anonymous-namespace, cppcoreguidelines-avoid-do-while, cert-err33-c,
 // misc-include-cleaner, cppcoreguidelines-pro-bounds-constant-array-index,
@@ -49,10 +50,10 @@ Model3DOData make_sprite_model() {
   model.polygons.push_back(polygons);
 
   model.vertices.resize(4);
-  model.vertices.at(0).position = Vec3{0.0F, 0.0F, 0.0F};   // Point 0: origin.
-  model.vertices.at(1).position = Vec3{2.0F, 3.0F, 0.0F};   // Point 1: diagonal target.
-  model.vertices.at(2).position = Vec3{0.0F, 3.0F, 0.0F};   // Point 2: adjacent corner.
-  model.vertices.at(3).position = Vec3{2.0F, 0.0F, 0.0F};   // Point 3: adjacent corner.
+  model.vertices.at(0).position = Vec3{0.0F, 0.0F, 0.0F};  // Point 0: origin.
+  model.vertices.at(1).position = Vec3{2.0F, 3.0F, 0.0F};  // Point 1: diagonal target.
+  model.vertices.at(2).position = Vec3{0.0F, 3.0F, 0.0F};  // Point 2: adjacent corner.
+  model.vertices.at(3).position = Vec3{2.0F, 0.0F, 0.0F};  // Point 3: adjacent corner.
   return model;
 }
 

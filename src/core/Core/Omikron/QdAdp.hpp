@@ -28,8 +28,7 @@ struct QdImaChannelState {
 class QdAdpFile {
  public:
   /// Parses and validates the 16-byte header plus payload sizing.
-  [[nodiscard]] static std::expected<QdAdpFile, std::string> load(
-      std::span<const std::byte> data);
+  [[nodiscard]] static std::expected<QdAdpFile, std::string> load(std::span<const std::byte> data);
 
   /// 0 for mono, 1 for stereo (the raw header byte).
   [[nodiscard]] std::uint8_t stereo_flag() const {
@@ -48,7 +47,8 @@ class QdAdpFile {
 
   /// Frames per channel: payload_size * 2 / channels.
   [[nodiscard]] std::uint64_t total_frames() const {
-    return (static_cast<std::uint64_t>(m_payload_size) * 2U) / static_cast<std::uint64_t>(channels());
+    return (static_cast<std::uint64_t>(m_payload_size) * 2U) /
+           static_cast<std::uint64_t>(channels());
   }
 
   /// The compressed payload (excludes the 16-byte header).

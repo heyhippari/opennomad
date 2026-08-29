@@ -28,8 +28,7 @@ class VideoPresenter {
 /// file produces SkippedUnavailable, never a startup failure.
 class StartupVideoSequence {
  public:
-  StartupVideoSequence(Startup::StartupTraceRecorder& recorder,
-      Startup::StartupMediaPolicy policy);
+  StartupVideoSequence(Startup::StartupTraceRecorder& recorder, Startup::StartupMediaPolicy policy);
 
   /// Plays one video slot and records its trace event.
   ///

@@ -1,13 +1,13 @@
 #include "SpriteFrame.hpp"
 
+#include <fmt/format.h>
+
 #include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <vector>
-
-#include <fmt/format.h>
 
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Omikron/Model3DO.hpp"
@@ -41,9 +41,8 @@ std::expected<SpriteFrame, SpriteFrameError> resolve_frame(const Omikron::Model3
   if (object_index >= model.meshes.size()) {
     return std::expected<SpriteFrame, SpriteFrameError>{std::unexpect,
         SpriteFrameError{.kind = SpriteFrameError::Kind::k_object_out_of_range,
-            .message = fmt::format("object index {} out of range ({} objects)",
-                object_index,
-                model.meshes.size())}};
+            .message = fmt::format(
+                "object index {} out of range ({} objects)", object_index, model.meshes.size())}};
   }
 
   const Omikron::MeshDescriptor& mesh{model.meshes.at(object_index)};

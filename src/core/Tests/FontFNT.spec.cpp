@@ -1,3 +1,5 @@
+#include "Core/Omikron/FontFNT.hpp"
+
 #include <doctest/doctest.h>
 
 #include <cstddef>
@@ -6,8 +8,6 @@
 #include <span>
 #include <string>
 #include <vector>
-
-#include "Core/Omikron/FontFNT.hpp"
 
 namespace {
 
@@ -62,8 +62,8 @@ TEST_CASE("FNT parses the fixed descriptor table and aligned row-major bitmaps")
   CHECK(static_cast<std::size_t>(glyph_b.data_block) * 8U == K_TABLE_SIZE + 8U);
   const std::size_t glyph_a_end{
       (static_cast<std::size_t>(glyph_a.data_block) * 8U) + glyph_a.coverage.size()};
-  CHECK(((glyph_a_end + 7U) & ~std::size_t{7U}) ==
-      static_cast<std::size_t>(glyph_b.data_block) * 8U);
+  CHECK(
+      ((glyph_a_end + 7U) & ~std::size_t{7U}) == static_cast<std::size_t>(glyph_b.data_block) * 8U);
   CHECK(glyph_b.coverage == std::vector<std::uint8_t>{7U, 8U});
   CHECK(parsed->glyphs.at(static_cast<std::uint8_t>(' ')).coverage.empty());
 }
@@ -82,8 +82,8 @@ TEST_CASE("FNT rejects truncated descriptors and invalid bitmap locations") {
 }
 
 TEST_CASE("FNT checked products and five-bit intensities are validated") {
-  const auto overflow{App::Omikron::FontFNT::checked_product(
-      std::numeric_limits<std::size_t>::max(), 2U)};
+  const auto overflow{
+      App::Omikron::FontFNT::checked_product(std::numeric_limits<std::size_t>::max(), 2U)};
   CHECK_FALSE(overflow.has_value());
 
   std::vector<std::byte> invalid{K_TABLE_SIZE + 8U, std::byte{}};
@@ -106,9 +106,8 @@ TEST_CASE("Retail FNT metrics use registry spacing and byte indices") {
   high_byte.coverage.resize(120U);
 
   CHECK(App::Omikron::fnt_glyph_advance(glyph_a, 1, 6) == doctest::Approx(14.0F));
-  CHECK(App::Omikron::fnt_glyph_advance(
-            font.glyphs.at(static_cast<std::uint8_t>(' ')), 1, 6) ==
-      doctest::Approx(7.0F));
+  CHECK(App::Omikron::fnt_glyph_advance(font.glyphs.at(static_cast<std::uint8_t>(' ')), 1, 6) ==
+        doctest::Approx(7.0F));
   CHECK(App::Omikron::measure_fnt_bytes(font, "A A", 1, 6) == doctest::Approx(35.0F));
   const std::string encoded(1U, static_cast<char>(0xE9U));
   CHECK(App::Omikron::measure_fnt_bytes(font, encoded, 1, 6) == doctest::Approx(11.0F));

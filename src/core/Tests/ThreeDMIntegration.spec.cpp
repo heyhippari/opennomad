@@ -21,16 +21,24 @@ struct RetailExpectation {
 }  // namespace
 
 TEST_CASE("retail dialog 272 3DM streams match recovered physical facts") {
-  constexpr RetailExpectation K_EXPECTATIONS[]{
-      {.basename = "125338", .file_size = 3465536U, .field_08 = 911U,
-          .visual_frames = 911U, .audio_frames = 911U},
-      {.basename = "125339", .file_size = 4127064U, .field_08 = 1299U,
-          .visual_frames = 1085U, .audio_frames = 1084U},
-      {.basename = "12533A", .file_size = 3659172U, .field_08 = 0U,
-          .visual_frames = 962U, .audio_frames = 961U}};
+  constexpr RetailExpectation K_EXPECTATIONS[]{{.basename = "125338",
+                                                   .file_size = 3465536U,
+                                                   .field_08 = 911U,
+                                                   .visual_frames = 911U,
+                                                   .audio_frames = 911U},
+      {.basename = "125339",
+          .file_size = 4127064U,
+          .field_08 = 1299U,
+          .visual_frames = 1085U,
+          .audio_frames = 1084U},
+      {.basename = "12533A",
+          .file_size = 3659172U,
+          .field_08 = 0U,
+          .visual_frames = 962U,
+          .audio_frames = 961U}};
   for (const RetailExpectation& expected : K_EXPECTATIONS) {
-    const auto file{App::load_game_file(
-        std::string{"MORPH/"} + std::string{expected.basename} + ".3dm")};
+    const auto file{
+        App::load_game_file(std::string{"MORPH/"} + std::string{expected.basename} + ".3dm")};
     REQUIRE(file.has_value());
     CHECK_EQ(file->bytes.size(), expected.file_size);
     const auto clip{App::Omikron::ThreeDM::load(file->bytes)};

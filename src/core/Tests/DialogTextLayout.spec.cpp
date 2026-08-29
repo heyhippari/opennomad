@@ -1,3 +1,5 @@
+#include "Core/Interface/DialogTextLayout.hpp"
+
 #include <doctest/doctest.h>
 
 #include <array>
@@ -5,7 +7,6 @@
 #include <string_view>
 
 #include "Core/Dialog/DialogRuntime.hpp"
-#include "Core/Interface/DialogTextLayout.hpp"
 #include "Core/Interface/FontManager.hpp"
 
 namespace {
@@ -17,8 +18,8 @@ float monospace_measure(const std::string_view text) {
 }  // namespace
 
 TEST_CASE("Dialog main text is left-layouted in a fixed 64-pixel viewport") {
-  const auto one_line{App::Interface::format_dialog_text(
-      "hello", 576.0F, 64.0F, 17.0F, monospace_measure)};
+  const auto one_line{
+      App::Interface::format_dialog_text("hello", 576.0F, 64.0F, 17.0F, monospace_measure)};
   REQUIRE(one_line.lines.size() == 1U);
   CHECK(one_line.lines.front().text == "hello");
   CHECK(one_line.formatted_height == doctest::Approx(17.0F));
@@ -32,8 +33,8 @@ TEST_CASE("Dialog main text is left-layouted in a fixed 64-pixel viewport") {
   CHECK(five_lines.formatted_height == doctest::Approx(85.0F));
   CHECK(five_lines.max_scroll() == doctest::Approx(21.0F));
 
-  const auto wrapped{App::Interface::format_dialog_text(
-      "AA AA", 20.0F, 64.0F, 17.0F, monospace_measure)};
+  const auto wrapped{
+      App::Interface::format_dialog_text("AA AA", 20.0F, 64.0F, 17.0F, monospace_measure)};
   REQUIRE(wrapped.lines.size() == 2U);
   CHECK(wrapped.lines.at(0).text == "AA");
   CHECK(wrapped.lines.at(1).text == "AA");
@@ -78,12 +79,11 @@ TEST_CASE("Dialog presenter uses D and retail authored colours without markers")
   CHECK(App::Interface::dialog_font_key() == 'D');
   CHECK(App::Interface::dialog_main_tint(
             App::Dialog::DialogState::k_presenting_automatic_player_line) ==
-      App::Interface::k_dialog_automatic_tint);
+        App::Interface::k_dialog_automatic_tint);
   CHECK(App::Interface::dialog_main_tint(App::Dialog::DialogState::k_presenting_line) ==
-      App::Interface::k_dialog_white);
+        App::Interface::k_dialog_white);
   CHECK(App::Interface::dialog_response_tint(true) == App::Interface::k_dialog_white);
-  CHECK(App::Interface::dialog_response_tint(false) ==
-      App::Interface::k_dialog_unselected_tint);
+  CHECK(App::Interface::dialog_response_tint(false) == App::Interface::k_dialog_unselected_tint);
 
   const auto response{App::Interface::format_dialog_text(
       "Authored response", 576.0F, 96.0F, 17.0F, monospace_measure)};

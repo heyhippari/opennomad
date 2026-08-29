@@ -58,7 +58,7 @@ struct ScxSection0Record {
 /// One DEAD0001 animation descriptor (0x24 bytes on disk). Runtime consumes
 /// one 8-byte-header animation payload for each record.
 struct ScxAnimationRecord {
-  std::string name;  ///< +0x00, fixed 24-byte field.
+  std::string name;                               ///< +0x00, fixed 24-byte field.
   std::uint32_t runtime_resource_placeholder{0};  ///< +0x18.
   std::uint32_t serialized_field_1c{0};           ///< +0x1C, unresolved.
   std::uint32_t animation_id{0};                  ///< +0x20.
@@ -67,8 +67,8 @@ struct ScxAnimationRecord {
 
 /// One entry of the DEAD0004 sprite/effect-model table (0x24 bytes on disk).
 struct ScxSpriteEntry {
-  std::string name;  ///< +0x00, fixed 24-byte field.
-  std::uint32_t sprite_id{0};  ///< +0x20.
+  std::string name;                             ///< +0x00, fixed 24-byte field.
+  std::uint32_t sprite_id{0};                   ///< +0x20.
   std::uint32_t runtime_sprite_placeholder{0};  ///< +0x18.
   std::uint32_t serialized_field_1c{0};         ///< +0x1C, unresolved.
   std::size_t file_offset{0};
@@ -78,9 +78,9 @@ struct ScxSpriteEntry {
 /// runtime replaces the +0x16 word with the loaded sound handle and writes
 /// 0xFFFF on failure. Its serialized value is retained verbatim here.
 struct ScxSoundRecord {
-  std::string name;  ///< +0x00, fixed 22-byte field.
+  std::string name;                         ///< +0x00, fixed 22-byte field.
   std::uint16_t runtime_sound_id{0xFFFFU};  ///< +0x16.
-  std::uint16_t h_id{0};                   ///< +0x18, semantics unresolved.
+  std::uint16_t h_id{0};                    ///< +0x18, semantics unresolved.
   std::size_t file_offset{0};
 };
 
@@ -104,7 +104,7 @@ struct ScxModelResource {
 /// One DEAD0005 external-scene descriptor (0x1C bytes on disk). Runtime
 /// consumes one 8-byte-header embedded 3D payload for each record.
 struct ScxSceneRecord {
-  std::string name;  ///< +0x00, fixed 24-byte field.
+  std::string name;                            ///< +0x00, fixed 24-byte field.
   std::uint32_t runtime_scene_placeholder{0};  ///< +0x18.
   std::size_t file_offset{0};
 };
@@ -126,15 +126,25 @@ struct ScxGlobalTable {
 struct ScriptValue {
   std::uint32_t raw{0};
 
-  [[nodiscard]] std::uint32_t as_unsigned() const { return raw; }
+  [[nodiscard]] std::uint32_t as_unsigned() const {
+    return raw;
+  }
   [[nodiscard]] std::int32_t as_signed() const {
     return std::bit_cast<std::int32_t>(raw);
   }
-  [[nodiscard]] float as_float() const { return std::bit_cast<float>(raw); }
+  [[nodiscard]] float as_float() const {
+    return std::bit_cast<float>(raw);
+  }
 
-  void set_unsigned(const std::uint32_t value) { raw = value; }
-  void set_signed(const std::int32_t value) { raw = std::bit_cast<std::uint32_t>(value); }
-  void set_float(const float value) { raw = std::bit_cast<std::uint32_t>(value); }
+  void set_unsigned(const std::uint32_t value) {
+    raw = value;
+  }
+  void set_signed(const std::int32_t value) {
+    raw = std::bit_cast<std::uint32_t>(value);
+  }
+  void set_float(const float value) {
+    raw = std::bit_cast<std::uint32_t>(value);
+  }
 };
 
 /// One serialized script command (0x18 bytes on disk).
@@ -164,23 +174,23 @@ struct ScxBindingTable {
 
 /// One immutable parsed DEAD0002 script definition.
 struct ScxScript {
-  std::uint32_t scenario_owner_placeholder{0};  ///< +0x00, overwritten at load.
-  std::string name;                             ///< +0x04, fixed 22-byte field.
-  std::uint16_t script_id{0};                   ///< +0x1A.
-  std::uint16_t runtime_state{0};               ///< +0x1C, reset at load.
-  std::uint16_t flags{0};                       ///< +0x1E.
-  std::uint32_t root_command_count{0};          ///< +0x20.
-  std::uint32_t current_root_command_index{0};  ///< +0x24.
-  std::uint32_t root_commands_placeholder{0};   ///< +0x28.
-  std::uint32_t linked_command_count{0};        ///< +0x2C.
-  std::uint32_t linked_commands_placeholder{0}; ///< +0x30.
-  std::int32_t repeat_limit{0};                 ///< +0x34, whole-script repeat limit.
-  std::uint32_t initial_repeat_index{0};        ///< +0x38, serialized repeat-index seed.
+  std::uint32_t scenario_owner_placeholder{0};            ///< +0x00, overwritten at load.
+  std::string name;                                       ///< +0x04, fixed 22-byte field.
+  std::uint16_t script_id{0};                             ///< +0x1A.
+  std::uint16_t runtime_state{0};                         ///< +0x1C, reset at load.
+  std::uint16_t flags{0};                                 ///< +0x1E.
+  std::uint32_t root_command_count{0};                    ///< +0x20.
+  std::uint32_t current_root_command_index{0};            ///< +0x24.
+  std::uint32_t root_commands_placeholder{0};             ///< +0x28.
+  std::uint32_t linked_command_count{0};                  ///< +0x2C.
+  std::uint32_t linked_commands_placeholder{0};           ///< +0x30.
+  std::int32_t repeat_limit{0};                           ///< +0x34, whole-script repeat limit.
+  std::uint32_t initial_repeat_index{0};                  ///< +0x38, serialized repeat-index seed.
   std::array<std::uint32_t, 3> binding_table_a_fields{};  ///< +0x3C..0x44.
   std::array<std::uint32_t, 3> binding_table_b_fields{};  ///< +0x48..0x50.
-  std::uint32_t related_script_placeholder{0};  ///< +0x54.
-  std::uint32_t runtime_field_58{0};            ///< +0x58.
-  std::array<std::uint8_t, 8> tail_fields{};    ///< +0x5C..0x63.
+  std::uint32_t related_script_placeholder{0};            ///< +0x54.
+  std::uint32_t runtime_field_58{0};                      ///< +0x58.
+  std::array<std::uint8_t, 8> tail_fields{};              ///< +0x5C..0x63.
   std::size_t file_offset{0};
 
   ScxRelatedScript related_script;

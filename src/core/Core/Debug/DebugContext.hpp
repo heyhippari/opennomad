@@ -12,7 +12,7 @@ class AudioSystem;
 namespace Startup {
 class StartupCoordinator;
 class StartupTraceRecorder;
-}
+}  // namespace Startup
 
 namespace Interface {
 class InterfaceManager;

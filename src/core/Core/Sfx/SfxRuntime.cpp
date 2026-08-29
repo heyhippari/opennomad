@@ -548,8 +548,7 @@ void Runtime::create_particle(
   sprite->tint = normalized_rgb(start_color);
   sprite->rotation =
       (definition.flags & 0x0010U) != 0U ? random01() * 360.0F * K_DEGREES_TO_RADIANS : 0.0F;
-  sprite->diffuse_alpha =
-      (definition.flags & 0x0002U) == 0U ? 0.5F : sprite->diffuse_alpha;
+  sprite->diffuse_alpha = (definition.flags & 0x0002U) == 0U ? 0.5F : sprite->diffuse_alpha;
 
   float scale_velocity{0.0F};
   if ((definition.flags & 0x0004U) != 0U) {

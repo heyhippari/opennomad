@@ -1,10 +1,11 @@
+#include "Core/Interface/I2DPresentation.hpp"
+
 #include <doctest/doctest.h>
 
 #include <utility>
 
 #include "Core/Interface/FontManager.hpp"
 #include "Core/Interface/I2DModel.hpp"
-#include "Core/Interface/I2DPresentation.hpp"
 
 // NOLINTBEGIN(misc-use-anonymous-namespace)
 
@@ -23,13 +24,12 @@ TEST_SUITE("Core::Interface::I2DPresentation") {
   }
 
   TEST_CASE("Vertical range is always 0..480") {
-    for (const auto [width, height] :
-        {std::pair{800, 600},
-            std::pair{1280, 720},
-            std::pair{1920, 1080},
-            std::pair{2560, 1440},
-            std::pair{3440, 1440},
-            std::pair{3840, 2160}}) {
+    for (const auto [width, height] : {std::pair{800, 600},
+             std::pair{1280, 720},
+             std::pair{1920, 1080},
+             std::pair{2560, 1440},
+             std::pair{3440, 1440},
+             std::pair{3840, 2160}}) {
       const auto transform{App::Interface::make_presentation_transform(width, height)};
       CHECK(transform.logical_top == doctest::Approx(0.0F));
       CHECK(transform.logical_bottom == doctest::Approx(480.0F));
@@ -62,21 +62,20 @@ TEST_SUITE("Core::Interface::I2DPresentation") {
       const auto transform{App::Interface::make_presentation_transform(width, height)};
       // physical_x = (logical_x - logical_left) * scale; at logical_x=320 it
       // must equal half the physical width.
-      const float physical_x{(320.0F - transform.logical_left) *
-                             transform.pixels_per_reference_unit};
+      const float physical_x{
+          (320.0F - transform.logical_left) * transform.pixels_per_reference_unit};
       CHECK(physical_x == doctest::Approx(static_cast<float>(width) / 2.0F));
     }
   }
 }
 
 TEST_SUITE("Core::Interface::I2DTopCenterPlacement") {
-  using App::Interface::I2DRect;
   using App::Interface::compute_top_center_placement;
+  using App::Interface::I2DRect;
 
   TEST_CASE("Landscape keeps the recovered logo rectangle + top margin") {
     const I2DRect destination{.x = 0, .y = 0, .width = 640, .height = 150};
-    const auto placement{
-        compute_top_center_placement(destination, 8.0F, true, 1920, 1080)};
+    const auto placement{compute_top_center_placement(destination, 8.0F, true, 1920, 1080)};
 
     // Horizontally centred on the reference canvas (x=320).
     CHECK((placement.x0 + placement.x1) / 2.0F == doctest::Approx(320.0F));
@@ -89,17 +88,12 @@ TEST_SUITE("Core::Interface::I2DTopCenterPlacement") {
 
   TEST_CASE("Presentation scale shrinks the logo around its horizontal centre") {
     const I2DRect destination{.x = 0, .y = 0, .width = 640, .height = 150};
-    const auto placement{
-        compute_top_center_placement(
-            destination, 12.0F, true, 1920, 1080, 0.84F)};
+    const auto placement{compute_top_center_placement(destination, 12.0F, true, 1920, 1080, 0.84F)};
 
-    CHECK((placement.x0 + placement.x1) / 2.0F ==
-          doctest::Approx(320.0F));
-    CHECK(placement.x1 - placement.x0 ==
-          doctest::Approx(537.6F));
+    CHECK((placement.x0 + placement.x1) / 2.0F == doctest::Approx(320.0F));
+    CHECK(placement.x1 - placement.x0 == doctest::Approx(537.6F));
     CHECK(placement.y0 == doctest::Approx(12.0F));
-    CHECK(placement.y1 - placement.y0 ==
-          doctest::Approx(126.0F));
+    CHECK(placement.y1 - placement.y0 == doctest::Approx(126.0F));
   }
 
   TEST_CASE("Margin is a constant fraction of screen height") {
@@ -113,18 +107,15 @@ TEST_SUITE("Core::Interface::I2DTopCenterPlacement") {
       // margin * scale = margin * height/480, so margin/height = 8/480.
       CHECK(placement.y0 == doctest::Approx(top_margin));
       const float scale{static_cast<float>(height) / 480.0F};
-      const float physical_margin{
-          (placement.y0 - static_cast<float>(destination.y)) * scale};
-      CHECK(physical_margin / static_cast<float>(height) ==
-            doctest::Approx(top_margin / 480.0F));
+      const float physical_margin{(placement.y0 - static_cast<float>(destination.y)) * scale};
+      CHECK(physical_margin / static_cast<float>(height) == doctest::Approx(top_margin / 480.0F));
     }
   }
 
   TEST_CASE("Narrow viewport clamps the logo width to stay visible") {
     const I2DRect destination{.x = 0, .y = 0, .width = 640, .height = 150};
     // 640x720: scale = 1.5, width capacity = 1.0 -> factor = 2/3.
-    const auto placement{
-        compute_top_center_placement(destination, 8.0F, true, 640, 720)};
+    const auto placement{compute_top_center_placement(destination, 8.0F, true, 640, 720)};
 
     const float width{placement.x1 - placement.x0};
     CHECK(width < doctest::Approx(640.0F));
@@ -137,8 +128,7 @@ TEST_SUITE("Core::Interface::I2DTopCenterPlacement") {
 
   TEST_CASE("Clamp disabled leaves the width unchanged on narrow viewports") {
     const I2DRect destination{.x = 0, .y = 0, .width = 640, .height = 150};
-    const auto placement{
-        compute_top_center_placement(destination, 8.0F, false, 640, 720)};
+    const auto placement{compute_top_center_placement(destination, 8.0F, false, 640, 720)};
     CHECK(placement.x1 - placement.x0 == doctest::Approx(640.0F));
   }
 }
@@ -146,11 +136,11 @@ TEST_SUITE("Core::Interface::I2DTopCenterPlacement") {
 TEST_SUITE("Core::Interface::FontManagerRasterBuckets") {
   TEST_CASE("Raster buckets track the presentation scale") {
     using App::Interface::FontManager;
-    CHECK_EQ(FontManager::raster_bucket(1.0F), 30);    // 480p
-    CHECK_EQ(FontManager::raster_bucket(1.5F), 46);    // 720p (45 -> nearest even)
-    CHECK_EQ(FontManager::raster_bucket(2.25F), 68);   // 1080p (67.5 -> 68)
-    CHECK_EQ(FontManager::raster_bucket(3.0F), 90);    // 1440p
-    CHECK_EQ(FontManager::raster_bucket(4.5F), 136);   // 2160p (135 -> nearest even)
+    CHECK_EQ(FontManager::raster_bucket(1.0F), 30);   // 480p
+    CHECK_EQ(FontManager::raster_bucket(1.5F), 46);   // 720p (45 -> nearest even)
+    CHECK_EQ(FontManager::raster_bucket(2.25F), 68);  // 1080p (67.5 -> 68)
+    CHECK_EQ(FontManager::raster_bucket(3.0F), 90);   // 1440p
+    CHECK_EQ(FontManager::raster_bucket(4.5F), 136);  // 2160p (135 -> nearest even)
   }
 
   TEST_CASE("Buckets are always even (2 px quantization)") {

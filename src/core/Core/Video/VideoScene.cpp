@@ -88,7 +88,8 @@ std::unique_ptr<VideoScene> VideoScene::create() {
 }
 
 VideoScene::VideoScene(Shader shader)
-    : m_shader(std::move(shader)), m_quad(make_quad_vertices(), make_quad_indices()) {}
+    : m_shader(std::move(shader)),
+      m_quad(make_quad_vertices(), make_quad_indices()) {}
 
 void VideoScene::present_frame(
     const VideoFrame& frame, const int viewport_width, const int viewport_height) {
@@ -98,8 +99,7 @@ void VideoScene::present_frame(
     return;
   }
 
-  if (m_texture == nullptr || m_texture_width != frame.width ||
-      m_texture_height != frame.height) {
+  if (m_texture == nullptr || m_texture_width != frame.width || m_texture_height != frame.height) {
     auto texture{Texture2D::create(frame.width,
         frame.height,
         std::span<const std::uint8_t>{frame.rgba},

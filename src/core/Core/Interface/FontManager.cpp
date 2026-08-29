@@ -1,10 +1,10 @@
 #include "Core/Interface/FontManager.hpp"
 
 // NOLINTBEGIN(misc-include-cleaner)
-#include <fmt/format.h>
-#include <imgui.h>
 #include <SDL3/SDL_iostream.h>
 #include <SDL3/SDL_stdinc.h>
+#include <fmt/format.h>
+#include <imgui.h>
 
 #include <algorithm>
 #include <array>
@@ -13,8 +13,8 @@
 #include <cstdint>
 #include <expected>
 #include <filesystem>
-#include <map>
 #include <limits>
+#include <map>
 #include <optional>
 #include <span>
 #include <string>
@@ -231,8 +231,7 @@ std::expected<FontResource, std::string> FontResource::load_retail_fnt(
     const Placement placement{placements.at(index)};
     for (std::size_t row{0}; row < static_cast<std::size_t>(source.height); ++row) {
       for (std::size_t column{0}; column < static_cast<std::size_t>(source.width); ++column) {
-        const std::size_t source_index{
-            (row * static_cast<std::size_t>(source.width)) + column};
+        const std::size_t source_index{(row * static_cast<std::size_t>(source.width)) + column};
         const std::size_t destination_y{atlas_height - 1U - (placement.y + row)};
         const std::size_t destination_index{
             ((destination_y * atlas_width) + placement.x + column) * 4U};
@@ -246,12 +245,11 @@ std::expected<FontResource, std::string> FontResource::load_retail_fnt(
     }
     target.visible = true;
     target.u_left = static_cast<float>(placement.x) / static_cast<float>(atlas_width);
-    target.u_right = static_cast<float>(placement.x + source.width) /
-        static_cast<float>(atlas_width);
-    target.v_top = 1.0F -
-        (static_cast<float>(placement.y) / static_cast<float>(atlas_height));
-    target.v_bottom = 1.0F -
-        (static_cast<float>(placement.y + source.height) / static_cast<float>(atlas_height));
+    target.u_right =
+        static_cast<float>(placement.x + source.width) / static_cast<float>(atlas_width);
+    target.v_top = 1.0F - (static_cast<float>(placement.y) / static_cast<float>(atlas_height));
+    target.v_bottom =
+        1.0F - (static_cast<float>(placement.y + source.height) / static_cast<float>(atlas_height));
     target.x1 = static_cast<float>(source.width);
     target.y0 = Omikron::fnt_glyph_top(source, 0.0F, line_height);
     target.y1 = target.y0 + static_cast<float>(source.height);
@@ -311,8 +309,7 @@ std::optional<FontResource::Glyph> FontResource::next_glyph(
     return std::nullopt;
   }
   if (m_is_retail_fnt) {
-    const auto glyph_index{
-        static_cast<std::uint8_t>(static_cast<unsigned char>(text.at(byte_offset)))};
+    const auto glyph_index{static_cast<unsigned char>(text.at(byte_offset))};
     ++byte_offset;
     return m_retail_glyphs.at(glyph_index);
   }
@@ -541,8 +538,7 @@ std::optional<FontRegistryEntry> FontManager::font_registry_entry(const char key
 
 std::expected<FontResource, std::string> FontManager::load_retail_font(
     const char key, const FontRegistryEntry& entry) {
-  const std::filesystem::path relative{
-      fmt::format("FONTS/{}.FNT", entry.logical_name)};
+  const std::filesystem::path relative{fmt::format("FONTS/{}.FNT", entry.logical_name)};
   auto bytes{read_game_file(relative)};
   if (!bytes) {
     return std::expected<FontResource, std::string>{std::unexpect, bytes.error()};

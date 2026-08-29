@@ -20,7 +20,7 @@ constexpr int K_MAXIMUM_HEIGHT{65535};
 
 [[nodiscard]] bool usable(const DisplayResolution resolution) {
   return resolution.width >= K_MINIMUM_WIDTH && resolution.height >= K_MINIMUM_HEIGHT &&
-      resolution.width <= K_MAXIMUM_WIDTH && resolution.height <= K_MAXIMUM_HEIGHT;
+         resolution.width <= K_MAXIMUM_WIDTH && resolution.height <= K_MAXIMUM_HEIGHT;
 }
 
 }  // namespace

@@ -1,3 +1,5 @@
+#include "Core/Omikron/Texture3DT.hpp"
+
 #include <doctest/doctest.h>
 
 #include <array>
@@ -7,7 +9,6 @@
 #include <vector>
 
 #include "Core/Omikron/Model3DO.hpp"
-#include "Core/Omikron/Texture3DT.hpp"
 #include "OmikronTestBuffer.hpp"
 
 // NOLINTBEGIN(misc-use-anonymous-namespace, cppcoreguidelines-avoid-do-while, cert-err33-c)
@@ -15,9 +16,9 @@
 namespace {
 
 App::Omikron::Material make_material(const std::uint32_t data_size,
-                                     const std::uint16_t bits_per_pixel,
-                                     const std::uint16_t width,
-                                     const std::uint16_t height) {
+    const std::uint16_t bits_per_pixel,
+    const std::uint16_t width,
+    const std::uint16_t height) {
   App::Omikron::Material material;
   material.data_size = data_size;
   material.bits_per_pixel = bits_per_pixel;
@@ -31,8 +32,10 @@ App::Omikron::Material make_material(const std::uint32_t data_size,
 TEST_SUITE("Core::Omikron::Texture3DT") {
   TEST_CASE("Decodes a palette, pure black is transparent") {
     Buffer file;
-    file.u8(0).u8(0).u8(0)  // Palette: black.
-        .u8(0);             // Index 0.
+    file.u8(0)
+        .u8(0)
+        .u8(0)   // Palette: black.
+        .u8(0);  // Index 0.
 
     const std::vector<App::Omikron::Material> materials{make_material(1, 0, 1, 1)};
     const auto images{App::Omikron::Texture3DT::load(file.data(), materials)};
@@ -62,13 +65,13 @@ TEST_SUITE("Core::Omikron::Texture3DT") {
     // The game stores the first row at the bottom, so rows are kept in
     // source order: [0, 1] / [2, 3].
     CHECK_EQ(std::array<std::uint8_t, 4>{rgba8.at(0), rgba8.at(1), rgba8.at(2), rgba8.at(3)},
-             std::array<std::uint8_t, 4>{10, 10, 10, 255});
+        std::array<std::uint8_t, 4>{10, 10, 10, 255});
     CHECK_EQ(std::array<std::uint8_t, 4>{rgba8.at(4), rgba8.at(5), rgba8.at(6), rgba8.at(7)},
-             std::array<std::uint8_t, 4>{20, 20, 20, 255});
+        std::array<std::uint8_t, 4>{20, 20, 20, 255});
     CHECK_EQ(std::array<std::uint8_t, 4>{rgba8.at(8), rgba8.at(9), rgba8.at(10), rgba8.at(11)},
-             std::array<std::uint8_t, 4>{30, 30, 30, 255});
+        std::array<std::uint8_t, 4>{30, 30, 30, 255});
     CHECK_EQ(std::array<std::uint8_t, 4>{rgba8.at(12), rgba8.at(13), rgba8.at(14), rgba8.at(15)},
-             std::array<std::uint8_t, 4>{40, 40, 40, 255});
+        std::array<std::uint8_t, 4>{40, 40, 40, 255});
   }
 
   TEST_CASE("Decompresses all four LZ sequence types") {
@@ -81,12 +84,7 @@ TEST_SUITE("Core::Omikron::Texture3DT") {
     //  bit 2: type 2, copy offset 2 x3
     //  bit 3: type 3, offset 256 -> zeros x3
     // Bits 4-7 are literals: four trailing index-0 bytes.
-    file.u8(1)
-        .u8(0xF0).u8(4)
-        .u8(1).u8(1)
-        .u8(2).u8(0).u8(1)
-        .u8(3).u8(1)
-        .u8(0).u8(0).u8(0).u8(0);
+    file.u8(1).u8(0xF0).u8(4).u8(1).u8(1).u8(2).u8(0).u8(1).u8(3).u8(1).u8(0).u8(0).u8(0).u8(0);
 
     const std::vector<App::Omikron::Material> materials{make_material(14, 1, 17, 1)};
     const auto images{App::Omikron::Texture3DT::load(file.data(), materials)};
@@ -101,18 +99,18 @@ TEST_SUITE("Core::Omikron::Texture3DT") {
     for (std::size_t pixel{0}; pixel < 10; ++pixel) {
       const std::size_t offset{pixel * 4U};
       CHECK_EQ(std::array<std::uint8_t, 4>{rgba8.at(offset),
-                                           rgba8.at(offset + 1U),
-                                           rgba8.at(offset + 2U),
-                                           rgba8.at(offset + 3U)},
-               lit);
+                   rgba8.at(offset + 1U),
+                   rgba8.at(offset + 2U),
+                   rgba8.at(offset + 3U)},
+          lit);
     }
     for (std::size_t pixel{10}; pixel < 17; ++pixel) {
       const std::size_t offset{pixel * 4U};
       CHECK_EQ(std::array<std::uint8_t, 4>{rgba8.at(offset),
-                                           rgba8.at(offset + 1U),
-                                           rgba8.at(offset + 2U),
-                                           rgba8.at(offset + 3U)},
-               clear);
+                   rgba8.at(offset + 1U),
+                   rgba8.at(offset + 2U),
+                   rgba8.at(offset + 3U)},
+          clear);
     }
   }
 
@@ -240,8 +238,7 @@ TEST_SUITE("Core::Omikron::Texture3DT") {
     // first bit completes the image (its remaining bits are never read).
     file.u8(1);
     for (std::uint32_t run{0}; run < 126U; ++run) {
-      file.u8(0xFF)
-          .u8(0xFC).u8(0xFC).u8(0xFC).u8(0xFC).u8(0xFC).u8(0xFC).u8(0xFC).u8(0xFC);
+      file.u8(0xFF).u8(0xFC).u8(0xFC).u8(0xFC).u8(0xFC).u8(0xFC).u8(0xFC).u8(0xFC).u8(0xFC);
     }
     file.u8(0x80).u8(0xFC);
 
@@ -268,8 +265,7 @@ TEST_SUITE("Core::Omikron::Texture3DT") {
     // covering 32x32.
     file.u8(1);
     for (std::uint32_t run{0}; run < 2U; ++run) {
-      file.u8(0xFF)
-          .u8(0xFC).u8(0xFC).u8(0xFC).u8(0xFC).u8(0xFC).u8(0xFC).u8(0xFC).u8(0xFC);
+      file.u8(0xFF).u8(0xFC).u8(0xFC).u8(0xFC).u8(0xFC).u8(0xFC).u8(0xFC).u8(0xFC).u8(0xFC);
     }
 
     const std::vector<App::Omikron::Material> materials{make_material(19, 1, 32, 32)};
@@ -322,8 +318,7 @@ TEST_SUITE("Core::Omikron::Texture3DT") {
     }
     // Literal index 1, then one flag byte with eight literal index-0 pixels;
     // the input ends cleanly after 9 of 256x256 pixels.
-    file.u8(1).u8(0x00)
-        .u8(0).u8(0).u8(0).u8(0).u8(0).u8(0).u8(0).u8(0);
+    file.u8(1).u8(0x00).u8(0).u8(0).u8(0).u8(0).u8(0).u8(0).u8(0).u8(0);
 
     const std::vector<App::Omikron::Material> materials{make_material(10, 8, 256, 256)};
     const auto images{App::Omikron::Texture3DT::load(file.data(), materials)};

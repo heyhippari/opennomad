@@ -22,11 +22,11 @@
 #include <string_view>
 #include <vector>
 
+#include "Core/Character/CharacterRuntime.hpp"
+#include "Core/Omikron/Model3DO.hpp"
 #include "Core/Scenario/ScenarioEngine.hpp"
 #include "Core/Scenario/ScenarioManager.hpp"
 #include "Core/Scenario/ScenarioRuntime.hpp"
-#include "Core/Character/CharacterRuntime.hpp"
-#include "Core/Omikron/Model3DO.hpp"
 #include "Core/Script/AreaScriptRuntime.hpp"
 #include "Core/Startup/StartupTraceRecorder.hpp"
 #include "IamStartTestData.hpp"
@@ -112,9 +112,11 @@ std::vector<std::byte> make_area_archive(const std::vector<std::byte>& prefix) {
   constexpr std::string_view k_character_name{"CURRENT CHARACTER"};
   constexpr std::string_view k_model_name{"CURRENT_BODY"};
   std::memcpy(data.data() + k_record_offset + k_definition_offset + 0x08U,
-      k_character_name.data(), k_character_name.size());
+      k_character_name.data(),
+      k_character_name.size());
   std::memcpy(data.data() + k_record_offset + k_definition_offset + 0x90U,
-      k_model_name.data(), k_model_name.size());
+      k_model_name.data(),
+      k_model_name.size());
   write_u16(data, k_record_offset + k_definition_offset + 0x110U, 136);
   std::memcpy(data.data() + k_record_offset + 0x3FC, prefix.data(), prefix.size());
   return data;
@@ -200,18 +202,39 @@ std::vector<std::byte> make_dialog_archive(const bool action_choice = false) {
 /// accepted by Model3DO::load without game data.
 std::vector<std::byte> make_minimal_3do() {
   Buffer bytes;
-  bytes.chars("OD3X", 4).u32(4).u32(0x2C)
-      .u32(416).u32(416).u32(416).u32(416).u32(416)
-      .u32(0).u32(0).u32(416)
-      .zeros(72).u32(0)
-      .zeros(104).u32(0).zeros(24).u32(0)
+  bytes.chars("OD3X", 4)
+      .u32(4)
+      .u32(0x2C)
+      .u32(416)
+      .u32(416)
+      .u32(416)
+      .u32(416)
+      .u32(416)
+      .u32(0)
+      .u32(0)
+      .u32(416)
+      .zeros(72)
+      .u32(0)
+      .zeros(104)
+      .u32(0)
+      .zeros(24)
+      .u32(0)
       .zeros(12)
-      .u32(0).u32(0)
-      .u32(0).u32(0).u32(0)
+      .u32(0)
+      .u32(0)
+      .u32(0)
+      .u32(0)
+      .u32(0)
       .u64(0)
-      .u32(0).u32(0).u32(0)
-      .u32(0).u32(0).u32(0)
-      .u32(0).u32(0).u32(0)
+      .u32(0)
+      .u32(0)
+      .u32(0)
+      .u32(0)
+      .u32(0)
+      .u32(0)
+      .u32(0)
+      .u32(0)
+      .u32(0)
       .zeros(84);
   return bytes.data();
 }
@@ -283,8 +306,7 @@ void write_transition_boot_fixtures(const TempDirectory& temp, const bool includ
   script.u8(0x47).u16(222).u16(55).u8(0x03);
   write_bytes(temp.root() / "IAM" / "START", make_start());
   write_bytes(temp.root() / "IAM" / "GLOBAL", App::Tests::make_empty_iam_global());
-  write_bytes(
-      temp.root() / "IAM" / "AREA", make_transition_area_archive(script.data()));
+  write_bytes(temp.root() / "IAM" / "AREA", make_transition_area_archive(script.data()));
   write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
   write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_minimal_scx());
   if (include_target_scx) {
@@ -309,8 +331,7 @@ bool install_fake_current_character_loader(App::ScenarioManager& manager) {
   return true;
 }
 
-std::optional<std::uint32_t> seq_of(
-    const App::Startup::StartupTraceRecorder& recorder,
+std::optional<std::uint32_t> seq_of(const App::Startup::StartupTraceRecorder& recorder,
     const std::string_view name,
     const std::string_view detail = {}) {
   for (const auto& event : recorder.events()) {
@@ -361,9 +382,9 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
 
     // Ordered trace subsequence.
     const auto ordered = [&recorder](const std::string_view before,
-                               const std::string_view before_detail,
-                               const std::string_view after,
-                               const std::string_view after_detail) {
+                             const std::string_view before_detail,
+                             const std::string_view after,
+                             const std::string_view after_detail) {
       const std::optional<std::uint32_t> first{seq_of(recorder, before, before_detail)};
       const std::optional<std::uint32_t> second{seq_of(recorder, after, after_detail)};
       REQUIRE(first.has_value());
@@ -386,11 +407,17 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
     ordered("AreaContext.Activated", {}, "ScenarioMode2.Complete", {});
     ordered("ScenarioMode2.Complete", {}, "ScenarioMode1.Begin", {});
     ordered("AreaScript.EventStarted", {}, "AreaScript.VariableSet", "index=175 value=1");
-    ordered("AreaScript.VariableSet", "index=175 value=1", "AreaScript.VariableSet",
+    ordered("AreaScript.VariableSet",
+        "index=175 value=1",
+        "AreaScript.VariableSet",
         "index=170 value=50");
-    ordered("AreaScript.VariableSet", "index=170 value=50", "AreaScript.BootstrapOpcode",
+    ordered("AreaScript.VariableSet",
+        "index=170 value=50",
+        "AreaScript.BootstrapOpcode",
         "opcode=0x38");
-    ordered("AreaScript.BootstrapOpcode", "opcode=0x76", "Interface.OpenRequested",
+    ordered("AreaScript.BootstrapOpcode",
+        "opcode=0x76",
+        "Interface.OpenRequested",
         "id=29 arg2=-1 arg3=19");
     ordered("Interface.OpenRequested", {}, "MainMenu.Active", {});
     ordered("MainMenu.Active", {}, "AreaContext.Waiting", "state=6");
@@ -462,10 +489,8 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
     REQUIRE(engine.enter_mode(App::ScenarioMode::k_tick, 0).has_value());
 
     CHECK(engine.main_menu_active());
-    const std::optional<std::uint32_t> decor{
-        seq_of(recorder, "AreaDependency.Decor.Loaded")};
-    const std::optional<std::uint32_t> scenario{
-        seq_of(recorder, "AreaDependency.Scenario.Loaded")};
+    const std::optional<std::uint32_t> decor{seq_of(recorder, "AreaDependency.Decor.Loaded")};
+    const std::optional<std::uint32_t> scenario{seq_of(recorder, "AreaDependency.Scenario.Loaded")};
     REQUIRE(decor.has_value());
     REQUIRE(scenario.has_value());
     CHECK_LT(decor.value(), scenario.value());

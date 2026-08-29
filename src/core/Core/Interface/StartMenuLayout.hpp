@@ -1,8 +1,8 @@
 #pragma once
 
 #include <array>
-#include <cstdint>
 #include <cstddef>
+#include <cstdint>
 
 #include "Core/Interface/I2DModel.hpp"
 
@@ -36,8 +36,7 @@ inline constexpr std::array<RecoveredTextEntry, 4> k_start_menu_root_entries{{
 ///
 /// The title element is mutated to IAM/Menu index 5 ("Quit") by
 /// Runtime @ 0x0047BBB0.
-inline constexpr RecoveredTextEntry k_start_menu_quit_title{
-    5, 'I', 0, 40, 640, 40};
+inline constexpr RecoveredTextEntry k_start_menu_quit_title{5, 'I', 0, 40, 640, 40};
 
 /// Runtime choice elements @ 0x004CEE78 / 0x004CEEC0.
 ///

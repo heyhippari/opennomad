@@ -1,16 +1,16 @@
 #include "Core/Audio/MusicPlayer.hpp"
 
-#include <cstddef>
-#include <cstdint>
-#include <string>
-#include <utility>
-#include <vector>
-
 #include <SDL3/SDL_error.h>
 #include <SDL3/SDL_iostream.h>
 #include <SDL3/SDL_properties.h>
 #include <SDL3/SDL_stdinc.h>
 #include <SDL3_mixer/SDL_mixer.h>
+
+#include <cstddef>
+#include <cstdint>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include "Core/Audio/AudioTypes.hpp"
 #include "Core/Log.hpp"
@@ -35,7 +35,9 @@ void MusicPlayer::attach(MIX_Mixer* mixer) {
   }
 }
 
-MusicPlayer::~MusicPlayer() { shutdown(); }
+MusicPlayer::~MusicPlayer() {
+  shutdown();
+}
 
 void MusicPlayer::shutdown() {
   if (m_track != nullptr) {
@@ -65,7 +67,8 @@ bool MusicPlayer::play(MusicSource source, const MusicPlayOptions& options) {
   }
 
   if (!MIX_SetTrackIOStream(m_track, source.io, /*closeio=*/true)) {
-    App::Log::error(LogCategory::Audio, "MIX_SetTrackIOStream failed for '{}': {}",
+    App::Log::error(LogCategory::Audio,
+        "MIX_SetTrackIOStream failed for '{}': {}",
         source.display_name,
         SDL_GetError());
     return false;
@@ -82,14 +85,14 @@ bool MusicPlayer::play(MusicSource source, const MusicPlayOptions& options) {
         props, MIX_PROP_PLAY_LOOP_START_MILLISECOND_NUMBER, options.loop_start_ms.value());
   }
   if (options.fade_in_ms > 0) {
-    SDL_SetNumberProperty(
-        props, MIX_PROP_PLAY_FADE_IN_MILLISECONDS_NUMBER, options.fade_in_ms);
+    SDL_SetNumberProperty(props, MIX_PROP_PLAY_FADE_IN_MILLISECONDS_NUMBER, options.fade_in_ms);
   }
 
   const bool started{MIX_PlayTrack(m_track, props)};
   SDL_DestroyProperties(props);
   if (!started) {
-    App::Log::error(LogCategory::Audio, "MIX_PlayTrack failed for '{}': {}",
+    App::Log::error(LogCategory::Audio,
+        "MIX_PlayTrack failed for '{}': {}",
         source.display_name,
         SDL_GetError());
     return false;
@@ -99,7 +102,8 @@ bool MusicPlayer::play(MusicSource source, const MusicPlayOptions& options) {
   m_loop = options.loop;
   m_loop_start_ms = options.loop_start_ms.value_or(0);
   m_fade_in_ms = options.fade_in_ms;
-  App::Log::debug(LogCategory::Audio, "music '{}' playing (loop {}, fade-in {} ms)",
+  App::Log::debug(LogCategory::Audio,
+      "music '{}' playing (loop {}, fade-in {} ms)",
       m_source_name,
       m_loop,
       m_fade_in_ms);
@@ -122,7 +126,8 @@ bool MusicPlayer::play_raw_pcm(RawPcmMusicSource source, const MusicPlayOptions&
   const std::size_t byte_size{source.samples.size() * sizeof(std::int16_t)};
   SDL_IOStream* io{SDL_IOFromConstMem(source.samples.data(), byte_size)};
   if (io == nullptr) {
-    App::Log::error(LogCategory::Audio, "SDL_IOFromConstMem failed for '{}': {}",
+    App::Log::error(LogCategory::Audio,
+        "SDL_IOFromConstMem failed for '{}': {}",
         source.display_name,
         SDL_GetError());
     return false;
@@ -131,7 +136,8 @@ bool MusicPlayer::play_raw_pcm(RawPcmMusicSource source, const MusicPlayOptions&
   // Stop playback and replace the input; this closes the previous IOStream.
   MIX_StopTrack(m_track, 0);
   if (!MIX_SetTrackRawIOStream(m_track, io, &source.spec, /*closeio=*/true)) {
-    App::Log::error(LogCategory::Audio, "MIX_SetTrackRawIOStream failed for '{}': {}",
+    App::Log::error(LogCategory::Audio,
+        "MIX_SetTrackRawIOStream failed for '{}': {}",
         source.display_name,
         SDL_GetError());
     SDL_CloseIO(io);
@@ -157,23 +163,22 @@ bool MusicPlayer::play_raw_pcm(RawPcmMusicSource source, const MusicPlayOptions&
         props, MIX_PROP_PLAY_LOOP_START_MILLISECOND_NUMBER, options.loop_start_ms.value());
   }
   if (options.fade_in_ms > 0) {
-    SDL_SetNumberProperty(
-        props, MIX_PROP_PLAY_FADE_IN_MILLISECONDS_NUMBER, options.fade_in_ms);
+    SDL_SetNumberProperty(props, MIX_PROP_PLAY_FADE_IN_MILLISECONDS_NUMBER, options.fade_in_ms);
   }
 
   const bool started{MIX_PlayTrack(m_track, props)};
   SDL_DestroyProperties(props);
   if (!started) {
-    App::Log::error(LogCategory::Audio, "MIX_PlayTrack failed for '{}': {}",
-        m_source_name,
-        SDL_GetError());
+    App::Log::error(
+        LogCategory::Audio, "MIX_PlayTrack failed for '{}': {}", m_source_name, SDL_GetError());
     return false;
   }
 
   m_loop = options.loop;
   m_loop_start_ms = options.loop_start_ms.value_or(0);
   m_fade_in_ms = options.fade_in_ms;
-  App::Log::debug(LogCategory::Audio, "music '{}' playing raw PCM (loop {}, {} ch, {} Hz, {} frames)",
+  App::Log::debug(LogCategory::Audio,
+      "music '{}' playing raw PCM (loop {}, {} ch, {} Hz, {} frames)",
       m_source_name,
       m_loop,
       m_raw_spec.channels,
@@ -250,8 +255,7 @@ MusicDebugInfo MusicPlayer::debug_info() const {
     info.channels = m_raw_spec.channels;
     info.sample_rate = m_raw_spec.freq;
     if (m_raw_spec.channels > 0) {
-      info.total_frames = static_cast<std::uint64_t>(
-          m_raw_samples.size() / static_cast<std::size_t>(m_raw_spec.channels));
+      info.total_frames = m_raw_samples.size() / static_cast<std::size_t>(m_raw_spec.channels);
     }
   }
   if (m_track != nullptr) {

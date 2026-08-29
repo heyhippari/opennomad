@@ -1,10 +1,10 @@
+#include "Core/Sprite/SpritePool.hpp"
+
 #include <doctest/doctest.h>
 
 #include <array>
 #include <cstddef>
 #include <expected>
-
-#include "Core/Sprite/SpritePool.hpp"
 
 // NOLINTBEGIN(misc-use-anonymous-namespace, cppcoreguidelines-avoid-do-while, cert-err33-c,
 // misc-include-cleaner, cppcoreguidelines-pro-bounds-constant-array-index,
@@ -53,8 +53,7 @@ TEST_SUITE("Core::Sprite::SpritePool") {
 
   TEST_CASE("create applies the requested position") {
     SpritePool pool;
-    const SpriteHandle handle{
-        pool.create(0, 0, k_frame_count, {1.0F, 2.0F, 3.0F}).value()};
+    const SpriteHandle handle{pool.create(0, 0, k_frame_count, {1.0F, 2.0F, 3.0F}).value()};
     const SpriteInstance* instance{pool.find(handle)};
     REQUIRE(instance != nullptr);
     CHECK_EQ(instance->position.at(0), 1.0F);

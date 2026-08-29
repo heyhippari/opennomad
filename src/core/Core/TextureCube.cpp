@@ -6,18 +6,17 @@
 // glm follows a "single-include" convention — the umbrella header is the
 // canonical way to pull in the library, even though clang-tidy cannot trace
 // individual symbols back to a direct sub-header.
-#include <glm/glm.hpp>
+#include <fmt/format.h>
 
 #include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <glm/glm.hpp>
 #include <string>
 #include <utility>
 #include <vector>
-
-#include <fmt/format.h>
 
 #include "Core/Debug/Instrumentor.hpp"
 
@@ -36,11 +35,11 @@ std::expected<TextureCube, std::string> TextureCube::create(
       static_cast<std::size_t>(size) * static_cast<std::size_t>(size) * 4U};
   for (std::size_t face{0}; face < faces.size(); ++face) {
     if (faces.at(face).size() < expected_bytes) {
-      return std::expected<TextureCube, std::string>{
-          std::unexpect, fmt::format("TextureCube: face {} has {} bytes, expected {}",
-                                     face,
-                                     faces.at(face).size(),
-                                     expected_bytes)};
+      return std::expected<TextureCube, std::string>{std::unexpect,
+          fmt::format("TextureCube: face {} has {} bytes, expected {}",
+              face,
+              faces.at(face).size(),
+              expected_bytes)};
     }
   }
 
@@ -49,14 +48,14 @@ std::expected<TextureCube, std::string> TextureCube::create(
   glBindTexture(GL_TEXTURE_CUBE_MAP, id);
   for (std::size_t face{0}; face < faces.size(); ++face) {
     glTexImage2D(static_cast<GLenum>(GL_TEXTURE_CUBE_MAP_POSITIVE_X + face),
-                 0,
-                 srgb ? GL_SRGB8_ALPHA8 : GL_RGBA8,
-                 size,
-                 size,
-                 0,
-                 GL_RGBA,
-                 GL_UNSIGNED_BYTE,
-                 faces.at(face).data());
+        0,
+        srgb ? GL_SRGB8_ALPHA8 : GL_RGBA8,
+        size,
+        size,
+        0,
+        GL_RGBA,
+        GL_UNSIGNED_BYTE,
+        faces.at(face).data());
   }
   glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
   glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -93,7 +92,7 @@ TextureCube::~TextureCube() {
 void TextureCube::bind(const std::uint32_t unit) const {
   APP_PROFILE_FUNCTION();
 
-  glActiveTexture(static_cast<GLenum>(GL_TEXTURE0 + unit));
+  glActiveTexture(GL_TEXTURE0 + unit);
   glBindTexture(GL_TEXTURE_CUBE_MAP, m_id);
 }
 
@@ -101,7 +100,9 @@ void TextureCube::unbind() {
   glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
 }
 
-GLuint TextureCube::id() const { return m_id; }
+GLuint TextureCube::id() const {
+  return m_id;
+}
 
 std::array<std::vector<std::uint8_t>, 6> generate_sky_cubemap(const int size) {
   std::array<std::vector<std::uint8_t>, 6> faces;
@@ -117,12 +118,18 @@ std::array<std::vector<std::uint8_t>, 6> generate_sky_cubemap(const int size) {
     const float texel_v{
         ((((static_cast<float>(py) + 0.5F) / static_cast<float>(side)) * 2.0F) - 1.0F)};
     switch (face) {
-      case 0: return glm::vec3{1.0F, -texel_v, -texel_u};
-      case 1: return glm::vec3{-1.0F, -texel_v, texel_u};
-      case 2: return glm::vec3{texel_u, 1.0F, texel_v};
-      case 3: return glm::vec3{texel_u, -1.0F, -texel_v};
-      case 4: return glm::vec3{texel_u, -texel_v, 1.0F};
-      default: return glm::vec3{-texel_u, -texel_v, -1.0F};
+      case 0:
+        return glm::vec3{1.0F, -texel_v, -texel_u};
+      case 1:
+        return glm::vec3{-1.0F, -texel_v, texel_u};
+      case 2:
+        return glm::vec3{texel_u, 1.0F, texel_v};
+      case 3:
+        return glm::vec3{texel_u, -1.0F, -texel_v};
+      case 4:
+        return glm::vec3{texel_u, -texel_v, 1.0F};
+      default:
+        return glm::vec3{-texel_u, -texel_v, -1.0F};
     }
   }};
 
@@ -138,10 +145,9 @@ std::array<std::vector<std::uint8_t>, 6> generate_sky_cubemap(const int size) {
             glm::normalize(direction_at(static_cast<int>(face_index), px, py, size))};
         const float height{std::clamp(glm::dot(direction, up), -1.0F, 1.0F)};
         const float blend{(height + 1.0F) * 0.5F};
-        const std::size_t pixel{
-            ((static_cast<std::size_t>(py) * static_cast<std::size_t>(size))
-             + static_cast<std::size_t>(px))
-            * 4U};
+        const std::size_t pixel{((static_cast<std::size_t>(py) * static_cast<std::size_t>(size)) +
+                                    static_cast<std::size_t>(px)) *
+                                4U};
         for (std::size_t channel{0}; channel < 3U; ++channel) {
           const float low{static_cast<float>(nadir.at(channel))};
           const float high{static_cast<float>(zenith.at(channel))};

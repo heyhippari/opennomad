@@ -18,9 +18,9 @@ TEST_SUITE("Core::DisplayConfiguration") {
             .has_value());
     CHECK_FALSE(App::pack_display_resolution(App::DisplayResolution{.width = 640, .height = 479})
             .has_value());
-        CHECK_FALSE(App::pack_display_resolution(App::DisplayResolution{.width = 32768, .height = 1080})
-          .has_value());
-        CHECK_FALSE(App::unpack_display_resolution(-1).has_value());
+    CHECK_FALSE(App::pack_display_resolution(App::DisplayResolution{.width = 32768, .height = 1080})
+            .has_value());
+    CHECK_FALSE(App::unpack_display_resolution(-1).has_value());
   }
 
   TEST_CASE("catalog deduplicates, filters and sorts dimensions") {
@@ -99,22 +99,20 @@ TEST_SUITE("Core::DisplayConfiguration") {
               catalog,
               true) == App::DisplayMode::k_exclusive_fullscreen);
     CHECK(App::select_exclusive_resolution(catalog, {.width = 1024, .height = 768}) ==
-        App::DisplayResolution{.width = 1280, .height = 720});
-    }
+          App::DisplayResolution{.width = 1280, .height = 720});
+  }
 
-    TEST_CASE("exclusive resolution fallback prefers desktop then deterministic first mode") {
+  TEST_CASE("exclusive resolution fallback prefers desktop then deterministic first mode") {
     const App::DisplayModeCatalog desktop_supported{.desktop = {.width = 1920, .height = 1080},
-      .resolutions = {{.width = 800, .height = 600}, {.width = 1920, .height = 1080}},
-      .exclusive_resolutions = {
-        {.width = 800, .height = 600}, {.width = 1920, .height = 1080}}};
+        .resolutions = {{.width = 800, .height = 600}, {.width = 1920, .height = 1080}},
+        .exclusive_resolutions = {{.width = 800, .height = 600}, {.width = 1920, .height = 1080}}};
     CHECK(App::select_exclusive_resolution(desktop_supported, {.width = 2560, .height = 1440}) ==
-        App::DisplayResolution{.width = 1920, .height = 1080});
+          App::DisplayResolution{.width = 1920, .height = 1080});
 
     const App::DisplayModeCatalog desktop_unsupported{.desktop = {.width = 1920, .height = 1080},
-      .resolutions = {{.width = 800, .height = 600}, {.width = 1280, .height = 720}},
-      .exclusive_resolutions = {
-        {.width = 800, .height = 600}, {.width = 1280, .height = 720}}};
+        .resolutions = {{.width = 800, .height = 600}, {.width = 1280, .height = 720}},
+        .exclusive_resolutions = {{.width = 800, .height = 600}, {.width = 1280, .height = 720}}};
     CHECK(App::select_exclusive_resolution(desktop_unsupported, {.width = 2560, .height = 1440}) ==
-        App::DisplayResolution{.width = 800, .height = 600});
+          App::DisplayResolution{.width = 800, .height = 600});
   }
 }

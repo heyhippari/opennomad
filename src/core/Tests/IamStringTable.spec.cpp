@@ -28,8 +28,8 @@ std::vector<std::byte> make_bytes(const std::string_view text) {
 
 TEST_SUITE("Core::Omikron::IamStringTable") {
   TEST_CASE("parses the recovered IAM/Menu prefix") {
-    const auto table{IamStringTable::load(make_bytes(
-        "New Game\0Load Game\0Delete\0Rename\0Options\0Quit\0"s))};
+    const auto table{
+        IamStringTable::load(make_bytes("New Game\0Load Game\0Delete\0Rename\0Options\0Quit\0"s))};
     REQUIRE(table.has_value());
     CHECK_EQ(table->size(), 6U);
     CHECK(table->at(0) == "New Game");

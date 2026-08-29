@@ -195,8 +195,8 @@ class CtlController {
     std::uint32_t ticks{0};
   };
 
-  explicit CtlController(std::shared_ptr<const Omikron::CtlControlSet> bank,
-      std::string resource_name);
+  explicit CtlController(
+      std::shared_ptr<const Omikron::CtlControlSet> bank, std::string resource_name);
 
   /// Runtime 0x0045A9A0: fixed 16-entry history reset, seeding the canonical
   /// no-input sentinel as the only entry.

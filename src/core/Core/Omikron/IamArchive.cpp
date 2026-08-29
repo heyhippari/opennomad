@@ -56,10 +56,8 @@ std::expected<std::span<const std::byte>, std::string> IamIndexedArchive::read_r
   }
 
   const std::size_t entry_position{*entry_offset};
-  const std::size_t page_position{
-      (entry_position / k_index_page_size) * k_index_page_size};
-  if (page_position > m_data.size() ||
-      k_index_page_size > (m_data.size() - page_position)) {
+  const std::size_t page_position{(entry_position / k_index_page_size) * k_index_page_size};
+  if (page_position > m_data.size() || k_index_page_size > (m_data.size() - page_position)) {
     return std::expected<std::span<const std::byte>, std::string>{std::unexpect,
         fmt::format("IAM archive: index page for record {} at {:#x} is truncated in the {} byte "
                     "archive",
@@ -113,8 +111,7 @@ std::expected<std::span<const std::byte>, std::string> IamFixedStrideArchive::re
             m_stride)};
   }
 
-  const std::uint64_t offset{
-      static_cast<std::uint64_t>(id) * static_cast<std::uint64_t>(m_stride)};
+  const std::uint64_t offset{static_cast<std::uint64_t>(id) * static_cast<std::uint64_t>(m_stride)};
   const std::uint64_t end{offset + static_cast<std::uint64_t>(m_record_size)};
   if (offset > std::numeric_limits<std::size_t>::max() ||
       end > std::numeric_limits<std::size_t>::max()) {
@@ -123,7 +120,8 @@ std::expected<std::span<const std::byte>, std::string> IamFixedStrideArchive::re
   }
   if (end > m_data.size()) {
     return std::expected<std::span<const std::byte>, std::string>{std::unexpect,
-        fmt::format("IAM fixed-stride record {} range [{:#x}, {:#x}) is outside the {} byte archive",
+        fmt::format(
+            "IAM fixed-stride record {} range [{:#x}, {:#x}) is outside the {} byte archive",
             id,
             offset,
             end,

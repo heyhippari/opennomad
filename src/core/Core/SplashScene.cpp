@@ -90,8 +90,7 @@ std::expected<std::unique_ptr<SplashScene>, std::string> SplashScene::create(
     return std::expected<std::unique_ptr<SplashScene>, std::string>{
         std::unexpect, fmt::format("Splash: {}", image.error())};
   }
-  auto texture{Texture2D::create(
-      image->width,
+  auto texture{Texture2D::create(image->width,
       image->height,
       std::span<const std::uint8_t>{image->rgba8},
       TextureColorEncoding::k_srgb)};

@@ -6,42 +6,41 @@
             "type": "shell",
             "command": "cmake",
             "args": [
-                "--preset", "debug"
+                "--preset", "linux-debug"
             ],
+            "osx": {
+                "args": [
+                    "--preset", "macos-debug"
+                ]
+            },
+            "windows": {
+                "args": [
+                    "--preset", "windows-debug"
+                ]
+            },
             "options": {
-                "cwd": "${workspaceFolder}",
-                "env": {
-                    "VCPKG_ROOT": "${env:HOME}/.local/share/vcpkg"
-                }
+                "cwd": "${workspaceFolder}"
             },
             "problemMatcher": [],
-            "group": "build",
-            "detail": "Configure the project for a debug build via the vcpkg preset (QuickStart §Build). Equivalent to: cmake --preset debug"
-        },
-        {
-            "label": "CMake: Configure Release",
-            "type": "shell",
-            "command": "cmake",
-            "args": [
-                "--preset", "release"
-            ],
-            "options": {
-                "cwd": "${workspaceFolder}",
-                "env": {
-                    "VCPKG_ROOT": "${env:HOME}/.local/share/vcpkg"
-                }
-            },
-            "problemMatcher": [],
-            "group": "build",
-            "detail": "Configure the project for a release build via the vcpkg preset (QuickStart §Build). Equivalent to: cmake --preset release"
+            "detail": "Configure the Debug preset for the current platform."
         },
         {
             "label": "CMake: Build Debug",
             "type": "shell",
             "command": "cmake",
             "args": [
-                "--build", "build/debug"
+                "--build", "--preset", "linux-debug"
             ],
+            "osx": {
+                "args": [
+                    "--build", "--preset", "macos-debug"
+                ]
+            },
+            "windows": {
+                "args": [
+                    "--build", "--preset", "windows-debug"
+                ]
+            },
             "options": {
                 "cwd": "${workspaceFolder}"
             },
@@ -55,14 +54,48 @@
             "dependsOn": [
                 "CMake: Configure Debug"
             ],
-            "detail": "Build the project in debug mode (QuickStart §Build). Equivalent to: cmake --build build/debug"
+            "detail": "Build the Debug preset for the current platform."
         },
         {
-            "label": "CMake: Build Release",
+            "label": "CMake: Configure Linux Debug",
             "type": "shell",
             "command": "cmake",
             "args": [
-                "--build", "build/release"
+                "--preset", "linux-debug"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}",
+                "env": {
+                    "VCPKG_ROOT": "${env:VCPKG_ROOT}"
+                }
+            },
+            "problemMatcher": [],
+            "group": "build",
+            "detail": "Configure the Linux Debug preset."
+        },
+        {
+            "label": "CMake: Configure Linux Release",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--preset", "linux-release"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}",
+                "env": {
+                    "VCPKG_ROOT": "${env:VCPKG_ROOT}"
+                }
+            },
+            "problemMatcher": [],
+            "group": "build",
+            "detail": "Configure the Linux Release preset."
+        },
+        {
+            "label": "CMake: Build Linux Debug",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--build", "--preset", "linux-debug"
             ],
             "options": {
                 "cwd": "${workspaceFolder}"
@@ -72,16 +105,35 @@
             ],
             "group": "build",
             "dependsOn": [
-                "CMake: Configure Release"
+                "CMake: Configure Linux Debug"
             ],
-            "detail": "Build the project in release mode (QuickStart §Build). Equivalent to: cmake --build build/release"
+            "detail": "Build the Linux Debug preset."
         },
         {
-            "label": "CMake: Test (Debug)",
+            "label": "CMake: Build Linux Release",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--build", "--preset", "linux-release"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": [
+                "$gcc"
+            ],
+            "group": "build",
+            "dependsOn": [
+                "CMake: Configure Linux Release"
+            ],
+            "detail": "Build the Linux Release preset."
+        },
+        {
+            "label": "CMake: Test Linux Debug",
             "type": "shell",
             "command": "ctest",
             "args": [
-                "--test-dir", "build/debug"
+                "--preset", "linux-debug", "--output-on-failure"
             ],
             "options": {
                 "cwd": "${workspaceFolder}"
@@ -89,16 +141,16 @@
             "problemMatcher": [],
             "group": "test",
             "dependsOn": [
-                "CMake: Build Debug"
+                "CMake: Build Linux Debug"
             ],
-            "detail": "Run all tests using CTest on the debug build (QuickStart §Tests). Equivalent to: ctest --test-dir build/debug"
+            "detail": "Test the Linux Debug preset."
         },
         {
-            "label": "CMake: Test (Release)",
+            "label": "CMake: Test Linux Release",
             "type": "shell",
             "command": "ctest",
             "args": [
-                "--test-dir", "build/release"
+                "--preset", "linux-release", "--output-on-failure"
             ],
             "options": {
                 "cwd": "${workspaceFolder}"
@@ -106,44 +158,134 @@
             "problemMatcher": [],
             "group": "test",
             "dependsOn": [
-                "CMake: Build Release"
+                "CMake: Build Linux Release"
             ],
-            "detail": "Run all tests using CTest on the release build. Equivalent to: ctest --test-dir build/release"
+            "detail": "Test the Linux Release preset."
         },
         {
-            "label": "CMake: Clean Debug",
+            "label": "CMake: Clean Linux Debug",
             "type": "shell",
             "command": "cmake",
             "args": [
-                "--build", "build/debug",
+                "--build", "--preset", "linux-debug",
                 "--target", "clean"
             ],
             "options": {
                 "cwd": "${workspaceFolder}"
             },
             "problemMatcher": [],
-            "detail": "Clean the debug build directory. Equivalent to: cmake --build build/debug --target clean"
+            "detail": "Clean the Linux Debug preset."
         },
         {
-            "label": "CMake: Clean Release",
+            "label": "CMake: Clean Linux Release",
             "type": "shell",
             "command": "cmake",
             "args": [
-                "--build", "build/release",
+                "--build", "--preset", "linux-release",
                 "--target", "clean"
             ],
             "options": {
                 "cwd": "${workspaceFolder}"
             },
             "problemMatcher": [],
-            "detail": "Clean the release build directory. Equivalent to: cmake --build build/release --target clean"
+            "detail": "Clean the Linux Release preset."
+        },
+        {
+            "label": "CMake: Workflow macOS Debug",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--workflow", "--preset", "macos-debug"
+            ],
+            "options": { "cwd": "${workspaceFolder}" },
+            "problemMatcher": [],
+            "group": "build",
+            "detail": "Configure, build, and test the macOS Debug preset."
+        },
+        {
+            "label": "CMake: Workflow macOS Release",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--workflow", "--preset", "macos-release"
+            ],
+            "options": { "cwd": "${workspaceFolder}" },
+            "problemMatcher": [],
+            "group": "build",
+            "detail": "Configure, build, and test the macOS Release preset."
+        },
+        {
+            "label": "CMake: Workflow Windows Debug",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--workflow", "--preset", "windows-debug"
+            ],
+            "options": { "cwd": "${workspaceFolder}" },
+            "problemMatcher": [],
+            "group": "build",
+            "detail": "Configure, build, and test the Windows Debug preset."
+        },
+        {
+            "label": "CMake: Workflow Windows Release",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--workflow", "--preset", "windows-release"
+            ],
+            "options": { "cwd": "${workspaceFolder}" },
+            "problemMatcher": [],
+            "group": "build",
+            "detail": "Configure, build, and test the Windows Release preset."
+        },
+        {
+            "label": "CMake: Configure Quality",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--preset", "quality"
+            ],
+            "options": { "cwd": "${workspaceFolder}" },
+            "problemMatcher": [],
+            "group": "build",
+            "detail": "Configure the canonical clang-format and clang-tidy quality preset."
+        },
+        {
+            "label": "CMake: Check Format",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--build", "--preset", "quality", "--target", "check-format"
+            ],
+            "options": { "cwd": "${workspaceFolder}" },
+            "problemMatcher": [],
+            "group": "test",
+            "dependsOn": [
+                "CMake: Configure Quality"
+            ],
+            "detail": "Run the canonical clang-format check."
+        },
+        {
+            "label": "CMake: Run clang-tidy",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--build", "--preset", "quality", "--target", "tidy"
+            ],
+            "options": { "cwd": "${workspaceFolder}" },
+            "problemMatcher": [],
+            "group": "test",
+            "dependsOn": [
+                "CMake: Configure Quality"
+            ],
+            "detail": "Run the canonical clang-tidy checks."
         },
         {
             "label": "CPack: Package Release",
             "type": "shell",
             "command": "cpack",
             "args": [
-                "--config", "build/release/CPackConfig.cmake"
+                "--config", "build/linux-release/CPackConfig.cmake"
             ],
             "options": {
                 "cwd": "${workspaceFolder}"
@@ -151,9 +293,9 @@
             "problemMatcher": [],
             "group": "build",
             "dependsOn": [
-                "CMake: Build Release"
+                "CMake: Build Linux Release"
             ],
-            "detail": "Create a distribution package using CPack (QuickStart §Distribution). Equivalent to: cpack --config build/release/CPackConfig.cmake"
+            "detail": "Create a distribution package from the Linux Release preset."
         }
     ]
 }

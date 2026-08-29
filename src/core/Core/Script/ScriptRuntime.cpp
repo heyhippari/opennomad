@@ -862,9 +862,8 @@ HandlerResult ScriptRuntime::handle_select_camera(
       .reason_text = {}};
 }
 
-HandlerResult ScriptRuntime::handle_interpolate_cameras(ScriptInstance& instance,
-    RuntimeScriptCommand& command,
-    const float script_delta_frames) {
+HandlerResult ScriptRuntime::handle_interpolate_cameras(
+    ScriptInstance& instance, RuntimeScriptCommand& command, const float script_delta_frames) {
   const std::uint32_t base{command.first_value_index};
   const float duration{instance.value_pool.at(base + 2U).as_float()};
   const float elapsed{instance.value_pool.at(base + 3U).as_float()};
@@ -892,10 +891,9 @@ HandlerResult ScriptRuntime::handle_interpolate_cameras(ScriptInstance& instance
   }
 
   const Omikron::ScxScript& source{m_scx->scripts.at(instance.source_script_index)};
-  const auto camera_name = [&](const std::uint32_t argument_index)
-      -> std::expected<std::string_view, std::string> {
-    const std::uint32_t binding_index{
-        instance.value_pool.at(base + argument_index).as_unsigned()};
+  const auto camera_name =
+      [&](const std::uint32_t argument_index) -> std::expected<std::string_view, std::string> {
+    const std::uint32_t binding_index{instance.value_pool.at(base + argument_index).as_unsigned()};
     if (binding_index >= source.binding_table_b.entries.size()) {
       return std::expected<std::string_view, std::string>{std::unexpect,
           fmt::format("camera binding table B index {} out of range ({} entries)",
@@ -915,11 +913,11 @@ HandlerResult ScriptRuntime::handle_interpolate_cameras(ScriptInstance& instance
 
   const float remaining{duration - elapsed};
   const float fraction{script_delta_frames / remaining};
-  if (auto interpolated{m_world->interpolate_cameras(CameraInterpolationRequest{
-          .camera_a = camera_a.value(),
-          .camera_b = camera_b.value(),
-          .fraction = fraction,
-          .snap_to_target = false})};
+  if (auto interpolated{
+          m_world->interpolate_cameras(CameraInterpolationRequest{.camera_a = camera_a.value(),
+              .camera_b = camera_b.value(),
+              .fraction = fraction,
+              .snap_to_target = false})};
       !interpolated) {
     return HandlerResult{.status = ScriptCommandStatus::k_error,
         .pause_reason = ScriptPauseReason::k_missing_resource,
@@ -936,11 +934,11 @@ HandlerResult ScriptRuntime::handle_interpolate_cameras(ScriptInstance& instance
 
   // Runtime can overshoot while applying delta/(duration-elapsed), then
   // immediately copies all eight pose fields of B into A on the crossing tick.
-  if (auto snapped{m_world->interpolate_cameras(CameraInterpolationRequest{
-          .camera_a = camera_a.value(),
-          .camera_b = camera_b.value(),
-          .fraction = 1.0F,
-          .snap_to_target = true})};
+  if (auto snapped{
+          m_world->interpolate_cameras(CameraInterpolationRequest{.camera_a = camera_a.value(),
+              .camera_b = camera_b.value(),
+              .fraction = 1.0F,
+              .snap_to_target = true})};
       !snapped) {
     return HandlerResult{.status = ScriptCommandStatus::k_error,
         .pause_reason = ScriptPauseReason::k_missing_resource,
@@ -1125,8 +1123,8 @@ HandlerResult ScriptRuntime::handle_move_object_on_path(
         .reason_text = fmt::format("Script_MoveObjectOnPath: {}", failure.reason_text)};
   };
   const bool initialize_reverse{direction == 1U && current == 0.0F &&
-      instance.value_pool.at(base + 8U).as_float() == 0.0F &&
-      command.execution_count == command.initial_execution_count};
+                                instance.value_pool.at(base + 8U).as_float() == 0.0F &&
+                                command.execution_count == command.initial_execution_count};
   std::optional<std::uint32_t> reverse_maximum;
   if (initialize_reverse || (direction == 1U && transform_rebase_mode == 1U)) {
     auto resolved{
@@ -1142,7 +1140,8 @@ HandlerResult ScriptRuntime::handle_move_object_on_path(
     instance.value_pool.at(base + 7U).set_float(current);
     instance.value_pool.at(base + 8U).set_float(current);
   }
-  const bool capture_rebase_translation{transform_rebase_mode == 1U &&
+  const bool capture_rebase_translation{
+      transform_rebase_mode == 1U &&
       ((direction == 0U && current == 0.0F) ||
           (direction == 1U && reverse_maximum.has_value() &&
               current == static_cast<float>(reverse_maximum.value_or(0U))))};
@@ -1505,10 +1504,8 @@ void ScriptRuntime::service_camera_editing(
         // Interpolate between the two keys
         const Omikron::ScxCameraEditingKey& key_a{editing.keys.at(key_a_idx.value())};
         const Omikron::ScxCameraEditingKey& key_b{editing.keys.at(key_b_idx.value())};
-        const Omikron::ScxCameraEditingPose& pose_a{
-            editing.poses.at(key_a.camera_index)};
-        const Omikron::ScxCameraEditingPose& pose_b{
-            editing.poses.at(key_b.camera_index)};
+        const Omikron::ScxCameraEditingPose& pose_a{editing.poses.at(key_a.camera_index)};
+        const Omikron::ScxCameraEditingPose& pose_b{editing.poses.at(key_b.camera_index)};
 
         const float time_a{key_a.local_time_frames};
         const float time_b{key_b.local_time_frames};

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <fmt/format.h>
+
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -14,8 +16,6 @@
 #include <thread>
 #include <utility>
 #include <vector>
-
-#include <fmt/format.h>
 
 #include "Core/Log.hpp"
 #include "Core/LogCategory.hpp"
@@ -63,7 +63,8 @@ class Instrumentor {
       m_current_session = std::make_unique<InstrumentationSession>(name);
       write_header();
     } else {
-      App::Log::error(LogCategory::Debug, "Instrumentor could not open results file '{0}'.", filepath);
+      App::Log::error(
+          LogCategory::Debug, "Instrumentor could not open results file '{0}'.", filepath);
     }
   }
 
@@ -92,7 +93,8 @@ class Instrumentor {
     }
 
     // Also store in the ring buffer for real-time in-app display.
-    const std::size_t idx = m_recent_write_index.fetch_add(1, std::memory_order_relaxed) % kMaxRecentProfiles;
+    const std::size_t idx =
+        m_recent_write_index.fetch_add(1, std::memory_order_relaxed) % kMaxRecentProfiles;
     m_recent_profiles[idx] = result;
   }
 
@@ -104,8 +106,8 @@ class Instrumentor {
   /// Return a snapshot of recent profile results (for in-app profiler display).
   /// Entries may be from different frames; aggregate by name for a summary.
   [[nodiscard]] std::vector<ProfileResult> get_recent_profiles() const {
-    const std::size_t count = std::min(
-        m_recent_write_index.load(std::memory_order_acquire), kMaxRecentProfiles);
+    const std::size_t count =
+        std::min(m_recent_write_index.load(std::memory_order_acquire), kMaxRecentProfiles);
     const std::span<const ProfileResult> recent{m_recent_profiles.data(), count};
     return std::ranges::to<std::vector<ProfileResult>>(recent);
   }

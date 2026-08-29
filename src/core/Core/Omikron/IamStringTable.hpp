@@ -44,7 +44,8 @@ class IamStringTable {
 
  private:
   explicit IamStringTable(std::vector<std::byte> storage, std::vector<std::string_view> strings)
-      : m_storage(std::move(storage)), m_strings(std::move(strings)) {}
+      : m_storage(std::move(storage)),
+        m_strings(std::move(strings)) {}
 
   std::vector<std::byte> m_storage;
   std::vector<std::string_view> m_strings;

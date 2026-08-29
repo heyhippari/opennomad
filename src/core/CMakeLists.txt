@@ -1,7 +1,5 @@
 set(NAME "Core")
 
-include(${PROJECT_SOURCE_DIR}/cmake/StaticAnalyzers.cmake)
-
 add_library(${NAME} STATIC
   Core/Log.cpp Core/Log.hpp Core/LogCategory.hpp Core/Debug/Instrumentor.hpp
   Core/Debug/Metrics.hpp Core/Debug/Metrics.cpp
@@ -153,6 +151,7 @@ find_package(FFMPEG REQUIRED)
 
 target_link_libraries(${NAME}
   PRIVATE project_warnings
+  PUBLIC project_options
   PUBLIC fmt::fmt spdlog::spdlog SDL3::SDL3 glad::glad imgui::imgui glm::glm
     $<IF:$<TARGET_EXISTS:SDL3_image::SDL3_image-shared>,SDL3_image::SDL3_image-shared,SDL3_image::SDL3_image-static>
     $<IF:$<TARGET_EXISTS:SDL3_mixer::SDL3_mixer-shared>,SDL3_mixer::SDL3_mixer-shared,SDL3_mixer::SDL3_mixer-static>
@@ -161,5 +160,6 @@ target_link_libraries(${NAME}
 target_include_directories(${NAME} PRIVATE ${FFMPEG_INCLUDE_DIRS})
 target_link_directories(${NAME} PRIVATE ${FFMPEG_LIBRARY_DIRS})
 target_link_libraries(${NAME} PRIVATE ${FFMPEG_LIBRARIES})
+opennomad_enable_quality(${NAME})
 
 add_subdirectory(Tests)

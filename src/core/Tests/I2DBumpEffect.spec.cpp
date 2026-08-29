@@ -1,3 +1,5 @@
+#include "Core/Interface/I2DBumpEffect.hpp"
+
 #include <doctest/doctest.h>
 
 #include <array>
@@ -6,7 +8,6 @@
 #include <utility>
 #include <vector>
 
-#include "Core/Interface/I2DBumpEffect.hpp"
 #include "Core/Omikron/IndexedBmp8.hpp"
 
 // NOLINTBEGIN(misc-use-anonymous-namespace,
@@ -22,9 +23,7 @@ namespace {
 /// Builds a 256x256 height map whose every cell is `value`.
 App::Omikron::IndexedBmp8 flat_height_map(const std::uint8_t value) {
   return App::Omikron::IndexedBmp8{
-      .width = 256,
-      .height = 256,
-      .indices = std::vector<std::uint8_t>(256U * 256U, value)};
+      .width = 256, .height = 256, .indices = std::vector<std::uint8_t>(256U * 256U, value)};
 }
 
 /// Builds a 256x256 height map with every cell 0 except the top-left (row 0,
@@ -33,8 +32,7 @@ App::Omikron::IndexedBmp8 flat_height_map(const std::uint8_t value) {
 App::Omikron::IndexedBmp8 corner_height_map(const std::uint8_t value) {
   std::vector<std::uint8_t> indices(256U * 256U, 0U);
   indices.at(0) = value;
-  return App::Omikron::IndexedBmp8{
-      .width = 256, .height = 256, .indices = std::move(indices)};
+  return App::Omikron::IndexedBmp8{.width = 256, .height = 256, .indices = std::move(indices)};
 }
 
 }  // namespace
@@ -120,9 +118,8 @@ TEST_SUITE("Core::Interface::I2DBumpEffect") {
     // dx = dy = 0 for every cell, so intensity = sar5(0) + 32 = 32.
     for (int y{0}; y < 256; ++y) {
       for (int x{0}; x < 256; ++x) {
-        CHECK_EQ(effect->lit_intensity(static_cast<std::size_t>(x),
-                      static_cast<std::size_t>(y)),
-            32);
+        CHECK_EQ(
+            effect->lit_intensity(static_cast<std::size_t>(x), static_cast<std::size_t>(y)), 32);
       }
     }
 
@@ -131,9 +128,8 @@ TEST_SUITE("Core::Interface::I2DBumpEffect") {
     const auto frame{effect->rgba_frame()};
     REQUIRE_EQ(frame.size(), 640U * 480U * 4U);
     const std::array<std::uint8_t, 4> expected{19, 17, 13, 255};
-    for (const std::size_t pixel : {std::size_t{0},
-             std::size_t{(320U * 640U + 240U) * 4U},
-             frame.size() - 4U}) {
+    for (const std::size_t pixel :
+        {std::size_t{0}, std::size_t{(320U * 640U + 240U) * 4U}, frame.size() - 4U}) {
       for (std::size_t channel{0}; channel < 4U; ++channel) {
         CHECK_EQ(frame[pixel + channel], expected.at(channel));
       }
@@ -144,9 +140,9 @@ TEST_SUITE("Core::Interface::I2DBumpEffect") {
     using App::Interface::I2DBumpEffect;
     CHECK_EQ(I2DBumpEffect::signed_byte(0 - 200), 56);  // -200 wraps to +56.
     CHECK_EQ(I2DBumpEffect::signed_byte(127), 127);
-    CHECK_EQ(I2DBumpEffect::signed_byte(128), -128);    // crosses 127.
+    CHECK_EQ(I2DBumpEffect::signed_byte(128), -128);  // crosses 127.
     CHECK_EQ(I2DBumpEffect::signed_byte(-128), -128);
-    CHECK_EQ(I2DBumpEffect::signed_byte(-129), 127);    // crosses -128.
+    CHECK_EQ(I2DBumpEffect::signed_byte(-129), 127);  // crosses -128.
     CHECK_EQ(I2DBumpEffect::signed_byte(0), 0);
   }
 
@@ -272,12 +268,12 @@ TEST_SUITE("Core::Interface::I2DBumpEffect") {
         {std::pair{0, 0}, std::pair{100, 200}, std::pair{639, 479}, std::pair{321, 123}}) {
       const auto [source_x, source_y]{effect->warp_source_coordinates(output_x, output_y)};
       CHECK_EQ(source_x,
-          (output_x + static_cast<int>(effect->row_warp(
-                          static_cast<std::size_t>(479 - output_y)))) &
+          (output_x +
+              static_cast<int>(effect->row_warp(static_cast<std::size_t>(479 - output_y)))) &
               0xFF);
       CHECK_EQ(source_y,
-          (output_y + static_cast<int>(effect->column_warp(
-                          static_cast<std::size_t>(639 - output_x)))) &
+          (output_y +
+              static_cast<int>(effect->column_warp(static_cast<std::size_t>(639 - output_x)))) &
               0xFF);
     }
   }

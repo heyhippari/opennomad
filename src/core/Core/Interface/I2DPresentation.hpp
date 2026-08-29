@@ -95,7 +95,7 @@ struct I2DTopCenterPlacement {
     const float element_scale = 1.0F) {
   const float reference_width{static_cast<float>(destination.width)};
   const float reference_height{static_cast<float>(destination.height)};
-  
+
   const float presentation_scale{std::max(0.0F, element_scale)};
 
   float width{reference_width * presentation_scale};

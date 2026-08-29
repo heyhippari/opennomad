@@ -42,8 +42,7 @@ class ThreeDM {
   static constexpr std::uint32_t k_max_morph_vertices{200};
   static constexpr std::uint32_t k_max_objects{30};
 
-  [[nodiscard]] static std::expected<ThreeDM, std::string> load(
-      std::span<const std::byte> data);
+  [[nodiscard]] static std::expected<ThreeDM, std::string> load(std::span<const std::byte> data);
 
   [[nodiscard]] const ThreeDmHeader& header() const {
     return m_header;

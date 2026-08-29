@@ -1,5 +1,8 @@
 {
     "cmake.useCMakePresets": "always",
     "cmake.configureOnOpen": false,
+    "cmake.configurePreset": "linux-debug",
+    "cmake.buildPreset": "linux-debug",
+    "cmake.testPreset": "linux-debug",
     "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools"
 }

@@ -102,8 +102,8 @@ Buffer make_3da(const std::uint32_t max_frame,
   return value;
 }
 
-Buffer build_ctl(const std::vector<CtlMoveSpec>& moves,
-    const std::map<std::string, Buffer>& animations = {}) {
+Buffer build_ctl(
+    const std::vector<CtlMoveSpec>& moves, const std::map<std::string, Buffer>& animations = {}) {
   Buffer ctl;
   ctl.u32(0x30374543U)
       .u32(0x101U)
@@ -288,21 +288,20 @@ std::shared_ptr<const App::Omikron::CtlControlSet> make_simple_bank(
   const std::vector<CtlMoveSpec> moves{CtlMoveSpec{.id = 100,
       .flags = 1,
       .name = "Main",
-      .states =
-          {
-              CtlStateSpec{.id = 1,
-                  .flags = K_DEFAULT_STATE,
-                  .key_bearing = true,
-                  .key = "STAND",
-                  .child_refs = {2}},
-              CtlStateSpec{.id = 2,
-                  .flags = 0x1U,
-                  .input = 0x4U,
-                  .transition_value = 1.0F,
-                  .goto_id = 1,
-                  .key_bearing = true,
-                  .key = "MOVE"},
-          }}};
+      .states = {
+          CtlStateSpec{.id = 1,
+              .flags = K_DEFAULT_STATE,
+              .key_bearing = true,
+              .key = "STAND",
+              .child_refs = {2}},
+          CtlStateSpec{.id = 2,
+              .flags = 0x1U,
+              .input = 0x4U,
+              .transition_value = 1.0F,
+              .goto_id = 1,
+              .key_bearing = true,
+              .key = "MOVE"},
+      }}};
   return make_bank(moves, {{"STAND", stand_anim}, {"MOVE", move_anim}});
 }
 
@@ -353,8 +352,8 @@ TEST_SUITE("Core::Character::CtlController") {
   }
 
   TEST_CASE("construction selects default move/state without touching a pose") {
-    auto created{App::Character::CtlController::create(
-        make_simple_bank(make_3da(3), make_3da(3)), "TEST")};
+    auto created{
+        App::Character::CtlController::create(make_simple_bank(make_3da(3), make_3da(3)), "TEST")};
     REQUIRE(created.has_value());
     CHECK_EQ(created->current_move()->move_id, 100U);
     CHECK_EQ(created->current_state()->state_id, 1U);
@@ -465,8 +464,8 @@ TEST_SUITE("Core::Character::CtlController") {
 
   TEST_CASE("persistent states re-enter at phase 1 while end-family follows goto") {
     // STAND has max frame 2; MOVE has max frame 1.
-    auto created{App::Character::CtlController::create(
-        make_simple_bank(make_3da(2), make_3da(1)), "TEST")};
+    auto created{
+        App::Character::CtlController::create(make_simple_bank(make_3da(2), make_3da(1)), "TEST")};
     REQUIRE(created.has_value());
     App::Character::RuntimeCharacter character{make_character()};
 
@@ -500,19 +499,14 @@ TEST_SUITE("Core::Character::CtlController") {
     const std::vector<CtlMoveSpec> moves{CtlMoveSpec{.id = 1,
         .flags = 1,
         .name = "Eval",
-        .states =
-            {
-                CtlStateSpec{.id = 1,
-                    .flags = K_NO_KEY | K_DEFAULT_STATE,
-                    .child_refs = {2, 3, 4}},
-                // First valid candidate wins without priority mode.
-                CtlStateSpec{.id = 2, .flags = K_NO_KEY | 0x10000000U, .input = 0x4U},
-                CtlStateSpec{.id = 3, .flags = K_NO_KEY | 0x10000000U, .input = 0x4U},
-                // Exact-input candidate does not match a superset mask.
-                CtlStateSpec{.id = 4,
-                    .flags = K_NO_KEY | 0x10000000U | K_EXACT_INPUT,
-                    .input = 0x5U},
-            }}};
+        .states = {
+            CtlStateSpec{.id = 1, .flags = K_NO_KEY | K_DEFAULT_STATE, .child_refs = {2, 3, 4}},
+            // First valid candidate wins without priority mode.
+            CtlStateSpec{.id = 2, .flags = K_NO_KEY | 0x10000000U, .input = 0x4U},
+            CtlStateSpec{.id = 3, .flags = K_NO_KEY | 0x10000000U, .input = 0x4U},
+            // Exact-input candidate does not match a superset mask.
+            CtlStateSpec{.id = 4, .flags = K_NO_KEY | 0x10000000U | K_EXACT_INPUT, .input = 0x5U},
+        }}};
     auto created{App::Character::CtlController::create(make_bank(moves), "TEST")};
     REQUIRE(created.has_value());
 
@@ -544,15 +538,14 @@ TEST_SUITE("Core::Character::CtlController") {
     const std::vector<CtlMoveSpec> moves{CtlMoveSpec{.id = 1,
         .flags = 1,
         .name = "Priority",
-        .states =
-            {
-                CtlStateSpec{.id = 1,
-                    .flags = K_NO_KEY | K_DEFAULT_STATE,
-                    .animation_mode = 0x0020U,  // reverse child traversal
-                    .child_refs = {2, 3}},
-                CtlStateSpec{.id = 2, .flags = K_NO_KEY, .input = 0x4U, .priority = 5},
-                CtlStateSpec{.id = 3, .flags = K_NO_KEY, .input = 0x4U, .priority = 7},
-            }}};
+        .states = {
+            CtlStateSpec{.id = 1,
+                .flags = K_NO_KEY | K_DEFAULT_STATE,
+                .animation_mode = 0x0020U,  // reverse child traversal
+                .child_refs = {2, 3}},
+            CtlStateSpec{.id = 2, .flags = K_NO_KEY, .input = 0x4U, .priority = 5},
+            CtlStateSpec{.id = 3, .flags = K_NO_KEY, .input = 0x4U, .priority = 7},
+        }}};
     auto created{App::Character::CtlController::create(make_bank(moves), "TEST")};
     REQUIRE(created.has_value());
 
@@ -580,15 +573,14 @@ TEST_SUITE("Core::Character::CtlController") {
     const std::vector<CtlMoveSpec> moves{CtlMoveSpec{.id = 1,
         .flags = 1,
         .name = "Fallback",
-        .states =
-            {
-                CtlStateSpec{.id = 1,
-                    .flags = K_NO_KEY | K_DEFAULT_STATE | K_FALLBACK_ENABLE,
-                    .child_refs = {2}},
-                CtlStateSpec{.id = 2, .flags = K_NO_KEY, .input = 0x8U},
-                CtlStateSpec{.id = 3, .flags = K_NO_KEY | K_FALLBACK_CANDIDATE, .input = 0x4U},
-                CtlStateSpec{.id = 4, .flags = K_NO_KEY, .input = 0x4U},
-            }}};
+        .states = {
+            CtlStateSpec{.id = 1,
+                .flags = K_NO_KEY | K_DEFAULT_STATE | K_FALLBACK_ENABLE,
+                .child_refs = {2}},
+            CtlStateSpec{.id = 2, .flags = K_NO_KEY, .input = 0x8U},
+            CtlStateSpec{.id = 3, .flags = K_NO_KEY | K_FALLBACK_CANDIDATE, .input = 0x4U},
+            CtlStateSpec{.id = 4, .flags = K_NO_KEY, .input = 0x4U},
+        }}};
     auto created{App::Character::CtlController::create(make_bank(moves), "TEST")};
     REQUIRE(created.has_value());
 
@@ -602,11 +594,10 @@ TEST_SUITE("Core::Character::CtlController") {
     const std::vector<CtlMoveSpec> no_fallback{CtlMoveSpec{.id = 1,
         .flags = 1,
         .name = "NoFallback",
-        .states =
-            {
-                CtlStateSpec{.id = 1, .flags = K_NO_KEY | K_DEFAULT_STATE},
-                CtlStateSpec{.id = 3, .flags = K_NO_KEY | K_FALLBACK_CANDIDATE, .input = 0x4U},
-            }}};
+        .states = {
+            CtlStateSpec{.id = 1, .flags = K_NO_KEY | K_DEFAULT_STATE},
+            CtlStateSpec{.id = 3, .flags = K_NO_KEY | K_FALLBACK_CANDIDATE, .input = 0x4U},
+        }}};
     auto plain{App::Character::CtlController::create(make_bank(no_fallback), "TEST")};
     REQUIRE(plain.has_value());
     CHECK(plain->evaluate_transition(0x4U, 1.0F, 2.0F, {}) == nullptr);
@@ -616,13 +607,10 @@ TEST_SUITE("Core::Character::CtlController") {
     const std::vector<CtlMoveSpec> moves{CtlMoveSpec{.id = 1,
         .flags = 1,
         .name = "Defer",
-        .states =
-            {
-                CtlStateSpec{.id = 1,
-                    .flags = K_NO_KEY | K_DEFAULT_STATE,
-                    .child_refs = {2}},
-                CtlStateSpec{.id = 2, .flags = K_NO_KEY, .input = 0x4U, .defer_ticks = 3},
-            }}};
+        .states = {
+            CtlStateSpec{.id = 1, .flags = K_NO_KEY | K_DEFAULT_STATE, .child_refs = {2}},
+            CtlStateSpec{.id = 2, .flags = K_NO_KEY, .input = 0x4U, .defer_ticks = 3},
+        }}};
     auto created{App::Character::CtlController::create(make_bank(moves), "TEST")};
     REQUIRE(created.has_value());
     App::Character::RuntimeCharacter character{make_character()};
@@ -649,8 +637,8 @@ TEST_SUITE("Core::Character::CtlController") {
     // Sample 0 is an obvious reference anchor that must never teleport the
     // actor; samples 1..N move +10 Z inches per interval.
     Buffer stand{make_3da(10, {.x = 10000.0F, .y = 0.0F, .z = 10000.0F}, {.z = 10.0F})};
-    auto created{App::Character::CtlController::create(
-        make_simple_bank(stand, make_3da(10)), "TEST")};
+    auto created{
+        App::Character::CtlController::create(make_simple_bank(stand, make_3da(10)), "TEST")};
     REQUIRE(created.has_value());
     App::Character::RuntimeCharacter character{make_character()};
     character.transform.translation = {.x = 100.0F, .y = 0.0F, .z = 200.0F};
@@ -665,8 +653,7 @@ TEST_SUITE("Core::Character::CtlController") {
     character.set_principal_orientation({.x = 0.0F, .y = 30.0F, .z = 0.0F});
     created->service(K_TICK, 0x0U, character);
     const App::Runtime::Vec3 expected{App::Runtime::transform_vector(
-        App::Runtime::Vec3{.x = 0.0F, .y = 0.0F, .z = 10.0F},
-        character.live_root_orientation())};
+        App::Runtime::Vec3{.x = 0.0F, .y = 0.0F, .z = 10.0F}, character.live_root_orientation())};
     CHECK(character.transform.translation.x == doctest::Approx(100.0F + expected.x));
     CHECK(character.transform.translation.y == doctest::Approx(expected.y));
     CHECK(character.transform.translation.z == doctest::Approx(210.0F + expected.z));
@@ -676,16 +663,15 @@ TEST_SUITE("Core::Character::CtlController") {
   TEST_CASE("lateral root motion rotates through a non-axis-aligned yaw") {
     // Authored lateral motion (sidestep): -X local per interval.
     Buffer step{make_3da(4, {}, {.x = -5.0F})};
-    auto created{App::Character::CtlController::create(
-        make_simple_bank(step, make_3da(4)), "TEST")};
+    auto created{
+        App::Character::CtlController::create(make_simple_bank(step, make_3da(4)), "TEST")};
     REQUIRE(created.has_value());
     App::Character::RuntimeCharacter character{make_character()};
     character.set_principal_orientation({.x = 0.0F, .y = 45.0F, .z = 0.0F});
 
     created->service(K_TICK, 0x0U, character);
     const App::Runtime::Vec3 expected{App::Runtime::transform_vector(
-        App::Runtime::Vec3{.x = -5.0F, .y = 0.0F, .z = 0.0F},
-        character.live_root_orientation())};
+        App::Runtime::Vec3{.x = -5.0F, .y = 0.0F, .z = 0.0F}, character.live_root_orientation())};
     // The displacement must not be a fixed world-axis step.
     CHECK(character.transform.translation.x == doctest::Approx(expected.x));
     CHECK(character.transform.translation.z == doctest::Approx(expected.z));
@@ -697,25 +683,22 @@ TEST_SUITE("Core::Character::CtlController") {
     const std::vector<CtlMoveSpec> moves{CtlMoveSpec{.id = 1,
         .flags = 1,
         .name = "Aux",
-        .states =
-            {
-                CtlStateSpec{.id = 1,
-                    .flags = K_NO_KEY | K_DEFAULT_STATE,
-                    .child_refs = {2, 4}},
-                CtlStateSpec{.id = 2,
-                    .flags = K_NO_KEY | 0x0100U,
-                    .input = 0x1U,
-                    .child_refs = {3},
-                    .orientation = App::Runtime::Vec3{.x = 0.0F, .y = 25.0F, .z = 0.0F}},
-                CtlStateSpec{.id = 3,
-                    .flags = K_NO_KEY | 0x0080U,
-                    .input = 0x2U,
-                    .movement = App::Runtime::Vec3{.x = 0.0F, .y = 0.0F, .z = 30.0F}},
-                CtlStateSpec{.id = 4,
-                    .flags = K_NO_KEY | 0x0100U,
-                    .input = 0x8U,
-                    .orientation = App::Runtime::Vec3{.x = 0.0F, .y = -60.0F, .z = 0.0F}},
-            }}};
+        .states = {
+            CtlStateSpec{.id = 1, .flags = K_NO_KEY | K_DEFAULT_STATE, .child_refs = {2, 4}},
+            CtlStateSpec{.id = 2,
+                .flags = K_NO_KEY | 0x0100U,
+                .input = 0x1U,
+                .child_refs = {3},
+                .orientation = App::Runtime::Vec3{.x = 0.0F, .y = 25.0F, .z = 0.0F}},
+            CtlStateSpec{.id = 3,
+                .flags = K_NO_KEY | 0x0080U,
+                .input = 0x2U,
+                .movement = App::Runtime::Vec3{.x = 0.0F, .y = 0.0F, .z = 30.0F}},
+            CtlStateSpec{.id = 4,
+                .flags = K_NO_KEY | 0x0100U,
+                .input = 0x8U,
+                .orientation = App::Runtime::Vec3{.x = 0.0F, .y = -60.0F, .z = 0.0F}},
+        }}};
     auto created{App::Character::CtlController::create(make_bank(moves), "TEST")};
     REQUIRE(created.has_value());
     App::Character::RuntimeCharacter character{make_character()};
@@ -730,13 +713,12 @@ TEST_SUITE("Core::Character::CtlController") {
     created->service(K_TICK, 0x2U, character);
     CHECK_EQ(created->current_state()->state_id, 3U);
     const App::Runtime::Vec3 expected{App::Runtime::transform_vector(
-        App::Runtime::Vec3{.x = 0.0F, .y = 0.0F, .z = 30.0F},
-        character.live_root_orientation())};
+        App::Runtime::Vec3{.x = 0.0F, .y = 0.0F, .z = 30.0F}, character.live_root_orientation())};
     CHECK(character.transform.translation.x == doctest::Approx(expected.x));
     CHECK(character.transform.translation.z == doctest::Approx(expected.z));
 
     // A negative authored delta: 15 - 60 wraps to -45.
-    created->select_move(1);
+    static_cast<void>(created->select_move(1));
     character.set_principal_orientation({.x = 0.0F, .y = 15.0F, .z = 0.0F});
     created->service(K_TICK, 0x8U, character);
     CHECK_EQ(created->current_state()->state_id, 4U);
@@ -752,8 +734,8 @@ TEST_SUITE("Core::Character::CtlController") {
             .key_bearing = true,
             .key = "LOOP",
             .callback = "MDWALK"}}}};
-    auto created{App::Character::CtlController::create(
-        make_bank(moves, {{"LOOP", make_3da(1)}}), "TEST")};
+    auto created{
+        App::Character::CtlController::create(make_bank(moves, {{"LOOP", make_3da(1)}}), "TEST")};
     REQUIRE(created.has_value());
     App::Character::RuntimeCharacter character{make_character()};
     // Construction queues the state's callback but does not dispatch it.
@@ -800,8 +782,8 @@ TEST_SUITE("Core::Character::CtlController") {
             .name = "RunBreathe",
             .states = {CtlStateSpec{.id = 1641, .flags = K_NO_KEY | K_DEFAULT_STATE}}},
     };
-    auto created{App::Character::CtlController::create(
-        make_bank(moves, {{"LOOP", make_3da(1)}}), "TEST")};
+    auto created{
+        App::Character::CtlController::create(make_bank(moves, {{"LOOP", make_3da(1)}}), "TEST")};
     REQUIRE(created.has_value());
     App::Character::RuntimeCharacter character{make_character()};
 
@@ -880,17 +862,14 @@ TEST_SUITE("Core::Character::CtlController") {
     const std::vector<CtlMoveSpec> moves{CtlMoveSpec{.id = 1,
         .flags = 1,
         .name = "Main",
-        .states =
-            {
-                CtlStateSpec{.id = 1,
-                    .flags = K_NO_KEY | K_DEFAULT_STATE | K_CALLBACK,
-                    .child_refs = {2},
-                    .callback = "MDROT000"},
-                CtlStateSpec{.id = 2,
-                    .flags = K_NO_KEY | K_CALLBACK,
-                    .input = 0x4U,
-                    .callback = "RSTAVNT"},
-            }}};
+        .states = {
+            CtlStateSpec{.id = 1,
+                .flags = K_NO_KEY | K_DEFAULT_STATE | K_CALLBACK,
+                .child_refs = {2},
+                .callback = "MDROT000"},
+            CtlStateSpec{
+                .id = 2, .flags = K_NO_KEY | K_CALLBACK, .input = 0x4U, .callback = "RSTAVNT"},
+        }}};
     auto created{App::Character::CtlController::create(make_bank(moves), "TEST")};
     REQUIRE(created.has_value());
     App::Character::RuntimeCharacter character{make_character()};
@@ -925,8 +904,8 @@ TEST_SUITE("Core::Character::CtlController") {
             .key_bearing = true,
             .key = "LOOP",
             .markers = {MarkerSpec{.phase = 3.0F, .hid = 777}}}}}};
-    auto created{App::Character::CtlController::create(
-        make_bank(moves, {{"LOOP", make_3da(5)}}), "TEST")};
+    auto created{
+        App::Character::CtlController::create(make_bank(moves, {{"LOOP", make_3da(5)}}), "TEST")};
     REQUIRE(created.has_value());
     App::Character::RuntimeCharacter character{make_character()};
 
@@ -952,8 +931,8 @@ TEST_SUITE("Core::Character::CtlController") {
   }
 
   TEST_CASE("enabling the controller replaces a stale scripted base pose") {
-    auto created{App::Character::CtlController::create(
-        make_simple_bank(make_3da(3), make_3da(3)), "TEST")};
+    auto created{
+        App::Character::CtlController::create(make_simple_bank(make_3da(3), make_3da(3)), "TEST")};
     REQUIRE(created.has_value());
     App::Character::RuntimeCharacter character{make_character()};
 
@@ -986,8 +965,8 @@ TEST_SUITE("Core::Character::CtlController") {
             .animation_mode = 0x6011U,  // 6-segment packed sampler
             .key_bearing = true,
             .key = "SEG"}}}};
-    auto created{App::Character::CtlController::create(
-        make_bank(moves, {{"SEG", make_3da(3)}}), "TEST")};
+    auto created{
+        App::Character::CtlController::create(make_bank(moves, {{"SEG", make_3da(3)}}), "TEST")};
     REQUIRE(created.has_value());
     App::Character::RuntimeCharacter character{make_character()};
     const std::uint64_t revision{character.pose_revision};
@@ -1003,9 +982,8 @@ TEST_SUITE("Core::Character::CtlController") {
     const std::vector<CtlMoveSpec> moves{CtlMoveSpec{.id = 1,
         .flags = 1,
         .name = "Unknown",
-        .states = {CtlStateSpec{.id = 1,
-            .flags = K_NO_KEY | K_DEFAULT_STATE | K_CALLBACK,
-            .callback = "MDFLYBY"}}}};
+        .states = {CtlStateSpec{
+            .id = 1, .flags = K_NO_KEY | K_DEFAULT_STATE | K_CALLBACK, .callback = "MDFLYBY"}}}};
     auto created{App::Character::CtlController::create(make_bank(moves), "TEST")};
     REQUIRE(created.has_value());
     App::Character::RuntimeCharacter character{make_character()};

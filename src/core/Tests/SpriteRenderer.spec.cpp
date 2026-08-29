@@ -249,13 +249,11 @@ TEST_SUITE("Core::Sprite::SpriteRenderer") {
 
   TEST_CASE("Orders additive before darken regardless of resource identity") {
     SpritePool pool;
-    const SpriteHandle additive{
-        pool.create(1, 0, 1, {0.0F, 0.0F, 5.0F}).value()};
+    const SpriteHandle additive{pool.create(1, 0, 1, {0.0F, 0.0F, 5.0F}).value()};
     pool.set_render_mode(additive, SpriteRenderMode::k_additive);
     pool.set_frame(additive, 0).value();
     pool.attach(additive).value();
-    const SpriteHandle darken{
-        pool.create(0, 0, 1, {1.0F, 0.0F, 5.0F}).value()};
+    const SpriteHandle darken{pool.create(0, 0, 1, {1.0F, 0.0F, 5.0F}).value()};
     pool.set_render_mode(darken, SpriteRenderMode::k_darken);
     pool.set_frame(darken, 0).value();
     pool.attach(darken).value();

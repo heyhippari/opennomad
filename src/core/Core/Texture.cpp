@@ -192,7 +192,7 @@ Texture2D::~Texture2D() {
 void Texture2D::bind(const std::uint32_t unit) const {
   APP_PROFILE_FUNCTION();
 
-  glActiveTexture(static_cast<GLenum>(GL_TEXTURE0 + unit));
+  glActiveTexture(GL_TEXTURE0 + unit);
   glBindTexture(GL_TEXTURE_2D, m_id);
 }
 

@@ -1,11 +1,11 @@
 #pragma once
 
+#include <SDL3_mixer/SDL_mixer.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
-
-#include <SDL3_mixer/SDL_mixer.h>
 
 namespace App::Audio {
 

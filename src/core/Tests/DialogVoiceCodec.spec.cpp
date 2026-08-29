@@ -1,11 +1,11 @@
+#include "Core/Audio/DialogVoiceCodec.hpp"
+
 #include <doctest/doctest.h>
 
 #include <cstddef>
 #include <cstdint>
 #include <span>
 #include <vector>
-
-#include "Core/Audio/DialogVoiceCodec.hpp"
 
 TEST_CASE("Runtime dialogue ADPCM is high-nibble first with no step-eighth baseline") {
   App::Audio::DialogAdpcmState state;
@@ -29,12 +29,12 @@ TEST_CASE("Runtime dialogue ADPCM preserves state across chunks and clamps") {
 
   App::Audio::DialogAdpcmState chunked_state;
   std::vector<std::int16_t> chunked;
-  REQUIRE(App::Audio::decode_dialog_adpcm(std::span<const std::byte>{encoded}.first(1U),
-      chunked_state,
-      chunked).has_value());
-  REQUIRE(App::Audio::decode_dialog_adpcm(std::span<const std::byte>{encoded}.subspan(1U),
-      chunked_state,
-      chunked).has_value());
+  REQUIRE(App::Audio::decode_dialog_adpcm(
+      std::span<const std::byte>{encoded}.first(1U), chunked_state, chunked)
+          .has_value());
+  REQUIRE(App::Audio::decode_dialog_adpcm(
+      std::span<const std::byte>{encoded}.subspan(1U), chunked_state, chunked)
+          .has_value());
   CHECK_EQ(chunked, continuous);
   CHECK_EQ(chunked_state.predictor, continuous_state.predictor);
   CHECK_EQ(chunked_state.step_index, continuous_state.step_index);

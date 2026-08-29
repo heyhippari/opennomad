@@ -425,10 +425,9 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
 
     // Camera-editing poses follow the same frame-scoped rule.
     REQUIRE(runtime
-                .apply_camera_editing_pose(App::Script::CameraEditingPose{.context_id = 1,
-                    .editing_name = "edit",
-                    .segment_name = "seg"})
-                .has_value());
+            .apply_camera_editing_pose(App::Script::CameraEditingPose{
+                .context_id = 1, .editing_name = "edit", .segment_name = "seg"})
+            .has_value());
     CHECK(runtime.selected_structured_camera() != nullptr);
     runtime.tick(1.0F / 30.0F);
     CHECK(runtime.selected_structured_camera() == nullptr);
@@ -443,7 +442,7 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
     App::Omikron::ScxData scx;
     App::ScenarioRuntime runtime;
     REQUIRE(runtime.initialize(scx, std::span<const std::byte>{}, "ctl_audio", nullptr, false)
-                .has_value());
+            .has_value());
     // No SCX sound owns hID 999: nonfatal, never an index lookup, no throw.
     runtime.play_ctl_sound_marker(999, {.x = 1.0F, .y = 2.0F, .z = 3.0F});
     CHECK(runtime.initialized());

@@ -15,10 +15,8 @@ WorldFadeCommand fade(const std::uint8_t mode,
     const std::uint32_t color,
     const std::int16_t duration_units,
     const std::int16_t delay_units = 0) {
-  return WorldFadeCommand{.mode = mode,
-      .color = color,
-      .duration_units = duration_units,
-      .delay_units = delay_units};
+  return WorldFadeCommand{
+      .mode = mode, .color = color, .duration_units = duration_units, .delay_units = delay_units};
 }
 
 }  // namespace

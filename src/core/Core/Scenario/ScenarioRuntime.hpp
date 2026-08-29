@@ -168,7 +168,8 @@ class ScenarioRuntime final : public Script::ScriptWorld, private Sfx::Host {
       const Audio::SoundPlayRequest& request) override;
   void stop_sound(Audio::SoundResourceId sound, const Audio::AudioOwnerToken& owner) override;
   [[nodiscard]] Audio::AudioContextInfo audio_context() const override;
-  [[nodiscard]] std::expected<void, std::string> select_camera(std::string_view camera_name) override;
+  [[nodiscard]] std::expected<void, std::string> select_camera(
+      std::string_view camera_name) override;
   [[nodiscard]] std::expected<void, std::string> interpolate_cameras(
       const Script::CameraInterpolationRequest& request) override;
   [[nodiscard]] std::expected<void, std::string> apply_camera_editing_pose(
@@ -229,7 +230,7 @@ class ScenarioRuntime final : public Script::ScriptWorld, private Sfx::Host {
       std::size_t resource_index);
   [[nodiscard]] std::expected<const Omikron::Path3DP*, std::string> path_resource(
       std::size_t resource_index);
-    void service_cin_sfx(Character::RuntimeCharacter& character, std::size_t animation_index);
+  void service_cin_sfx(Character::RuntimeCharacter& character, std::size_t animation_index);
 
   std::vector<std::byte> m_scx_bytes;
   Omikron::ScxData m_scx;
@@ -253,7 +254,7 @@ class ScenarioRuntime final : public Script::ScriptWorld, private Sfx::Host {
   std::unique_ptr<Script::ScriptRuntime> m_script_runtime;
   std::optional<Omikron::SfxData> m_sfx_data;
   std::unique_ptr<Sfx::Runtime> m_sfx_runtime;
-    std::vector<std::optional<std::size_t>> m_cin_sfx_bindings;
+  std::vector<std::optional<std::size_t>> m_cin_sfx_bindings;
   /// Runtime sound resources parallel to `m_scx.sounds` (lazily loaded).
   std::vector<Audio::SoundResourceId> m_sound_resources;
   /// Non-owning audio subsystem injected by the application.

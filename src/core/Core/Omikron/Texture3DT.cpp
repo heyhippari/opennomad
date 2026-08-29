@@ -120,8 +120,8 @@ std::expected<std::size_t, std::string> Texture3DT::encoded_size(
                                      (std::uint64_t{1} << material.bits_per_pixel)};
     const std::uint64_t addition{palette_size + material.data_size};
     if (addition > (std::numeric_limits<std::uint64_t>::max() - total)) {
-      return std::expected<std::size_t, std::string>{std::unexpect,
-          fmt::format("auxiliary size overflow at material '{}'", material.name)};
+      return std::expected<std::size_t, std::string>{
+          std::unexpect, fmt::format("auxiliary size overflow at material '{}'", material.name)};
     }
     total += addition;
   }

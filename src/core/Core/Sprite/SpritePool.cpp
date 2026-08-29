@@ -1,13 +1,13 @@
 #include "SpritePool.hpp"
 
+#include <fmt/format.h>
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <optional>
 #include <string>
-
-#include <fmt/format.h>
 
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Sprite/SpriteInstance.hpp"
@@ -22,7 +22,9 @@ std::string handle_context(const SpriteHandle handle) {
 }
 }  // namespace
 
-SpritePool::SpritePool() { m_slots.reserve(k_default_capacity); }
+SpritePool::SpritePool() {
+  m_slots.reserve(k_default_capacity);
+}
 
 std::expected<SpriteHandle, std::string> SpritePool::create(const std::size_t resource_index,
     const std::size_t object_index,
@@ -59,8 +61,8 @@ std::expected<void, std::string> SpritePool::attach(const SpriteHandle handle) {
 
   Slot* slot{find_slot(handle)};
   if (slot == nullptr) {
-    return std::expected<void, std::string>{std::unexpect,
-        fmt::format("attach failed: stale {}", handle_context(handle))};
+    return std::expected<void, std::string>{
+        std::unexpect, fmt::format("attach failed: stale {}", handle_context(handle))};
   }
   if (slot->attached) {
     return std::expected<void, std::string>{std::unexpect,
@@ -85,12 +87,12 @@ std::expected<void, std::string> SpritePool::detach(const SpriteHandle handle) {
 
   Slot* slot{find_slot(handle)};
   if (slot == nullptr) {
-    return std::expected<void, std::string>{std::unexpect,
-        fmt::format("detach failed: stale {}", handle_context(handle))};
+    return std::expected<void, std::string>{
+        std::unexpect, fmt::format("detach failed: stale {}", handle_context(handle))};
   }
   if (!slot->attached) {
-    return std::expected<void, std::string>{std::unexpect,
-        fmt::format("detach failed: {} is not attached", handle_context(handle))};
+    return std::expected<void, std::string>{
+        std::unexpect, fmt::format("detach failed: {} is not attached", handle_context(handle))};
   }
 
   unlink(*slot);
@@ -102,8 +104,8 @@ std::expected<void, std::string> SpritePool::destroy(const SpriteHandle handle) 
 
   Slot* slot{find_slot(handle)};
   if (slot == nullptr) {
-    return std::expected<void, std::string>{std::unexpect,
-        fmt::format("destroy failed: stale {}", handle_context(handle))};
+    return std::expected<void, std::string>{
+        std::unexpect, fmt::format("destroy failed: stale {}", handle_context(handle))};
   }
 
   if (slot->attached) {
@@ -135,14 +137,14 @@ bool SpritePool::attached(const SpriteHandle handle) const {
   return slot != nullptr && slot->attached;
 }
 
-std::expected<void, std::string> SpritePool::set_frame(const SpriteHandle handle,
-    const std::uint16_t frame_index) {
+std::expected<void, std::string> SpritePool::set_frame(
+    const SpriteHandle handle, const std::uint16_t frame_index) {
   APP_PROFILE_FUNCTION();
 
   Slot* slot{find_slot(handle)};
   if (slot == nullptr) {
-    return std::expected<void, std::string>{std::unexpect,
-        fmt::format("set_frame failed: stale {}", handle_context(handle))};
+    return std::expected<void, std::string>{
+        std::unexpect, fmt::format("set_frame failed: stale {}", handle_context(handle))};
   }
   if (static_cast<std::size_t>(frame_index) >= slot->frame_count) {
     slot->instance.frame_index = SpriteInstance::k_invalid_frame;
@@ -205,9 +207,8 @@ void SpritePool::set_tint(const SpriteHandle handle, const std::array<float, 3> 
   }
 }
 
-void SpritePool::set_texture_offset(const SpriteHandle handle,
-    const float offset_u,
-    const float offset_v) {
+void SpritePool::set_texture_offset(
+    const SpriteHandle handle, const float offset_u, const float offset_v) {
   if (SpriteInstance* instance{find(handle)}; instance != nullptr) {
     instance->texture_offset_u = offset_u;
     instance->texture_offset_v = offset_v;
@@ -251,11 +252,17 @@ std::optional<SpriteHandle> SpritePool::render_list_next(const SpriteHandle hand
   return SpriteHandle{.index = slot->next, .generation = next.generation};
 }
 
-std::size_t SpritePool::capacity() const { return m_slots.size(); }
+std::size_t SpritePool::capacity() const {
+  return m_slots.size();
+}
 
-std::size_t SpritePool::live_count() const { return m_slots.size() - m_free_indices.size(); }
+std::size_t SpritePool::live_count() const {
+  return m_slots.size() - m_free_indices.size();
+}
 
-std::size_t SpritePool::attached_count() const { return m_attached_count; }
+std::size_t SpritePool::attached_count() const {
+  return m_attached_count;
+}
 
 SpritePool::Slot* SpritePool::find_slot(const SpriteHandle handle) {
   if (handle.index == SpriteHandle::k_invalid_index ||

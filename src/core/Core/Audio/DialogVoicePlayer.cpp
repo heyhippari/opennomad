@@ -1,20 +1,22 @@
 #include "Core/Audio/DialogVoicePlayer.hpp"
 
+#include <SDL3/SDL_audio.h>
+#include <SDL3/SDL_error.h>
+#include <SDL3_mixer/SDL_mixer.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <string>
 #include <utility>
-
-#include <SDL3/SDL_audio.h>
-#include <SDL3/SDL_error.h>
-#include <SDL3_mixer/SDL_mixer.h>
 
 #include "Core/Log.hpp"
 #include "Core/LogCategory.hpp"
 
 namespace App::Audio {
 
-DialogVoicePlayer::~DialogVoicePlayer() { shutdown(); }
+DialogVoicePlayer::~DialogVoicePlayer() {
+  shutdown();
+}
 
 void DialogVoicePlayer::attach(MIX_Mixer* mixer) {
   if (m_track != nullptr || mixer == nullptr) {
@@ -37,8 +39,7 @@ void DialogVoicePlayer::shutdown() {
   m_samples.reset();
 }
 
-bool DialogVoicePlayer::play(
-    std::string display_name, DialogVoiceSamples stereo_samples) {
+bool DialogVoicePlayer::play(std::string display_name, DialogVoiceSamples stereo_samples) {
   if (m_mixer == nullptr || m_track == nullptr || stereo_samples == nullptr ||
       stereo_samples->empty()) {
     return false;
@@ -52,8 +53,7 @@ bool DialogVoicePlayer::play(
   // The PCM is already completely decoded and resident. Wrap it directly in
   // MIX_Audio instead of making SDL_mixer stream it through an SDL_IOStream.
   // No copy is made; m_samples below keeps the backing allocation alive.
-  MIX_Audio* input{MIX_LoadRawAudioNoCopy(
-      m_mixer,
+  MIX_Audio* input{MIX_LoadRawAudioNoCopy(m_mixer,
       stereo_samples->data(),
       byte_size,
       &spec,
@@ -61,7 +61,7 @@ bool DialogVoicePlayer::play(
   if (input == nullptr) {
     return false;
   }
-  
+
   // Replacing a track's MIX_Audio while it is playing is explicitly legal.
   // Do not MIX_StopTrack() first: MIX_PlayTrack() below restarts the track
   // against the new input, avoiding an unnecessary stop/start hole.
@@ -77,7 +77,7 @@ bool DialogVoicePlayer::play(
   // this MIX_Audio.
   m_samples = std::move(stereo_samples);
   m_source_name = std::move(display_name);
-  
+
   // Default MIX_PlayTrack options already mean zero loops.
   const bool started{MIX_PlayTrack(m_track, 0)};
 

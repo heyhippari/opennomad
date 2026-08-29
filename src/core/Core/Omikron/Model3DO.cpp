@@ -511,9 +511,11 @@ std::expected<std::vector<MaterialGroup>, std::string> Model3DO::build_posed_geo
       return groups.at(found->second);
     }
     group_by_material.emplace(key, groups.size());
-    groups.push_back(MaterialGroup{
-        .mesh_index = mesh_index,
-        .material_id = material_id, .flags = render_flags, .vertices = {}, .indices = {}});
+    groups.push_back(MaterialGroup{.mesh_index = mesh_index,
+        .material_id = material_id,
+        .flags = render_flags,
+        .vertices = {},
+        .indices = {}});
     return groups.at(groups.size() - 1U);
   };
 
@@ -539,7 +541,7 @@ std::expected<std::vector<MaterialGroup>, std::string> Model3DO::build_posed_geo
           fmt::format(
               "vertex index {} out of range ({} vertices)", global_index, source_vertices.size())};
     }
-    
+
     const RawVertex& raw{source_vertices.subspan(global_index, 1U).front()};
     if (vertex_owner_index >= runtime_objects.size()) {
       return std::expected<void, std::string>{

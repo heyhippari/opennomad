@@ -50,13 +50,10 @@ class FontFNT {
 
 /// Measures byte-indexed retail text. Bytes >= 0x80 are glyph indices, not
 /// UTF-8 lead bytes.
-[[nodiscard]] float measure_fnt_bytes(const FontFntData& font,
-    std::string_view text,
-    int letter_spacing,
-    int blank_width);
+[[nodiscard]] float measure_fnt_bytes(
+    const FontFntData& font, std::string_view text, int letter_spacing, int blank_width);
 
 /// Runtime top edge for a glyph on a logical line whose top is `line_y`.
-[[nodiscard]] float fnt_glyph_top(
-    const FontFntGlyph& glyph, float line_y, int line_height);
+[[nodiscard]] float fnt_glyph_top(const FontFntGlyph& glyph, float line_y, int line_height);
 
 }  // namespace App::Omikron

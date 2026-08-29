@@ -4,9 +4,9 @@
 
 #include <algorithm>
 #include <array>
-#include <optional>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -60,17 +60,15 @@ std::optional<InputSource> first_physical_press(
     const RawInputState& state, const RawInputState& previous) {
   for (std::size_t index{0}; index < state.key_down.size(); ++index) {
     if (state.key_down.at(index) && !previous.key_down.at(index)) {
-      return InputSource{
-          .type = SourceType::k_key, .index = static_cast<std::uint32_t>(index)};
+      return InputSource{.type = SourceType::k_key, .index = static_cast<std::uint32_t>(index)};
     }
   }
 
   // Button id 0 is unused by SDL; start at the first real mouse button.
   for (std::size_t button{1U}; button < state.mouse_button_down.size(); ++button) {
-    if (state.mouse_button_down.at(button) &&
-        !previous.mouse_button_down.at(button)) {
-      return InputSource{.type = SourceType::k_mouse_button,
-          .index = static_cast<std::uint32_t>(button)};
+    if (state.mouse_button_down.at(button) && !previous.mouse_button_down.at(button)) {
+      return InputSource{
+          .type = SourceType::k_mouse_button, .index = static_cast<std::uint32_t>(button)};
     }
   }
 
@@ -134,7 +132,8 @@ void InputManager::update(const RawInputState& state) {
   // rising edge. Mask bit cleared: it stays pressed every frame while held.
   for (std::size_t index{0}; index < k_action_count; ++index) {
     const bool held{m_action_values.at(index) >= k_press_threshold};
-    m_action_pressed.at(index) = held && !(m_previous_held.at(index) && m_action_edge_mask.at(index));
+    m_action_pressed.at(index) =
+        held && !(m_previous_held.at(index) && m_action_edge_mask.at(index));
     m_previous_held.at(index) = held;
   }
 }

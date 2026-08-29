@@ -2089,8 +2089,7 @@ void AreaScriptRuntime::execute_instruction() {
           m_pause_info = AreaPauseInfo{.offset = instruction_offset,
               .opcode = opcode,
               .opcode_name = std::string{info->name},
-              .reason_text = fmt::format(
-                  "failed to start tracked camera {}: {}",
+              .reason_text = fmt::format("failed to start tracked camera {}: {}",
                   m_last_camera_request->camera_id,
                   submitted.error()),
               .nearby_bytes = nearby_bytes_hex(instruction_offset)};

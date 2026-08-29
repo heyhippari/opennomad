@@ -33,20 +33,28 @@ List registered tests with:
 ctest --test-dir build/debug --show-only
 ```
 
-## Debug-build checks
+## Sanitizer and quality checks
 
-A non-Release build runs clang-tidy during compilation when the tool is installed. Its diagnostics are errors, including
-include-cleaner, unchecked container access, and the other checks configured in `.clang-tidy`.
-
-On non-Windows platforms, non-Release targets are also built with AddressSanitizer. Some environments cannot run
-LeakSanitizer under a debugger or ptrace-based harness even after every assertion passes. If that infrastructure issue
-is the only failure, this command can confirm the test result without leak detection:
+The normal Debug configuration has no implicit sanitizers or static analysis. Use `debug-sanitized` to run the suite
+with AddressSanitizer and UndefinedBehaviorSanitizer:
 
 ```shell
-ASAN_OPTIONS=detect_leaks=0 ctest --test-dir build/debug -R '^Model3DOTest$' --output-on-failure
+cmake --preset debug-sanitized
+cmake --build --preset debug-sanitized
+ctest --preset sanitized
+```
+
+Some environments cannot run LeakSanitizer under a debugger or ptrace-based harness even after every assertion passes.
+If that infrastructure issue is the only failure, this command can confirm the test result without leak detection:
+
+```shell
+ASAN_OPTIONS=detect_leaks=0 ctest --preset sanitized -R '^Model3DOTest$'
 ```
 
 Disabling leak detection is a diagnostic workaround, not a clean LeakSanitizer result, and should be reported as such.
+
+The `quality` preset runs clang-tidy major version `20`; diagnostics are errors, including include-cleaner and the
+checks configured in `.clang-tidy`. It also provides `format` and non-mutating `check-format` targets.
 
 ## Add a test
 

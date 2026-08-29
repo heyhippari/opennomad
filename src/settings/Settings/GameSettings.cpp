@@ -428,8 +428,10 @@ bool GameSettings::set_choice_raw_value(
   return true;
 }
 
-bool GameSettings::set_runtime_control_binding(
-    const RuntimeControlDevice device, const std::size_t group, const std::size_t slot, const std::uint32_t value) {
+bool GameSettings::set_runtime_control_binding(const RuntimeControlDevice device,
+    const std::size_t group,
+    const std::size_t slot,
+    const std::uint32_t value) {
   if (!m_runtime_control_bindings.set_value(device, group, slot, value)) {
     return false;
   }

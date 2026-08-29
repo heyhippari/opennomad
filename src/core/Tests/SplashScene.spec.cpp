@@ -1,8 +1,8 @@
+#include "Core/SplashScene.hpp"
+
 #include <doctest/doctest.h>
 
 #include <array>
-
-#include "Core/SplashScene.hpp"
 
 // NOLINTBEGIN(misc-use-anonymous-namespace, cppcoreguidelines-avoid-do-while, cert-err33-c)
 

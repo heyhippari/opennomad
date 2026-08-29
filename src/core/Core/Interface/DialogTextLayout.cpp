@@ -74,10 +74,11 @@ DialogTextLayout format_dialog_text(const std::string_view text,
   std::size_t segment_begin{0};
   while (segment_begin <= text.size()) {
     const std::size_t newline{text.find('\n', segment_begin)};
-    const std::size_t segment_end{
-        newline == std::string_view::npos ? text.size() : newline};
-    append_wrapped_segment(
-        text.substr(segment_begin, segment_end - segment_begin), maximum_width, measure, result.lines);
+    const std::size_t segment_end{newline == std::string_view::npos ? text.size() : newline};
+    append_wrapped_segment(text.substr(segment_begin, segment_end - segment_begin),
+        maximum_width,
+        measure,
+        result.lines);
     if (newline == std::string_view::npos) {
       break;
     }
@@ -87,8 +88,7 @@ DialogTextLayout format_dialog_text(const std::string_view text,
   return result;
 }
 
-DialogResponseBlockLayout layout_dialog_responses(
-    const std::span<const float> response_heights) {
+DialogResponseBlockLayout layout_dialog_responses(const std::span<const float> response_heights) {
   DialogResponseBlockLayout result;
   for (const float height : response_heights) {
     result.total_height += height;
@@ -104,9 +104,8 @@ DialogResponseBlockLayout layout_dialog_responses(
 }
 
 std::array<float, 4> dialog_main_tint(const Dialog::DialogState state) {
-  return state == Dialog::DialogState::k_presenting_automatic_player_line
-      ? k_dialog_automatic_tint
-      : k_dialog_white;
+  return state == Dialog::DialogState::k_presenting_automatic_player_line ? k_dialog_automatic_tint
+                                                                          : k_dialog_white;
 }
 
 std::array<float, 4> dialog_response_tint(const bool selected) {
@@ -134,10 +133,10 @@ void DialogScrollState::reset() {
 void DialogScrollState::update(
     const float delta_seconds, const bool up_held, const bool down_held) {
   const float direction{static_cast<float>(down_held) - static_cast<float>(up_held)};
-  m_offset = std::clamp(m_offset + (direction * k_dialog_scroll_speed *
-                                       std::max(0.0F, delta_seconds)),
-      0.0F,
-      m_maximum);
+  m_offset =
+      std::clamp(m_offset + (direction * k_dialog_scroll_speed * std::max(0.0F, delta_seconds)),
+          0.0F,
+          m_maximum);
 }
 
 void DialogScrollState::set_maximum(const float maximum) {

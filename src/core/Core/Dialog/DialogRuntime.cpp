@@ -187,7 +187,7 @@ DialogCameraPair DialogRuntime::resolve_cameras(
 }
 
 std::optional<std::string> DialogRuntime::face_motion_base_for_node(
-   const std::int16_t node_id) const {
+    const std::int16_t node_id) const {
   if (!m_record.has_value()) {
     return std::nullopt;
   }

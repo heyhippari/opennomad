@@ -24,8 +24,8 @@ AudioListenerState listener_at(const Vec3 position) {
   return listener;
 }
 
-SoundEmitterState emitter_at(const Vec3 position, const float min_distance = 1.0F,
-    const float max_distance = 10.0F) {
+SoundEmitterState emitter_at(
+    const Vec3 position, const float min_distance = 1.0F, const float max_distance = 10.0F) {
   SoundEmitterState emitter;
   emitter.position = position;
   emitter.minimum_distance = min_distance;
@@ -107,8 +107,8 @@ TEST_SUITE("Core::Audio::LegacySpatializer") {
 
   TEST_CASE("Doppler ratio is clamped to the SDL3_mixer range") {
     CHECK_GE(App::Audio::doppler_frequency_ratio(0.0F, 5000.0F), App::Audio::k_min_frequency_ratio);
-    CHECK_LE(App::Audio::doppler_frequency_ratio(0.0F, -5000.0F),
-        App::Audio::k_max_frequency_ratio);
+    CHECK_LE(
+        App::Audio::doppler_frequency_ratio(0.0F, -5000.0F), App::Audio::k_max_frequency_ratio);
   }
 
   TEST_CASE("Spatialize returns centred full-gain ratio-1 for coincident positions") {
@@ -124,8 +124,7 @@ TEST_SUITE("Core::Audio::LegacySpatializer") {
   TEST_CASE("Spatialize ratio is 1 for a zero/paused delta") {
     const AudioListenerState listener{listener_at(Vec3{0.0F, 0.0F, 0.0F})};
     const SoundEmitterState emitter{emitter_at(Vec3{5.0F, 0.0F, 0.0F})};
-    const App::Audio::SpatialResult result{
-        App::Audio::spatialize(listener, emitter, -1.0F, 0.0F)};
+    const App::Audio::SpatialResult result{App::Audio::spatialize(listener, emitter, -1.0F, 0.0F)};
     CHECK_EQ(result.frequency_ratio, doctest::Approx(1.0F));
   }
 }

@@ -303,8 +303,7 @@ TEST_SUITE("Core::Scenario::ScenarioManager") {
         manager.world_presentation().reset_generation()};
     REQUIRE(manager.reset_for_new_session().has_value());
     CHECK_FALSE(manager.dialog_runtime().active());
-    CHECK_EQ(manager.world_presentation().reset_generation(),
-        presentation_reset_generation + 1U);
+    CHECK_EQ(manager.world_presentation().reset_generation(), presentation_reset_generation + 1U);
   }
 
   TEST_CASE("Dialog camera pairs retain participants, state mapping, and 160-unit timing") {

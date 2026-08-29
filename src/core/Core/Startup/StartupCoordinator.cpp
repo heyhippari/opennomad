@@ -26,8 +26,7 @@ std::expected<void, std::string> failure(std::string message) {
 
 }  // namespace
 
-StartupCoordinator::StartupCoordinator(StartupTraceRecorder& recorder)
-    : m_recorder(recorder) {}
+StartupCoordinator::StartupCoordinator(StartupTraceRecorder& recorder) : m_recorder(recorder) {}
 
 std::optional<std::size_t> StartupCoordinator::phase_index(const StartupPhase phase) {
   const PhaseList phases{ordered_phases()};

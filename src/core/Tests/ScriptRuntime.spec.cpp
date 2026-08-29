@@ -161,7 +161,7 @@ class FakeWorld final : public App::Script::ScriptWorld {
   }
   std::expected<void, std::string> select_camera(const std::string_view camera_name) override {
     selected_cameras.emplace_back(camera_name);
-   if (fail_camera) {
+    if (fail_camera) {
       return std::expected<void, std::string>{std::unexpect, "no camera"};
     }
     return {};
@@ -290,8 +290,7 @@ App::Omikron::ScxScript select_camera_script() {
 }
 
 App::Omikron::ScxScript interpolate_cameras_script() {
-  App::Omikron::ScxScript script{
-      single_root_script(command(K_INTERPOLATE_CAMERAS, 0, 4))};
+  App::Omikron::ScxScript script{single_root_script(command(K_INTERPOLATE_CAMERAS, 0, 4))};
   script.binding_table_b.entries.push_back(App::Omikron::ScxBindingEntry{.name = "CAM_A"});
   script.binding_table_b.entries.push_back(App::Omikron::ScxBindingEntry{.name = "CAM_B"});
   return script;
@@ -371,8 +370,8 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
     CHECK(App::Script::opcode_info(K_SELECT_CAMERA)->support ==
           App::Script::OpcodeSupport::k_supported);
     REQUIRE_NE(App::Script::opcode_info(K_INTERPOLATE_CAMERAS), nullptr);
-    CHECK_EQ(std::string{App::Script::opcode_name(K_INTERPOLATE_CAMERAS)},
-        "Script_InterpolateCameras");
+    CHECK_EQ(
+        std::string{App::Script::opcode_name(K_INTERPOLATE_CAMERAS)}, "Script_InterpolateCameras");
     CHECK(App::Script::opcode_info(K_INTERPOLATE_CAMERAS)->support ==
           App::Script::OpcodeSupport::k_supported);
     REQUIRE_NE(App::Script::opcode_info(K_SELECT_BODY_ANIMATION), nullptr);

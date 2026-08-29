@@ -406,7 +406,8 @@ std::expected<void, std::string> ScenarioRuntime::initialize(const Omikron::ScxD
       for (std::size_t animation_index{0}; animation_index < m_scx.animations.size();
           ++animation_index) {
         if (static_cast<std::uint16_t>(m_scx.animations.at(animation_index).animation_id) ==
-                record.animation_lookup_id() && !m_cin_sfx_bindings.at(animation_index).has_value()) {
+                record.animation_lookup_id() &&
+            !m_cin_sfx_bindings.at(animation_index).has_value()) {
           m_cin_sfx_bindings.at(animation_index) = record_index;
         }
       }
@@ -660,16 +661,17 @@ std::optional<Runtime::Transform> ScenarioRuntime::resolve_sfx_character_anchor(
 
 std::expected<void, std::string> ScenarioRuntime::play_sfx_sound(
     const std::int32_t authored_h_id, const Runtime::Vec3 position) {
-  if (authored_h_id < 0 || std::cmp_greater(authored_h_id, std::numeric_limits<std::uint16_t>::max()) ||
+  if (authored_h_id < 0 ||
+      std::cmp_greater(authored_h_id, std::numeric_limits<std::uint16_t>::max()) ||
       authored_h_id == 0x0000FFFF) {
-    return std::expected<void, std::string>{std::unexpect,
-        fmt::format("invalid SFX sound hID {}", authored_h_id)};
+    return std::expected<void, std::string>{
+        std::unexpect, fmt::format("invalid SFX sound hID {}", authored_h_id)};
   }
   const std::uint16_t h_id{static_cast<std::uint16_t>(authored_h_id)};
   const auto sound{std::ranges::find(m_scx.sounds, h_id, &Omikron::ScxSoundRecord::h_id)};
   if (sound == m_scx.sounds.end()) {
-    return std::expected<void, std::string>{std::unexpect,
-        fmt::format("scenario '{}' has no sound hID {}", m_scenario_name, h_id)};
+    return std::expected<void, std::string>{
+        std::unexpect, fmt::format("scenario '{}' has no sound hID {}", m_scenario_name, h_id)};
   }
   const std::size_t index{static_cast<std::size_t>(std::distance(m_scx.sounds.begin(), sound))};
   auto descriptor{resolve_sound(static_cast<std::uint32_t>(index))};
@@ -690,7 +692,7 @@ std::expected<void, std::string> ScenarioRuntime::play_sfx_sound(
           .source_script_index = std::nullopt,
           .script_instance_id = std::nullopt,
           .function_id = std::nullopt},
-        .raw_flags = 0U};
+      .raw_flags = 0U};
   auto played{play_sound(request)};
   if (!played) {
     return std::expected<void, std::string>{std::unexpect, played.error()};
@@ -981,23 +983,20 @@ void ScenarioRuntime::service_cin_sfx(
     return;
   }
   const std::size_t record_index{m_cin_sfx_bindings.at(animation_index).value_or(0U)};
-  const Omikron::SfxCinAnimationRecord& record{
-      m_sfx_data.value().records_b.at(record_index)};
+  const Omikron::SfxCinAnimationRecord& record{m_sfx_data.value().records_b.at(record_index)};
   const float elapsed{character.body_animation.previous_progress};
   const auto emit_channel = [this, &character, elapsed](const bool enabled,
-                                   const std::int32_t definition_id,
-                                   const float start,
-                                   const float end,
-                                   const std::int32_t object_reference) {
+                                const std::int32_t definition_id,
+                                const float start,
+                                const float end,
+                                const std::int32_t object_reference) {
     if (!enabled || elapsed < start || elapsed > end) {
       return;
     }
-    const std::uint32_t script_id{object_reference > 0
-                                      ? static_cast<std::uint32_t>(object_reference - 1)
-                                      : 0U};
-    const auto mesh{std::ranges::find(character.model_resource->model.meshes,
-        script_id,
-        &Omikron::MeshDescriptor::script_id)};
+    const std::uint32_t script_id{
+        object_reference > 0 ? static_cast<std::uint32_t>(object_reference - 1) : 0U};
+    const auto mesh{std::ranges::find(
+        character.model_resource->model.meshes, script_id, &Omikron::MeshDescriptor::script_id)};
     if (mesh == character.model_resource->model.meshes.end()) {
       App::Log::warn(LogCategory::Scenario,
           "Cin-SFX object reference {} not found in character {}",
@@ -1005,14 +1004,14 @@ void ScenarioRuntime::service_cin_sfx(
           character.character_id);
       return;
     }
-    const std::size_t mesh_index{
-        static_cast<std::size_t>(std::distance(character.model_resource->model.meshes.begin(), mesh))};
+    const std::size_t mesh_index{static_cast<std::size_t>(
+        std::distance(character.model_resource->model.meshes.begin(), mesh))};
     if (mesh_index >= character.runtime_objects.size()) {
       return;
     }
     const Runtime::Vec3 local_position{character.runtime_objects.at(mesh_index).world_translation};
-    const Runtime::Vec3 rotated{Runtime::transform_vector(local_position,
-        character.principal_orientation())};
+    const Runtime::Vec3 rotated{
+        Runtime::transform_vector(local_position, character.principal_orientation())};
     m_sfx_runtime->emit_definition(definition_id,
         Runtime::Vec3{.x = character.transform.translation.x + rotated.x,
             .y = character.transform.translation.y + rotated.y,
@@ -1194,8 +1193,8 @@ void ScenarioRuntime::reset_body_animation(const std::int16_t character_id) {
   m_character_runtime.reset_pose(character_id);
 }
 
-void ScenarioRuntime::play_ctl_sound_marker(const std::uint16_t sound_hid,
-    const Runtime::Vec3 position) {
+void ScenarioRuntime::play_ctl_sound_marker(
+    const std::uint16_t sound_hid, const Runtime::Vec3 position) {
   const auto sound{std::ranges::find(m_scx.sounds, sound_hid, &Omikron::ScxSoundRecord::h_id)};
   if (sound == m_scx.sounds.end()) {
     App::Log::warn(LogCategory::Scenario,
@@ -1234,14 +1233,15 @@ void ScenarioRuntime::play_ctl_sound_marker(const std::uint16_t sound_hid,
   }
 }
 
-std::expected<void, std::string> ScenarioRuntime::select_camera(const std::string_view camera_name) {
-  const auto camera{std::ranges::find_if(m_decor_cameras,
-      [camera_name](const Omikron::CameraRecord& candidate) {
+std::expected<void, std::string> ScenarioRuntime::select_camera(
+    const std::string_view camera_name) {
+  const auto camera{
+      std::ranges::find_if(m_decor_cameras, [camera_name](const Omikron::CameraRecord& candidate) {
         return candidate.name == camera_name;
       })};
   if (camera == m_decor_cameras.end()) {
-    return std::expected<void, std::string>{std::unexpect,
-        fmt::format("can't find 3DO camera '{}' in current scene", camera_name)};
+    return std::expected<void, std::string>{
+        std::unexpect, fmt::format("can't find 3DO camera '{}' in current scene", camera_name)};
   }
 
   m_selected_decor_camera_index =
@@ -1257,8 +1257,9 @@ std::expected<void, std::string> ScenarioRuntime::select_camera(const std::strin
 std::expected<void, std::string> ScenarioRuntime::interpolate_cameras(
     const Script::CameraInterpolationRequest& request) {
   const auto find_camera = [this](const std::string_view name) {
-    return std::ranges::find_if(m_decor_cameras,
-        [name](const Omikron::CameraRecord& candidate) { return candidate.name == name; });
+    return std::ranges::find_if(m_decor_cameras, [name](const Omikron::CameraRecord& candidate) {
+      return candidate.name == name;
+    });
   };
   auto camera_a{find_camera(request.camera_a)};
   auto camera_b{find_camera(request.camera_b)};

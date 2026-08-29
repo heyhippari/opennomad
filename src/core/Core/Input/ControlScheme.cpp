@@ -17,22 +17,33 @@
 namespace App::Input {
 
 ControlScheme::ControlScheme(std::string name, const Device device)
-    : m_name(std::move(name)), m_device(device) {}
+    : m_name(std::move(name)),
+      m_device(device) {}
 
 ControlScheme& ControlScheme::add_binding(Binding binding) {
   m_bindings.push_back(binding);
   return *this;
 }
 
-void ControlScheme::set_enabled(const bool enabled) { m_enabled = enabled; }
+void ControlScheme::set_enabled(const bool enabled) {
+  m_enabled = enabled;
+}
 
-bool ControlScheme::is_enabled() const { return m_enabled; }
+bool ControlScheme::is_enabled() const {
+  return m_enabled;
+}
 
-const std::string& ControlScheme::name() const { return m_name; }
+const std::string& ControlScheme::name() const {
+  return m_name;
+}
 
-Device ControlScheme::device() const { return m_device; }
+Device ControlScheme::device() const {
+  return m_device;
+}
 
-const std::vector<Binding>& ControlScheme::bindings() const { return m_bindings; }
+const std::vector<Binding>& ControlScheme::bindings() const {
+  return m_bindings;
+}
 
 ControlScheme ControlScheme::make_keyboard_mouse_default() {
   using App::Input::MouseAxis;
@@ -132,8 +143,8 @@ ControlScheme ControlScheme::make_keyboard_mouse_default() {
       SDL_SCANCODE_TAB,
   };
   for (std::size_t slot{0}; slot < ctl_slot_keys.size(); ++slot) {
-    scheme.add_binding({.action = static_cast<Action>(std::to_underlying(Action::k_ctl_slot_0) +
-                                                     static_cast<int>(slot)),
+    scheme.add_binding({.action = static_cast<Action>(
+                            std::to_underlying(Action::k_ctl_slot_0) + static_cast<int>(slot)),
         .source = InputSource{.type = SourceType::k_key,
             .index = static_cast<std::uint32_t>(ctl_slot_keys.at(slot))},
         .scale = 1.0F});

@@ -109,10 +109,11 @@ std::expected<CtlController, std::string> CtlController::create(
   const Omikron::CtlMove* const default_move{controller.m_bank->default_move()};
   if (default_move == nullptr) {
     return std::expected<CtlController, std::string>{std::unexpect,
-        fmt::format("CTL control set '{}' has no default move (flags & 1)",
-            controller.m_resource_name)};
+        fmt::format(
+            "CTL control set '{}' has no default move (flags & 1)", controller.m_resource_name)};
   }
-  const Omikron::CtlState* const default_state{Omikron::CtlControlSet::default_state(*default_move)};
+  const Omikron::CtlState* const default_state{
+      Omikron::CtlControlSet::default_state(*default_move)};
   if (default_state == nullptr) {
     return std::expected<CtlController, std::string>{std::unexpect,
         fmt::format("CTL control set '{}' default move {} has no default state (flags & 0x20)",
@@ -124,9 +125,10 @@ std::expected<CtlController, std::string> CtlController::create(
   return controller;
 }
 
-CtlController::CtlController(std::shared_ptr<const Omikron::CtlControlSet> bank,
-    std::string resource_name)
-    : m_bank{std::move(bank)}, m_resource_name{std::move(resource_name)} {
+CtlController::CtlController(
+    std::shared_ptr<const Omikron::CtlControlSet> bank, std::string resource_name)
+    : m_bank{std::move(bank)},
+      m_resource_name{std::move(resource_name)} {
   reset_input_history();
 }
 
@@ -202,33 +204,30 @@ const Omikron::CtlState* CtlController::evaluate_transition(const std::uint32_t 
     return nullptr;
   }
 
-  const auto candidate_matches =
-      [current_input, previous_progress, current_progress, &query](
-          const Omikron::CtlState& candidate) {
-        if (query.required_flags_a != -1 &&
-            (candidate.flags & static_cast<std::uint32_t>(query.required_flags_a)) == 0U) {
-          return false;
-        }
-        if (query.required_flags_b != -1 &&
-            (candidate.flags & static_cast<std::uint32_t>(query.required_flags_b)) == 0U) {
-          return false;
-        }
-        if ((candidate.flags & K_STATE_EXACT_INPUT_FLAG) != 0U) {
-          if (candidate.input_condition != current_input) {
-            return false;
-          }
-        } else if (!ctl_condition_matches(candidate.input_condition, current_input)) {
-          return false;
-        }
-        if (query.check_timing &&
-            !ctl_timing_matches(previous_progress,
-                current_progress,
-                candidate.window_start,
-                candidate.window_end)) {
-          return false;
-        }
-        return true;
-      };
+  const auto candidate_matches = [current_input, previous_progress, current_progress, &query](
+                                     const Omikron::CtlState& candidate) {
+    if (query.required_flags_a != -1 &&
+        (candidate.flags & static_cast<std::uint32_t>(query.required_flags_a)) == 0U) {
+      return false;
+    }
+    if (query.required_flags_b != -1 &&
+        (candidate.flags & static_cast<std::uint32_t>(query.required_flags_b)) == 0U) {
+      return false;
+    }
+    if ((candidate.flags & K_STATE_EXACT_INPUT_FLAG) != 0U) {
+      if (candidate.input_condition != current_input) {
+        return false;
+      }
+    } else if (!ctl_condition_matches(candidate.input_condition, current_input)) {
+      return false;
+    }
+    if (query.check_timing &&
+        !ctl_timing_matches(
+            previous_progress, current_progress, candidate.window_start, candidate.window_end)) {
+      return false;
+    }
+    return true;
+  };
 
   const auto select = [this, &candidate_matches](
                           const std::vector<const Omikron::CtlState*>& candidates,
@@ -305,9 +304,8 @@ const Omikron::CtlState* CtlController::evaluate_transition(const std::uint32_t 
   return nullptr;
 }
 
-void CtlController::service(const float delta_seconds,
-    const std::uint32_t profile_input,
-    RuntimeCharacter& character) {
+void CtlController::service(
+    const float delta_seconds, const std::uint32_t profile_input, RuntimeCharacter& character) {
   m_sound_events.clear();
   if (!m_motion_anchor_initialized) {
     m_candidate_translation = character.transform.translation;
@@ -422,11 +420,11 @@ void CtlController::tick_once(const std::uint32_t profile_input, RuntimeCharacte
       if (root_pose.channel_index.has_value()) {
         const Omikron::Animation3DAChannel& root_channel{
             m_animation->channels.at(root_pose.channel_index.value())};
-        if (const std::optional<App::Runtime::Vec3> local_delta{root_channel.integrate_translation(
-                m_previous_progress, m_current_progress)};
+        if (const std::optional<App::Runtime::Vec3> local_delta{
+                root_channel.integrate_translation(m_previous_progress, m_current_progress)};
             local_delta.has_value()) {
-          const App::Runtime::Vec3 world_delta{
-              App::Runtime::transform_vector(local_delta.value(), character.live_root_orientation())};
+          const App::Runtime::Vec3 world_delta{App::Runtime::transform_vector(
+              local_delta.value(), character.live_root_orientation())};
           m_candidate_translation.x += world_delta.x;
           m_candidate_translation.y += world_delta.y;
           m_candidate_translation.z += world_delta.z;
@@ -466,9 +464,8 @@ void CtlController::tick_once(const std::uint32_t profile_input, RuntimeCharacte
   }
 }
 
-void CtlController::activate_state(const Omikron::CtlState& state,
-    const float phase,
-    RuntimeCharacter* const character) {
+void CtlController::activate_state(
+    const Omikron::CtlState& state, const float phase, RuntimeCharacter* const character) {
   if (m_current_state == &state) {
     ++m_same_state_restart_count;
   } else {
@@ -600,7 +597,8 @@ std::expected<void, std::string> CtlController::apply_animation_pose(
       continue;
     }
     const Omikron::Animation3DAChannel& channel{animation.channels.at(pose.channel_index.value())};
-    if (const std::optional<App::Runtime::Quaternion> rotation{channel.sample_rotation(clamped_phase)};
+    if (const std::optional<App::Runtime::Quaternion> rotation{
+            channel.sample_rotation(clamped_phase)};
         rotation.has_value()) {
       pose.current_quaternion = rotation.value();
       character.runtime_objects.at(object_index).animation_matrix =
@@ -613,8 +611,8 @@ std::expected<void, std::string> CtlController::apply_animation_pose(
       !resolved) {
     return std::expected<void, std::string>{std::unexpect, std::move(resolved).error()};
   }
-  auto groups{Omikron::Model3DO::build_posed_geometry(
-      model, std::span<const Omikron::Model3DOData::RuntimeObjectState>{character.runtime_objects})};
+  auto groups{Omikron::Model3DO::build_posed_geometry(model,
+      std::span<const Omikron::Model3DOData::RuntimeObjectState>{character.runtime_objects})};
   if (!groups) {
     return std::expected<void, std::string>{std::unexpect, std::move(groups).error()};
   }
@@ -624,9 +622,8 @@ std::expected<void, std::string> CtlController::apply_animation_pose(
   return {};
 }
 
-void CtlController::service_audio_markers(const Omikron::CtlState& state,
-    const float previous,
-    const float current) {
+void CtlController::service_audio_markers(
+    const Omikron::CtlState& state, const float previous, const float current) {
   if ((state.animation_mode & K_ANIMATION_MODE_MARKERS) == 0U) {
     return;
   }

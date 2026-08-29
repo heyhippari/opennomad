@@ -205,8 +205,8 @@ class VideoPlayer::Impl {
     spec.format = SDL_AUDIO_F32;
     spec.channels = K_OUTPUT_CHANNELS;
     spec.freq = m_output_sample_rate;
-    m_audio_stream = SDL_OpenAudioDeviceStream(
-        SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr);
+    m_audio_stream =
+        SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr);
     if (m_audio_stream != nullptr) {
       SDL_ResumeAudioDevice(SDL_GetAudioStreamDevice(m_audio_stream));
     }

@@ -305,14 +305,14 @@ void install_stub_ctl_loader(App::ScenarioRuntime& runtime) {
 /// toggles the controller off and ends.
 std::vector<std::byte> make_zone_contact_area_archive(const bool starts_dialog = false,
     const bool self_disables = true,
-  const bool enable_controller = true,
-  const std::int16_t zone_id = 3795,
-  const bool controller_off_before_wait = false,
-  const bool place_before_activation = false,
-  const std::uint32_t initial_xz = 50U,
-  const std::int16_t orientation_center_units = 4090,
-  const std::int16_t orientation_span_units = 0,
-  const bool launch_fire_and_forget = false) {
+    const bool enable_controller = true,
+    const std::int16_t zone_id = 3795,
+    const bool controller_off_before_wait = false,
+    const bool place_before_activation = false,
+    const std::uint32_t initial_xz = 50U,
+    const std::int16_t orientation_center_units = 4090,
+    const std::int16_t orientation_span_units = 0,
+    const bool launch_fire_and_forget = false) {
   Buffer top_level;
   top_level.u8(0x38).u16(136);
   if (launch_fire_and_forget) {
@@ -389,15 +389,13 @@ std::vector<std::byte> make_zone_contact_area_archive(const bool starts_dialog =
           k_vertices.at(index).at(coordinate));
     }
   }
-    write_u16(data,
+  write_u16(data,
       k_record_offset + k_table2_offset + 0x3CU,
       static_cast<std::uint16_t>(orientation_center_units));
-    write_u16(data,
+  write_u16(data,
       k_record_offset + k_table2_offset + 0x3EU,
       static_cast<std::uint16_t>(orientation_span_units));
-  write_u16(data,
-      k_record_offset + k_table2_offset + 0x40U,
-      static_cast<std::uint16_t>(zone_id));
+  write_u16(data, k_record_offset + k_table2_offset + 0x40U, static_cast<std::uint16_t>(zone_id));
   write_u16(data, k_record_offset + k_table2_offset + 0x42U, 0xFFFF);
 
   write_u32(data, k_record_offset + 0x28U + (4U * 4U), k_table4_offset);
@@ -430,7 +428,7 @@ std::vector<std::byte> make_zone_contact_area_archive(const bool starts_dialog =
   std::memcpy(data.data() + k_record_offset + zone_event_offset,
       zone_event.data().data(),
       zone_event.data().size());
-    std::memcpy(data.data() + k_record_offset + departure_event_offset,
+  std::memcpy(data.data() + k_record_offset + departure_event_offset,
       departure_event.data().data(),
       departure_event.data().size());
   return data;
@@ -665,7 +663,7 @@ std::vector<std::byte> make_kayl_arrives_scx(const std::uint16_t script_id = 1) 
   descriptor.u32(0).u32(0);                  // field34 and runtime field38.
   descriptor.zeros(3U * 4U).zeros(3U * 4U);  // Binding-table header fields.
   descriptor.u32(0).u32(0).zeros(8);         // Related/runtime placeholders and tail.
-  descriptor.u32(2).f32(0.0F).f32(0.0F);    // Wait duration and elapsed time.
+  descriptor.u32(2).f32(0.0F).f32(0.0F);     // Wait duration and elapsed time.
   descriptor.u8(0);                          // No related script.
   descriptor.u32(0x06000017U).u32(2).u32(0).u32(0xFFFFFFFFU).u32(1).u32(0);
   descriptor.u32(0).u32(0);  // Empty binding tables A and B.
@@ -897,31 +895,30 @@ void write_boot_fixtures(const TempDirectory& temp) {
 }
 
 void write_zone_contact_fixtures(const TempDirectory& temp,
-  const bool enable_controller = true,
-  const std::int16_t zone_id = 3795,
-  const bool controller_off_before_wait = false,
-  const bool place_before_activation = false,
-  const std::uint32_t initial_xz = 50U,
-  const std::int16_t orientation_center_units = 4090,
-  const std::int16_t orientation_span_units = 0,
-  const bool launch_fire_and_forget = false) {
+    const bool enable_controller = true,
+    const std::int16_t zone_id = 3795,
+    const bool controller_off_before_wait = false,
+    const bool place_before_activation = false,
+    const std::uint32_t initial_xz = 50U,
+    const std::int16_t orientation_center_units = 4090,
+    const std::int16_t orientation_span_units = 0,
+    const bool launch_fire_and_forget = false) {
   write_bytes(temp.root() / "IAM" / "START", make_start());
   write_bytes(temp.root() / "IAM" / "GLOBAL", make_camera_namespace_global(true));
-    write_bytes(temp.root() / "IAM" / "AREA",
-      make_zone_contact_area_archive(
-        false,
-        true,
-        enable_controller,
-        zone_id,
-        controller_off_before_wait,
-        place_before_activation,
-        initial_xz,
-        orientation_center_units,
+  write_bytes(temp.root() / "IAM" / "AREA",
+      make_zone_contact_area_archive(false,
+          true,
+          enable_controller,
+          zone_id,
+          controller_off_before_wait,
+          place_before_activation,
+          initial_xz,
+          orientation_center_units,
           orientation_span_units,
           launch_fire_and_forget));
   write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
-        write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX",
-        launch_fire_and_forget ? make_kayl_arrives_scx(221) : make_minimal_scx());
+  write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX",
+      launch_fire_and_forget ? make_kayl_arrives_scx(221) : make_minimal_scx());
 }
 
 void write_live_zone_contact_fixtures(const TempDirectory& temp) {
@@ -1250,7 +1247,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(controller.tick(1.0F / 30.0F).has_value());
     REQUIRE(controller.current_character_trigger_proxy().has_value());
     const App::CurrentCharacterTriggerProxy proxy{
-      controller.current_character_trigger_proxy().value()};
+        controller.current_character_trigger_proxy().value()};
     CHECK(proxy.registered);
     CHECK_EQ(proxy.owner.character_id, 136);
     CHECK_EQ(proxy.owner.world_scene_id, 0U);
@@ -1410,8 +1407,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
   TEST_CASE("fire-and-forget current-character script freezes proxy synchronization") {
     constexpr std::int16_t k_zone_id{17};
     const TempDirectory temp;
-    write_zone_contact_fixtures(
-        temp, false, k_zone_id, false, false, 50U, 4090, 0, true);
+    write_zone_contact_fixtures(temp, false, k_zone_id, false, false, 50U, 4090, 0, true);
     const ScopedGameDataRoot root{temp.root()};
 
     App::ScenarioManager manager;
@@ -1441,7 +1437,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(controller.tick(1.0F / 30.0F).has_value());
     CHECK(controller.current_character_trigger_proxy()->synchronization_suspended);
     CHECK_EQ(controller.current_character_trigger_proxy()->suspension_reason,
-      "current-character structured script active");
+        "current-character structured script active");
     CHECK_FALSE(controller.current_character_trigger_proxy()->contact_ready);
     CHECK_EQ(controller.zone_contact_count(), 0U);
   }
@@ -1742,10 +1738,10 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
 
     REQUIRE(controller.current_character_trigger_proxy().has_value());
     const App::Runtime::Vec3 frozen_position{
-      controller.current_character_trigger_proxy()->position};
+        controller.current_character_trigger_proxy()->position};
     CHECK(controller.current_character_trigger_proxy()->synchronization_suspended);
     App::Character::RuntimeCharacter* mutable_destination_character{
-      destination_runtime->character_runtime().find(57)};
+        destination_runtime->character_runtime().find(57)};
     REQUIRE(mutable_destination_character != nullptr);
     mutable_destination_character->transform.translation.x += 100.0F;
 
@@ -1763,7 +1759,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(controller.tick(1.0F / 30.0F).has_value());
     CHECK_FALSE(controller.current_character_trigger_proxy()->synchronization_suspended);
     CHECK_EQ(controller.current_character_trigger_proxy()->position.x,
-      mutable_destination_character->transform.translation.x);
+        mutable_destination_character->transform.translation.x);
   }
 
   TEST_CASE("Startup reaches the main menu through START, AREA 118 and interface 29") {

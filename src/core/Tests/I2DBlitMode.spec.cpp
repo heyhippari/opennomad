@@ -29,8 +29,7 @@ TEST_SUITE("Core::Interface::I2D blit mode") {
   }
 
   TEST_CASE("Bit 0 enables the source colour key") {
-    const auto options{resolve_bitmap_blit_options(
-        I2DBitmapElement{.runtime_blit_mode = 0x03})};
+    const auto options{resolve_bitmap_blit_options(I2DBitmapElement{.runtime_blit_mode = 0x03})};
     REQUIRE(options.source_colour_key.has_value());
     if (options.source_colour_key.has_value()) {
       const auto& key{options.source_colour_key.value()};
@@ -41,14 +40,12 @@ TEST_SUITE("Core::Interface::I2D blit mode") {
   }
 
   TEST_CASE("Bit 1 alone leaves the source colour key disabled") {
-    const auto options{resolve_bitmap_blit_options(
-        I2DBitmapElement{.runtime_blit_mode = 0x02})};
+    const auto options{resolve_bitmap_blit_options(I2DBitmapElement{.runtime_blit_mode = 0x02})};
     CHECK_FALSE(options.source_colour_key.has_value());
   }
 
   TEST_CASE("Blit mode 0 leaves the source colour key disabled") {
-    const auto options{resolve_bitmap_blit_options(
-        I2DBitmapElement{.runtime_blit_mode = 0x00})};
+    const auto options{resolve_bitmap_blit_options(I2DBitmapElement{.runtime_blit_mode = 0x00})};
     CHECK_FALSE(options.source_colour_key.has_value());
   }
 

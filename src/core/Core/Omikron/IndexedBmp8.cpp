@@ -69,8 +69,8 @@ std::expected<IndexedBmp8, std::string> IndexedBmp8Decoder::load(
   // BITMAPINFOHEADER (the only header size this loader understands).
   const std::uint32_t dib_size{reader.read_u32()};
   if (dib_size < K_BITMAPINFOHEADER_SIZE) {
-    return std::expected<IndexedBmp8, std::string>{std::unexpect,
-        fmt::format("IndexedBmp8: unsupported DIB header size {}", dib_size)};
+    return std::expected<IndexedBmp8, std::string>{
+        std::unexpect, fmt::format("IndexedBmp8: unsupported DIB header size {}", dib_size)};
   }
   const std::int32_t width{reader.read_i32()};
   const std::int32_t height{reader.read_i32()};
@@ -84,8 +84,8 @@ std::expected<IndexedBmp8, std::string> IndexedBmp8Decoder::load(
   reader.skip(4);  // colours important.
 
   if (reader.has_error()) {
-    return std::expected<IndexedBmp8, std::string>{std::unexpect,
-        fmt::format("IndexedBmp8: truncated header: {}", reader.error())};
+    return std::expected<IndexedBmp8, std::string>{
+        std::unexpect, fmt::format("IndexedBmp8: truncated header: {}", reader.error())};
   }
 
   // Larger (V4/V5) headers append fields before the palette; skip them.
@@ -98,12 +98,11 @@ std::expected<IndexedBmp8, std::string> IndexedBmp8Decoder::load(
         std::unexpect, "IndexedBmp8: non-positive width"};
   }
   if (height == 0) {
-    return std::expected<IndexedBmp8, std::string>{
-        std::unexpect, "IndexedBmp8: zero height"};
+    return std::expected<IndexedBmp8, std::string>{std::unexpect, "IndexedBmp8: zero height"};
   }
   if (planes != K_PLANES_1) {
-    return std::expected<IndexedBmp8, std::string>{std::unexpect,
-        fmt::format("IndexedBmp8: expected 1 plane, got {}", planes)};
+    return std::expected<IndexedBmp8, std::string>{
+        std::unexpect, fmt::format("IndexedBmp8: expected 1 plane, got {}", planes)};
   }
   if (bits_per_pixel != K_BITS_PER_PIXEL_8) {
     return std::expected<IndexedBmp8, std::string>{std::unexpect,
@@ -118,20 +117,19 @@ std::expected<IndexedBmp8, std::string> IndexedBmp8Decoder::load(
   // the pixel array (colours_used may legitimately be 0, meaning 256).
   const std::uint32_t palette_entries{colours_used != 0U ? colours_used : K_PALETTE_ENTRIES};
   if (palette_entries > K_PALETTE_ENTRIES) {
-    return std::expected<IndexedBmp8, std::string>{std::unexpect,
-        fmt::format("IndexedBmp8: implausible palette size {}", palette_entries)};
+    return std::expected<IndexedBmp8, std::string>{
+        std::unexpect, fmt::format("IndexedBmp8: implausible palette size {}", palette_entries)};
   }
   reader.skip(static_cast<std::size_t>(palette_entries) * K_PALETTE_ENTRY_BYTES);
 
   const std::size_t absolute_height{
       height < 0 ? static_cast<std::size_t>(-height) : static_cast<std::size_t>(height)};
-  const std::size_t row_stride{
-      ((static_cast<std::size_t>(width) + 3U) / 4U) * 4U};
+  const std::size_t row_stride{((static_cast<std::size_t>(width) + 3U) / 4U) * 4U};
 
   reader.seek(pixel_offset);
   if (reader.has_error()) {
-    return std::expected<IndexedBmp8, std::string>{std::unexpect,
-        fmt::format("IndexedBmp8: pixel data offset {} out of range", pixel_offset)};
+    return std::expected<IndexedBmp8, std::string>{
+        std::unexpect, fmt::format("IndexedBmp8: pixel data offset {} out of range", pixel_offset)};
   }
 
   std::vector<std::uint8_t> indices(static_cast<std::size_t>(width) * absolute_height);
@@ -141,17 +139,15 @@ std::expected<IndexedBmp8, std::string> IndexedBmp8Decoder::load(
     // storage (negative height) stores row 0 of the file as the top.
     const std::size_t file_row{height > 0 ? absolute_height - row - 1U : row};
     reader.seek(static_cast<std::size_t>(pixel_offset) + (file_row * row_stride));
-    const std::span<const std::byte> row_bytes{
-        reader.read_bytes(static_cast<std::size_t>(width))};
+    const std::span<const std::byte> row_bytes{reader.read_bytes(static_cast<std::size_t>(width))};
     if (reader.has_error()) {
-      return std::expected<IndexedBmp8, std::string>{std::unexpect,
-          fmt::format("IndexedBmp8: truncated pixel data: {}", reader.error())};
+      return std::expected<IndexedBmp8, std::string>{
+          std::unexpect, fmt::format("IndexedBmp8: truncated pixel data: {}", reader.error())};
     }
     copy_row(indices, static_cast<std::size_t>(width), row, row_bytes);
   }
 
-  return IndexedBmp8{
-      .width = width, .height = height, .indices = std::move(indices)};
+  return IndexedBmp8{.width = width, .height = height, .indices = std::move(indices)};
 }
 
 }  // namespace App::Omikron

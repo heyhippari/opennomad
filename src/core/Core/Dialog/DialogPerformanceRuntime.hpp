@@ -26,7 +26,7 @@ class DialogRuntime;
 namespace App::Omikron {
 class ThreeDM;
 struct Model3DOData;
-}
+}  // namespace App::Omikron
 
 namespace App::Dialog {
 
@@ -61,8 +61,9 @@ class DialogPerformanceClock {
 /// object, face and embedded voice performance.
 class DialogPerformanceRuntime {
  public:
-  using ClipLoader = std::function<std::expected<std::shared_ptr<const Omikron::ThreeDM>,
-      std::string>(std::string_view basename)>;
+  using ClipLoader =
+      std::function<std::expected<std::shared_ptr<const Omikron::ThreeDM>, std::string>(
+          std::string_view basename)>;
 
   DialogPerformanceRuntime();
   explicit DialogPerformanceRuntime(ClipLoader loader);
@@ -101,15 +102,13 @@ class DialogPerformanceRuntime {
     std::size_t next_frame{0};
   };
 
-
   [[nodiscard]] static std::expected<std::shared_ptr<const Omikron::ThreeDM>, std::string>
   load_clip(std::string_view basename);
 
   [[nodiscard]] std::expected<const PreparedClip*, std::string> prepare_clip(
       std::string_view basename);
 
-  void queue_successor_prefetches(
-      const DialogRuntime& dialog, std::string_view current_basename);
+  void queue_successor_prefetches(const DialogRuntime& dialog, std::string_view current_basename);
   void pump_prefetch();
 
   /// Natural EOF: restore the facial source vertices but retain the final

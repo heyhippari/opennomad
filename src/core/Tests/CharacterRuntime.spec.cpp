@@ -184,7 +184,8 @@ TEST_SUITE("Core::Character::Runtime") {
         static_cast<float>(App::Runtime::area_position_to_inches(-271)));
     CHECK_EQ(character->transform.translation.z,
         static_cast<float>(App::Runtime::area_position_to_inches(-816)));
-    CHECK_EQ(character->runtime_orientation_degrees, App::Runtime::area_angle_to_degrees(4084));CHECK_EQ(character->principal_orientation_degrees.x, doctest::Approx(0.0F));
+    CHECK_EQ(character->runtime_orientation_degrees, App::Runtime::area_angle_to_degrees(4084));
+    CHECK_EQ(character->principal_orientation_degrees.x, doctest::Approx(0.0F));
     CHECK_EQ(character->principal_orientation_degrees.y,
         doctest::Approx(static_cast<float>(character->runtime_orientation_degrees)));
     CHECK_EQ(character->principal_orientation_degrees.z, doctest::Approx(0.0F));
@@ -247,7 +248,8 @@ TEST_SUITE("Core::Character::Runtime") {
     REQUIRE(source.ensure_area_character(118, area, 310).has_value());
     App::Character::RuntimeCharacter* character{source.find(310)};
     REQUIRE(character != nullptr);
-    const std::shared_ptr<const App::Character::ModelResource> source_resource{character->model_resource};
+    const std::shared_ptr<const App::Character::ModelResource> source_resource{
+        character->model_resource};
     character->transform.translation = App::Runtime::Vec3{11.0F, 22.0F, 33.0F};
     character->pose_revision = 17U;
     REQUIRE(source.set_presentation_enabled(310, false).has_value());
@@ -321,9 +323,8 @@ TEST_SUITE("Core::Character::Runtime") {
     CHECK(character->area_present);
     CHECK(character->renderable());
 
-    const App::Omikron::IamAreaAddressRecord address{.serialized_position = {43922, 2592, 19656},
-        .orientation_units = 0,
-        .address_id = 654};
+    const App::Omikron::IamAreaAddressRecord address{
+        .serialized_position = {43922, 2592, 19656}, .orientation_units = 0, .address_id = 654};
     REQUIRE(runtime.place_character_at_address(57, address).has_value());
     character = runtime.find(57);
     REQUIRE(character != nullptr);
@@ -376,16 +377,15 @@ TEST_SUITE("Core::Character::Runtime") {
 
     character->runtime_objects.at(0).local_offset.x = 7.0F;
     REQUIRE(App::Omikron::Model3DO::resolve_runtime_transforms(
-                character->model_resource->model, std::span{character->runtime_objects})
-                .has_value());
+        character->model_resource->model, std::span{character->runtime_objects})
+            .has_value());
     App::Character::DialogPerformanceOverlay overlay;
     overlay.object_rotations.resize(1U);
     overlay.object_rotations.at(0) = App::Runtime::Quaternion{};
     overlay.root_object_index = 0U;
     overlay.root_translation_delta.x = 2.0F;
     overlay.face_mesh_index = 0U;
-    overlay.face_vertices = {
-        {.position = {10.0F, 0.0F, 0.0F}, .normal = {0.0F, 0.0F, 1.0F}},
+    overlay.face_vertices = {{.position = {10.0F, 0.0F, 0.0F}, .normal = {0.0F, 0.0F, 1.0F}},
         {.position = {11.0F, 0.0F, 0.0F}, .normal = {0.0F, 0.0F, 1.0F}},
         {.position = {12.0F, 0.0F, 0.0F}, .normal = {0.0F, 0.0F, 1.0F}}};
     REQUIRE(runtime.apply_dialog_performance(310, std::move(overlay)).has_value());
@@ -395,8 +395,8 @@ TEST_SUITE("Core::Character::Runtime") {
 
     character->runtime_objects.at(0).local_offset.x = 20.0F;
     REQUIRE(App::Omikron::Model3DO::resolve_runtime_transforms(
-                character->model_resource->model, std::span{character->runtime_objects})
-                .has_value());
+        character->model_resource->model, std::span{character->runtime_objects})
+            .has_value());
     runtime.clear_dialog_performance(310);
     CHECK_FALSE(character->dialog_performance.has_value());
     CHECK_EQ(character->posed_groups.at(0).vertices.at(0).position.at(0), 20.0F);

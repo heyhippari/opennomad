@@ -45,7 +45,7 @@ struct DisplayModeCatalog {
 [[nodiscard]] bool is_exclusive_resolution_supported(
     const DisplayModeCatalog& catalog, DisplayResolution resolution);
 [[nodiscard]] std::optional<DisplayResolution> select_exclusive_resolution(
-  const DisplayModeCatalog& catalog, DisplayResolution preferred);
+    const DisplayModeCatalog& catalog, DisplayResolution preferred);
 [[nodiscard]] DisplayMode toggle_display_mode(DisplayMode actual, DisplayMode preferred_fullscreen);
 /// Returns whether OpenNomad may request an absolute position for a normal top-level window.
 [[nodiscard]] bool supports_toplevel_window_positioning(std::string_view video_driver);

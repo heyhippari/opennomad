@@ -93,14 +93,12 @@ class I2DBumpEffect {
   }
 
   /// Signed 8-bit X gradient at cell (x, y), precomputed at construction.
-  [[nodiscard]] std::int8_t gradient_x(const std::size_t x,
-                                       const std::size_t y) const {
+  [[nodiscard]] std::int8_t gradient_x(const std::size_t x, const std::size_t y) const {
     return m_gradient_x.at((y * K_HEIGHT_SIZE) + x);
   }
 
   /// Signed 8-bit Y gradient at cell (x, y), precomputed at construction.
-  [[nodiscard]] std::int8_t gradient_y(const std::size_t x,
-                                       const std::size_t y) const {
+  [[nodiscard]] std::int8_t gradient_y(const std::size_t x, const std::size_t y) const {
     return m_gradient_y.at((y * K_HEIGHT_SIZE) + x);
   }
 
@@ -109,13 +107,25 @@ class I2DBumpEffect {
 
   // --- Observability accessors (recovered-math tests, no GL required) ---
 
-  [[nodiscard]] int light_x() const { return m_endpoint.light_x; }
-  [[nodiscard]] int light_y() const { return m_endpoint.light_y; }
+  [[nodiscard]] int light_x() const {
+    return m_endpoint.light_x;
+  }
+  [[nodiscard]] int light_y() const {
+    return m_endpoint.light_y;
+  }
 
-  [[nodiscard]] double phase_a() const { return m_endpoint.phase_a; }
-  [[nodiscard]] double phase_b() const { return m_endpoint.phase_b; }
-  [[nodiscard]] double phase_c() const { return m_endpoint.phase_c; }
-  [[nodiscard]] double phase_d() const { return m_endpoint.phase_d; }
+  [[nodiscard]] double phase_a() const {
+    return m_endpoint.phase_a;
+  }
+  [[nodiscard]] double phase_b() const {
+    return m_endpoint.phase_b;
+  }
+  [[nodiscard]] double phase_c() const {
+    return m_endpoint.phase_c;
+  }
+  [[nodiscard]] double phase_d() const {
+    return m_endpoint.phase_d;
+  }
 
   [[nodiscard]] std::uint8_t row_warp(const std::size_t index) const {
     return m_row_warp.at(index);
@@ -125,19 +135,17 @@ class I2DBumpEffect {
   }
 
   /// The intensity index written into the 256x256 lit map for a cell.
-  [[nodiscard]] std::uint8_t lit_intensity(const std::size_t x,
-                                           const std::size_t y) const {
+  [[nodiscard]] std::uint8_t lit_intensity(const std::size_t x, const std::size_t y) const {
     return m_lit.at((y * K_HEIGHT_SIZE) + x);
   }
 
   /// The wrapped source coordinate the final warp reads for the given output
   /// pixel (reverse table order + 8-bit wrapping).
-  [[nodiscard]] std::pair<int, int> warp_source_coordinates(const int output_x,
-                                                            const int output_y) const {
-    const int row_offset{m_row_warp.at(
-        static_cast<std::size_t>(K_ROW_WARP_SIZE - 1 - output_y))};
-    const int column_offset{m_column_warp.at(
-        static_cast<std::size_t>(K_COLUMN_WARP_SIZE - 1 - output_x))};
+  [[nodiscard]] std::pair<int, int> warp_source_coordinates(
+      const int output_x, const int output_y) const {
+    const int row_offset{m_row_warp.at(static_cast<std::size_t>(K_ROW_WARP_SIZE - 1 - output_y))};
+    const int column_offset{
+        m_column_warp.at(static_cast<std::size_t>(K_COLUMN_WARP_SIZE - 1 - output_x))};
     return {(output_x + row_offset) & 0xFF, (output_y + column_offset) & 0xFF};
   }
 
@@ -150,15 +158,13 @@ class I2DBumpEffect {
   /// The recovered row-warp offset for an arbitrary logical y coordinate
   /// (continuous extension of Runtime's 480-entry table). Used by the GPU
   /// path to build per-physical-row lookup values for widescreen viewports.
-  [[nodiscard]] static std::uint8_t row_warp_offset(double phase_a,
-      double phase_b,
-      double logical_y);
+  [[nodiscard]] static std::uint8_t row_warp_offset(
+      double phase_a, double phase_b, double logical_y);
 
   /// The recovered column-warp offset for an arbitrary logical x coordinate
   /// (continuous extension of Runtime's 640-entry table).
-  [[nodiscard]] static std::uint8_t column_warp_offset(double phase_c,
-      double phase_d,
-      double logical_x);
+  [[nodiscard]] static std::uint8_t column_warp_offset(
+      double phase_c, double phase_d, double logical_x);
 
   /// Arithmetic right shift by 5, matching x86 SAR (negative values round
   /// toward negative infinity, not toward zero).

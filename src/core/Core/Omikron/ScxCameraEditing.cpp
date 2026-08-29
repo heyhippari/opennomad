@@ -1,5 +1,7 @@
 #include "Core/Omikron/ScxCameraEditing.hpp"
 
+#include <fmt/format.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -9,8 +11,6 @@
 #include <string>
 #include <utility>
 #include <vector>
-
-#include <fmt/format.h>
 
 #include "Core/Log.hpp"
 #include "Core/LogCategory.hpp"
@@ -36,9 +36,9 @@ std::string fixed_string(const std::span<const std::byte> bytes) {
   const void* raw{bytes.data()};
   const char* begin{static_cast<const char*>(raw)};
   const void* nul{std::memchr(raw, '\0', bytes.size())};
-  const std::size_t length{
-      nul == nullptr ? bytes.size()
-                     : static_cast<std::size_t>(static_cast<const char*>(nul) - begin)};
+  const std::size_t length{nul == nullptr
+                               ? bytes.size()
+                               : static_cast<std::size_t>(static_cast<const char*>(nul) - begin)};
   return std::string{begin, length};
 }
 
@@ -78,7 +78,8 @@ std::expected<ScxCameraEditingData, std::string> ScxCameraEditing::load(
     const std::span<const std::byte> payload) {
   if (payload.size() < K_HEADER_SIZE) {
     return std::expected<ScxCameraEditingData, std::string>{std::unexpect,
-        fmt::format("DEAD000A payload too small: {} bytes, expected at least {}", payload.size(),
+        fmt::format("DEAD000A payload too small: {} bytes, expected at least {}",
+            payload.size(),
             K_HEADER_SIZE)};
   }
 
@@ -98,14 +99,15 @@ std::expected<ScxCameraEditingData, std::string> ScxCameraEditing::load(
   static_cast<void>(reader.read_u32());  // serialized editing-track-array pointer
 
   if (reader.has_error()) {
-    return std::expected<ScxCameraEditingData, std::string>{std::unexpect,
-        fmt::format("DEAD000A header read failed: {}", reader.error())};
+    return std::expected<ScxCameraEditingData, std::string>{
+        std::unexpect, fmt::format("DEAD000A header read failed: {}", reader.error())};
   }
 
   // Validate version
   if (version != ScxCameraEditingData::k_supported_version) {
     return std::expected<ScxCameraEditingData, std::string>{std::unexpect,
-        fmt::format("DEAD000A unsupported version: {}, expected {}", version,
+        fmt::format("DEAD000A unsupported version: {}, expected {}",
+            version,
             ScxCameraEditingData::k_supported_version)};
   }
 
@@ -115,12 +117,12 @@ std::expected<ScxCameraEditingData, std::string> ScxCameraEditing::load(
         fmt::format("DEAD000A camera pose array too large: {} poses", camera_pose_count)};
   }
   if (!safe_record_bounds(timed_key_count, K_KEY_STRIDE, payload.size() - K_HEADER_SIZE)) {
-    return std::expected<ScxCameraEditingData, std::string>{std::unexpect,
-        fmt::format("DEAD000A timed key array too large: {} keys", timed_key_count)};
+    return std::expected<ScxCameraEditingData, std::string>{
+        std::unexpect, fmt::format("DEAD000A timed key array too large: {} keys", timed_key_count)};
   }
   if (!safe_record_bounds(segment_count, K_SEGMENT_STRIDE, payload.size() - K_HEADER_SIZE)) {
-    return std::expected<ScxCameraEditingData, std::string>{std::unexpect,
-        fmt::format("DEAD000A segment array too large: {} segments", segment_count)};
+    return std::expected<ScxCameraEditingData, std::string>{
+        std::unexpect, fmt::format("DEAD000A segment array too large: {} segments", segment_count)};
   }
   if (!safe_record_bounds(editing_track_count, K_TRACK_STRIDE, payload.size() - K_HEADER_SIZE)) {
     return std::expected<ScxCameraEditingData, std::string>{std::unexpect,
@@ -185,8 +187,8 @@ std::expected<ScxCameraEditingData, std::string> ScxCameraEditing::load(
     segment.serialized_next_placeholder = reader.read_u32();
 
     if (reader.has_error()) {
-      return std::expected<ScxCameraEditingData, std::string>{std::unexpect,
-          fmt::format("DEAD000A segment {} read failed: {}", index, reader.error())};
+      return std::expected<ScxCameraEditingData, std::string>{
+          std::unexpect, fmt::format("DEAD000A segment {} read failed: {}", index, reader.error())};
     }
 
     data.segments.push_back(segment);
@@ -199,8 +201,8 @@ std::expected<ScxCameraEditingData, std::string> ScxCameraEditing::load(
     if (total_segment_refs > K_MAX_SAFE_COUNT ||
         static_cast<std::size_t>(segment.serialized_key_reference_count) >
             K_MAX_SAFE_COUNT - total_segment_refs) {
-      return std::expected<ScxCameraEditingData, std::string>{std::unexpect,
-          fmt::format("DEAD000A segment key references overflow")};
+      return std::expected<ScxCameraEditingData, std::string>{
+          std::unexpect, fmt::format("DEAD000A segment key references overflow")};
     }
     total_segment_refs += segment.serialized_key_reference_count;
   }
@@ -251,8 +253,8 @@ std::expected<ScxCameraEditingData, std::string> ScxCameraEditing::load(
     if (total_track_refs > K_MAX_SAFE_COUNT ||
         static_cast<std::uint32_t>(track.serialized_segment_reference_count) >
             K_MAX_SAFE_COUNT - total_track_refs) {
-      return std::expected<ScxCameraEditingData, std::string>{std::unexpect,
-          fmt::format("DEAD000A track segment references overflow")};
+      return std::expected<ScxCameraEditingData, std::string>{
+          std::unexpect, fmt::format("DEAD000A track segment references overflow")};
     }
     total_track_refs += track.serialized_segment_reference_count;
   }
@@ -278,29 +280,29 @@ std::expected<ScxCameraEditingData, std::string> ScxCameraEditing::load(
   if (auto result = validate_and_resolve_keys(data)) {
     // Success
   } else {
-    return std::expected<ScxCameraEditingData, std::string>{std::unexpect,
-        std::move(result).error()};
+    return std::expected<ScxCameraEditingData, std::string>{
+        std::unexpect, std::move(result).error()};
   }
 
   if (auto result = validate_and_resolve_segments(data)) {
     // Success
   } else {
-    return std::expected<ScxCameraEditingData, std::string>{std::unexpect,
-        std::move(result).error()};
+    return std::expected<ScxCameraEditingData, std::string>{
+        std::unexpect, std::move(result).error()};
   }
 
   if (auto result = validate_and_resolve_tracks(data)) {
     // Success
   } else {
-    return std::expected<ScxCameraEditingData, std::string>{std::unexpect,
-        std::move(result).error()};
+    return std::expected<ScxCameraEditingData, std::string>{
+        std::unexpect, std::move(result).error()};
   }
 
   if (auto result = validate_key_intervals(data)) {
     // Success
   } else {
-    return std::expected<ScxCameraEditingData, std::string>{std::unexpect,
-        std::move(result).error()};
+    return std::expected<ScxCameraEditingData, std::string>{
+        std::unexpect, std::move(result).error()};
   }
 
   App::Log::debug(LogCategory::SCX,
@@ -331,8 +333,7 @@ std::expected<void, std::string> ScxCameraEditing::validate_and_resolve_keys(
 
     if (!found) {
       return std::expected<void, std::string>{std::unexpect,
-          fmt::format("DEAD000A key {} references unknown camera ID {}", key_index,
-              key.camera_id)};
+          fmt::format("DEAD000A key {} references unknown camera ID {}", key_index, key.camera_id)};
     }
   }
 
@@ -363,8 +364,7 @@ std::expected<void, std::string> ScxCameraEditing::validate_and_resolve_segments
 
       if (!found) {
         return std::expected<void, std::string>{std::unexpect,
-            fmt::format("DEAD000A segment {} references unknown key ID {}", segment_index,
-                key_id)};
+            fmt::format("DEAD000A segment {} references unknown key ID {}", segment_index, key_id)};
       }
     }
 
@@ -384,12 +384,12 @@ std::expected<void, std::string> ScxCameraEditing::validate_and_resolve_tracks(
     resolved_indices.reserve(track.segment_indices.size());
 
     for (std::size_t ref_index{0}; ref_index < track.segment_indices.size(); ++ref_index) {
-      const std::uint32_t segment_id{static_cast<std::uint32_t>(track.segment_indices.at(ref_index))};
+      const std::uint32_t segment_id{
+          static_cast<std::uint32_t>(track.segment_indices.at(ref_index))};
 
       // Find first segment with matching ID
       bool found{false};
-      for (std::size_t segment_index{0}; segment_index < data.segments.size();
-           ++segment_index) {
+      for (std::size_t segment_index{0}; segment_index < data.segments.size(); ++segment_index) {
         if (data.segments.at(segment_index).id == segment_id) {
           resolved_indices.push_back(segment_index);
           found = true;
@@ -399,8 +399,8 @@ std::expected<void, std::string> ScxCameraEditing::validate_and_resolve_tracks(
 
       if (!found) {
         return std::expected<void, std::string>{std::unexpect,
-            fmt::format("DEAD000A track {} references unknown segment ID {}", track_index,
-                segment_id)};
+            fmt::format(
+                "DEAD000A track {} references unknown segment ID {}", track_index, segment_id)};
       }
     }
 

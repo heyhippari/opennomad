@@ -117,9 +117,19 @@ TEST_SUITE("Core::Omikron::SCXIntegration") {
     }
     for (std::size_t index{0}; index < scx->models.size(); ++index) {
       const App::Omikron::ScxModelResource& resource{scx->models.at(index)};
-      MESSAGE("model ", index, ": header ", resource.header_offset, ", core ",
-          resource.core_offset, " (", resource.core_size, " bytes), auxiliary ",
-          resource.auxiliary_offset, " (", resource.auxiliary_size, " bytes)");
+      MESSAGE("model ",
+          index,
+          ": header ",
+          resource.header_offset,
+          ", core ",
+          resource.core_offset,
+          " (",
+          resource.core_size,
+          " bytes), auxiliary ",
+          resource.auxiliary_offset,
+          " (",
+          resource.auxiliary_size,
+          " bytes)");
     }
   }
 
@@ -141,7 +151,8 @@ TEST_SUITE("Core::Omikron::SCXIntegration") {
       const App::Omikron::ScxModelResource& resource{scx->models.at(index)};
       const std::string& name{scx->sprites.at(index).name};
 
-      auto model{App::Omikron::Model3DO::load(all.subspan(resource.core_offset, resource.core_size))};
+      auto model{
+          App::Omikron::Model3DO::load(all.subspan(resource.core_offset, resource.core_size))};
       if (!model) {
         MESSAGE("Model '", name, "' failed to decode: ", model.error());
         continue;
@@ -166,8 +177,8 @@ TEST_SUITE("Core::Omikron::SCXIntegration") {
       CHECK_EQ(expected_aux.value(), resource.auxiliary_size);
 
       ++decoded_count;
-      MESSAGE("Model '", name, "' decoded: ", groups->size(), " groups, ", images->size(),
-          " textures");
+      MESSAGE(
+          "Model '", name, "' decoded: ", groups->size(), " groups, ", images->size(), " textures");
       if (name == K_SELECTED_MODEL && !groups->empty()) {
         selected_model_decoded = true;
       }
@@ -194,26 +205,53 @@ TEST_SUITE("Core::Omikron::SCXIntegration") {
     // The first script is the verified effects2_smoke2 effect; dump its
     // command chain and the argument words it addresses.
     const App::Omikron::ScxScript& first{scx->scripts.at(0)};
-    MESSAGE("script 0: '", first.name, "' id ", first.script_id, " roots ",
-        first.root_command_count, " linked ", first.linked_command_count, " repeat limit ",
+    MESSAGE("script 0: '",
+        first.name,
+        "' id ",
+        first.script_id,
+        " roots ",
+        first.root_command_count,
+        " linked ",
+        first.linked_command_count,
+        " repeat limit ",
         first.repeat_limit);
 
     for (std::size_t index{0}; index < first.root_commands.size(); ++index) {
       const App::Omikron::ScxScriptCommand& command{first.root_commands.at(index)};
-      MESSAGE("  root ", index, ": opcode ", command.opcode, " args[",
-          command.first_value_index, "..", command.first_value_index + command.value_count,
-          ") next ", command.next_linked_command_index.value_or(0xFFFFFFFFU));
+      MESSAGE("  root ",
+          index,
+          ": opcode ",
+          command.opcode,
+          " args[",
+          command.first_value_index,
+          "..",
+          command.first_value_index + command.value_count,
+          ") next ",
+          command.next_linked_command_index.value_or(0xFFFFFFFFU));
     }
     for (std::size_t index{0}; index < first.linked_commands.size(); ++index) {
       const App::Omikron::ScxScriptCommand& command{first.linked_commands.at(index)};
-      MESSAGE("  linked ", index, ": opcode ", command.opcode, " args[",
-          command.first_value_index, "..", command.first_value_index + command.value_count,
-          ") next ", command.next_linked_command_index.value_or(0xFFFFFFFFU));
+      MESSAGE("  linked ",
+          index,
+          ": opcode ",
+          command.opcode,
+          " args[",
+          command.first_value_index,
+          "..",
+          command.first_value_index + command.value_count,
+          ") next ",
+          command.next_linked_command_index.value_or(0xFFFFFFFFU));
       for (std::uint32_t arg{0}; arg < command.value_count; ++arg) {
         const App::Omikron::ScriptValue& value{
             scx->shared_values.at(command.first_value_index + arg)};
-        MESSAGE("    arg ", arg, ": raw ", value.raw, " float ", value.as_float(),
-            " unsigned ", value.as_unsigned());
+        MESSAGE("    arg ",
+            arg,
+            ": raw ",
+            value.raw,
+            " float ",
+            value.as_float(),
+            " unsigned ",
+            value.as_unsigned());
       }
     }
   }
@@ -236,19 +274,38 @@ TEST_SUITE("Core::Omikron::SCXIntegration") {
     CHECK_EQ(scx->header.magic, 0x00DEAD00U);
     CHECK_EQ(scx->header.version, 5U);
 
-    MESSAGE("Grid.SCX: header descriptor_size ", scx->header.descriptor_size,
-        " stream offset ", scx->resource_stream_offset);
-    MESSAGE("Grid.SCX: sprites ", scx->sprites.size(), " sounds ", scx->sounds.size(),
-        " waves ", scx->waves.size(), " models ", scx->models.size(), " scripts ",
-        scx->scripts.size(), " shared values ", scx->shared_values.size());
+    MESSAGE("Grid.SCX: header descriptor_size ",
+        scx->header.descriptor_size,
+        " stream offset ",
+        scx->resource_stream_offset);
+    MESSAGE("Grid.SCX: sprites ",
+        scx->sprites.size(),
+        " sounds ",
+        scx->sounds.size(),
+        " waves ",
+        scx->waves.size(),
+        " models ",
+        scx->models.size(),
+        " scripts ",
+        scx->scripts.size(),
+        " shared values ",
+        scx->shared_values.size());
 
     // The loader enforces a parallel sprite/model table, as for aventure.SCX.
     CHECK_EQ(scx->models.size(), scx->sprites.size());
 
     for (std::size_t index{0}; index < scx->scripts.size(); ++index) {
       const App::Omikron::ScxScript& script{scx->scripts.at(index)};
-      MESSAGE("Grid script ", index, ": '", script.name, "' id ", script.script_id,
-          " roots ", script.root_command_count, " linked ", script.linked_command_count);
+      MESSAGE("Grid script ",
+          index,
+          ": '",
+          script.name,
+          "' id ",
+          script.script_id,
+          " roots ",
+          script.root_command_count,
+          " linked ",
+          script.linked_command_count);
     }
   }
 }

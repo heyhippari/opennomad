@@ -98,9 +98,9 @@ std::string fixed_string(const std::span<const std::byte> bytes) {
   const void* raw{bytes.data()};
   const char* begin{static_cast<const char*>(raw)};
   const void* nul{std::memchr(raw, '\0', bytes.size())};
-  const std::size_t length{
-      nul == nullptr ? bytes.size()
-                     : static_cast<std::size_t>(static_cast<const char*>(nul) - begin)};
+  const std::size_t length{nul == nullptr
+                               ? bytes.size()
+                               : static_cast<std::size_t>(static_cast<const char*>(nul) - begin)};
   return std::string{begin, length};
 }
 
@@ -127,8 +127,8 @@ std::expected<void, std::string> require_record_bytes(BinaryReader& reader,
 std::expected<std::vector<ScxScriptCommand>, std::string> read_command_array(
     BinaryReader& reader, const std::uint32_t count) {
   if (count > K_MAX_COMMAND_COUNT) {
-    return std::expected<std::vector<ScxScriptCommand>, std::string>{std::unexpect,
-        fmt::format("script commands: implausible count {}", count)};
+    return std::expected<std::vector<ScxScriptCommand>, std::string>{
+        std::unexpect, fmt::format("script commands: implausible count {}", count)};
   }
   const std::uint64_t byte_count{static_cast<std::uint64_t>(count) * 0x18U};
   if (byte_count > reader.remaining()) {
@@ -150,8 +150,8 @@ std::expected<std::vector<ScxScriptCommand>, std::string> read_command_array(
     const std::uint32_t execution_limit{reader.read_u32()};
     const std::uint32_t execution_count{reader.read_u32()};
     if (reader.has_error()) {
-      return std::expected<std::vector<ScxScriptCommand>, std::string>{std::unexpect,
-          fmt::format("script command {}: {}", index, reader.error())};
+      return std::expected<std::vector<ScxScriptCommand>, std::string>{
+          std::unexpect, fmt::format("script command {}: {}", index, reader.error())};
     }
 
     std::optional<std::uint32_t> next;
@@ -159,9 +159,8 @@ std::expected<std::vector<ScxScriptCommand>, std::string> read_command_array(
       next = std::nullopt;
     } else if (next_command_index < 0) {
       return std::expected<std::vector<ScxScriptCommand>, std::string>{std::unexpect,
-          fmt::format("script command {}: negative next-command index {}",
-              index,
-              next_command_index)};
+          fmt::format(
+              "script command {}: negative next-command index {}", index, next_command_index)};
     } else {
       next = static_cast<std::uint32_t>(next_command_index);
     }
@@ -184,8 +183,8 @@ std::expected<ScxBindingTable, std::string> read_binding_table(BinaryReader& rea
         std::unexpect, fmt::format("binding table: {}", reader.error())};
   }
   if (count > K_MAX_BINDING_ENTRIES) {
-    return std::expected<ScxBindingTable, std::string>{std::unexpect,
-        fmt::format("binding table: implausible count {}", count)};
+    return std::expected<ScxBindingTable, std::string>{
+        std::unexpect, fmt::format("binding table: implausible count {}", count)};
   }
   const std::uint64_t slot_bytes{static_cast<std::uint64_t>(count) * 8U};
   const std::uint64_t name_bytes{static_cast<std::uint64_t>(count) * K_BINDING_NAME_SIZE};
@@ -203,8 +202,8 @@ std::expected<ScxBindingTable, std::string> read_binding_table(BinaryReader& rea
   for (std::uint32_t index{0}; index < count; ++index) {
     const std::span<const std::byte> name_bytes_span{reader.read_bytes(K_BINDING_NAME_SIZE)};
     if (reader.has_error()) {
-      return std::expected<ScxBindingTable, std::string>{std::unexpect,
-          fmt::format("binding table entry {}: {}", index, reader.error())};
+      return std::expected<ScxBindingTable, std::string>{
+          std::unexpect, fmt::format("binding table entry {}: {}", index, reader.error())};
     }
     table.entries.push_back(ScxBindingEntry{.name = fixed_string(name_bytes_span)});
   }
@@ -295,8 +294,8 @@ std::expected<void, std::string> parse_dead0002(BinaryReader& reader,
         std::unexpect, fmt::format("shared values: {}", reader.error())};
   }
   if (shared_value_count > K_MAX_VALUE_COUNT) {
-    return std::expected<void, std::string>{std::unexpect,
-        fmt::format("shared values: implausible count {}", shared_value_count)};
+    return std::expected<void, std::string>{
+        std::unexpect, fmt::format("shared values: implausible count {}", shared_value_count)};
   }
   const std::uint64_t value_bytes{static_cast<std::uint64_t>(shared_value_count) * 4U};
   if (value_bytes > reader.remaining()) {
@@ -383,14 +382,13 @@ std::expected<void, std::string> parse_dead0000(
     return std::expected<void, std::string>{
         std::unexpect, fmt::format("DEAD0000: {}", reader.error())};
   }
-  if (auto valid{require_record_bytes(reader, count, K_SECTION0_RECORD_SIZE, "DEAD0000")};
-      !valid) {
+  if (auto valid{require_record_bytes(reader, count, K_SECTION0_RECORD_SIZE, "DEAD0000")}; !valid) {
     return valid;
   }
   records.reserve(count);
   for (std::uint32_t index{0}; index < count; ++index) {
     const std::size_t file_offset{K_HEADER_SIZE + reader.tell()};
-    records.push_back(ScxSection0Record{.name = fixed_string(reader.read_bytes(K_NAME_24_SIZE)),        
+    records.push_back(ScxSection0Record{.name = fixed_string(reader.read_bytes(K_NAME_24_SIZE)),
         .runtime_paths_placeholder = reader.read_u32(),
         .serialized_subpath_count = reader.read_u32(),
         .file_offset = file_offset});
@@ -548,8 +546,8 @@ std::expected<ParsedResource<ScxWaveResource>, std::string> parse_wave_resource(
   const ScxEmbeddedResource& raw{embedded->resource};
   if (raw.payload_size < 12U || read_u32_at(data, raw.payload_offset) != K_RIFF_MAGIC ||
       read_u32_at(data, raw.payload_offset + 8U) != K_WAVE_MAGIC) {
-    return std::expected<ParsedResource<ScxWaveResource>, std::string>{std::unexpect,
-        fmt::format("{} at {:#x}: payload is not RIFF/WAVE", label, position)};
+    return std::expected<ParsedResource<ScxWaveResource>, std::string>{
+        std::unexpect, fmt::format("{} at {:#x}: payload is not RIFF/WAVE", label, position)};
   }
   return ParsedResource<ScxWaveResource>{
       .resource = ScxWaveResource{.header_offset = raw.header_offset,
@@ -563,8 +561,8 @@ std::expected<ParsedResource<ScxModelResource>, std::string> parse_model_resourc
     const std::size_t position,
     const std::string_view label) {
   if (position > data.size() || (data.size() - position) < K_MODEL_HEADER_SIZE) {
-    return std::expected<ParsedResource<ScxModelResource>, std::string>{std::unexpect,
-        fmt::format("{} at {:#x}: truncated 12-byte model header", label, position)};
+    return std::expected<ParsedResource<ScxModelResource>, std::string>{
+        std::unexpect, fmt::format("{} at {:#x}: truncated 12-byte model header", label, position)};
   }
   const std::uint32_t self_offset{read_u32_at(data, position)};
   if (self_offset != position) {
@@ -591,8 +589,8 @@ std::expected<ParsedResource<ScxModelResource>, std::string> parse_model_resourc
   }
   const std::size_t core_offset{position + K_MODEL_HEADER_SIZE};
   if (read_u32_at(data, core_offset) != K_OD3X_MAGIC) {
-    return std::expected<ParsedResource<ScxModelResource>, std::string>{std::unexpect,
-        fmt::format("{} at {:#x}: core does not begin with OD3X", label, position)};
+    return std::expected<ParsedResource<ScxModelResource>, std::string>{
+        std::unexpect, fmt::format("{} at {:#x}: core does not begin with OD3X", label, position)};
   }
   const std::uint32_t core_version{read_u32_at(data, core_offset + 4U)};
   if (core_version != K_OD3X_VERSION) {
@@ -675,9 +673,8 @@ std::expected<ScxData, std::string> SCX::load(const std::span<const std::byte> d
   }
   if (scx.header.version != k_supported_version) {
     return std::expected<ScxData, std::string>{std::unexpect,
-        fmt::format("unsupported version {}, expected {}",
-            scx.header.version,
-            k_supported_version)};
+        fmt::format(
+            "unsupported version {}, expected {}", scx.header.version, k_supported_version)};
   }
 
   const std::size_t descriptor_size{scx.header.descriptor_size};
@@ -695,8 +692,7 @@ std::expected<ScxData, std::string> SCX::load(const std::span<const std::byte> d
 
   while (true) {
     if (reader.remaining() < 4U) {
-      return std::expected<ScxData, std::string>{
-          std::unexpect, "descriptor ended before DEADFFFF"};
+      return std::expected<ScxData, std::string>{std::unexpect, "descriptor ended before DEADFFFF"};
     }
     const std::size_t tag_offset{reader.tell()};
     const std::uint32_t tag{reader.read_u32()};
@@ -736,8 +732,7 @@ std::expected<ScxData, std::string> SCX::load(const std::span<const std::byte> d
       case K_CHUNK_ANIMATIONS:
         parsed = parse_dead0001(reader, scx.animations);
         if (parsed) {
-          append_pending(
-              pending_resources, PendingResourceKind::Animation, scx.animations.size());
+          append_pending(pending_resources, PendingResourceKind::Animation, scx.animations.size());
         }
         break;
       case K_CHUNK_SCRIPTS:
@@ -752,8 +747,7 @@ std::expected<ScxData, std::string> SCX::load(const std::span<const std::byte> d
       case K_CHUNK_SPRITES:
         parsed = parse_dead0004(reader, scx.sprites);
         if (parsed) {
-          append_pending(
-              pending_resources, PendingResourceKind::SpriteModel, scx.sprites.size());
+          append_pending(pending_resources, PendingResourceKind::SpriteModel, scx.sprites.size());
         }
         break;
       case K_CHUNK_SCENES:
@@ -810,8 +804,7 @@ std::expected<ScxData, std::string> SCX::load(const std::span<const std::byte> d
       case PendingResourceKind::Section0: {
         auto parsed{parse_embedded_resource(data, position, label)};
         if (!parsed) {
-          return std::expected<ScxData, std::string>{
-              std::unexpect, std::move(parsed).error()};
+          return std::expected<ScxData, std::string>{std::unexpect, std::move(parsed).error()};
         }
         scx.section0_resources.push_back(parsed->resource);
         position = parsed->next_offset;
@@ -820,8 +813,7 @@ std::expected<ScxData, std::string> SCX::load(const std::span<const std::byte> d
       case PendingResourceKind::Animation: {
         auto parsed{parse_embedded_resource(data, position, label)};
         if (!parsed) {
-          return std::expected<ScxData, std::string>{
-              std::unexpect, std::move(parsed).error()};
+          return std::expected<ScxData, std::string>{std::unexpect, std::move(parsed).error()};
         }
         scx.animation_resources.push_back(parsed->resource);
         position = parsed->next_offset;
@@ -830,8 +822,7 @@ std::expected<ScxData, std::string> SCX::load(const std::span<const std::byte> d
       case PendingResourceKind::Sound: {
         auto parsed{parse_wave_resource(data, position, label)};
         if (!parsed) {
-          return std::expected<ScxData, std::string>{
-              std::unexpect, std::move(parsed).error()};
+          return std::expected<ScxData, std::string>{std::unexpect, std::move(parsed).error()};
         }
         scx.waves.push_back(parsed->resource);
         position = parsed->next_offset;
@@ -840,8 +831,7 @@ std::expected<ScxData, std::string> SCX::load(const std::span<const std::byte> d
       case PendingResourceKind::SpriteModel: {
         auto parsed{parse_model_resource(data, position, label)};
         if (!parsed) {
-          return std::expected<ScxData, std::string>{
-              std::unexpect, std::move(parsed).error()};
+          return std::expected<ScxData, std::string>{std::unexpect, std::move(parsed).error()};
         }
         scx.models.push_back(parsed->resource);
         position = parsed->next_offset;
@@ -850,8 +840,7 @@ std::expected<ScxData, std::string> SCX::load(const std::span<const std::byte> d
       case PendingResourceKind::Scene: {
         auto parsed{parse_embedded_resource(data, position, label)};
         if (!parsed) {
-          return std::expected<ScxData, std::string>{
-              std::unexpect, std::move(parsed).error()};
+          return std::expected<ScxData, std::string>{std::unexpect, std::move(parsed).error()};
         }
         scx.scene_resources.push_back(parsed->resource);
         position = parsed->next_offset;
@@ -860,16 +849,14 @@ std::expected<ScxData, std::string> SCX::load(const std::span<const std::byte> d
       case PendingResourceKind::Extra: {
         auto parsed{parse_embedded_resource(data, position, label)};
         if (!parsed) {
-          return std::expected<ScxData, std::string>{
-              std::unexpect, std::move(parsed).error()};
+          return std::expected<ScxData, std::string>{std::unexpect, std::move(parsed).error()};
         }
         scx.extra_block = parsed->resource;
 
         // Parse DEAD000A camera-editing timeline if present
         if (scx.extra_block.has_value()) {
-          const auto payload{data.subspan(
-              scx.extra_block->payload_offset,
-              scx.extra_block->payload_size)};
+          const auto payload{
+              data.subspan(scx.extra_block->payload_offset, scx.extra_block->payload_size)};
           auto camera_editing{ScxCameraEditing::load(payload)};
           if (!camera_editing) {
             return std::expected<ScxData, std::string>{

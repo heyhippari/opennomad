@@ -41,8 +41,7 @@ using InterfaceOpenSink =
 
 /// Caller-wired completion sink: delivered an interface completion so the
 /// scenario controller can resume a waiting AREA script.
-using InterfaceCompletionSink =
-    std::function<void(const InterfaceCompletion&)>;
+using InterfaceCompletionSink = std::function<void(const InterfaceCompletion&)>;
 
 /// Routes interface-open requests to the generic interface system and
 /// forwards completions back to the scenario controller. Pure transport: it

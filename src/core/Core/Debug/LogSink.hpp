@@ -62,8 +62,8 @@ class RingBufferSink final : public spdlog::sinks::base_sink<std::mutex> {
     this->formatter_->format(msg, formatted);
     m_buffer[m_head] = std::string(formatted.data(), formatted.size());
     m_levels[m_head] = msg.level;
-    m_categories[m_head] =
-        App::log_category_from_name(std::string_view{msg.logger_name.data(), msg.logger_name.size()});
+    m_categories[m_head] = App::log_category_from_name(
+        std::string_view{msg.logger_name.data(), msg.logger_name.size()});
     m_head = (m_head + 1) % Capacity;
     if (m_count < Capacity) {
       m_count += 1;

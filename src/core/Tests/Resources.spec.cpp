@@ -1,10 +1,10 @@
+#include "Core/Resources.hpp"
+
 #include <doctest/doctest.h>
 
 #include <filesystem>
 #include <fstream>
 #include <ios>
-
-#include "Core/Resources.hpp"
 
 // NOLINTBEGIN(misc-use-anonymous-namespace, cppcoreguidelines-avoid-do-while, cert-err33-c)
 
@@ -13,20 +13,23 @@ namespace {
 /// Scratch directory that is wiped on construction and destruction.
 class TempDirectory {
  public:
-  TempDirectory()
-      : m_root{std::filesystem::temp_directory_path() / "opennomad-resources-test"} {
+  TempDirectory() : m_root{std::filesystem::temp_directory_path() / "opennomad-resources-test"} {
     std::filesystem::remove_all(m_root);
     std::filesystem::create_directories(m_root);
   }
 
-  ~TempDirectory() { std::filesystem::remove_all(m_root); }
+  ~TempDirectory() {
+    std::filesystem::remove_all(m_root);
+  }
 
   TempDirectory(const TempDirectory&) = delete;
   TempDirectory(TempDirectory&&) = delete;
   TempDirectory& operator=(const TempDirectory&) = delete;
   TempDirectory& operator=(TempDirectory&&) = delete;
 
-  [[nodiscard]] const std::filesystem::path& root() const { return m_root; }
+  [[nodiscard]] const std::filesystem::path& root() const {
+    return m_root;
+  }
 
  private:
   std::filesystem::path m_root;
@@ -76,8 +79,8 @@ TEST_SUITE("Core::Resources") {
     const std::filesystem::path path{temp.root() / "SCPTDATA" / "Grid.SCX"};
     write_file(path);
 
-    const std::filesystem::path resolved{App::Resources::resolve_case_insensitive(
-        temp.root() / "SCPTDATA" / "GRID.SCX")};
+    const std::filesystem::path resolved{
+        App::Resources::resolve_case_insensitive(temp.root() / "SCPTDATA" / "GRID.SCX")};
     CHECK_EQ(resolved.string(), path.string());
     CHECK(std::filesystem::exists(resolved));
   }

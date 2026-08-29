@@ -2,175 +2,206 @@
   "version": 6,
   "configurePresets": [
     {
-      "name": "debug",
-      "displayName": "Debug",
+      "name": "common-base",
+      "hidden": true,
       "generator": "Ninja",
-      "binaryDir": "build/debug",
+      "binaryDir": "${sourceDir}/build/${presetName}",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_CXX_STANDARD": "23",
+        "CMAKE_CXX_EXTENSIONS": "OFF",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
         "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
-        "VCPKG_TARGET_TRIPLET": "x64-linux-dynamic-glcore",
         "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/triplets"
-      },
-      "condition": {
-        "type": "equals",
-        "lhs": "${hostSystemName}",
-        "rhs": "Linux"
       }
     },
     {
-      "name": "release",
-      "displayName": "Release",
-      "generator": "Ninja",
-      "binaryDir": "build/release",
+      "name": "linux-base",
+      "hidden": true,
+      "inherits": "common-base",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release",
-        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
-        "VCPKG_TARGET_TRIPLET": "x64-linux-dynamic-glcore",
-        "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/triplets"
+        "VCPKG_TARGET_TRIPLET": "x64-linux-dynamic-glcore"
       },
-      "condition": {
-        "type": "equals",
-        "lhs": "${hostSystemName}",
-        "rhs": "Linux"
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" }
+    },
+    {
+      "name": "macos-base",
+      "hidden": true,
+      "inherits": "common-base",
+      "cacheVariables": {
+        "CMAKE_OSX_DEPLOYMENT_TARGET": "10.15",
+        "VCPKG_TARGET_TRIPLET": "arm64-osx"
+      },
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Darwin" }
+    },
+    {
+      "name": "windows-base",
+      "hidden": true,
+      "inherits": "common-base",
+      "cacheVariables": {
+        "VCPKG_TARGET_TRIPLET": "x64-windows"
+      },
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+    },
+    {
+      "name": "linux-debug",
+      "displayName": "Linux Debug",
+      "inherits": "linux-base",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug", "OPENNOMAD_WARNINGS_AS_ERRORS": "ON" }
+    },
+    {
+      "name": "linux-release",
+      "displayName": "Linux Release",
+      "inherits": "linux-base",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "OPENNOMAD_WARNINGS_AS_ERRORS": "ON" }
+    },
+    {
+      "name": "linux-sanitize",
+      "displayName": "Linux Sanitize",
+      "inherits": "linux-debug",
+      "cacheVariables": {
+        "OPENNOMAD_ENABLE_ASAN": "ON",
+        "OPENNOMAD_ENABLE_UBSAN": "ON",
+        "OPENNOMAD_WARNINGS_AS_ERRORS": "ON"
       }
+    },
+    {
+      "name": "quality",
+      "displayName": "Quality (clang-tidy and clang-format)",
+      "inherits": "linux-debug",
+      "cacheVariables": {
+        "OPENNOMAD_ENABLE_CLANG_TIDY": "ON",
+        "OPENNOMAD_ENABLE_FORMAT_TARGETS": "ON",
+        "OPENNOMAD_WARNINGS_AS_ERRORS": "ON"
+      }
+    },
+    {
+      "name": "macos-debug",
+      "displayName": "macOS Debug",
+      "inherits": "macos-base",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug", "OPENNOMAD_WARNINGS_AS_ERRORS": "ON" }
+    },
+    {
+      "name": "macos-release",
+      "displayName": "macOS Release",
+      "inherits": "macos-base",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "OPENNOMAD_WARNINGS_AS_ERRORS": "ON" }
+    },
+    {
+      "name": "windows-debug",
+      "displayName": "Windows Debug",
+      "inherits": "windows-base",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug", "OPENNOMAD_WARNINGS_AS_ERRORS": "ON" }
+    },
+    {
+      "name": "windows-release",
+      "displayName": "Windows Release",
+      "inherits": "windows-base",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "OPENNOMAD_WARNINGS_AS_ERRORS": "ON" }
     },
     {
       "name": "xcode-debug",
       "displayName": "Debug (Xcode)",
       "generator": "Xcode",
-      "binaryDir": "build/xcode-debug",
+      "binaryDir": "${sourceDir}/build/xcode-debug",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug"
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_OSX_DEPLOYMENT_TARGET": "10.15",
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+        "CMAKE_OSX_ARCHITECTURES": "$(ARCHS_STANDARD)"
       },
-      "condition": {
-        "type": "equals",
-        "lhs": "${hostSystemName}",
-        "rhs": "Darwin"
-      }
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Darwin" }
     },
     {
       "name": "xcode-release",
       "displayName": "Release (Xcode)",
       "generator": "Xcode",
-      "binaryDir": "build/xcode-release",
+      "binaryDir": "${sourceDir}/build/xcode-release",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release"
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_OSX_DEPLOYMENT_TARGET": "10.15",
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+        "CMAKE_OSX_ARCHITECTURES": "$(ARCHS_STANDARD)"
       },
-      "condition": {
-        "type": "equals",
-        "lhs": "${hostSystemName}",
-        "rhs": "Darwin"
-      }
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Darwin" }
     }
   ],
   "buildPresets": [
-    {
-      "name": "debug",
-      "displayName": "Build Debug",
-      "configurePreset": "debug",
-      "configuration": "Debug"
-    },
-    {
-      "name": "release",
-      "displayName": "Build Release",
-      "configurePreset": "release",
-      "configuration": "Release",
-      "targets": [
-        "App"
-      ]
-    },
-    {
-      "name": "xcode-debug",
-      "displayName": "Build Debug (Xcode)",
-      "configurePreset": "xcode-debug",
-      "configuration": "Debug",
-      "condition": {
-        "type": "equals",
-        "lhs": "${hostSystemName}",
-        "rhs": "Darwin"
-      }
-    },
-    {
-      "name": "xcode-release",
-      "displayName": "Build Release (Xcode)",
-      "configurePreset": "xcode-release",
-      "configuration": "Release",
-      "targets": [
-        "App"
-      ],
-      "condition": {
-        "type": "equals",
-        "lhs": "${hostSystemName}",
-        "rhs": "Darwin"
-      }
-    }
-  ],
-  "packagePresets": [
-    {
-      "name": "release",
-      "displayName": "Distribute Release",
-      "configurePreset": "release",
-      "configurations": [
-        "Release"
-      ]
-    },
-    {
-      "name": "xcode-release",
-      "displayName": "Distribute Release (Xcode)",
-      "configurePreset": "xcode-release",
-      "configurations": [
-        "Release"
-      ],
-      "condition": {
-        "type": "equals",
-        "lhs": "${hostSystemName}",
-        "rhs": "Darwin"
-      }
-    }
+    { "name": "linux-debug", "displayName": "Build Linux Debug", "configurePreset": "linux-debug" },
+    { "name": "linux-release", "displayName": "Build Linux Release", "configurePreset": "linux-release" },
+    { "name": "linux-sanitize", "displayName": "Build Linux Sanitize", "configurePreset": "linux-sanitize" },
+    { "name": "quality", "displayName": "Build Quality", "configurePreset": "quality" },
+    { "name": "macos-debug", "displayName": "Build macOS Debug", "configurePreset": "macos-debug" },
+    { "name": "macos-release", "displayName": "Build macOS Release", "configurePreset": "macos-release" },
+    { "name": "windows-debug", "displayName": "Build Windows Debug", "configurePreset": "windows-debug" },
+    { "name": "windows-release", "displayName": "Build Windows Release", "configurePreset": "windows-release" },
+    { "name": "xcode-debug", "displayName": "Build Debug (Xcode)", "configurePreset": "xcode-debug", "configuration": "Debug" },
+    { "name": "xcode-release", "displayName": "Build Release (Xcode)", "configurePreset": "xcode-release", "configuration": "Release" }
   ],
   "testPresets": [
-    {
-      "name": "all",
-      "displayName": "Test All",
-      "configurePreset": "debug"
-    }
+    { "name": "linux-debug", "displayName": "Test Linux Debug", "configurePreset": "linux-debug", "output": { "outputOnFailure": true } },
+    { "name": "linux-release", "displayName": "Test Linux Release", "configurePreset": "linux-release", "output": { "outputOnFailure": true } },
+    { "name": "linux-sanitize", "displayName": "Test Linux Sanitize", "configurePreset": "linux-sanitize", "output": { "outputOnFailure": true } },
+    { "name": "macos-debug", "displayName": "Test macOS Debug", "configurePreset": "macos-debug", "output": { "outputOnFailure": true } },
+    { "name": "macos-release", "displayName": "Test macOS Release", "configurePreset": "macos-release", "output": { "outputOnFailure": true } },
+    { "name": "windows-debug", "displayName": "Test Windows Debug", "configurePreset": "windows-debug", "output": { "outputOnFailure": true } },
+    { "name": "windows-release", "displayName": "Test Windows Release", "configurePreset": "windows-release", "output": { "outputOnFailure": true } }
+  ],
+  "packagePresets": [
+    { "name": "linux-release", "displayName": "Distribute Linux Release", "configurePreset": "linux-release" },
+    { "name": "xcode-release", "displayName": "Distribute Release (Xcode)", "configurePreset": "xcode-release", "configurations": ["Release"] }
   ],
   "workflowPresets": [
+    {
+      "name": "linux-debug",
+      "displayName": "Linux Debug Workflow",
+      "steps": [
+        { "type": "configure", "name": "linux-debug" },
+        { "type": "build", "name": "linux-debug" },
+        { "type": "test", "name": "linux-debug" }
+      ]
+    },
+    {
+      "name": "linux-release",
+      "displayName": "Linux Release Workflow",
+      "steps": [
+        { "type": "configure", "name": "linux-release" },
+        { "type": "build", "name": "linux-release" },
+        { "type": "test", "name": "linux-release" }
+      ]
+    },
+    {
+      "name": "linux-sanitize",
+      "displayName": "Linux Sanitize Workflow",
+      "steps": [
+        { "type": "configure", "name": "linux-sanitize" },
+        { "type": "build", "name": "linux-sanitize" },
+        { "type": "test", "name": "linux-sanitize" }
+      ]
+    },
+    {
+      "name": "quality",
+      "displayName": "Quality Workflow",
+      "steps": [
+        { "type": "configure", "name": "quality" },
+        { "type": "build", "name": "quality" }
+      ]
+    },
     {
       "name": "dist",
       "displayName": "Distribution Workflow",
       "steps": [
-        {
-          "type": "configure",
-          "name": "release"
-        },
-        {
-          "type": "build",
-          "name": "release"
-        },
-        {
-          "type": "package",
-          "name": "release"
-        }
+        { "type": "configure", "name": "linux-release" },
+        { "type": "build", "name": "linux-release" },
+        { "type": "package", "name": "linux-release" }
       ]
     },
     {
       "name": "xcode-dist",
       "displayName": "Distribution Workflow (Xcode)",
       "steps": [
-        {
-          "type": "configure",
-          "name": "xcode-release"
-        },
-        {
-          "type": "build",
-          "name": "xcode-release"
-        },
-        {
-          "type": "package",
-          "name": "xcode-release"
-        }
+        { "type": "configure", "name": "xcode-release" },
+        { "type": "build", "name": "xcode-release" },
+        { "type": "package", "name": "xcode-release" }
       ]
     }
   ]

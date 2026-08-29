@@ -29,8 +29,12 @@ Buffer& command(Buffer& buffer,
     const std::uint32_t first_value_index,
     const std::int32_t next_command_index,
     const std::uint32_t execution_limit = 1) {
-  buffer.u32(opcode).u32(value_count).u32(first_value_index).i32(next_command_index)
-      .u32(execution_limit).u32(0);
+  buffer.u32(opcode)
+      .u32(value_count)
+      .u32(first_value_index)
+      .i32(next_command_index)
+      .u32(execution_limit)
+      .u32(0);
   return buffer;
 }
 
@@ -76,10 +80,10 @@ Buffer make_single_script_descriptor() {
   Buffer descriptor;
   descriptor.u32(K_SCRIPTS_TAG).u32(1);
   script_record(descriptor, "effects2_smoke2", 1, 1, 0);
-  descriptor.u32(2);                 // sharedValueCount.
-  descriptor.u32(0);                 // shared value 0: sprite index.
-  descriptor.f32(1.5F);              // shared value 1: frame (float bits).
-  descriptor.u8(0);                  // related block absent.
+  descriptor.u32(2);     // sharedValueCount.
+  descriptor.u32(0);     // shared value 0: sprite index.
+  descriptor.f32(1.5F);  // shared value 1: frame (float bits).
+  descriptor.u8(0);      // related block absent.
   command(descriptor, K_SET_FRAME, 2, 0, -1);
   empty_binding_tables(descriptor);
   descriptor.u32(K_SPRITES_TAG).u32(0);
@@ -87,8 +91,8 @@ Buffer make_single_script_descriptor() {
   return descriptor;
 }
 
-bool error_contains(const std::expected<App::Omikron::ScxData, std::string>& result,
-    const std::string_view text) {
+bool error_contains(
+    const std::expected<App::Omikron::ScxData, std::string>& result, const std::string_view text) {
   return result.error().find(text) != std::string::npos;
 }
 

@@ -3,7 +3,6 @@
 #include <SDL3/SDL_error.h>
 #include <SDL3/SDL_iostream.h>
 #include <SDL3/SDL_stdinc.h>
-
 #include <fmt/format.h>
 
 #include <cstddef>
@@ -21,8 +20,7 @@
 
 namespace App {
 
-std::expected<LoadedGameFile, std::string> load_game_file(
-    const std::filesystem::path& relative) {
+std::expected<LoadedGameFile, std::string> load_game_file(const std::filesystem::path& relative) {
   APP_PROFILE_FUNCTION();
 
   const std::filesystem::path root_relative{Resources::game_data_path(relative)};
@@ -49,9 +47,7 @@ std::expected<LoadedGameFile, std::string> load_game_file(
   }
   SDL_free(raw);
 
-  return LoadedGameFile{.requested = relative,
-      .resolved = resolved,
-      .bytes = std::move(bytes)};
+  return LoadedGameFile{.requested = relative, .resolved = resolved, .bytes = std::move(bytes)};
 }
 
 }  // namespace App

@@ -67,8 +67,8 @@ void DebugUI::show_frame_timing() {
   ImGui::Text("Runtime moving average: %llu ms  |  %.1f FPS",
       static_cast<unsigned long long>(timing.moving_average_frame_time_ms),
       static_cast<double>(timing.average_fps));
-  ImGui::Text("Dear ImGui presentation estimate: %.1f FPS",
-      static_cast<double>(ImGui::GetIO().Framerate));
+  ImGui::Text(
+      "Dear ImGui presentation estimate: %.1f FPS", static_cast<double>(ImGui::GetIO().Framerate));
   const auto& window_info{Metrics::get().window_info()};
   if (const auto refresh{window_info.find("Refresh Rate")}; refresh != window_info.end()) {
     ImGui::Text("Window refresh rate: %s", refresh->second.c_str());
@@ -96,8 +96,8 @@ void DebugUI::show_frame_timing() {
       static_cast<double>(timing.next_effective_delta_units));
   ImGui::Text("Time-scale mode: %s", time_scale_mode_name(timing.time_scale_mode));
   if (timing.forced_delta.has_value()) {
-    ImGui::Text("Forced delta: %.6f Runtime units",
-        static_cast<double>(timing.forced_delta.value()));
+    ImGui::Text(
+        "Forced delta: %.6f Runtime units", static_cast<double>(timing.forced_delta.value()));
   } else {
     ImGui::TextUnformatted("Forced delta: disabled");
   }
@@ -114,8 +114,8 @@ void DebugUI::show_frame_timing() {
   if (script_runtime == nullptr) {
     ImGui::TextUnformatted("Selected target has no loaded SCX runtime.");
   } else {
-    ImGui::Text("Last real delta: %.6f s",
-        static_cast<double>(script_runtime->last_real_delta_seconds()));
+    ImGui::Text(
+        "Last real delta: %.6f s", static_cast<double>(script_runtime->last_real_delta_seconds()));
     ImGui::Text("Script delta: %.6f frames @ 30 Hz",
         static_cast<double>(script_runtime->last_script_delta_frames()));
     if (script_runtime->last_script_delta_clamped()) {
@@ -123,19 +123,19 @@ void DebugUI::show_frame_timing() {
     } else {
       ImGui::TextUnformatted("Clamp: no");
     }
-    ImGui::Text("Script tick count: %llu",
-        static_cast<unsigned long long>(script_runtime->tick_count()));
+    ImGui::Text(
+        "Script tick count: %llu", static_cast<unsigned long long>(script_runtime->tick_count()));
   }
 
   ImGui::SeparatorText("Interface timing");
   const I2DCounters& i2d{Metrics::get().i2d_counters()};
   ImGui::Text("Logical background endpoint tick: %llu",
       static_cast<unsigned long long>(i2d.background_tick));
-  ImGui::Text("Endpoint ticks crossed: %llu",
-      static_cast<unsigned long long>(i2d.background_ticks));
+  ImGui::Text(
+      "Endpoint ticks crossed: %llu", static_cast<unsigned long long>(i2d.background_ticks));
   ImGui::Text("Interpolation alpha: %.3f", static_cast<double>(i2d.background_alpha));
-  ImGui::Text("Presentation: %s",
-      i2d.background_interpolated ? "interpolated" : "stepped endpoints");
+  ImGui::Text(
+      "Presentation: %s", i2d.background_interpolated ? "interpolated" : "stepped endpoints");
   ImGui::TextDisabled("Interpolation presents between authored 30 Hz logical endpoints.");
 
   ImGui::SeparatorText("Activity gates");
@@ -147,7 +147,7 @@ void DebugUI::show_frame_timing() {
   ImGui::Text("Gameplay paused: %s", timing.gameplay_paused ? "yes" : "no");
   ImGui::Text("Engine callback skipped: %s",
       timing.last_engine_callback.timed_frame_observed && !timing.last_engine_callback.ran ? "yes"
-                                                                                         : "no");
+                                                                                           : "no");
   ImGui::Text("Persistent skip-engine-frame state: %s",
       timing.skip_engine_frame ? "enabled (read-only)" : "disabled");
   ImGui::TextDisabled(
@@ -162,8 +162,8 @@ void DebugUI::show_frame_timing() {
   } else {
     const float max_value{*std::ranges::max_element(display_order)};
     const float plot_max{std::max(max_value * 1.2F, 16.67F)};
-    const std::string overlay{fmt::format("{} ms completed frame",
-        timing.last_completed_frame_time_ms)};
+    const std::string overlay{
+        fmt::format("{} ms completed frame", timing.last_completed_frame_time_ms)};
     ImGui::PlotLines("Presentation frame time (ms)",
         display_order.data(),
         static_cast<int>(display_order.size()),
@@ -175,8 +175,7 @@ void DebugUI::show_frame_timing() {
   }
 
   ImGui::SeparatorText("Debug Overrides");
-  constexpr std::array<FrameTiming::TimeScaleMode, 5> k_modes{
-      FrameTiming::TimeScaleMode::k_dynamic,
+  constexpr std::array<FrameTiming::TimeScaleMode, 5> k_modes{FrameTiming::TimeScaleMode::k_dynamic,
       FrameTiming::TimeScaleMode::k_fixed_30hz,
       FrameTiming::TimeScaleMode::k_fixed_60hz,
       FrameTiming::TimeScaleMode::k_fixed_300hz,
@@ -198,12 +197,8 @@ void DebugUI::show_frame_timing() {
         forced_enabled ? std::optional<float>{m_forced_delta_override_value} : std::nullopt);
   }
   ImGui::BeginDisabled(!forced_enabled);
-  if (ImGui::DragFloat("Forced Runtime units",
-          &m_forced_delta_override_value,
-          0.01F,
-          0.0F,
-          10.0F,
-          "%.3f")) {
+  if (ImGui::DragFloat(
+          "Forced Runtime units", &m_forced_delta_override_value, 0.01F, 0.0F, 10.0F, "%.3f")) {
     source->set_forced_delta(m_forced_delta_override_value);
   }
   ImGui::EndDisabled();
@@ -310,7 +305,7 @@ void DebugUI::show_profiler() {
           display_name.c_str(),
           static_cast<long long>(scope_stats.total_time.count()),
           scope_stats.call_count);
-        ++rank;
+      ++rank;
     }
 
     ImGui::Separator();

@@ -50,16 +50,14 @@ std::array<std::array<std::uint8_t, 4>, 64> build_palette() {
     const int red{(4049 - 111 * i) / 32};
     const int green{(947 - 13 * i) / 32};
     const int blue{(13 + 13 * i) / 32};
-    palette.at(static_cast<std::size_t>(i)) = {
-        static_cast<std::uint8_t>(red),
+    palette.at(static_cast<std::size_t>(i)) = {static_cast<std::uint8_t>(red),
         static_cast<std::uint8_t>(green),
         static_cast<std::uint8_t>(blue),
         255U};
     const int red2{(608 + 19 * i) / 32};
     const int green2{(544 + 94 * i) / 32};
     const int blue2{(416 + 92 * i) / 32};
-    palette.at(static_cast<std::size_t>(i + 32)) = {
-        static_cast<std::uint8_t>(red2),
+    palette.at(static_cast<std::size_t>(i + 32)) = {static_cast<std::uint8_t>(red2),
         static_cast<std::uint8_t>(green2),
         static_cast<std::uint8_t>(blue2),
         255U};
@@ -69,9 +67,8 @@ std::array<std::array<std::uint8_t, 4>, 64> build_palette() {
 
 }  // namespace
 
-std::uint8_t I2DBumpEffect::row_warp_offset(const double phase_a,
-    const double phase_b,
-    const double logical_y) {
+std::uint8_t I2DBumpEffect::row_warp_offset(
+    const double phase_a, const double phase_b, const double logical_y) {
   // i = 479 - y; a = phase_a - 0.0043*i; b = phase_b + 0.0067*i;
   // offset = trunc(32.0*cos(b) + 64.0*cos(a)) & 0xFF.
   const double i{479.0 - logical_y};
@@ -81,9 +78,8 @@ std::uint8_t I2DBumpEffect::row_warp_offset(const double phase_a,
   return static_cast<std::uint8_t>(value & 0xFF);
 }
 
-std::uint8_t I2DBumpEffect::column_warp_offset(const double phase_c,
-    const double phase_d,
-    const double logical_x) {
+std::uint8_t I2DBumpEffect::column_warp_offset(
+    const double phase_c, const double phase_d, const double logical_x) {
   // i = 639 - x; c = phase_c + 0.0057*i; d = phase_d - 0.0099*i;
   // offset = trunc(48.0*(cos(c)+cos(d))) & 0xFF.
   const double i{639.0 - logical_x};
@@ -105,9 +101,8 @@ std::expected<I2DBumpEffect, std::string> I2DBumpEffect::create(Omikron::Indexed
   // relies on exactly a 256x256 source.
   if (source.width != K_HEIGHT_SIZE || source.height != K_HEIGHT_SIZE) {
     return std::expected<I2DBumpEffect, std::string>{std::unexpect,
-        fmt::format("I2DBumpEffect: expected 256x256 height map, got {}x{}",
-            source.width,
-            source.height)};
+        fmt::format(
+            "I2DBumpEffect: expected 256x256 height map, got {}x{}", source.width, source.height)};
   }
   if (source.indices.size() !=
       static_cast<std::size_t>(K_HEIGHT_SIZE) * static_cast<std::size_t>(K_HEIGHT_SIZE)) {
@@ -119,9 +114,8 @@ std::expected<I2DBumpEffect, std::string> I2DBumpEffect::create(Omikron::Indexed
   effect.m_height = std::move(source.indices);
   effect.m_palette = palette();
   effect.m_lit.assign(K_HEIGHT_CELLS, 0U);
-  effect.m_frame.assign(static_cast<std::size_t>(K_FRAME_WIDTH) *
-                            static_cast<std::size_t>(K_FRAME_HEIGHT) * 4U,
-      0U);
+  effect.m_frame.assign(
+      static_cast<std::size_t>(K_FRAME_WIDTH) * static_cast<std::size_t>(K_FRAME_HEIGHT) * 4U, 0U);
 
   // The height field never changes, so the signed 8-bit X/Y gradients used by
   // the lighting pass are precomputed once here. They preserve Runtime's
@@ -134,12 +128,12 @@ std::expected<I2DBumpEffect, std::string> I2DBumpEffect::create(Omikron::Indexed
       const std::size_t index{static_cast<std::size_t>(y * K_HEIGHT_SIZE + x)};
       effect.m_gradient_x.at(index) = signed_byte(
           static_cast<int>(effect.m_height.at(index)) -
-          static_cast<int>(effect.m_height.at(
-              static_cast<std::size_t>(y * K_HEIGHT_SIZE + right_x))));
+          static_cast<int>(
+              effect.m_height.at(static_cast<std::size_t>(y * K_HEIGHT_SIZE + right_x))));
       effect.m_gradient_y.at(index) = signed_byte(
           static_cast<int>(effect.m_height.at(index)) -
-          static_cast<int>(effect.m_height.at(
-              static_cast<std::size_t>(below_y * K_HEIGHT_SIZE + x))));
+          static_cast<int>(
+              effect.m_height.at(static_cast<std::size_t>(below_y * K_HEIGHT_SIZE + x))));
     }
   }
   return effect;
@@ -209,9 +203,8 @@ void I2DBumpEffect::regenerate_lighting() {
     const std::size_t row_base{static_cast<std::size_t>(y) * K_HEIGHT_SIZE};
     for (int x{0}; x < K_HEIGHT_SIZE; ++x) {
       const std::size_t index{row_base + static_cast<std::size_t>(x)};
-      int intensity{arithmetic_shift_right_5(
-                        static_cast<int>(grad_x[index]) * (x - light_x) +
-                        static_cast<int>(grad_y[index]) * y_minus_light_y) +
+      int intensity{arithmetic_shift_right_5(static_cast<int>(grad_x[index]) * (x - light_x) +
+                                             static_cast<int>(grad_y[index]) * y_minus_light_y) +
                     32};
       intensity = std::clamp(intensity, 0, 63);
       lit[index] = static_cast<std::uint8_t>(intensity);
@@ -231,16 +224,16 @@ void I2DBumpEffect::regenerate_frame() {
     const int row_offset{m_row_warp.at(static_cast<std::size_t>(K_ROW_WARP_SIZE - 1 - y))};
     for (int x{0}; x < K_FRAME_WIDTH; ++x) {
       const int source_x{(x + row_offset) & 0xFF};
-      const int source_y{(y + m_column_warp.at(
-                                  static_cast<std::size_t>(K_COLUMN_WARP_SIZE - 1 - x))) &
-                         0xFF};
+      const int source_y{
+          (y + m_column_warp.at(static_cast<std::size_t>(K_COLUMN_WARP_SIZE - 1 - x))) & 0xFF};
 
       const std::uint8_t intensity{
           m_lit.at(static_cast<std::size_t>(source_y * K_HEIGHT_SIZE + source_x))};
       const std::array<std::uint8_t, 4>& colour{m_palette.at(intensity)};
-      const std::size_t out{((static_cast<std::size_t>(y) * static_cast<std::size_t>(K_FRAME_WIDTH)) +
-                             static_cast<std::size_t>(x)) *
-                            4U};
+      const std::size_t out{
+          ((static_cast<std::size_t>(y) * static_cast<std::size_t>(K_FRAME_WIDTH)) +
+              static_cast<std::size_t>(x)) *
+          4U};
       m_frame.at(out + 0U) = colour.at(0);
       m_frame.at(out + 1U) = colour.at(1);
       m_frame.at(out + 2U) = colour.at(2);

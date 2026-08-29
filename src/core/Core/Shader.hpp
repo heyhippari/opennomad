@@ -19,8 +19,8 @@ class Shader {
  public:
   /// Compiles and links the given sources. On failure the error describes
   /// which stage failed (the compiler/linker info log is logged separately).
-  static std::expected<Shader, std::string> create(std::string_view vertex_source,
-                                                   std::string_view fragment_source);
+  static std::expected<Shader, std::string> create(
+      std::string_view vertex_source, std::string_view fragment_source);
 
   Shader(Shader&& other) noexcept;
   Shader& operator=(Shader&& other) noexcept;

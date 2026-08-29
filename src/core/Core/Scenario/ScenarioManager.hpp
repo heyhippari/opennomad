@@ -11,9 +11,9 @@
 #include <string_view>
 #include <vector>
 
-#include "Core/GameState.hpp"
-#include "Core/Dialog/DialogRuntime.hpp"
 #include "Core/Dialog/DialogPerformanceRuntime.hpp"
+#include "Core/Dialog/DialogRuntime.hpp"
+#include "Core/GameState.hpp"
 #include "Core/Omikron/Model3DO.hpp"
 #include "Core/Omikron/SCX.hpp"
 #include "Core/Omikron/SFX.hpp"

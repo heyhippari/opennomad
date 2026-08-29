@@ -1,9 +1,9 @@
+#include "Core/Dialog/DialogPerformanceRuntime.hpp"
+
 #include <doctest/doctest.h>
 
 #include <cstddef>
 #include <optional>
-
-#include "Core/Dialog/DialogPerformanceRuntime.hpp"
 
 TEST_CASE("dialogue performance clock selects authored 30 Hz held samples") {
   App::Dialog::DialogPerformanceClock clock;

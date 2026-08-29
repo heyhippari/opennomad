@@ -63,8 +63,8 @@ TEST_SUITE("Core::Startup::StartupCoordinator") {
     StartupTraceRecorder recorder;
     StartupCoordinator coordinator{recorder};
 
-    const auto result{coordinator.complete(
-        StartupPhase::k_process_bootstrap, StartupPhaseStatus::k_complete)};
+    const auto result{
+        coordinator.complete(StartupPhase::k_process_bootstrap, StartupPhaseStatus::k_complete)};
     REQUIRE_FALSE(result.has_value());
   }
 
@@ -73,9 +73,8 @@ TEST_SUITE("Core::Startup::StartupCoordinator") {
     StartupCoordinator coordinator{recorder};
 
     REQUIRE(coordinator.begin(StartupPhase::k_process_bootstrap).has_value());
-    REQUIRE(coordinator.complete(
-        StartupPhase::k_process_bootstrap, StartupPhaseStatus::k_failed)
-                .has_value());
+    REQUIRE(coordinator.complete(StartupPhase::k_process_bootstrap, StartupPhaseStatus::k_failed)
+            .has_value());
     CHECK(coordinator.finished());
     CHECK_FALSE(coordinator.begin(StartupPhase::k_create_windows).has_value());
   }
@@ -85,14 +84,14 @@ TEST_SUITE("Core::Startup::StartupCoordinator") {
     StartupCoordinator coordinator{recorder};
 
     REQUIRE(coordinator.begin(StartupPhase::k_process_bootstrap).has_value());
-    REQUIRE(coordinator.complete(
-        StartupPhase::k_process_bootstrap, StartupPhaseStatus::k_complete)
-                .has_value());
+    REQUIRE(coordinator.complete(StartupPhase::k_process_bootstrap, StartupPhaseStatus::k_complete)
+            .has_value());
 
     REQUIRE(coordinator.begin(StartupPhase::k_create_windows).has_value());
-    REQUIRE(coordinator.complete(
-        StartupPhase::k_create_windows, StartupPhaseStatus::k_skipped_by_configuration)
-                .has_value());
+    REQUIRE(coordinator
+            .complete(
+                StartupPhase::k_create_windows, StartupPhaseStatus::k_skipped_by_configuration)
+            .has_value());
 
     CHECK(recorder.first_sequence_of("CreateWindows.SkippedByConfiguration").has_value());
     CHECK_FALSE(coordinator.finished());

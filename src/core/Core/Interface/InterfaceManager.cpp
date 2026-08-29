@@ -1502,7 +1502,8 @@ I2DTextElement make_keyboard_binding_text(InterfaceManager& manager,
   const std::size_t slot{definition.slot};
   const std::string capture_token{std::string{definition.stable_id}};
   const InterfaceManager* manager_ptr{&manager};
-  const App::Settings::RuntimeControlBindings& bindings{manager.game_settings().runtime_control_bindings()};
+  const App::Settings::RuntimeControlBindings& bindings{
+      manager.game_settings().runtime_control_bindings()};
 
   text.value_text = [manager_ptr, &bindings, capture_token, group, slot]() {
     if (manager_ptr->physical_input_capture_active(capture_token)) {

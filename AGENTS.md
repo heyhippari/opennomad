@@ -1,44 +1,59 @@
 # AGENTS.md - guidance for AI coding agents
 
 OpenNomad is a C++23 reimplementation of the *Omikron: The Nomad Soul* engine. It uses CMake, vcpkg manifest
-mode, Ninja on Linux, SDL3, OpenGL, Dear ImGui, and doctest.
+mode, Ninja for native development and CI builds, SDL3, OpenGL, Dear ImGui, and doctest.
+
+## Authoritative local quality gate
+
+Before finishing a substantive C++ change, run the repository's checked-in quality workflow for the current host
+platform. The canonical rules are in `.clang-tidy` and the toolchain contract is documented in
+[docs/Toolchain.md](docs/Toolchain.md).
+
+Linux workflow:
+
+```sh
+cmake --workflow --preset linux-debug
+cmake --workflow --preset linux-release
+cmake --workflow --preset linux-sanitize
+cmake --build --preset quality --target check-format
+cmake --build --preset quality --target tidy
+```
+
+The quality build requires the canonical LLVM 22.1.8 toolchain. If the tool is not present, the configure step must
+fail with a clear error instead of silently accepting a different formatter or lint tool.
 
 ## Build and test
 
-The checked-in presets are the supported entry points. On Linux, set `VCPKG_ROOT` before configuring:
+The checked-in presets are the supported entry points. On Linux, configure from a shell that exports
+`VCPKG_ROOT` before the first configure of a build tree:
 
 ```sh
-cmake --preset debug
-cmake --build build/debug
-ctest --test-dir build/debug --output-on-failure
+export VCPKG_ROOT="$HOME/.local/share/vcpkg"
+cmake --preset linux-debug
+cmake --build --preset linux-debug
+ctest --preset linux-debug --output-on-failure
 ```
 
-Use `release` and `build/release` for a Release build. The Release build preset targets `App`; Debug builds all
-registered targets. The macOS presets are `xcode-debug` and `xcode-release`; they may need an explicit
-`-DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"`.
-
-Debug is the normal development configuration. When available, `clang-tidy` runs during non-Release compilation and
-its diagnostics are errors. Non-Windows non-Release builds use AddressSanitizer. The authoritative checks are in
-`.clang-tidy`; do not duplicate its check list here.
-
-Build and run one test without rebuilding everything:
+Use the matching release and sanitizer presets for the other local workflows:
 
 ```sh
-cmake --build build/debug --target Model3DOTest
-ctest --test-dir build/debug -R '^Model3DOTest$' --output-on-failure
+cmake --preset linux-release
+cmake --build --preset linux-release
+ctest --preset linux-release --output-on-failure
+
+cmake --preset linux-sanitize
+cmake --build --preset linux-sanitize
+ctest --preset linux-sanitize --output-on-failure
 ```
 
-Tests needing original, uncommitted game data are disabled by default. Enable them at configure time and set the
-data root when running them:
+The macOS and Windows equivalents are `macos-debug`, `macos-release`, `windows-debug`, and `windows-release`.
+They use the same semantic build settings as the Linux presets and must remain consistent with the repository's
+quality policy.
 
-```sh
-cmake --preset debug -DOPENNOMAD_GAME_DATA_TESTS=ON
-OPENNOMAD_GAME_DATA_ROOT=/path/to/Omikron ctest --test-dir build/debug -R 'IntegrationTest$' --output-on-failure
-```
-
-Useful project options include `DEACTIVATE_LOGGING`, `DEBUG`, and `ENABLE_DEBUG_UI`; options are cached per build
-tree. See [BuildAndExecution.md](docs/BuildAndExecution.md) and [Testing.md](docs/Testing.md) for packaging,
-runtime controls, and integration-test details.
+Useful project options include `DEACTIVATE_LOGGING`, `DEBUG`, `ENABLE_DEBUG_UI`,
+`OPENNOMAD_ENABLE_ASAN`, `OPENNOMAD_ENABLE_UBSAN`, and `OPENNOMAD_WARNINGS_AS_ERRORS`; options are cached per build
+tree. See [docs/BuildAndExecution.md](docs/BuildAndExecution.md), [docs/Testing.md](docs/Testing.md), and
+[docs/Toolchain.md](docs/Toolchain.md) for the supported commands.
 
 ## Structure and architecture
 
@@ -59,7 +74,8 @@ and `Settings` is independent settings state.
 
 ## Coding rules
 
-- Use C++23 with extensions disabled and include every directly used header. Debug builds enforce include-cleaner.
+- Use C++23 with extensions disabled and include every directly used header. The checked-in quality build enforces
+  include-cleaner and warnings-as-errors for first-party code.
 - Use `std::expected<T, std::string>` for recoverable failures rather than exceptions. Preserve the existing error
   propagation style in the surrounding subsystem.
 - Follow the configured naming rules: `m_` for private members, lower-case methods/functions/members, CamelCase types
@@ -79,7 +95,7 @@ and `Settings` is independent settings state.
 - Keep platform-specific resource behavior in `src/core/Platform/<platform>/` and select it through the existing
   CMake platform branches. Do not bypass `Resources` with platform-specific path assumptions.
 - The vcpkg SDL3 overlay and custom `x64-linux-dynamic-glcore` triplet are part of the supported Linux setup. Keep
-  them when changing dependencies; the overlay enables Wayland `libdecor` support. See [Dependencies.md](docs/Dependencies.md)
+  them when changing dependencies; the overlay enables Wayland `libdecor` support. See [docs/Dependencies.md](docs/Dependencies.md)
   for system prerequisites.
 - Use `App::Log` for logging. Its format strings are checked through `fmt`; keep format arguments consistent with
   the format string and use the logging levels exposed by the wrapper.
@@ -88,5 +104,5 @@ and `Settings` is independent settings state.
 
 Prefer the repository documentation over repeating operational detail here: [README.md](README.md),
 [docs/WhereIsWhat.md](docs/WhereIsWhat.md), [docs/BuildAndExecution.md](docs/BuildAndExecution.md),
-[docs/Testing.md](docs/Testing.md), [docs/Rendering.md](docs/Rendering.md), and
-[reverse-engineering/startup-sequence.md](docs/reverse-engineering/startup-sequence.md).
+[docs/Testing.md](docs/Testing.md), [docs/Rendering.md](docs/Rendering.md), [docs/Toolchain.md](docs/Toolchain.md),
+and [docs/reverse-engineering/startup-sequence.md](docs/reverse-engineering/startup-sequence.md).

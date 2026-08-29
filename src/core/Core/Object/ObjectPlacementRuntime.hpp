@@ -64,8 +64,9 @@ struct RuntimePlacement {
 /// Attached SCENEs add/remove their own placement subset independently.
 class Runtime {
  public:
-  using ModelLoader = std::function<
-      std::expected<std::shared_ptr<const ModelResource>, std::string>(std::string_view)>;
+  using ModelLoader =
+      std::function<std::expected<std::shared_ptr<const ModelResource>, std::string>(
+          std::string_view)>;
 
   Runtime();
   explicit Runtime(ModelLoader loader);
@@ -86,12 +87,10 @@ class Runtime {
       std::int16_t object_id,
       bool enabled);
 
-  [[nodiscard]] RuntimePlacement* find(std::int32_t area_id,
-      std::optional<std::int32_t> scene_id,
-      std::int16_t object_id);
-  [[nodiscard]] const RuntimePlacement* find(std::int32_t area_id,
-      std::optional<std::int32_t> scene_id,
-      std::int16_t object_id) const;
+  [[nodiscard]] RuntimePlacement* find(
+      std::int32_t area_id, std::optional<std::int32_t> scene_id, std::int16_t object_id);
+  [[nodiscard]] const RuntimePlacement* find(
+      std::int32_t area_id, std::optional<std::int32_t> scene_id, std::int16_t object_id) const;
 
   [[nodiscard]] std::span<const RuntimePlacement> placements() const {
     return m_placements;

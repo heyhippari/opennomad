@@ -30,13 +30,8 @@ if (CMAKE_GENERATOR MATCHES "^Ninja")
   set(CMAKE_LINK_DEPENDS_USE_LINKER FALSE)
 endif ()
 
-# Compile as strict C++23. CMAKE_CXX_EXTENSIONS OFF forces CMake to emit
-# -std=c++23 into compile_commands.json: the compiler default (gnu++23)
-# would otherwise satisfy the request without a flag, and clang-tidy would
-# then parse the sources as its own default (C++17) and reject newer
-# library features. An explicit flag keeps tidy and the compiler in sync.
-set(CMAKE_CXX_STANDARD 23)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
+# The project options interface target selects C++23 for OpenNomad targets.
+# Keep extensions disabled globally so CMake emits -std=c++23 for each target.
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 # The project does not use C++ modules. Disable CMake's module dependency
@@ -45,16 +40,5 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 
 option(DEACTIVATE_LOGGING "Disable logging" OFF)
-if (DEACTIVATE_LOGGING)
-  add_compile_definitions(APP_DEACTIVATE_LOGGING)
-endif ()
-
 option(DEBUG "Enable debug statements and asserts" OFF)
-if (DEBUG OR CMAKE_BUILD_TYPE STREQUAL "Debug")
-  add_compile_definitions(DEBUG APP_PROFILE)
-endif ()
-
 option(ENABLE_DEBUG_UI "Enable the in-app ImGui debugging/performance UI" ON)
-if (ENABLE_DEBUG_UI AND (DEBUG OR CMAKE_BUILD_TYPE STREQUAL "Debug"))
-  add_compile_definitions(APP_DEBUG_UI)
-endif ()

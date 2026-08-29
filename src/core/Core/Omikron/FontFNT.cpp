@@ -1,5 +1,7 @@
 #include "Core/Omikron/FontFNT.hpp"
 
+#include <fmt/format.h>
+
 #include <bit>
 #include <cstddef>
 #include <cstdint>
@@ -8,8 +10,6 @@
 #include <span>
 #include <string>
 #include <string_view>
-
-#include <fmt/format.h>
 
 #include "Core/Omikron/BinaryReader.hpp"
 
@@ -24,8 +24,7 @@ std::expected<std::size_t, std::string> FontFNT::checked_product(
   return left * right;
 }
 
-std::expected<FontFntData, std::string> FontFNT::load(
-    const std::span<const std::byte> data) {
+std::expected<FontFntData, std::string> FontFNT::load(const std::span<const std::byte> data) {
   if (data.size() < k_descriptor_table_size) {
     return std::expected<FontFntData, std::string>{std::unexpect,
         fmt::format("FNT descriptor table requires {} bytes, file has {}",
@@ -56,13 +55,13 @@ std::expected<FontFntData, std::string> FontFNT::load(
     auto bitmap_size{checked_product(
         static_cast<std::size_t>(glyph.width), static_cast<std::size_t>(glyph.height))};
     if (!bitmap_size) {
-      return std::expected<FontFntData, std::string>{std::unexpect,
-          fmt::format("FNT glyph {}: {}", index, bitmap_size.error())};
+      return std::expected<FontFntData, std::string>{
+          std::unexpect, fmt::format("FNT glyph {}: {}", index, bitmap_size.error())};
     }
     auto bitmap_offset{checked_product(static_cast<std::size_t>(glyph.data_block), 8U)};
     if (!bitmap_offset) {
-      return std::expected<FontFntData, std::string>{std::unexpect,
-          fmt::format("FNT glyph {}: {}", index, bitmap_offset.error())};
+      return std::expected<FontFntData, std::string>{
+          std::unexpect, fmt::format("FNT glyph {}: {}", index, bitmap_offset.error())};
     }
     if (bitmap_offset.value() < k_descriptor_table_size) {
       return std::expected<FontFntData, std::string>{std::unexpect,
@@ -107,14 +106,13 @@ float measure_fnt_bytes(const FontFntData& font,
     const int blank_width) {
   float width{0.0F};
   for (const char character : text) {
-    const auto index{static_cast<std::uint8_t>(static_cast<unsigned char>(character))};
+    const auto index{static_cast<unsigned char>(character)};
     width += fnt_glyph_advance(font.glyphs.at(index), letter_spacing, blank_width);
   }
   return width;
 }
 
-float fnt_glyph_top(
-    const FontFntGlyph& glyph, const float line_y, const int line_height) {
+float fnt_glyph_top(const FontFntGlyph& glyph, const float line_y, const int line_height) {
   const float baseline{line_y + static_cast<float>(line_height)};
   return baseline + static_cast<float>(glyph.vertical_offset) - static_cast<float>(glyph.height);
 }

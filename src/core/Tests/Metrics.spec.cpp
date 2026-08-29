@@ -1,10 +1,10 @@
+#include "Core/Debug/Metrics.hpp"
+
 #include <doctest/doctest.h>
 
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
-
-#include "Core/Debug/Metrics.hpp"
 
 // NOLINTBEGIN(misc-use-anonymous-namespace, cppcoreguidelines-avoid-do-while, cert-err33-c)
 

@@ -21,6 +21,8 @@ The repository currently defines:
 |---|---|---|---|
 | Configure/build | `debug` | Linux | Ninja Debug build in `build/debug`. |
 | Configure/build | `release` | Linux | Ninja Release build in `build/release`; the build preset targets `App`. |
+| Configure/build | `debug-sanitized` | Linux | Debug build in `build/debug-sanitized` with AddressSanitizer and UndefinedBehaviorSanitizer. |
+| Configure/build | `quality` | Linux | Debug build with the pinned clang-tidy and clang-format tools. |
 | Configure/build | `xcode-debug` | macOS | Xcode Debug build in `build/xcode-debug`. |
 | Configure/build | `xcode-release` | macOS | Xcode Release build in `build/xcode-release`; the build preset targets `App`. |
 | Test | `all` | Linux | Run CTest against the `debug` configure preset. |
@@ -31,8 +33,7 @@ The repository currently defines:
 On Linux, the configure presets read the vcpkg toolchain from
 `$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake`. `VCPKG_ROOT` must be set before the first configure of a build tree.
 
-The Xcode presets do not currently embed the vcpkg toolchain path. Pass it when configuring unless your local CMake
-setup already injects it:
+The Xcode presets also read the vcpkg toolchain from `$VCPKG_ROOT`:
 
 ```shell
 cmake --preset xcode-debug \
@@ -40,15 +41,8 @@ cmake --preset xcode-debug \
 cmake --build --preset xcode-debug
 ```
 
-There is no checked-in Windows preset yet. A Ninja build can be configured manually from a shell where the compiler
-and vcpkg are available:
-
-```shell
-cmake -S . -B build/debug -G Ninja \
-  -DCMAKE_BUILD_TYPE=Debug \
-  -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
-cmake --build build/debug
-```
+CI owns platform-specific Release presets for Linux, macOS, and Windows. They use the same toolchain settings as the
+developer presets and are intentionally named `ci-<platform>-release`.
 
 ## Build modes
 
@@ -58,11 +52,23 @@ Debug is the normal development configuration. It:
 
 - defines `DEBUG` and `APP_PROFILE`;
 - enables the in-app debug UI by default;
-- runs clang-tidy during compilation when `clang-tidy` is installed; and
-- enables AddressSanitizer on non-Windows platforms.
+- has no implicit static analysis or sanitizer instrumentation.
 
-Clang-tidy diagnostics are treated as build failures. This includes include-cleaner and the project's other strict
-checks, not only compiler warnings.
+Use the explicit validation configurations when needed:
+
+```shell
+cmake --preset debug-sanitized
+cmake --build --preset debug-sanitized
+ctest --preset sanitized
+
+cmake --preset quality
+cmake --build --preset quality
+cmake --build --preset quality --target check-format
+```
+
+`quality` requires clang-format and clang-tidy major version `20`. This is checked at configure time; set
+`OPENNOMAD_CLANG_TOOLS_MAJOR` only for an intentional local toolchain-policy change. `format` modifies C++ files;
+`check-format` is the non-mutating validation target. Clang-tidy diagnostics are build failures.
 
 ### Release
 
@@ -80,6 +86,9 @@ test target manually if a release-mode test is needed.
 | `DEBUG` | `OFF` | Enables debug definitions and profiling outside a Debug build. |
 | `ENABLE_DEBUG_UI` | `ON` | Enables the ImGui development UI when debug definitions are active. |
 | `OPENNOMAD_GAME_DATA_TESTS` | `OFF` | Registers tests that inspect original game data. |
+| `OPENNOMAD_ENABLE_SANITIZERS` | `OFF` | Enables ASan and UBSan on project targets. Prefer `debug-sanitized`. |
+| `OPENNOMAD_ENABLE_CLANG_TIDY` | `OFF` | Runs the pinned clang-tidy on project targets. Prefer `quality`. |
+| `OPENNOMAD_ENABLE_FORMAT_TARGETS` | `OFF` | Creates `format` and `check-format`. Prefer `quality`. |
 
 Pass options during configuration, for example:
 

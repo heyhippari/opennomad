@@ -24,16 +24,26 @@ enum class SpriteRenderMode : std::uint16_t {
 /// the modern renderer maps modes through render_state() instead.
 [[nodiscard]] constexpr std::uint16_t bucket_bits(const SpriteRenderMode mode) {
   switch (mode) {
-    case SpriteRenderMode::k_default:         return 0x0000U;
-    case SpriteRenderMode::k_cutout:          return 0x0400U;
-    case SpriteRenderMode::k_alpha:           return 0x2000U;
-    case SpriteRenderMode::k_alpha_cutout:    return 0x2400U;
-    case SpriteRenderMode::k_additive:        return 0x2100U;
-    case SpriteRenderMode::k_additive_cutout: return 0x2500U;
-    case SpriteRenderMode::k_darken:          return 0x2200U;
-    case SpriteRenderMode::k_darken_cutout:   return 0x2600U;
-    case SpriteRenderMode::k_alternate_cutout: return 0x0400U;
-    default:                                  return 0x0000U;
+    case SpriteRenderMode::k_default:
+      return 0x0000U;
+    case SpriteRenderMode::k_cutout:
+      return 0x0400U;
+    case SpriteRenderMode::k_alpha:
+      return 0x2000U;
+    case SpriteRenderMode::k_alpha_cutout:
+      return 0x2400U;
+    case SpriteRenderMode::k_additive:
+      return 0x2100U;
+    case SpriteRenderMode::k_additive_cutout:
+      return 0x2500U;
+    case SpriteRenderMode::k_darken:
+      return 0x2200U;
+    case SpriteRenderMode::k_darken_cutout:
+      return 0x2600U;
+    case SpriteRenderMode::k_alternate_cutout:
+      return 0x0400U;
+    default:
+      return 0x0000U;
   }
 }
 

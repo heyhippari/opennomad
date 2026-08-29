@@ -48,8 +48,8 @@ class Log {
   /// Trace level. Compiled out in release builds and when logging is disabled.
   template <typename... Args>
   static void trace(const LogCategory category,
-                    [[maybe_unused]] fmt::format_string<Args...> format,
-                    [[maybe_unused]] Args&&... args) {
+      [[maybe_unused]] fmt::format_string<Args...> format,
+      [[maybe_unused]] Args&&... args) {
     if constexpr (k_logging_enabled && k_debug_logging_enabled) {
       category_logger(category).trace(format, std::forward<Args>(args)...);
     }
@@ -58,8 +58,8 @@ class Log {
   /// Debug level. Compiled out in release builds and when logging is disabled.
   template <typename... Args>
   static void debug(const LogCategory category,
-                    [[maybe_unused]] fmt::format_string<Args...> format,
-                    [[maybe_unused]] Args&&... args) {
+      [[maybe_unused]] fmt::format_string<Args...> format,
+      [[maybe_unused]] Args&&... args) {
     if constexpr (k_logging_enabled && k_debug_logging_enabled) {
       category_logger(category).debug(format, std::forward<Args>(args)...);
     }
@@ -68,8 +68,8 @@ class Log {
   /// Info level.
   template <typename... Args>
   static void info(const LogCategory category,
-                   [[maybe_unused]] fmt::format_string<Args...> format,
-                   [[maybe_unused]] Args&&... args) {
+      [[maybe_unused]] fmt::format_string<Args...> format,
+      [[maybe_unused]] Args&&... args) {
     if constexpr (k_logging_enabled) {
       category_logger(category).info(format, std::forward<Args>(args)...);
     }
@@ -78,8 +78,8 @@ class Log {
   /// Warn level.
   template <typename... Args>
   static void warn(const LogCategory category,
-                   [[maybe_unused]] fmt::format_string<Args...> format,
-                   [[maybe_unused]] Args&&... args) {
+      [[maybe_unused]] fmt::format_string<Args...> format,
+      [[maybe_unused]] Args&&... args) {
     if constexpr (k_logging_enabled) {
       category_logger(category).warn(format, std::forward<Args>(args)...);
     }
@@ -88,8 +88,8 @@ class Log {
   /// Error level.
   template <typename... Args>
   static void error(const LogCategory category,
-                    [[maybe_unused]] fmt::format_string<Args...> format,
-                    [[maybe_unused]] Args&&... args) {
+      [[maybe_unused]] fmt::format_string<Args...> format,
+      [[maybe_unused]] Args&&... args) {
     if constexpr (k_logging_enabled) {
       category_logger(category).error(format, std::forward<Args>(args)...);
     }
@@ -99,8 +99,8 @@ class Log {
   /// the current stack trace when available.
   template <typename... Args>
   static void fatal(const LogCategory category,
-                    [[maybe_unused]] fmt::format_string<Args...> format,
-                    [[maybe_unused]] Args&&... args) {
+      [[maybe_unused]] fmt::format_string<Args...> format,
+      [[maybe_unused]] Args&&... args) {
     if constexpr (k_logging_enabled) {
       category_logger(category).critical(format, std::forward<Args>(args)...);
 #ifdef __cpp_lib_stacktrace

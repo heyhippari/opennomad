@@ -39,8 +39,7 @@ class SpritePool {
   /// Allocates a free slot with the Runtime creation defaults: scale 1/1,
   /// diffuse alpha 0.9, frame index 0xFFFF, tint white, render mode default.
   /// frame_count is the object's frame table size and drives set_frame().
-  [[nodiscard]] std::expected<SpriteHandle, std::string> create(
-      std::size_t resource_index,
+  [[nodiscard]] std::expected<SpriteHandle, std::string> create(std::size_t resource_index,
       std::size_t object_index,
       std::size_t frame_count,
       std::array<float, 3> position = {0.0F, 0.0F, 0.0F});
@@ -62,8 +61,8 @@ class SpritePool {
 
   /// Runtime SetSpriteFrame semantics: accepts only frame_index < the
   /// object's frame count. On failure the instance stores 0xFFFF.
-  [[nodiscard]] std::expected<void, std::string> set_frame(SpriteHandle handle,
-                                                           std::uint16_t frame_index);
+  [[nodiscard]] std::expected<void, std::string> set_frame(
+      SpriteHandle handle, std::uint16_t frame_index);
 
   /// Direct assignment like Runtime's SetSpriteRenderMode (always succeeds).
   void set_render_mode(SpriteHandle handle, SpriteRenderMode mode);

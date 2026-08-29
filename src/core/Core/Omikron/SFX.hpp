@@ -34,9 +34,15 @@ struct SfxCinAnimationRecord {
   [[nodiscard]] constexpr std::uint16_t animation_lookup_id() const {
     return static_cast<std::uint16_t>(animation_lookup_raw & 0xFFFFU);
   }
-  [[nodiscard]] constexpr bool cin_sfx_enabled() const { return (flags & 0x80U) != 0U; }
-  [[nodiscard]] constexpr bool channel1_enabled() const { return (flags & 0x08U) != 0U; }
-  [[nodiscard]] constexpr bool channel2_enabled() const { return (flags & 0x10U) != 0U; }
+  [[nodiscard]] constexpr bool cin_sfx_enabled() const {
+    return (flags & 0x80U) != 0U;
+  }
+  [[nodiscard]] constexpr bool channel1_enabled() const {
+    return (flags & 0x08U) != 0U;
+  }
+  [[nodiscard]] constexpr bool channel2_enabled() const {
+    return (flags & 0x10U) != 0U;
+  }
 };
 
 struct SfxRawRecord10 {

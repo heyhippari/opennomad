@@ -1,5 +1,7 @@
 #include "SpriteResource.hpp"
 
+#include <fmt/format.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -7,8 +9,6 @@
 #include <string>
 #include <utility>
 #include <vector>
-
-#include <fmt/format.h>
 
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Omikron/Model3DO.hpp"
@@ -63,7 +63,9 @@ std::expected<SpriteResource, std::string> SpriteResource::create(
   return decoded;
 }
 
-std::size_t SpriteResource::object_count() const { return model.meshes.size(); }
+std::size_t SpriteResource::object_count() const {
+  return model.meshes.size();
+}
 
 std::size_t SpriteResource::frame_count(const std::size_t object_index) const {
   return Sprite::frame_count(model, object_index);
@@ -74,7 +76,8 @@ std::expected<SpriteFrame, SpriteFrameError> SpriteResource::resolve_frame(
     const std::uint16_t frame_index,
     const float texture_offset_u,
     const float texture_offset_v) const {
-  return Sprite::resolve_frame(model, object_index, frame_index, texture_offset_u, texture_offset_v);
+  return Sprite::resolve_frame(
+      model, object_index, frame_index, texture_offset_u, texture_offset_v);
 }
 
 std::size_t SpriteResource::default_object_index() const {

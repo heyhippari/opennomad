@@ -68,8 +68,8 @@ static_assert(k_action_count == std::to_underlying(Action::k_ctl_slot_13) + 1U);
 
 /// CTL profile slot of one k_ctl_slot_* action.
 [[nodiscard]] constexpr std::size_t ctl_slot_index(const Action action) {
-  return static_cast<std::size_t>(std::to_underlying(action) -
-                                  std::to_underlying(Action::k_ctl_slot_0));
+  return static_cast<std::size_t>(
+      std::to_underlying(action) - std::to_underlying(Action::k_ctl_slot_0));
 }
 
 }  // namespace App::Input

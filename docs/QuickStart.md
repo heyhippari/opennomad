@@ -33,8 +33,19 @@ cmake --build build/debug
 The first configure builds the manifest dependencies and can take a while. They are cached under
 `build/debug/vcpkg_installed` for later builds.
 
-Debug builds enable clang-tidy when it is installed, AddressSanitizer on non-Windows platforms, profiling, and the
-in-app debug UI. For a faster build without those development checks:
+Debug builds enable profiling and the in-app debug UI. Sanitizers and clang tooling are explicit configurations, so
+the normal edit-build-test loop stays predictable:
+
+```shell
+cmake --preset debug-sanitized
+cmake --build --preset debug-sanitized
+ctest --preset sanitized
+
+cmake --preset quality
+cmake --build --preset quality --target check-format
+```
+
+The `quality` preset requires clang-format and clang-tidy major version `20`. For a Release build:
 
 ```shell
 cmake --preset release

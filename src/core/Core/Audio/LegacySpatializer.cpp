@@ -23,9 +23,8 @@ float radial_component(const Vec3& vector, const Vec3& direction) {
          (vector.at(2) * direction.at(2));
 }
 
-float attenuation_gain(const float distance,
-    const float minimum_distance,
-    const float maximum_distance) {
+float attenuation_gain(
+    const float distance, const float minimum_distance, const float maximum_distance) {
   if (!std::isfinite(distance) || distance < 0.0F) {
     return 1.0F;
   }
@@ -40,8 +39,7 @@ float attenuation_gain(const float distance,
   if (distance >= maximum_distance) {
     return 0.0F;
   }
-  const float gain{
-      (maximum_distance - distance) / (maximum_distance - minimum_distance)};
+  const float gain{(maximum_distance - distance) / (maximum_distance - minimum_distance)};
   return std::clamp(gain, 0.0F, 1.0F);
 }
 
@@ -54,10 +52,8 @@ float pan_factor(const Vec3& relative, const Vec3& listener_right) {
   if (!std::isfinite(right_length) || right_length == 0.0F) {
     return 0.0F;
   }
-  const Vec3 to_source{
-      relative.at(0) / length, relative.at(1) / length, relative.at(2) / length};
-  const Vec3 right_unit{
-      listener_right.at(0) / right_length,
+  const Vec3 to_source{relative.at(0) / length, relative.at(1) / length, relative.at(2) / length};
+  const Vec3 right_unit{listener_right.at(0) / right_length,
       listener_right.at(1) / right_length,
       listener_right.at(2) / right_length};
   const float dot{radial_component(to_source, right_unit)};
@@ -69,16 +65,14 @@ float pan_factor(const Vec3& relative, const Vec3& listener_right) {
 
 std::pair<float, float> constant_power_stereo_gains(const float pan) {
   const float clamped{std::clamp(pan, -1.0F, 1.0F)};
-  const float angle{
-      (clamped + 1.0F) * std::numbers::pi_v<float> * 0.25F};
+  const float angle{(clamped + 1.0F) * std::numbers::pi_v<float> * 0.25F};
   return {std::cos(angle), std::sin(angle)};
 }
 
 float doppler_frequency_ratio(const float listener_radial_velocity,
     const float source_radial_velocity,
     const float speed_of_sound) {
-  const float speed{std::abs(speed_of_sound) > 1.0e-3F ? speed_of_sound
-                                                       : k_doppler_speed_of_sound};
+  const float speed{std::abs(speed_of_sound) > 1.0e-3F ? speed_of_sound : k_doppler_speed_of_sound};
   // Clamp the denominator away from zero; preserve its sign.
   float denominator{speed - source_radial_velocity};
   if (std::abs(denominator) < 1.0e-3F) {
@@ -97,8 +91,7 @@ SpatialResult spatialize(const AudioListenerState& listener,
     const float real_delta_seconds) {
   SpatialResult result;
 
-  const Vec3 relative{
-      emitter.position.at(0) - listener.position.at(0),
+  const Vec3 relative{emitter.position.at(0) - listener.position.at(0),
       emitter.position.at(1) - listener.position.at(1),
       emitter.position.at(2) - listener.position.at(2)};
   const float distance{vec_length(relative)};
@@ -108,16 +101,15 @@ SpatialResult spatialize(const AudioListenerState& listener,
   // with a stable fallback basis for degenerate transforms.
   const Vec3 forward{listener.forward.at(0), listener.forward.at(1), listener.forward.at(2)};
   const Vec3 up{listener.up.at(0), listener.up.at(1), listener.up.at(2)};
-  Vec3 right{
-      (forward.at(1) * up.at(2)) - (forward.at(2) * up.at(1)),
+  Vec3 right{(forward.at(1) * up.at(2)) - (forward.at(2) * up.at(1)),
       (forward.at(2) * up.at(0)) - (forward.at(0) * up.at(2)),
       (forward.at(0) * up.at(1)) - (forward.at(1) * up.at(0))};
   const float right_length{vec_length(right)};
   if (!std::isfinite(right_length) || right_length < 1.0e-6F) {
     right = Vec3{1.0F, 0.0F, 0.0F};
   } else {
-    right = Vec3{right.at(0) / right_length, right.at(1) / right_length,
-        right.at(2) / right_length};
+    right =
+        Vec3{right.at(0) / right_length, right.at(1) / right_length, right.at(2) / right_length};
   }
 
   result.attenuation_gain =
@@ -135,8 +127,8 @@ SpatialResult spatialize(const AudioListenerState& listener,
   float source_radial{0.0F};
   if (distance > 1.0e-6F && std::isfinite(distance)) {
     // `direction` points listener -> source; `toward` points source -> listener.
-    const Vec3 toward{-relative.at(0) / distance, -relative.at(1) / distance,
-        -relative.at(2) / distance};
+    const Vec3 toward{
+        -relative.at(0) / distance, -relative.at(1) / distance, -relative.at(2) / distance};
     listener_radial = radial_component(listener.velocity, toward);
     source_radial = radial_component(emitter.velocity, toward);
   }

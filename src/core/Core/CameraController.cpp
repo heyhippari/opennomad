@@ -4,11 +4,10 @@
 // glm follows a "single-include" convention — the umbrella headers are the
 // canonical way to pull in the library, even though clang-tidy cannot trace
 // individual symbols back to a direct sub-header.
-#include <glm/glm.hpp>
-#include <glm/gtc/type_ptr.hpp>
-
 #include <algorithm>
 #include <cmath>
+#include <glm/glm.hpp>
+#include <glm/gtc/type_ptr.hpp>
 
 #include "Core/Input/InputAction.hpp"
 
@@ -28,8 +27,7 @@ void CameraController::update(const App::Input::InputManager& input, const float
   // --- Mouse look (per-frame deltas, so no delta_time scaling) ---
   const float yaw_delta{input.get_action_value(Action::k_look_yaw) * m_look_sensitivity};
   // Mouse down (positive delta) looks down, so the pitch axis is inverted.
-  const float pitch_delta{
-      -(input.get_action_value(Action::k_look_pitch) * m_look_sensitivity)};
+  const float pitch_delta{-(input.get_action_value(Action::k_look_pitch) * m_look_sensitivity)};
 
   // Screen-right in world space is cross(front, up) — the lookAt "s" basis —
   // which at yaw 0 (facing +Z) is -X. Turning toward it therefore *decreases*
@@ -56,10 +54,9 @@ void CameraController::update(const App::Input::InputManager& input, const float
   // same basis the view matrix derives from glm::lookAt.
   const glm::vec3 right{glm::normalize(glm::cross(front, K_WORLD_UP))};
 
-  glm::vec3 direction{
-      (front * input.get_action_value(Action::k_move_forward)) +
-      (right * input.get_action_value(Action::k_move_right)) +
-      (K_WORLD_UP * input.get_action_value(Action::k_move_up))};
+  glm::vec3 direction{(front * input.get_action_value(Action::k_move_forward)) +
+                      (right * input.get_action_value(Action::k_move_right)) +
+                      (K_WORLD_UP * input.get_action_value(Action::k_move_up))};
   // Keep diagonal movement at the same speed as the individual axes.
   if (glm::length(direction) > 1.0F) {
     direction = glm::normalize(direction);
@@ -81,9 +78,13 @@ void CameraController::set_look_sensitivity(const float degrees_per_pixel) {
   m_look_sensitivity = degrees_per_pixel;
 }
 
-float CameraController::get_move_speed() const { return m_move_speed; }
+float CameraController::get_move_speed() const {
+  return m_move_speed;
+}
 
-float CameraController::get_look_sensitivity() const { return m_look_sensitivity; }
+float CameraController::get_look_sensitivity() const {
+  return m_look_sensitivity;
+}
 
 // NOLINTEND(misc-include-cleaner)
 

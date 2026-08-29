@@ -746,7 +746,7 @@ void WorldRenderer::draw_character_group(const Character::RuntimeCharacter& char
   const Shader& shader{legacy_effect ? *m_legacy_shader : *m_modern_shader};
   shader.bind();
   shader.set_uniform_mat4("u_mvp", std::span<const GLfloat, 16>{glm::value_ptr(mvp), 16});
-  
+
   const std::array<float, 2> uv_offset{
       Omikron::uv_scroll_offset(gpu.group_flags.at(group_index), uv_phase_u, uv_phase_v)};
   shader.set_uniform_vec2("u_uv_offset", std::span<const GLfloat, 2>{uv_offset});

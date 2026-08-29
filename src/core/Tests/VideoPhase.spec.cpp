@@ -87,11 +87,16 @@ TEST_SUITE("Core::Video::StartupVideoSequence") {
     StubPresenter presenter;
 
     const StartupPhaseStatus publisher{
-        sequence.play_slot(StartupVideoSlot::k_publisher, presenter, [] { return false; })};
+        sequence.play_slot(StartupVideoSlot::k_publisher, presenter, [] {
+          return false;
+        })};
     const StartupPhaseStatus developer{
-        sequence.play_slot(StartupVideoSlot::k_developer, presenter, [] { return false; })};
-    const StartupPhaseStatus intro{
-        sequence.play_slot(StartupVideoSlot::k_intro, presenter, [] { return false; })};
+        sequence.play_slot(StartupVideoSlot::k_developer, presenter, [] {
+          return false;
+        })};
+    const StartupPhaseStatus intro{sequence.play_slot(StartupVideoSlot::k_intro, presenter, [] {
+      return false;
+    })};
 
     CHECK(publisher == StartupPhaseStatus::k_skipped_by_configuration);
     CHECK(developer == StartupPhaseStatus::k_skipped_by_configuration);
@@ -116,13 +121,13 @@ TEST_SUITE("Core::Video::StartupVideoSequence") {
     StartupMediaPolicy policy;
     policy.videos_enabled = true;
     policy.video_paths = std::array<std::string, 3>{
-        "FLIS/DOES_NOT_EXIST_1.mpg",
-        "FLIS/DOES_NOT_EXIST_2.mpg",
-        "FLIS/DOES_NOT_EXIST_3.mpg"};
+        "FLIS/DOES_NOT_EXIST_1.mpg", "FLIS/DOES_NOT_EXIST_2.mpg", "FLIS/DOES_NOT_EXIST_3.mpg"};
     StartupVideoSequence sequence{recorder, policy};
     StubPresenter presenter;
 
-    sequence.play_all(presenter, [] { return false; });
+    sequence.play_all(presenter, [] {
+      return false;
+    });
 
     const std::optional<std::uint32_t> eidos{
         recorder.first_sequence_of("StartupVideo.Eidos.SkippedUnavailable")};

@@ -148,16 +148,18 @@ TEST_SUITE("Core::WorldCameraSystem") {
         .horizontal_fov_degrees = static_cast<std::int32_t>(70.0F)};
 
     camera.apply_command(command);
-    CHECK(camera.camera().get_far_plane() ==
-          doctest::Approx(App::Runtime::metres_to_inches(App::Runtime::k_default_clip_distance_metres)));
+    CHECK(camera.camera().get_far_plane() == doctest::Approx(App::Runtime::metres_to_inches(
+                                                 App::Runtime::k_default_clip_distance_metres)));
 
     camera.set_clip_distance_metres(150.0F);
-    CHECK(camera.camera().get_far_plane() == doctest::Approx(App::Runtime::metres_to_inches(150.0F)));
+    CHECK(
+        camera.camera().get_far_plane() == doctest::Approx(App::Runtime::metres_to_inches(150.0F)));
     CHECK(camera.pose().horizontal_fov_degrees == doctest::Approx(70.0F));
     CHECK(camera.pose().eye.z == doctest::Approx(0.0F));
 
     camera.apply_command(command);
-    CHECK(camera.camera().get_far_plane() == doctest::Approx(App::Runtime::metres_to_inches(150.0F)));
+    CHECK(
+        camera.camera().get_far_plane() == doctest::Approx(App::Runtime::metres_to_inches(150.0F)));
     CHECK(camera.pose().horizontal_fov_degrees == doctest::Approx(70.0F));
     CHECK(camera.pose().target.z == doctest::Approx(100.0F));
   }

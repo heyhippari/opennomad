@@ -63,10 +63,7 @@ class FontResource {
   /// Builds a nearest-filtered white/alpha atlas from retail five-bit glyphs.
   /// Requires a current GL context.
   [[nodiscard]] static std::expected<FontResource, std::string> load_retail_fnt(
-      const Omikron::FontFntData& font,
-      int letter_spacing,
-      int blank_width,
-      int line_height);
+      const Omikron::FontFntData& font, int letter_spacing, int blank_width, int line_height);
 
   FontResource(FontResource&& other) noexcept;
   FontResource& operator=(FontResource&& other) noexcept;
@@ -166,8 +163,7 @@ class FontManager {
   /// the temporary TTF fallback is used for a missing/corrupt retail `.FNT`.
   [[nodiscard]] static float fallback_logical_height(char key) {
     const auto entry{font_registry_entry(key)};
-    return entry.has_value() ? static_cast<float>(entry->line_height)
-                             : k_ttf_fallback_logical_size;
+    return entry.has_value() ? static_cast<float>(entry->line_height) : k_ttf_fallback_logical_size;
   }
 
   /// Quantizes a desired physical raster size to the nearest 2 px bucket so

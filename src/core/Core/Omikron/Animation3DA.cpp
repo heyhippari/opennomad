@@ -38,8 +38,7 @@ std::string read_fixed_string(BinaryReader& reader, const std::size_t length) {
 }
 
 Runtime::Vec3 read_vec3(BinaryReader& reader) {
-  return Runtime::Vec3{
-      .x = reader.read_f32(), .y = reader.read_f32(), .z = reader.read_f32()};
+  return Runtime::Vec3{.x = reader.read_f32(), .y = reader.read_f32(), .z = reader.read_f32()};
 }
 
 Runtime::Quaternion read_quaternion(BinaryReader& reader) {
@@ -96,8 +95,8 @@ std::optional<Runtime::Vec3> Animation3DAChannel::integrate_translation(
   Runtime::Vec3 result{};
   const std::size_t first_interval{
       std::max<std::size_t>(1U, static_cast<std::size_t>(std::floor(begin)) + 1U)};
-  const std::size_t last_interval{std::min<std::size_t>(
-      translations.size() - 1U, static_cast<std::size_t>(std::ceil(end)))};
+  const std::size_t last_interval{
+      std::min<std::size_t>(translations.size() - 1U, static_cast<std::size_t>(std::ceil(end)))};
 
   for (std::size_t interval{first_interval}; interval <= last_interval; ++interval) {
     const float interval_begin{static_cast<float>(interval - 1U)};
@@ -112,17 +111,17 @@ std::optional<Runtime::Vec3> Animation3DAChannel::integrate_translation(
   return result;
 }
 
-std::optional<Runtime::Quaternion> Animation3DAChannel::sample_rotation(const float progress) const {
+std::optional<Runtime::Quaternion> Animation3DAChannel::sample_rotation(
+    const float progress) const {
   if (rotations.empty()) {
     return std::nullopt;
   }
-  const float frame{std::clamp(
-      std::max(progress, 1.0F), 0.0F, static_cast<float>(rotations.size() - 1U))};
+  const float frame{
+      std::clamp(std::max(progress, 1.0F), 0.0F, static_cast<float>(rotations.size() - 1U))};
   return rotations.at(static_cast<std::size_t>(std::floor(frame)));
 }
 
-std::expected<Animation3DA, std::string> Animation3DA::load(
-    const std::span<const std::byte> data) {
+std::expected<Animation3DA, std::string> Animation3DA::load(const std::span<const std::byte> data) {
   BinaryReader reader{data};
   Animation3DA animation;
   animation.max_frame_index = reader.read_u32();
@@ -175,8 +174,8 @@ std::expected<Animation3DA, std::string> Animation3DA::load(
       }
     }
     if (reader.has_error()) {
-      return std::expected<Animation3DA, std::string>{std::unexpect,
-          fmt::format("3DA channel '{}' streams: {}", channel.name, reader.error())};
+      return std::expected<Animation3DA, std::string>{
+          std::unexpect, fmt::format("3DA channel '{}' streams: {}", channel.name, reader.error())};
     }
   }
   return animation;

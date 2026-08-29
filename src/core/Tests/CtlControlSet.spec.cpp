@@ -87,8 +87,7 @@ Buffer make_3da(const std::uint32_t max_frame,
 
 [[nodiscard]] std::string uppercase(std::string value) {
   for (char& character : value) {
-    character =
-        static_cast<char>(std::toupper(static_cast<unsigned char>(character)));
+    character = static_cast<char>(std::toupper(static_cast<unsigned char>(character)));
   }
   return value;
 }
@@ -96,8 +95,8 @@ Buffer make_3da(const std::uint32_t max_frame,
 /// Builds a complete synthetic CTL resource. `animations` maps the UPPERCASE
 /// canonical animation key to its embedded 3DA payload; every key-bearing
 /// state must be covered exactly once per unique key.
-Buffer build_ctl(const std::vector<CtlMoveSpec>& moves,
-    const std::map<std::string, Buffer>& animations = {}) {
+Buffer build_ctl(
+    const std::vector<CtlMoveSpec>& moves, const std::map<std::string, Buffer>& animations = {}) {
   Buffer ctl;
   ctl.u32(0x30374543U)  // "CE70"
       .u32(0x00000101U)
@@ -123,21 +122,21 @@ Buffer build_ctl(const std::vector<CtlMoveSpec>& moves,
           .f32(state.window_start)
           .f32(state.window_end)
           .f32(state.transition_value)
-          .u32(0)            // dynamic block
-          .u32(0)            // parent refs
-          .u32(0)            // child refs
+          .u32(0)  // dynamic block
+          .u32(0)  // parent refs
+          .u32(0)  // child refs
           .u32(state.goto_id)
-          .u32(0)            // block 2c
-          .u32(0)            // block 30
-          .u32(0)            // raw_34
-          .u32(0)            // owner move
-          .u32(0)            // raw_3c
-          .u32(0)            // callback name
-          .u32(0)            // animation key
-          .u32(0)            // animation runtime
+          .u32(0)  // block 2c
+          .u32(0)  // block 30
+          .u32(0)  // raw_34
+          .u32(0)  // owner move
+          .u32(0)  // raw_3c
+          .u32(0)  // callback name
+          .u32(0)  // animation key
+          .u32(0)  // animation runtime
           .u16(state.animation_mode)
-          .u16(0)            // transition count
-          .u16(0)            // phase offset
+          .u16(0)  // transition count
+          .u16(0)  // phase offset
           .u16(state.defer_ticks)
           .u16(state.priority)
           .u8(static_cast<std::uint8_t>(state.parent_refs.size()))
@@ -284,25 +283,30 @@ TEST_SUITE("Core::Omikron::CtlControlSet") {
     Buffer ctl;
     ctl.u32(0x30374543U).u32(0x101U).u32(0).u32(1).zeros(0x48U);
     ctl.u32(77).u32(1).u32(1).u32(0).u32(0).chars("Sentinel", 12);
-    ctl.u32(0xAABBCCDDU)      // state_id
-        .u32(0x00040004U)     // input condition
-        .u32(0x8022U)         // flags (default + no-key family)
-        .u32(0x0C0C0C0CU)     // raw_0c
-        .f32(4.0F)            // window start
-        .f32(21.0F)           // window end
-        .f32(2.5F)            // transition value
-        .u32(0).u32(0).u32(0)
-        .u32(0)               // goto
-        .u32(0).u32(0)
-        .u32(0x34343434U)     // raw_34
+    ctl.u32(0xAABBCCDDU)   // state_id
+        .u32(0x00040004U)  // input condition
+        .u32(0x8022U)      // flags (default + no-key family)
+        .u32(0x0C0C0C0CU)  // raw_0c
+        .f32(4.0F)         // window start
+        .f32(21.0F)        // window end
+        .f32(2.5F)         // transition value
         .u32(0)
-        .u32(0x3C3C3C3CU)     // raw_3c
-        .u32(0).u32(0).u32(0)
-        .u16(0x0009U)         // animation mode (markers bit set)
-        .u16(7U)              // transition count
-        .u16(3U)              // phase offset
-        .u16(5U)              // defer ticks
-        .u16(11U)             // priority
+        .u32(0)
+        .u32(0)
+        .u32(0)  // goto
+        .u32(0)
+        .u32(0)
+        .u32(0x34343434U)  // raw_34
+        .u32(0)
+        .u32(0x3C3C3C3CU)  // raw_3c
+        .u32(0)
+        .u32(0)
+        .u32(0)
+        .u16(0x0009U)  // animation mode (markers bit set)
+        .u16(7U)       // transition count
+        .u16(3U)       // phase offset
+        .u16(5U)       // defer ticks
+        .u16(11U)      // priority
         .u8(0)
         .u8(0);
     // animation_mode & 8 appends the dynamic marker block: zero markers here.
@@ -367,8 +371,7 @@ TEST_SUITE("Core::Omikron::CtlControlSet") {
   TEST_CASE("truncated variable sections are structured errors") {
     Buffer complete{build_ctl(two_move_graph())};
     // Cut the buffer inside the child-reference section.
-    const std::vector<std::byte> truncated{
-        complete.data().begin(), complete.data().end() - 2};
+    const std::vector<std::byte> truncated{complete.data().begin(), complete.data().end() - 2};
     CHECK_FALSE(App::Omikron::CtlControlSet::load(truncated).has_value());
 
     // Trailing garbage after a complete parse is also an error: a correct
@@ -404,15 +407,14 @@ TEST_SUITE("Core::Omikron::CtlControlSet") {
     const std::vector<CtlMoveSpec> moves{CtlMoveSpec{.id = 1,
         .flags = 1,
         .name = "Moves",
-        .states =
-            {
-                CtlStateSpec{.id = 1, .flags = 0x20U, .key_bearing = true, .key = "walk"},
-                // Same canonical key, different case: shares the resource.
-                CtlStateSpec{.id = 2, .flags = 0U, .key_bearing = true, .key = "WALK"},
-                CtlStateSpec{.id = 3, .flags = 0U, .key_bearing = true, .key = "Run"},
-                // No key: the 0x8002 predicate suppresses the key field.
-                CtlStateSpec{.id = 4, .flags = 0x8002U},
-            }}};
+        .states = {
+            CtlStateSpec{.id = 1, .flags = 0x20U, .key_bearing = true, .key = "walk"},
+            // Same canonical key, different case: shares the resource.
+            CtlStateSpec{.id = 2, .flags = 0U, .key_bearing = true, .key = "WALK"},
+            CtlStateSpec{.id = 3, .flags = 0U, .key_bearing = true, .key = "Run"},
+            // No key: the 0x8002 predicate suppresses the key field.
+            CtlStateSpec{.id = 4, .flags = 0x8002U},
+        }}};
     Buffer ctl{build_ctl(moves, animations)};
     const auto parsed{App::Omikron::CtlControlSet::load(ctl.data())};
     REQUIRE(parsed.has_value());
@@ -437,16 +439,15 @@ TEST_SUITE("Core::Omikron::CtlControlSet") {
     const std::vector<CtlMoveSpec> moves{CtlMoveSpec{.id = 1,
         .flags = 1,
         .name = "Aux",
-        .states =
-            {
-                CtlStateSpec{.id = 1,
-                    .flags = 0x8002U | 0x20U | 0x0100U,
-                    .orientation = App::Runtime::Vec3{.x = 0.0F, .y = 5.0F, .z = 0.0F}},
-                CtlStateSpec{.id = 2,
-                    .flags = 0x8002U | 0x0080U,
-                    .movement = App::Runtime::Vec3{.x = 1.0F, .y = 2.0F, .z = 3.0F}},
-                CtlStateSpec{.id = 3, .flags = 0x8002U},
-            }}};
+        .states = {
+            CtlStateSpec{.id = 1,
+                .flags = 0x8002U | 0x20U | 0x0100U,
+                .orientation = App::Runtime::Vec3{.x = 0.0F, .y = 5.0F, .z = 0.0F}},
+            CtlStateSpec{.id = 2,
+                .flags = 0x8002U | 0x0080U,
+                .movement = App::Runtime::Vec3{.x = 1.0F, .y = 2.0F, .z = 3.0F}},
+            CtlStateSpec{.id = 3, .flags = 0x8002U},
+        }}};
     Buffer ctl{build_ctl(moves)};
     const auto parsed{App::Omikron::CtlControlSet::load(ctl.data())};
     REQUIRE(parsed.has_value());
@@ -465,13 +466,10 @@ TEST_SUITE("Core::Omikron::CtlControlSet") {
     const std::vector<CtlMoveSpec> moves{CtlMoveSpec{.id = 1,
         .flags = 1,
         .name = "Callbacks",
-        .states =
-            {
-                CtlStateSpec{.id = 1,
-                    .flags = 0x8002U | 0x20U | 0x10U,
-                    .callback = "MDSTAND"},
-                CtlStateSpec{.id = 2, .flags = 0x8002U | 0x02000000U, .aux28 = true},
-            }}};
+        .states = {
+            CtlStateSpec{.id = 1, .flags = 0x8002U | 0x20U | 0x10U, .callback = "MDSTAND"},
+            CtlStateSpec{.id = 2, .flags = 0x8002U | 0x02000000U, .aux28 = true},
+        }}};
     Buffer ctl{build_ctl(moves)};
     const auto parsed{App::Omikron::CtlControlSet::load(ctl.data())};
     REQUIRE(parsed.has_value());
@@ -487,7 +485,8 @@ TEST_SUITE("Core::Omikron::CtlControlSet") {
         .states = {CtlStateSpec{.id = 1,
             .flags = 0x8002U | 0x20U,
             .animation_mode = 0x0009U,
-            .markers = {MarkerSpec{.phase = 3.0F, .hid = 203}, MarkerSpec{.phase = 15.0F, .hid = 199}}}}}};
+            .markers = {
+                MarkerSpec{.phase = 3.0F, .hid = 203}, MarkerSpec{.phase = 15.0F, .hid = 199}}}}}};
     Buffer ctl{build_ctl(moves)};
     const auto parsed{App::Omikron::CtlControlSet::load(ctl.data())};
     REQUIRE(parsed.has_value());

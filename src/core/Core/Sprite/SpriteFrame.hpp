@@ -47,8 +47,7 @@ struct SpriteFrame {
 /// Frame count of one object. Provisional rule: the serialized root frame
 /// count wins when non-zero, otherwise the per-object rectangle (frame
 /// descriptor) table size — the root field is 0 in every observed file.
-[[nodiscard]] std::size_t frame_count(const Omikron::Model3DOData& model,
-                                      std::size_t object_index);
+[[nodiscard]] std::size_t frame_count(const Omikron::Model3DOData& model, std::size_t object_index);
 
 /// Resolves one frame descriptor of an object into a renderable frame.
 ///

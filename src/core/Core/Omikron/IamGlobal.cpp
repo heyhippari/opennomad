@@ -40,8 +40,8 @@ std::expected<IamGlobal, std::string> IamGlobal::load(const std::span<const std:
 
   const std::int16_t signed_count{read_at<std::int16_t>(data, k_offset_camera_count)};
   if (signed_count < 0) {
-    return std::expected<IamGlobal, std::string>{std::unexpect,
-        fmt::format("IAM/GLOBAL: camera table has negative count {}", signed_count)};
+    return std::expected<IamGlobal, std::string>{
+        std::unexpect, fmt::format("IAM/GLOBAL: camera table has negative count {}", signed_count)};
   }
 
   const std::size_t count{static_cast<std::size_t>(signed_count)};
@@ -49,8 +49,7 @@ std::expected<IamGlobal, std::string> IamGlobal::load(const std::span<const std:
     return IamGlobal{std::vector<IamCameraRecord>{}};
   }
 
-  const std::uint32_t serialized_offset{
-      read_at<std::uint32_t>(data, k_offset_camera_table)};
+  const std::uint32_t serialized_offset{read_at<std::uint32_t>(data, k_offset_camera_table)};
   const std::size_t camera_offset{serialized_offset};
   if (camera_offset > data.size()) {
     return std::expected<IamGlobal, std::string>{std::unexpect,
@@ -70,21 +69,18 @@ std::expected<IamGlobal, std::string> IamGlobal::load(const std::span<const std:
   std::vector<IamCameraRecord> cameras;
   cameras.reserve(count);
   for (std::size_t index{0}; index < count; ++index) {
-    const std::size_t offset{
-        camera_offset + (index * IamCameraRecord::k_serialized_size)};
-    auto camera{parse_iam_camera(
-        data.subspan(offset, IamCameraRecord::k_serialized_size))};
+    const std::size_t offset{camera_offset + (index * IamCameraRecord::k_serialized_size)};
+    auto camera{parse_iam_camera(data.subspan(offset, IamCameraRecord::k_serialized_size))};
     if (!camera) {
-      return std::expected<IamGlobal, std::string>{std::unexpect,
-          fmt::format("IAM/GLOBAL: camera {}: {}", index, camera.error())};
+      return std::expected<IamGlobal, std::string>{
+          std::unexpect, fmt::format("IAM/GLOBAL: camera {}: {}", index, camera.error())};
     }
     cameras.push_back(std::move(camera).value());
   }
   return IamGlobal{std::move(cameras)};
 }
 
-std::optional<IamCameraRecord> IamGlobal::camera_by_id(
-    const std::int16_t camera_id) const {
+std::optional<IamCameraRecord> IamGlobal::camera_by_id(const std::int16_t camera_id) const {
   for (const IamCameraRecord& camera : m_cameras) {
     if (camera.camera_id == camera_id) {
       return camera;

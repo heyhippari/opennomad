@@ -19,9 +19,8 @@
 namespace App::Omikron {
 namespace {
 
-[[nodiscard]] bool checked_add(const std::size_t first,
-    const std::size_t second,
-    std::size_t& result) {
+[[nodiscard]] bool checked_add(
+    const std::size_t first, const std::size_t second, std::size_t& result) {
   if (first > std::numeric_limits<std::size_t>::max() - second) {
     return false;
   }
@@ -29,9 +28,8 @@ namespace {
   return true;
 }
 
-[[nodiscard]] bool checked_multiply(const std::size_t first,
-    const std::size_t second,
-    std::size_t& result) {
+[[nodiscard]] bool checked_multiply(
+    const std::size_t first, const std::size_t second, std::size_t& result) {
   if (first != 0U && second > std::numeric_limits<std::size_t>::max() / first) {
     return false;
   }
@@ -56,10 +54,10 @@ namespace {
   if (reader.has_error()) {
     return std::expected<Runtime::Quaternion, std::string>{std::unexpect, reader.error()};
   }
-  const double length_squared{(static_cast<double>(value.w) * value.w) +
-                              (static_cast<double>(value.x) * value.x) +
-                              (static_cast<double>(value.y) * value.y) +
-                              (static_cast<double>(value.z) * value.z)};
+  const double length_squared{(static_cast<double>(value.w) * static_cast<double>(value.w)) +
+                              (static_cast<double>(value.x) * static_cast<double>(value.x)) +
+                              (static_cast<double>(value.y) * static_cast<double>(value.y)) +
+                              (static_cast<double>(value.z) * static_cast<double>(value.z))};
   if (!std::isfinite(length_squared) || length_squared <= 0.0) {
     return std::expected<Runtime::Quaternion, std::string>{std::unexpect,
         fmt::format("3DM object slot {} contains a non-finite or zero quaternion", slot)};
@@ -84,12 +82,12 @@ std::expected<ThreeDM, std::string> ThreeDM::load(const std::span<const std::byt
   clip.m_header.field_08 = reader.read_u32();
   const std::uint32_t object_count{reader.read_u32()};
   if (reader.has_error()) {
-    return std::expected<ThreeDM, std::string>{std::unexpect,
-        fmt::format("truncated 3DM header: {}", reader.error())};
+    return std::expected<ThreeDM, std::string>{
+        std::unexpect, fmt::format("truncated 3DM header: {}", reader.error())};
   }
   if (clip.m_header.stream_mode != 0U) {
-    return std::expected<ThreeDM, std::string>{std::unexpect,
-        fmt::format("unsupported 3DM stream mode {}", clip.m_header.stream_mode)};
+    return std::expected<ThreeDM, std::string>{
+        std::unexpect, fmt::format("unsupported 3DM stream mode {}", clip.m_header.stream_mode)};
   }
   if (clip.m_header.morph_vertex_count > k_max_morph_vertices) {
     return std::expected<ThreeDM, std::string>{std::unexpect,
@@ -106,8 +104,8 @@ std::expected<ThreeDM, std::string> ThreeDM::load(const std::span<const std::byt
     clip.m_header.object_ids.push_back(reader.read_u32());
   }
   if (reader.has_error()) {
-    return std::expected<ThreeDM, std::string>{std::unexpect,
-        fmt::format("truncated 3DM object ID table: {}", reader.error())};
+    return std::expected<ThreeDM, std::string>{
+        std::unexpect, fmt::format("truncated 3DM object ID table: {}", reader.error())};
   }
 
   std::size_t object_bytes{0};
@@ -139,8 +137,8 @@ std::expected<ThreeDM, std::string> ThreeDM::load(const std::span<const std::byt
   clip.m_frames.reserve(full_count + (remainder == motion_size ? 1U : 0U));
   std::size_t offset{payload_offset};
   for (std::size_t index{0}; index < full_count; ++index) {
-    clip.m_frames.push_back(ThreeDmFrameLocation{
-        .motion_offset = offset, .audio_offset = offset + motion_size});
+    clip.m_frames.push_back(
+        ThreeDmFrameLocation{.motion_offset = offset, .audio_offset = offset + motion_size});
     offset += full_record_size;
   }
   if (remainder == motion_size) {
@@ -160,8 +158,8 @@ std::size_t ThreeDM::audio_chunk_count() const {
 std::expected<ThreeDmFrame, std::string> ThreeDM::decode_frame(
     const std::size_t frame_index, const std::size_t root_object_slot) const {
   if (frame_index >= m_frames.size()) {
-    return std::expected<ThreeDmFrame, std::string>{std::unexpect,
-        fmt::format("3DM frame {} out of range ({})", frame_index, m_frames.size())};
+    return std::expected<ThreeDmFrame, std::string>{
+        std::unexpect, fmt::format("3DM frame {} out of range ({})", frame_index, m_frames.size())};
   }
   if (root_object_slot >= m_header.object_ids.size()) {
     return std::expected<ThreeDmFrame, std::string>{std::unexpect,
@@ -170,8 +168,8 @@ std::expected<ThreeDmFrame, std::string> ThreeDM::decode_frame(
             m_header.object_ids.size())};
   }
   const ThreeDmFrameLocation& location{m_frames.at(frame_index)};
-  BinaryReader reader{std::span<const std::byte>{m_bytes}.subspan(location.motion_offset,
-      m_motion_size)};
+  BinaryReader reader{
+      std::span<const std::byte>{m_bytes}.subspan(location.motion_offset, m_motion_size)};
   ThreeDmFrame frame;
   frame.object_rotations.reserve(m_header.object_ids.size());
   for (std::size_t slot{0}; slot < m_header.object_ids.size(); ++slot) {
@@ -184,8 +182,7 @@ std::expected<ThreeDmFrame, std::string> ThreeDM::decode_frame(
     }
     auto quaternion{read_quaternion(reader, slot)};
     if (!quaternion) {
-      return std::expected<ThreeDmFrame, std::string>{
-          std::unexpect, std::move(quaternion).error()};
+      return std::expected<ThreeDmFrame, std::string>{std::unexpect, std::move(quaternion).error()};
     }
     frame.object_rotations.push_back(quaternion.value());
   }
@@ -193,14 +190,14 @@ std::expected<ThreeDmFrame, std::string> ThreeDM::decode_frame(
   for (std::uint32_t index{0}; index < m_header.morph_vertex_count; ++index) {
     const ThreeDmMorphVertex vertex{.position = read_vec3(reader), .normal = read_vec3(reader)};
     if (reader.has_error() || !finite(vertex.position) || !finite(vertex.normal)) {
-      return std::expected<ThreeDmFrame, std::string>{std::unexpect,
-          fmt::format("3DM morph vertex {} is truncated or non-finite", index)};
+      return std::expected<ThreeDmFrame, std::string>{
+          std::unexpect, fmt::format("3DM morph vertex {} is truncated or non-finite", index)};
     }
     frame.morph_vertices.push_back(vertex);
   }
   if (reader.has_error() || reader.remaining() != 0U) {
-    return std::expected<ThreeDmFrame, std::string>{std::unexpect,
-        reader.has_error() ? reader.error() : "3DM motion record size mismatch"};
+    return std::expected<ThreeDmFrame, std::string>{
+        std::unexpect, reader.has_error() ? reader.error() : "3DM motion record size mismatch"};
   }
   return frame;
 }

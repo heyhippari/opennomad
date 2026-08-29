@@ -35,8 +35,7 @@ struct SpriteResource {
   /// Frame count of one object (see Sprite::frame_count for the provisional
   /// serialized-frame-count rule).
   [[nodiscard]] std::size_t frame_count(std::size_t object_index) const;
-  [[nodiscard]] std::expected<SpriteFrame, SpriteFrameError> resolve_frame(
-      std::size_t object_index,
+  [[nodiscard]] std::expected<SpriteFrame, SpriteFrameError> resolve_frame(std::size_t object_index,
       std::uint16_t frame_index,
       float texture_offset_u,
       float texture_offset_v) const;

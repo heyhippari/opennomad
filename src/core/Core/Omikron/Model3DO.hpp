@@ -264,9 +264,9 @@ struct MeshPolygons {
 struct CameraRecord {
   static constexpr std::size_t k_serialized_size{0x34};
 
-  std::string name;  ///< +0x00, fixed 20-byte field.
-  Vec3 eye{};        ///< +0x14..+0x1C, Runtime-native inches.
-  Vec3 target{};     ///< +0x20..+0x28, Runtime-native inches.
+  std::string name;                    ///< +0x00, fixed 20-byte field.
+  Vec3 eye{};                          ///< +0x14..+0x1C, Runtime-native inches.
+  Vec3 target{};                       ///< +0x20..+0x28, Runtime-native inches.
   float roll_degrees{0.0F};            ///< +0x2C.
   float horizontal_fov_degrees{0.0F};  ///< +0x30.
 };
@@ -374,8 +374,7 @@ class Model3DO {
   /// Builds geometry from instance-local Runtime object transforms without
   /// mutating the shared parsed model resource.
   [[nodiscard]] static std::expected<std::vector<MaterialGroup>, std::string> build_posed_geometry(
-      const Model3DOData& model,
-      std::span<const Model3DOData::RuntimeObjectState> runtime_objects);
+      const Model3DOData& model, std::span<const Model3DOData::RuntimeObjectState> runtime_objects);
 
   /// Builds posed geometry from instance-local object transforms and an
   /// instance-local source vertex array. The override array must remain in
@@ -394,8 +393,7 @@ class Model3DO {
   /// Resolves an instance-local transform array against an immutable model
   /// hierarchy.
   [[nodiscard]] static std::expected<void, std::string> resolve_runtime_transforms(
-      const Model3DOData& model,
-      std::span<Model3DOData::RuntimeObjectState> runtime_objects);
+      const Model3DOData& model, std::span<Model3DOData::RuntimeObjectState> runtime_objects);
 
  private:
   static void read_header(BinaryReader& reader, Header& header);

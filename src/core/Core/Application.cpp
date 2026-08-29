@@ -275,7 +275,7 @@ std::expected<Application, std::string> Application::create(const std::string& t
           Settings::SettingChoice{.label = "150 m", .raw_value = 150},
           Settings::SettingChoice{.label = "200 m", .raw_value = 200}},
       1U);
-  game_settings->ensure_choice("video.display)pàôooooooooooooooooooooo_sky",
+  game_settings->ensure_choice("video.display_sky",
       {Settings::SettingChoice{.label = "Off", .raw_value = 0},
           Settings::SettingChoice{.label = "On", .raw_value = 1}},
       1U);

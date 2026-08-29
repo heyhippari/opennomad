@@ -24,16 +24,95 @@ constexpr std::size_t K_HEADER_SIZE{0x10};
 constexpr std::uint32_t K_PAYLOAD_OFFSET{0x04};
 
 /// The standard 89-entry IMA step-size table.
-constexpr std::array<std::int32_t, 89> K_IMA_STEP_TABLE{
-    7, 8, 9, 10, 11, 12, 13, 14, 16, 17,
-    19, 21, 23, 25, 28, 31, 34, 37, 41, 45,
-    50, 55, 60, 66, 73, 80, 88, 97, 107, 118,
-    130, 143, 157, 173, 190, 209, 230, 253, 279, 307,
-    337, 371, 408, 449, 494, 544, 598, 658, 724, 796,
-    876, 963, 1060, 1166, 1282, 1411, 1552, 1707, 1878, 2066,
-    2272, 2499, 2749, 3024, 3327, 3660, 4026, 4428, 4871, 5358,
-    5894, 6484, 7132, 7845, 8630, 9493, 10442, 11487, 12635, 13899,
-    15289, 16818, 18500, 20350, 22385, 24623, 27086, 29794, 32767};
+constexpr std::array<std::int32_t, 89> K_IMA_STEP_TABLE{7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    16,
+    17,
+    19,
+    21,
+    23,
+    25,
+    28,
+    31,
+    34,
+    37,
+    41,
+    45,
+    50,
+    55,
+    60,
+    66,
+    73,
+    80,
+    88,
+    97,
+    107,
+    118,
+    130,
+    143,
+    157,
+    173,
+    190,
+    209,
+    230,
+    253,
+    279,
+    307,
+    337,
+    371,
+    408,
+    449,
+    494,
+    544,
+    598,
+    658,
+    724,
+    796,
+    876,
+    963,
+    1060,
+    1166,
+    1282,
+    1411,
+    1552,
+    1707,
+    1878,
+    2066,
+    2272,
+    2499,
+    2749,
+    3024,
+    3327,
+    3660,
+    4026,
+    4428,
+    4871,
+    5358,
+    5894,
+    6484,
+    7132,
+    7845,
+    8630,
+    9493,
+    10442,
+    11487,
+    12635,
+    13899,
+    15289,
+    16818,
+    18500,
+    20350,
+    22385,
+    24623,
+    27086,
+    29794,
+    32767};
 
 /// The standard 16-entry IMA index-adjustment table.
 constexpr std::array<int, 16> K_IMA_INDEX_TABLE{
@@ -41,15 +120,14 @@ constexpr std::array<int, 16> K_IMA_INDEX_TABLE{
 
 /// Clamps a decoded predictor sum into signed 16-bit range.
 [[nodiscard]] std::int16_t clamp_to_int16(const std::int32_t value) {
-  return static_cast<std::int16_t>(
-      std::clamp(value,
-          static_cast<std::int32_t>(std::numeric_limits<std::int16_t>::min()),
-          static_cast<std::int32_t>(std::numeric_limits<std::int16_t>::max())));
+  return static_cast<std::int16_t>(std::clamp(value,
+      static_cast<std::int32_t>(std::numeric_limits<std::int16_t>::min()),
+      static_cast<std::int32_t>(std::numeric_limits<std::int16_t>::max())));
 }
 
 /// Reads a little-endian 24-bit unsigned integer from `data` at `offset`.
-[[nodiscard]] std::uint32_t read_u24_le(const std::span<const std::byte> data,
-    const std::size_t offset) {
+[[nodiscard]] std::uint32_t read_u24_le(
+    const std::span<const std::byte> data, const std::size_t offset) {
   const std::uint32_t byte0{static_cast<std::uint32_t>(data[offset])};
   const std::uint32_t byte1{static_cast<std::uint32_t>(data[offset + 1U])};
   const std::uint32_t byte2{static_cast<std::uint32_t>(data[offset + 2U])};
@@ -67,8 +145,8 @@ std::expected<QdAdpFile, std::string> QdAdpFile::load(const std::span<const std:
   const std::uint32_t payload_size{read_u24_le(data, 0x00)};
   const std::uint8_t stereo_flag{static_cast<std::uint8_t>(data[0x03])};
   if (stereo_flag > 1U) {
-    return std::expected<QdAdpFile, std::string>{std::unexpect,
-        fmt::format("ADP stereo flag {} is invalid (expected 0 or 1)", stereo_flag)};
+    return std::expected<QdAdpFile, std::string>{
+        std::unexpect, fmt::format("ADP stereo flag {} is invalid (expected 0 or 1)", stereo_flag)};
   }
 
   for (std::size_t offset{K_PAYLOAD_OFFSET}; offset < K_HEADER_SIZE; ++offset) {
@@ -78,8 +156,7 @@ std::expected<QdAdpFile, std::string> QdAdpFile::load(const std::span<const std:
     }
   }
 
-  const std::uint64_t expected_size{
-      static_cast<std::uint64_t>(payload_size) + K_HEADER_SIZE};
+  const std::uint64_t expected_size{static_cast<std::uint64_t>(payload_size) + K_HEADER_SIZE};
   if (expected_size != data.size()) {
     return std::expected<QdAdpFile, std::string>{std::unexpect,
         fmt::format("ADP payload size {} (+16 = {}) does not match file size {}",
@@ -150,16 +227,15 @@ std::size_t QdAdpDecoder::decode_frames(std::span<std::int16_t> interleaved_pcm)
   }
   const std::size_t capacity_frames{interleaved_pcm.size() / channel_count};
   const std::uint64_t remaining{total_frames() - m_decoded_frames};
-  const std::size_t frames_to_decode{static_cast<std::size_t>(
-      std::min<std::uint64_t>(remaining, capacity_frames))};
+  const std::size_t frames_to_decode{
+      static_cast<std::size_t>(std::min<std::uint64_t>(remaining, capacity_frames))};
 
   std::size_t out_sample{0};
   for (std::size_t frame{0}; frame < frames_to_decode; ++frame) {
     if (m_read_position >= m_file.payload().size()) {
       break;  // Truncated payload: stop rather than read past the end.
     }
-    const std::uint8_t byte{
-        static_cast<std::uint8_t>(m_file.payload()[m_read_position])};
+    const std::uint8_t byte{static_cast<std::uint8_t>(m_file.payload()[m_read_position])};
     ++m_read_position;
 
     if (channel_count == 1U) {

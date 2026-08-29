@@ -15,8 +15,8 @@
 
 namespace {
 
-using App::Debug::LogFilter;
 using App::LogCategory;
+using App::Debug::LogFilter;
 
 }  // namespace
 

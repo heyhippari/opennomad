@@ -56,7 +56,9 @@ class Buffer {
     return *this;
   }
 
-  [[nodiscard]] const std::vector<std::byte>& data() const { return m_data; }
+  [[nodiscard]] const std::vector<std::byte>& data() const {
+    return m_data;
+  }
 
  private:
   std::vector<std::byte> m_data;

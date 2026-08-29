@@ -57,10 +57,11 @@ class IamIndexedArchive {
 /// 0x518-byte record in each 0x800-byte slot.
 class IamFixedStrideArchive {
  public:
-  IamFixedStrideArchive(std::span<const std::byte> data,
-      std::size_t record_size,
-      std::size_t stride)
-      : m_data(data), m_record_size(record_size), m_stride(stride) {}
+  IamFixedStrideArchive(
+      std::span<const std::byte> data, std::size_t record_size, std::size_t stride)
+      : m_data(data),
+        m_record_size(record_size),
+        m_stride(stride) {}
 
   /// Returns the fixed-size record for `id`. A zero-filled slot is still a
   /// present record; unlike IamIndexedArchive there is no serialized size

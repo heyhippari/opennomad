@@ -12,8 +12,8 @@
 
 #include "Core/Character/CharacterRuntime.hpp"
 #include "Core/Debug/SceneDebugView.hpp"
-#include "Core/Object/ObjectPlacementRuntime.hpp"
 #include "Core/Mesh.hpp"
+#include "Core/Object/ObjectPlacementRuntime.hpp"
 #include "Core/Omikron/Model3DO.hpp"
 #include "Core/Shader.hpp"
 #include "Core/Sprite/SpriteRenderer.hpp"

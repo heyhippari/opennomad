@@ -151,8 +151,7 @@ class IamAreaRecord {
   [[nodiscard]] std::vector<IamAreaZoneRecord> zones() const;
 
   /// Known serialized stride of each recovered AREA table family.
-  [[nodiscard]] static std::optional<std::size_t> known_table_stride(
-      std::size_t index);
+  [[nodiscard]] static std::optional<std::size_t> known_table_stride(std::size_t index);
 
  private:
   explicit IamAreaRecord(std::vector<std::byte> bytes) : m_bytes(std::move(bytes)) {}

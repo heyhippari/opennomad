@@ -934,7 +934,8 @@ void WorldScene::update(const float delta_time, const Input::InputManager& input
   m_uv_phases.update(delta_time);
 
   m_camera.update(delta_time);
-  if (std::optional<WorldCameraOperationCompletion> completed{m_camera.take_completed_operation()};      completed.has_value() && m_scenarios != nullptr) {
+  if (std::optional<WorldCameraOperationCompletion> completed{m_camera.take_completed_operation()};
+      completed.has_value() && m_scenarios != nullptr) {
     if (completed->source_area_id == 222 &&
         (completed->camera_id == 4291U || completed->camera_id == 4292U)) {
       App::Log::info(

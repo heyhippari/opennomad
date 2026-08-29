@@ -135,8 +135,7 @@ TEST_SUITE("Core::Input") {
     manager.update(state);
     REQUIRE(manager.last_physical_press().has_value());
     CHECK_EQ(manager.last_physical_press()->type, SourceType::k_key);
-    CHECK_EQ(manager.last_physical_press()->index,
-        static_cast<std::uint32_t>(SDL_SCANCODE_RCTRL));
+    CHECK_EQ(manager.last_physical_press()->index, static_cast<std::uint32_t>(SDL_SCANCODE_RCTRL));
 
     // Holding the key does not repeatedly satisfy a binding capture.
     manager.update(state);
@@ -156,8 +155,7 @@ TEST_SUITE("Core::Input") {
     manager.update(state);
     REQUIRE(manager.last_physical_press().has_value());
     CHECK_EQ(manager.last_physical_press()->type, SourceType::k_mouse_button);
-    CHECK_EQ(manager.last_physical_press()->index,
-        static_cast<std::uint32_t>(SDL_BUTTON_RIGHT));
+    CHECK_EQ(manager.last_physical_press()->index, static_cast<std::uint32_t>(SDL_BUTTON_RIGHT));
 
     manager.update(state);
     CHECK_FALSE(manager.last_physical_press().has_value());

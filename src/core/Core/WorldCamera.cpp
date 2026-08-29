@@ -359,8 +359,8 @@ void WorldCameraSystem::commit_pose() {
   m_camera.set_view_matrix(std::span<const float, 16>{glm::value_ptr(gl_view), 16}, eye);
 
   if (m_current.horizontal_fov_degrees > 0.0F) {
-    m_camera.set_perspective(Runtime::horizontal_4_3_to_vertical_fov(
-                                 m_current.horizontal_fov_degrees),
+    m_camera.set_perspective(
+        Runtime::horizontal_4_3_to_vertical_fov(m_current.horizontal_fov_degrees),
         Runtime::k_default_near_inches,
         Runtime::metres_to_inches(m_clip_distance_metres));
   }

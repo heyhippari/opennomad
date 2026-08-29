@@ -170,7 +170,7 @@ struct RuntimeCharacter {
   [[nodiscard]] App::Runtime::Matrix3 principal_orientation() const {
     return App::Runtime::euler_rotation_degrees(principal_orientation_degrees);
   }
-  
+
   void set_principal_orientation(const App::Runtime::Vec3& degrees) {
     principal_orientation_degrees = degrees;
     transform.matrix = principal_orientation();

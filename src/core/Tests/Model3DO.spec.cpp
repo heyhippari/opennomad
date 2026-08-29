@@ -248,12 +248,7 @@ TEST_SUITE("Core::Omikron::Model3DO") {
 
   TEST_CASE("Parses named 0x34-byte scene cameras in Runtime-native units") {
     Buffer file{make_header(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, K_DIRECTORY_SIZE, 1)};
-    append_camera(file,
-        "CAMERA",
-        {10.0F, -20.0F, 30.0F},
-        {40.0F, 50.0F, -60.0F},
-        15.0F,
-        80.0F);
+    append_camera(file, "CAMERA", {10.0F, -20.0F, 30.0F}, {40.0F, 50.0F, -60.0F}, 15.0F, 80.0F);
 
     const auto model{App::Omikron::Model3DO::load(file.data())};
     REQUIRE(model.has_value());

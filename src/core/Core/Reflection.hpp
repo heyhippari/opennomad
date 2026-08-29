@@ -14,9 +14,8 @@ namespace App {
 ///
 /// The normal follows (b - a) x (c - a), normalised; a point p lies on the
 /// plane when dot(normal, p) + d == 0.
-[[nodiscard]] inline glm::vec4 plane_from_points(const glm::vec3 a,
-                                                 const glm::vec3 b,
-                                                 const glm::vec3 c) {
+[[nodiscard]] inline glm::vec4 plane_from_points(
+    const glm::vec3 a, const glm::vec3 b, const glm::vec3 c) {
   const glm::vec3 normal{glm::normalize(glm::cross(b - a, c - a))};
   return glm::vec4{normal, -glm::dot(normal, a)};
 }
@@ -29,8 +28,7 @@ namespace App {
 }
 
 /// Reflects a direction vector through a plane.
-[[nodiscard]] inline glm::vec3 reflect_direction(const glm::vec3 direction,
-                                                 const glm::vec4 plane) {
+[[nodiscard]] inline glm::vec3 reflect_direction(const glm::vec3 direction, const glm::vec4 plane) {
   const glm::vec3 normal{glm::vec3{plane}};
   return direction - ((2.0F * glm::dot(normal, direction)) * normal);
 }
@@ -50,17 +48,15 @@ struct ViewBasis {
 /// Recovers the world-space camera basis of a rigid view matrix.
 [[nodiscard]] inline ViewBasis view_basis(const glm::mat4 view) {
   const glm::mat4 inverse{glm::inverse(view)};
-  return ViewBasis{.right = glm::vec3{inverse[0]},
-      .up = glm::vec3{inverse[1]},
-      .front = -glm::vec3{inverse[2]}};
+  return ViewBasis{
+      .right = glm::vec3{inverse[0]}, .up = glm::vec3{inverse[1]}, .front = -glm::vec3{inverse[2]}};
 }
 
 /// Builds the view matrix of a camera mirrored through a plane.
 ///
 /// The result has the opposite handedness of the input view; renderers must
 /// flip the front-face winding while using it.
-[[nodiscard]] inline glm::mat4 reflected_view_matrix(const glm::mat4 view,
-                                                     const glm::vec4 plane) {
+[[nodiscard]] inline glm::mat4 reflected_view_matrix(const glm::mat4 view, const glm::vec4 plane) {
   // Recover the camera pose from the view matrix.
   const glm::mat4 inverse{glm::inverse(view)};
   const glm::vec3 eye{glm::vec3{inverse[3]}};
@@ -68,8 +64,8 @@ struct ViewBasis {
   const glm::vec3 front{-glm::vec3{inverse[2]}};
 
   return glm::lookAt(reflect_point(eye, plane),
-                     reflect_point(eye, plane) + reflect_direction(front, plane),
-                     reflect_direction(up, plane));
+      reflect_point(eye, plane) + reflect_direction(front, plane),
+      reflect_direction(up, plane));
 }
 
 }  // namespace App

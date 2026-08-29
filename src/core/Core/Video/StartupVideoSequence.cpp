@@ -1,7 +1,6 @@
 #include "Core/Video/StartupVideoSequence.hpp"
 
 #include <SDL3/SDL_timer.h>
-
 #include <fmt/format.h>
 
 #include <cstddef>
@@ -22,12 +21,14 @@
 namespace {
 
 /// Human-oriented display name of a startup video slot.
-constexpr std::string_view startup_video_display_name(
-    const App::Startup::StartupVideoSlot slot) {
+constexpr std::string_view startup_video_display_name(const App::Startup::StartupVideoSlot slot) {
   switch (slot) {
-    case App::Startup::StartupVideoSlot::k_publisher: return "Eidos";
-    case App::Startup::StartupVideoSlot::k_developer: return "Quantic Dream";
-    case App::Startup::StartupVideoSlot::k_intro:     return "game intro";
+    case App::Startup::StartupVideoSlot::k_publisher:
+      return "Eidos";
+    case App::Startup::StartupVideoSlot::k_developer:
+      return "Quantic Dream";
+    case App::Startup::StartupVideoSlot::k_intro:
+      return "game intro";
   }
   return "unknown";
 }
@@ -130,8 +131,7 @@ Startup::StartupPhaseStatus StartupVideoSequence::play_slot(const Startup::Start
   m_player.stop_audio();
 
   if (status == VideoDecodeStatus::k_error) {
-    App::Log::info(
-        LogCategory::Video, "{} startup video unavailable — decode error", display);
+    App::Log::info(LogCategory::Video, "{} startup video unavailable — decode error", display);
     m_recorder.record(fmt::format("{}.SkippedUnavailable", base));
     return Startup::StartupPhaseStatus::k_skipped_unavailable;
   }

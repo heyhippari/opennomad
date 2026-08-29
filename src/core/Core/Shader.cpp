@@ -36,8 +36,8 @@ Shader& Shader::operator=(Shader&& other) noexcept {
   return *this;
 }
 
-std::expected<Shader, std::string> Shader::create(const std::string_view vertex_source,
-                                                  const std::string_view fragment_source) {
+std::expected<Shader, std::string> Shader::create(
+    const std::string_view vertex_source, const std::string_view fragment_source) {
   APP_PROFILE_FUNCTION();
 
   const GLuint vs{compile_shader(GL_VERTEX_SHADER, vertex_source)};
@@ -101,9 +101,10 @@ GLuint Shader::compile_shader(const GLenum type, const std::string_view source) 
     glGetShaderiv(id, GL_INFO_LOG_LENGTH, &info_length);
     std::string info_log(static_cast<std::size_t>(info_length), '\0');
     glGetShaderInfoLog(id, info_length, nullptr, info_log.data());
-    App::Log::error(LogCategory::Renderer, "Shader compile error ({}): {}",
-                    (type == GL_VERTEX_SHADER ? "vertex" : "fragment"),
-                    info_log);
+    App::Log::error(LogCategory::Renderer,
+        "Shader compile error ({}): {}",
+        (type == GL_VERTEX_SHADER ? "vertex" : "fragment"),
+        info_log);
     glDeleteShader(id);
     return 0;
   }
@@ -119,7 +120,9 @@ void Shader::unbind() {
   glUseProgram(0);
 }
 
-GLuint Shader::program_id() const { return m_program_id; }
+GLuint Shader::program_id() const {
+  return m_program_id;
+}
 
 std::optional<GLint> Shader::uniform_location(const std::string_view name) const {
   const std::string key{name};
@@ -135,36 +138,36 @@ std::optional<GLint> Shader::uniform_location(const std::string_view name) const
   return location;
 }
 
-void Shader::set_uniform_mat4(const std::string_view name,
-                              const std::span<const GLfloat, 16> value) const {
+void Shader::set_uniform_mat4(
+    const std::string_view name, const std::span<const GLfloat, 16> value) const {
   if (const auto loc{uniform_location(name)}) {
     glUniformMatrix4fv(*loc, 1, GL_FALSE, value.data());
   }
 }
 
-void Shader::set_uniform_mat3(const std::string_view name,
-                              const std::span<const GLfloat, 9> value) const {
+void Shader::set_uniform_mat3(
+    const std::string_view name, const std::span<const GLfloat, 9> value) const {
   if (const auto loc{uniform_location(name)}) {
     glUniformMatrix3fv(*loc, 1, GL_FALSE, value.data());
   }
 }
 
-void Shader::set_uniform_vec4(const std::string_view name,
-                              const std::span<const GLfloat, 4> value) const {
+void Shader::set_uniform_vec4(
+    const std::string_view name, const std::span<const GLfloat, 4> value) const {
   if (const auto loc{uniform_location(name)}) {
     glUniform4fv(*loc, 1, value.data());
   }
 }
 
-void Shader::set_uniform_vec3(const std::string_view name,
-                              const std::span<const GLfloat, 3> value) const {
+void Shader::set_uniform_vec3(
+    const std::string_view name, const std::span<const GLfloat, 3> value) const {
   if (const auto loc{uniform_location(name)}) {
     glUniform3fv(*loc, 1, value.data());
   }
 }
 
-void Shader::set_uniform_vec2(const std::string_view name,
-                              const std::span<const GLfloat, 2> value) const {
+void Shader::set_uniform_vec2(
+    const std::string_view name, const std::span<const GLfloat, 2> value) const {
   if (const auto loc{uniform_location(name)}) {
     glUniform2fv(*loc, 1, value.data());
   }
@@ -182,8 +185,8 @@ void Shader::set_uniform_int(const std::string_view name, const int value) const
   }
 }
 
-void Shader::set_uniform_block_binding(const std::string_view name,
-                                       const GLuint binding_point) const {
+void Shader::set_uniform_block_binding(
+    const std::string_view name, const GLuint binding_point) const {
   const std::string key{name};
   GLuint block_index{GL_INVALID_INDEX};
   if (const auto found{m_block_cache.find(key)}; found != m_block_cache.end()) {

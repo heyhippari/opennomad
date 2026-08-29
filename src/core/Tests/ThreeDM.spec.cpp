@@ -1,3 +1,5 @@
+#include "Core/Omikron/ThreeDM.hpp"
+
 #include <doctest/doctest.h>
 
 #include <bit>
@@ -8,7 +10,6 @@
 
 #include "Core/Dialog/DialogPerformanceRuntime.hpp"
 #include "Core/Omikron/Model3DO.hpp"
-#include "Core/Omikron/ThreeDM.hpp"
 
 namespace {
 

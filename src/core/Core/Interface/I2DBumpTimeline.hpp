@@ -43,17 +43,15 @@ struct BumpTimelineAdvance {
 /// example 100 ms) crosses the corresponding tick boundaries at once and
 /// returns the correct current tick + alpha, without generating any
 /// intermediate per-pixel work.
-inline BumpTimelineAdvance advance_bump_timeline(BumpTimelineState state,
-    double& remainder_seconds,
-    const double elapsed_seconds) {
+inline BumpTimelineAdvance advance_bump_timeline(
+    BumpTimelineState state, double& remainder_seconds, const double elapsed_seconds) {
   remainder_seconds += elapsed_seconds;
   const auto ticks{static_cast<std::uint64_t>(remainder_seconds / k_bump_tick_seconds)};
   if (ticks > 0U) {
     state.current_tick += ticks;
     remainder_seconds -= static_cast<double>(ticks) * k_bump_tick_seconds;
   }
-  state.alpha = static_cast<float>(
-      std::clamp(remainder_seconds / k_bump_tick_seconds, 0.0, 1.0));
+  state.alpha = static_cast<float>(std::clamp(remainder_seconds / k_bump_tick_seconds, 0.0, 1.0));
   return BumpTimelineAdvance{.ticks_advanced = ticks, .state = state};
 }
 

@@ -1,10 +1,11 @@
+#include "Core/Omikron/IndexedBmp8.hpp"
+
 #include <doctest/doctest.h>
 
 #include <cstddef>
 #include <cstdint>
 #include <vector>
 
-#include "Core/Omikron/IndexedBmp8.hpp"
 #include "OmikronTestBuffer.hpp"
 
 // NOLINTBEGIN(misc-use-anonymous-namespace, cppcoreguidelines-avoid-do-while, cert-err33-c)
@@ -17,14 +18,13 @@ constexpr std::uint32_t K_PIXEL_OFFSET{14U + 40U + (256U * 4U)};
 /// Rows are given in file order: positive height = bottom-up, negative =
 /// top-down. The palette entries are all zero (the decoder skips them).
 Buffer make_indexed_bmp(const std::int32_t width,
-                        const std::int32_t height,
-                        const std::vector<std::vector<std::uint8_t>>& rows) {
+    const std::int32_t height,
+    const std::vector<std::vector<std::uint8_t>>& rows) {
   const std::size_t row_bytes{static_cast<std::size_t>(width)};
   const std::size_t row_stride{((row_bytes + 3U) / 4U) * 4U};
   const std::size_t absolute_height{
       height < 0 ? static_cast<std::size_t>(-height) : static_cast<std::size_t>(height)};
-  const std::uint32_t pixel_data_size{
-      static_cast<std::uint32_t>(row_stride * absolute_height)};
+  const std::uint32_t pixel_data_size{static_cast<std::uint32_t>(row_stride * absolute_height)};
 
   Buffer file;
   file.chars("BM", 2)
@@ -32,17 +32,17 @@ Buffer make_indexed_bmp(const std::int32_t width,
       .u16(0)
       .u16(0)
       .u32(K_PIXEL_OFFSET)
-      .u32(40)        // BITMAPINFOHEADER size.
+      .u32(40)  // BITMAPINFOHEADER size.
       .i32(width)
-      .i32(height)    // Positive = bottom-up, negative = top-down.
-      .u16(1)         // Planes.
-      .u16(8)         // Bits per pixel.
-      .u32(0)         // BI_RGB.
+      .i32(height)  // Positive = bottom-up, negative = top-down.
+      .u16(1)       // Planes.
+      .u16(8)       // Bits per pixel.
+      .u32(0)       // BI_RGB.
       .u32(pixel_data_size)
-      .i32(0)         // x pixels per metre.
-      .i32(0)         // y pixels per metre.
-      .u32(256)       // Colours used.
-      .u32(0);        // Colours important.
+      .i32(0)    // x pixels per metre.
+      .i32(0)    // y pixels per metre.
+      .u32(256)  // Colours used.
+      .u32(0);   // Colours important.
   for (std::size_t entry{0}; entry < 256U; ++entry) {
     file.u8(0).u8(0).u8(0).u8(0);
   }

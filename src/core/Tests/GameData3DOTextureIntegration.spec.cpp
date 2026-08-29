@@ -42,8 +42,8 @@ std::optional<std::vector<std::byte>> load_game_file(const std::filesystem::path
   if (root == nullptr) {
     return std::nullopt;
   }
-  const std::filesystem::path resolved{App::Resources::resolve_case_insensitive(
-      std::filesystem::path{root} / relative_path)};
+  const std::filesystem::path resolved{
+      App::Resources::resolve_case_insensitive(std::filesystem::path{root} / relative_path)};
   std::size_t size{0};
   void* raw{SDL_LoadFile(resolved.string().c_str(), &size)};
   if (raw == nullptr) {
@@ -107,8 +107,8 @@ TEST_SUITE("Core::Omikron::GameData3DOTextureIntegration") {
       return;
     }
 
-    CHECK_EQ(std::string_view{model->header.signature.data(), model->header.signature.size()},
-             "OD3X");
+    CHECK_EQ(
+        std::string_view{model->header.signature.data(), model->header.signature.size()}, "OD3X");
     CHECK_EQ(model->header.version_major, 4U);
     // Confirmed serialized values of the original root structure.
     CHECK_EQ(model->header.frame_count, 0U);
@@ -210,8 +210,7 @@ TEST_SUITE("Core::Omikron::GameData3DOTextureIntegration") {
     CHECK_EQ(introgrid.triangle_count, 64U);
 
     CHECK_EQ(model->hierarchy_reachable, std::vector<std::uint8_t>{1U, 1U, 1U});
-    CHECK(model->runtime_objects.at(0).world_translation.x ==
-          doctest::Approx(circle01.position.x));
+    CHECK(model->runtime_objects.at(0).world_translation.x == doctest::Approx(circle01.position.x));
     CHECK(model->runtime_objects.at(1).world_translation.x == doctest::Approx(circle2.position.x));
     CHECK(model->runtime_objects.at(1).world_translation.y == doctest::Approx(circle2.position.y));
     CHECK(model->runtime_objects.at(1).world_translation.z == doctest::Approx(circle2.position.z));

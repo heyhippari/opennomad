@@ -46,8 +46,7 @@ class Resources {
       return file_path;  // e.g. permission denied: keep the original path.
     }
 
-    const fs::path absolute{
-        file_path.is_absolute() ? file_path : fs::absolute(file_path, error)};
+    const fs::path absolute{file_path.is_absolute() ? file_path : fs::absolute(file_path, error)};
     if (error) {
       return file_path;
     }
@@ -97,8 +96,8 @@ class Resources {
   }
 
  private:
-  [[nodiscard]] static bool ascii_case_insensitive_equal(const std::string_view left,
-                                                         const std::string_view right) {
+  [[nodiscard]] static bool ascii_case_insensitive_equal(
+      const std::string_view left, const std::string_view right) {
     if (left.size() != right.size()) {
       return false;
     }

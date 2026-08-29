@@ -408,7 +408,6 @@ class ScriptWorld {
     return std::expected<RelativeBodyAnimationResult, RelativeBodyAnimationFailure>{std::unexpect,
         RelativeBodyAnimationFailure{.error = BodyAnimationApplyError::k_resource_resolution,
             .reason_text = "relative body animation is unavailable in this world"}};
-
   }
 
   /// Clears instance-local body-animation playback state during script reset.

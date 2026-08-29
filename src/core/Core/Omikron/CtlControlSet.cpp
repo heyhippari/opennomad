@@ -42,8 +42,7 @@ namespace {
 [[nodiscard]] std::string canonical_animation_key(const std::string_view key) {
   std::string canonical{key};
   std::ranges::transform(canonical, canonical.begin(), [](const char character) {
-    return static_cast<char>(
-        std::toupper(static_cast<unsigned char>(character)));
+    return static_cast<char>(std::toupper(static_cast<unsigned char>(character)));
   });
   return canonical;
 }
@@ -69,10 +68,9 @@ std::expected<CtlControlSet, std::string> CtlControlSet::load(
     const std::span<const std::byte> data) {
   BinaryReader reader{data};
   if (data.size() < K_CTL_HEADER_SIZE) {
-    return std::expected<CtlControlSet, std::string>{
-        std::unexpect, fmt::format("CTL resource is {} bytes; header requires {:#x}",
-                             data.size(),
-                             K_CTL_HEADER_SIZE)};
+    return std::expected<CtlControlSet, std::string>{std::unexpect,
+        fmt::format(
+            "CTL resource is {} bytes; header requires {:#x}", data.size(), K_CTL_HEADER_SIZE)};
   }
 
   const std::uint32_t magic{reader.read_u32()};
@@ -290,13 +288,13 @@ std::expected<CtlControlSet, std::string> CtlControlSet::load(
     const std::uint32_t payload_size{reader.read_u32()};
     const std::span<const std::byte> payload{reader.read_bytes(payload_size)};
     if (reader.has_error()) {
-      return std::expected<CtlControlSet, std::string>{std::unexpect,
-          fmt::format("CTL embedded animation '{}': {}", key, reader.error())};
+      return std::expected<CtlControlSet, std::string>{
+          std::unexpect, fmt::format("CTL embedded animation '{}': {}", key, reader.error())};
     }
     auto animation{Animation3DA::load(payload)};
     if (!animation) {
-      return std::expected<CtlControlSet, std::string>{std::unexpect,
-          fmt::format("CTL embedded animation '{}': {}", key, animation.error())};
+      return std::expected<CtlControlSet, std::string>{
+          std::unexpect, fmt::format("CTL embedded animation '{}': {}", key, animation.error())};
     }
     animation_indices.emplace(key, animations.size());
     animations.push_back(std::move(animation).value());
@@ -312,16 +310,16 @@ std::expected<CtlControlSet, std::string> CtlControlSet::load(
   move_indices.reserve(moves.size());
   for (std::size_t move_index{0}; move_index < moves.size(); ++move_index) {
     if (!move_indices.emplace(moves.at(move_index).move_id, move_index).second) {
-      return std::expected<CtlControlSet, std::string>{std::unexpect,
-          fmt::format("CTL duplicate move ID {}", moves.at(move_index).move_id)};
+      return std::expected<CtlControlSet, std::string>{
+          std::unexpect, fmt::format("CTL duplicate move ID {}", moves.at(move_index).move_id)};
     }
   }
   std::unordered_map<std::uint32_t, std::size_t> state_indices;
   state_indices.reserve(states.size());
   for (std::size_t state_index{0}; state_index < states.size(); ++state_index) {
     if (!state_indices.emplace(states.at(state_index).state_id, state_index).second) {
-      return std::expected<CtlControlSet, std::string>{std::unexpect,
-          fmt::format("CTL duplicate state ID {}", states.at(state_index).state_id)};
+      return std::expected<CtlControlSet, std::string>{
+          std::unexpect, fmt::format("CTL duplicate state ID {}", states.at(state_index).state_id)};
     }
   }
 
@@ -412,14 +410,16 @@ const CtlState* CtlControlSet::state_by_id(const std::uint32_t state_id) const {
 }
 
 const CtlMove* CtlControlSet::default_move() const {
-  const auto found{
-      std::ranges::find_if(m_moves, [](const CtlMove& move) { return (move.flags & 0x1U) != 0U; })};
+  const auto found{std::ranges::find_if(m_moves, [](const CtlMove& move) {
+    return (move.flags & 0x1U) != 0U;
+  })};
   return found == m_moves.end() ? nullptr : &(*found);
 }
 
 const CtlState* CtlControlSet::default_state(const CtlMove& move) {
-  const auto found{std::ranges::find_if(
-      move.states, [](const CtlState* state) { return (state->flags & 0x20U) != 0U; })};
+  const auto found{std::ranges::find_if(move.states, [](const CtlState* state) {
+    return (state->flags & 0x20U) != 0U;
+  })};
   return found == move.states.end() ? nullptr : *found;
 }
 

@@ -54,20 +54,15 @@ void write_camera(
 
 std::vector<std::byte> make_global(const std::span<const CameraFixture> cameras,
     const std::size_t camera_offset = IamGlobal::k_minimum_header_size) {
-  const std::size_t size{
-      camera_offset + (cameras.size() * IamCameraRecord::k_serialized_size)};
+  const std::size_t size{camera_offset + (cameras.size() * IamCameraRecord::k_serialized_size)};
   std::vector<std::byte> data(size, std::byte{});
-  write_at(data,
-      IamGlobal::k_offset_camera_table,
-      static_cast<std::uint32_t>(camera_offset));
-  write_at(data,
-      IamGlobal::k_offset_camera_count,
-      static_cast<std::int16_t>(cameras.size()));
+  write_at(data, IamGlobal::k_offset_camera_table, static_cast<std::uint32_t>(camera_offset));
+  write_at(data, IamGlobal::k_offset_camera_count, static_cast<std::int16_t>(cameras.size()));
   for (std::size_t index{0}; index < cameras.size(); ++index) {
-    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access) -- span has no at().
-    write_camera(data,
-        camera_offset + (index * IamCameraRecord::k_serialized_size),
-        cameras[index]);
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access) -- span has no
+    // at().
+    write_camera(
+        data, camera_offset + (index * IamCameraRecord::k_serialized_size), cameras[index]);
   }
   return data;
 }
@@ -110,22 +105,18 @@ TEST_SUITE("Core::Omikron::IamGlobal") {
   }
 
   TEST_CASE("Parses the four supplied retail positive-control camera records") {
-    const std::array cameras{CameraFixture{.eye = {0, 179, -768},
-                                 .target = {0, 99, -4},
-                                 .camera_id = 0,
-                                 .tail = {0, 8, 16, 0}},
-        CameraFixture{.eye = {1, 177, -573},
-            .target = {11, 38, 0},
-            .camera_id = 6,
-            .tail = {4, 6, 6, 0}},
+    const std::array cameras{
+        CameraFixture{
+            .eye = {0, 179, -768}, .target = {0, 99, -4}, .camera_id = 0, .tail = {0, 8, 16, 0}},
+        CameraFixture{
+            .eye = {1, 177, -573}, .target = {11, 38, 0}, .camera_id = 6, .tail = {4, 6, 6, 0}},
         CameraFixture{.eye = {5, -13, 268},
             .target = {5, -25, 107},
             .camera_id = 11,
             .horizontal_fov_units = 910,
             .target_selector = 1,
             .eye_selector = 1},
-        CameraFixture{
-            .eye = {10, 105, 288}, .target = {5, 105, -480}, .camera_id = 35}};
+        CameraFixture{.eye = {10, 105, 288}, .target = {5, 105, -480}, .camera_id = 35}};
     const auto global{IamGlobal::load(make_global(cameras, 0x80U))};
     REQUIRE(global.has_value());
     CHECK_EQ(global->cameras().size(), 4U);

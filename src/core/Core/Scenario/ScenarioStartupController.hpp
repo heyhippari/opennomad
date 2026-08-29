@@ -242,8 +242,8 @@ class ScenarioStartupController {
   [[nodiscard]] const ZoneContactContext* zone_contact(std::size_t index) const {
     return index < m_zone_contacts.size() ? m_zone_contacts.at(index).get() : nullptr;
   }
-  [[nodiscard]] const std::optional<CurrentCharacterTriggerProxy>&
-  current_character_trigger_proxy() const {
+  [[nodiscard]] const std::optional<CurrentCharacterTriggerProxy>& current_character_trigger_proxy()
+      const {
     return m_current_character_trigger_proxy;
   }
   [[nodiscard]] bool area_transition_pending() const {
@@ -404,10 +404,10 @@ class ScenarioStartupController {
   [[nodiscard]] bool zone_contact_spatially_matches(const ZoneContactContext& contact) const;
   [[nodiscard]] bool zone_contact_reporting_enabled(const ZoneContactContext& contact) const;
   [[nodiscard]] bool zone_contact_reporting_enabled(const ActiveZoneRef& active_zone) const;
-    void register_current_character_trigger_proxy(const ControlledCharacterRef& owner,
-      const Character::RuntimeCharacter& character);
-    void service_current_character_trigger_proxy();
-    [[nodiscard]] bool current_character_structured_script_active(
+  void register_current_character_trigger_proxy(
+      const ControlledCharacterRef& owner, const Character::RuntimeCharacter& character);
+  void service_current_character_trigger_proxy();
+  [[nodiscard]] bool current_character_structured_script_active(
       const ControlledCharacterRef& owner) const;
   [[nodiscard]] std::expected<void, std::string> create_zone_contact(
       const ActiveZoneRef& active_zone);

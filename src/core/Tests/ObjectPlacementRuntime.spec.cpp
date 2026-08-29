@@ -10,8 +10,8 @@
 #include <expected>
 #include <memory>
 #include <optional>
-#include <string>
 #include <stdexcept>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -70,10 +70,12 @@ std::vector<std::byte> make_area_object(
   constexpr std::size_t k_definition{k_placement + 0x18U};
   std::vector<std::byte> data(k_definition + 0x18U, std::byte{});
   write(data, IamAreaRecord::k_offset_script, static_cast<std::uint32_t>(data.size()));
-  write(data, IamAreaRecord::k_offset_table_offsets + (1U * 4U),
+  write(data,
+      IamAreaRecord::k_offset_table_offsets + (1U * 4U),
       static_cast<std::uint32_t>(k_placement));
   write(data, IamAreaRecord::k_offset_table_counts + (1U * 2U), static_cast<std::uint16_t>(1));
-  write(data, IamAreaRecord::k_offset_table_offsets + (3U * 4U),
+  write(data,
+      IamAreaRecord::k_offset_table_offsets + (3U * 4U),
       static_cast<std::uint32_t>(k_definition));
   write(data, IamAreaRecord::k_offset_table_counts + (3U * 2U), static_cast<std::uint16_t>(1));
   write_object_pair(data, k_placement, k_definition, object_id, state_index, "RINGS3");
@@ -85,10 +87,12 @@ std::vector<std::byte> make_scene_object(
   constexpr std::size_t k_placement{IamSceneRecord::k_header_size};
   constexpr std::size_t k_definition{k_placement + 0x18U};
   std::vector<std::byte> data(k_definition + 0x18U, std::byte{});
-  write(data, IamSceneRecord::k_offset_table_offsets + (1U * 4U),
+  write(data,
+      IamSceneRecord::k_offset_table_offsets + (1U * 4U),
       static_cast<std::uint32_t>(k_placement));
   write(data, IamSceneRecord::k_offset_table_counts + (1U * 2U), static_cast<std::int16_t>(1));
-  write(data, IamSceneRecord::k_offset_table_offsets + (3U * 4U),
+  write(data,
+      IamSceneRecord::k_offset_table_offsets + (3U * 4U),
       static_cast<std::uint32_t>(k_definition));
   write(data, IamSceneRecord::k_offset_table_counts + (3U * 2U), static_cast<std::int16_t>(1));
   write_object_pair(data, k_placement, k_definition, object_id, state_index, "RINGS3");
@@ -151,7 +155,8 @@ TEST_SUITE("Core::ObjectPlacement::Runtime") {
     }
   }
 
-  TEST_CASE("object placement transform reproduces Runtime direct XYZ and literal-degree Euler path") {
+  TEST_CASE(
+      "object placement transform reproduces Runtime direct XYZ and literal-degree Euler path") {
     const auto area{IamAreaRecord::load(make_area_object(162, 471))};
     REQUIRE(area.has_value());
     GameState game_state{make_game_state()};
@@ -165,10 +170,8 @@ TEST_SUITE("Core::ObjectPlacement::Runtime") {
     CHECK_EQ(placement->transform.translation.y, -200.0F);
     CHECK_EQ(placement->transform.translation.z, 300.0F);
     constexpr float k_pi{3.14159265358979323846F};
-    const App::Runtime::Matrix3 expected{
-        App::Runtime::euler_rotation(10.0F * k_pi / 180.0F,
-            20.0F * k_pi / 180.0F,
-            30.0F * k_pi / 180.0F)};
+    const App::Runtime::Matrix3 expected{App::Runtime::euler_rotation(
+        10.0F * k_pi / 180.0F, 20.0F * k_pi / 180.0F, 30.0F * k_pi / 180.0F)};
     for (std::size_t index{0}; index < expected.values.size(); ++index) {
       CHECK(placement->transform.matrix.values.at(index) ==
             doctest::Approx(expected.values.at(index)).epsilon(0.00001));

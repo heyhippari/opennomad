@@ -260,9 +260,9 @@ void DebugUI::show_scx_script_inspector() {
   ImGui::Text("Path: %s", fmt::format("{}", scenario_runtime->script_scenario_name()).c_str());
   ImGui::Text("State: %s", script_run_state_name(runtime->run_state()));
   ImGui::Text("Tick: %llu", static_cast<unsigned long long>(runtime->tick_count()));
-  ImGui::Text("Scripts: %lu, shared values: %lu",
-      static_cast<unsigned long>(runtime->scx().scripts.size()),
-      static_cast<unsigned long>(runtime->scx().shared_values.size()));
+  ImGui::Text("Scripts: %zu, shared values: %zu",
+      runtime->scx().scripts.size(),
+      runtime->scx().shared_values.size());
   ImGui::Text("Real delta:   %.6f s", static_cast<double>(runtime->last_real_delta_seconds()));
   ImGui::Text("Script delta: %.6f frames (30 Hz)%s",
       static_cast<double>(runtime->last_script_delta_frames()),
@@ -397,14 +397,14 @@ void DebugUI::show_scx_script_inspector() {
         source_script.name.c_str(),
         source_script.script_id,
         static_cast<unsigned long>(selected->instance_id));
-    ImGui::Text("Repeat %u / %d (initial %u), elapsed %.3f script frames, %s%s, sprite remaps %lu",
+    ImGui::Text("Repeat %u / %d (initial %u), elapsed %.3f script frames, %s%s, sprite remaps %zu",
         selected->repeat_index,
         selected->repeat_limit,
         selected->initial_repeat_index,
         static_cast<double>(selected->elapsed_script_frames),
         selected->completed ? "completed" : "active",
         selected->paused ? ", paused" : "",
-        static_cast<unsigned long>(selected->sprite_remap.size()));
+        selected->sprite_remap.size());
     if (selected->launch_context.character_id.has_value()) {
       ImGui::Text("Launch: Character  Character: %d  Parameter: %d",
           selected->launch_context.character_id.value(),
@@ -702,7 +702,7 @@ void DebugUI::show_area_vm() {
     for (const AreaVmContextDebugState& context : registry.contexts) {
       const std::string label{fmt::format("[{}] {} {}\n{}",
           context.source.open_nomad_context_index,
-        area_context_source_name(context.source.source_type),
+          area_context_source_name(context.source.source_type),
           area_context_source_id(context.source),
           area_lifecycle_name(context.lifecycle_state))};
       const bool is_selected{selected_matches(context)};
@@ -733,8 +733,8 @@ void DebugUI::show_area_vm() {
       ImGui::Text("Zone ID: %d", context.source.zone_id.value());
     }
     if (context.source.owner_area_slot.has_value()) {
-      ImGui::Text("Owner AREA slot: %u",
-          static_cast<unsigned int>(context.source.owner_area_slot.value()));
+      ImGui::Text(
+          "Owner AREA slot: %u", static_cast<unsigned int>(context.source.owner_area_slot.value()));
     } else {
       ImGui::TextUnformatted("Owner AREA slot: unknown");
     }
@@ -752,7 +752,7 @@ void DebugUI::show_area_vm() {
       ImGui::TextUnformatted("Source primary/default event offset: unavailable");
     }
     for (std::size_t event_index{0}; event_index < context.source.source_event_entry_offsets.size();
-         ++event_index) {
+        ++event_index) {
       const auto& entry{context.source.source_event_entry_offsets.at(event_index)};
       if (entry.has_value()) {
         ImGui::Text("Event %zu source entry: +%#zx (startup mapping)",
@@ -789,9 +789,8 @@ void DebugUI::show_area_vm() {
     } else {
       ImGui::TextUnformatted("OpenNomad active event: none");
     }
-    ImGui::Text("Instruction pointer: +%#zx / %#zx",
-        context.instruction_pointer,
-        context.bytecode_size);
+    ImGui::Text(
+        "Instruction pointer: +%#zx / %#zx", context.instruction_pointer, context.bytecode_size);
     if (context.instruction_pointer <= context.bytecode_size) {
       ImGui::Text("Serialized record offset: +%#zx",
           context.source.open_nomad_execution_base_offset + context.instruction_pointer);
@@ -815,8 +814,8 @@ void DebugUI::show_area_vm() {
         "OpenNomad currently uses a safe uint16 FIFO; capacity/dedup parity is not claimed.");
     if (context.queued_events.empty()) {
       ImGui::TextUnformatted("Pending events: (none)");
-    } else if (ImGui::BeginTable("##AreaEventQueue", 2,
-                   ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+    } else if (ImGui::BeginTable(
+                   "##AreaEventQueue", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
       ImGui::TableSetupColumn("Index");
       ImGui::TableSetupColumn("Pending event");
       ImGui::TableHeadersRow();
@@ -831,13 +830,14 @@ void DebugUI::show_area_vm() {
     }
 
     ImGui::SeparatorText("Evaluation stack");
-    ImGui::Text("Depth: %zu / %zu", context.evaluation_stack.size(), k_retail_area_vm_stack_capacity);
+    ImGui::Text(
+        "Depth: %zu / %zu", context.evaluation_stack.size(), k_retail_area_vm_stack_capacity);
     ImGui::TextDisabled(
         "OpenNomad clears at event boundaries and fails safely; retail clearing is not observed.");
     if (context.evaluation_stack.empty()) {
       ImGui::TextUnformatted("(empty)");
-    } else if (ImGui::BeginTable("##AreaEvalStack", 3,
-                   ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+    } else if (ImGui::BeginTable(
+                   "##AreaEvalStack", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
       ImGui::TableSetupColumn("Index");
       ImGui::TableSetupColumn("Raw / signed value");
       ImGui::TableSetupColumn("Marker");
@@ -875,8 +875,7 @@ void DebugUI::show_area_vm() {
           static_cast<unsigned int>(context.wait.interface_result_variable.value()));
     }
     if (context.wait.scx_script_instance.has_value()) {
-      ImGui::Text("Tracked SCX runtime instance: %zu",
-          context.wait.scx_script_instance.value());
+      ImGui::Text("Tracked SCX runtime instance: %zu", context.wait.scx_script_instance.value());
     }
     if (context.wait.character_script.has_value()) {
       const Script::AreaCharacterScriptRequest& request{context.wait.character_script.value()};
@@ -890,53 +889,53 @@ void DebugUI::show_area_vm() {
           request.camera_duration_units);
     }
     if (context.wait.character_script_instance.has_value()) {
-      ImGui::Text("Tracked ScriptRuntime instance: %zu",
-          context.wait.character_script_instance.value());
+      ImGui::Text(
+          "Tracked ScriptRuntime instance: %zu", context.wait.character_script_instance.value());
     }
     if (context.tracked_script.has_value()) {
       const AreaVmTrackedScriptDebugState& tracked{context.tracked_script.value()};
       ImGui::SeparatorText("Tracked ScriptInstance");
       ImGui::Text("Instance %zu | source [%zu] ID %u '%s'",
-        tracked.instance_id,
-        tracked.source_script_index,
-        static_cast<unsigned int>(tracked.source_script_id),
-        tracked.source_script_name.c_str());
+          tracked.instance_id,
+          tracked.source_script_index,
+          static_cast<unsigned int>(tracked.source_script_id),
+          tracked.source_script_name.c_str());
       ImGui::Text("Bound character: %s",
-        tracked.bound_character_id.has_value()
-          ? fmt::format("{}", tracked.bound_character_id.value()).c_str()
-          : "none");
+          tracked.bound_character_id.has_value()
+              ? fmt::format("{}", tracked.bound_character_id.value()).c_str()
+              : "none");
       ImGui::Text("Paused: %s | completed: %s",
-        tracked.paused ? "yes" : "no",
-        tracked.completed ? "yes" : "no");
+          tracked.paused ? "yes" : "no",
+          tracked.completed ? "yes" : "no");
       ImGui::Text("Group %zu / %zu | repeat %u / %d | elapsed %.3f frames",
-        tracked.current_group_index,
-        tracked.group_count,
-        tracked.repeat_index,
-        tracked.repeat_limit,
-        static_cast<double>(tracked.elapsed_script_frames));
+          tracked.current_group_index,
+          tracked.group_count,
+          tracked.repeat_index,
+          tracked.repeat_limit,
+          static_cast<double>(tracked.elapsed_script_frames));
       ImGui::Text("Commands: %zu root, %zu linked",
-        tracked.root_command_count,
-        tracked.linked_command_count);
+          tracked.root_command_count,
+          tracked.linked_command_count);
       for (const AreaVmTrackedCommandDebugState& command : tracked.active_group_commands) {
-      ImGui::Text("%s %zu: %#010x %s | %s | execution %u / %#x",
-        command.root ? "Root" : "Linked",
-        command.command_index,
-        command.opcode,
-        command.opcode_name.c_str(),
-        command.status.c_str(),
-        command.execution_count,
-        command.execution_limit);
-      for (std::size_t argument_index{0}; argument_index < command.arguments.size();
-         ++argument_index) {
-        const AreaVmTrackedCommandDebugState::Argument& argument{
-          command.arguments.at(argument_index)};
-        ImGui::TextDisabled("  arg %zu: raw %#010x signed %d unsigned %u float %.6g",
-          argument_index,
-          argument.raw,
-          argument.as_signed,
-          argument.as_unsigned,
-          static_cast<double>(argument.as_float));
-      }
+        ImGui::Text("%s %zu: %#010x %s | %s | execution %u / %#x",
+            command.root ? "Root" : "Linked",
+            command.command_index,
+            command.opcode,
+            command.opcode_name.c_str(),
+            command.status.c_str(),
+            command.execution_count,
+            command.execution_limit);
+        for (std::size_t argument_index{0}; argument_index < command.arguments.size();
+            ++argument_index) {
+          const AreaVmTrackedCommandDebugState::Argument& argument{
+              command.arguments.at(argument_index)};
+          ImGui::TextDisabled("  arg %zu: raw %#010x signed %d unsigned %u float %.6g",
+              argument_index,
+              argument.raw,
+              argument.as_signed,
+              argument.as_unsigned,
+              static_cast<double>(argument.as_float));
+        }
       }
     }
     if (context.wait.area_transition.has_value()) {
@@ -969,9 +968,9 @@ void DebugUI::show_area_vm() {
     ImGui::SeparatorText("Global variables");
     if (context.variables.empty()) {
       ImGui::TextUnformatted("(none)");
-    } else if (ImGui::BeginTable("##AreaVariables", 3,
-                   ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
-                       ImGuiTableFlags_ScrollY,
+    } else if (ImGui::BeginTable("##AreaVariables",
+                   3,
+                   ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY,
                    ImVec2{0.0F, 160.0F})) {
       ImGui::TableSetupColumn("ID");
       ImGui::TableSetupColumn("Value");
@@ -1068,8 +1067,8 @@ void DebugUI::show_area_vm() {
               *visible_trace.at(static_cast<std::size_t>(index))};
           ImGui::TableNextRow();
           if (entry.offset == context.instruction_pointer) {
-            ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0,
-                ImGui::GetColorU32(ImVec4{0.2F, 0.35F, 0.55F, 0.45F}));
+            ImGui::TableSetBgColor(
+                ImGuiTableBgTarget_RowBg0, ImGui::GetColorU32(ImVec4{0.2F, 0.35F, 0.55F, 0.45F}));
           }
           ImGui::TableSetColumnIndex(0);
           ImGui::Text("+%#zx", entry.offset);

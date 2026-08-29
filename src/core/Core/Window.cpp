@@ -377,11 +377,11 @@ bool Window::apply_display_configuration(
     }
     const char* video_driver{SDL_GetCurrentVideoDriver()};
     if (m_actual_display_mode != DisplayMode::k_windowed &&
-      supports_toplevel_window_positioning(video_driver == nullptr ? "" : video_driver) &&
-      !SDL_SetWindowPosition(m_window.get(), m_window_pos_x, m_window_pos_y)) {
+        supports_toplevel_window_positioning(video_driver == nullptr ? "" : video_driver) &&
+        !SDL_SetWindowPosition(m_window.get(), m_window_pos_x, m_window_pos_y)) {
       App::Log::warn(LogCategory::Renderer,
-        "failed to restore windowed position; continuing without it: {}",
-        SDL_GetError());
+          "failed to restore windowed position; continuing without it: {}",
+          SDL_GetError());
     }
   } else if (!SDL_SetWindowFullscreen(m_window.get(), true)) {
     App::Log::warn(LogCategory::Renderer, "SDL_SetWindowFullscreen failed: {}", SDL_GetError());

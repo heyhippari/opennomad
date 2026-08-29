@@ -119,9 +119,8 @@ std::string dependency_path(const std::string_view directory,
   return inside;
 }
 
-[[nodiscard]] bool zone_intersects_proxy_bounds(const Omikron::IamZoneRecord& zone,
-    const Runtime::Vec3& position,
-    const float radius) {
+[[nodiscard]] bool zone_intersects_proxy_bounds(
+    const Omikron::IamZoneRecord& zone, const Runtime::Vec3& position, const float radius) {
   Runtime::Vec3 minimum{.x = std::numeric_limits<float>::max(),
       .y = std::numeric_limits<float>::max(),
       .z = std::numeric_limits<float>::max()};
@@ -1172,10 +1171,9 @@ ScenarioStartupController::enqueue_compact_camera(
       .target_attachment_selector = camera.target_attachment_selector,
       .eye_attachment_selector = camera.eye_attachment_selector,
       .tail_fields = camera.tail_fields});
-  const std::string camera_source_name{resolved.has_value()
-                                          ? std::string{compact_camera_definition_source_name(
-                                              resolved->source)}
-                                          : std::string{"ACTIVE"}};
+  const std::string camera_source_name{
+      resolved.has_value() ? std::string{compact_camera_definition_source_name(resolved->source)}
+                           : std::string{"ACTIVE"}};
   record("AreaScript.CameraRequested",
       fmt::format("id={} duration={} flags={} type={} hFov={}deg source={} operation={}",
           request.camera_id,
@@ -1188,8 +1186,8 @@ ScenarioStartupController::enqueue_compact_camera(
                                            : std::string{"none"}));
   return std::optional<Script::AreaCameraOperationHandle>{
       operation_generation.has_value()
-          ? std::optional<Script::AreaCameraOperationHandle>{
-                Script::AreaCameraOperationHandle{.generation = operation_generation.value()}}
+          ? std::optional<Script::AreaCameraOperationHandle>{Script::AreaCameraOperationHandle{
+                .generation = operation_generation.value()}}
           : std::nullopt};
 }
 
@@ -1786,9 +1784,9 @@ std::expected<void, std::string> ScenarioStartupController::select_current_chara
   }
   game_state->ensure_character_profile(request.character_id, definition->values);
   game_state->establish_current_character(definition.value());
-    const ControlledCharacterRef selected{
+  const ControlledCharacterRef selected{
       .character_id = request.character_id, .world_scene_id = slot.world_scene_id};
-    m_manager->set_controlled_character(selected);
+  m_manager->set_controlled_character(selected);
 
   // Becoming the persistent current character installs the adventure CTL
   // controller from the definition's authored control set. The controller is
@@ -1806,8 +1804,8 @@ std::expected<void, std::string> ScenarioStartupController::select_current_chara
           slot.world_scene_id,
           character->model_resource_name));
   App::Log::info(LogCategory::Scenario,
-          "CurrentCharacterChanged — ownerSlot={} id={} world={} model={}",
-          owner_slot,
+      "CurrentCharacterChanged — ownerSlot={} id={} world={} model={}",
+      owner_slot,
       character->character_id,
       slot.world_scene_id,
       character->model_resource_name);
@@ -1871,8 +1869,8 @@ std::expected<void, std::string> ScenarioStartupController::select_current_chara
   if (character->ctl_controller.has_value()) {
     // Runtime 0x0041B6F0 -> 0x0046ACE0 -> 0x0045A630: exact move-ID lookup
     // and controller move switch against the current character's CTL bank.
-    if (auto selected{character->ctl_controller->select_move(
-            static_cast<std::uint32_t>(request.move_id))};
+    if (auto selected{
+            character->ctl_controller->select_move(static_cast<std::uint32_t>(request.move_id))};
         !selected) {
       App::Log::warn(LogCategory::Scenario,
           "current character move {} failed — id={} world={}: {}",
@@ -1929,14 +1927,13 @@ std::expected<void, std::string> ScenarioStartupController::set_current_characte
   if (character->ctl_controller.has_value()) {
     character->ctl_controller->set_player_direct_control(request.enabled);
   }
-    App::Log::info(LogCategory::Scenario,
+  App::Log::info(LogCategory::Scenario,
       "{} — controlledCharacter={} world={} controllerEnabled={} directControl={}",
       request.enabled ? "ControllerOn" : "ControllerOff",
       current->character_id,
       current->world_scene_id,
       character->controller_enabled,
-      character->ctl_controller.has_value() &&
-          character->ctl_controller->direct_control_active());
+      character->ctl_controller.has_value() && character->ctl_controller->direct_control_active());
   return {};
 }
 
@@ -1973,7 +1970,8 @@ void ScenarioStartupController::register_current_character_trigger_proxy(
       .registered = true,
       .contact_ready = false,
       .position = character.transform.translation,
-      .radius = character.model_resource == nullptr ? 0.0F : character.model_resource->bounds_radius,
+      .radius =
+          character.model_resource == nullptr ? 0.0F : character.model_resource->bounds_radius,
       .heading_degrees = character.principal_orientation_degrees.y,
       .generation = m_next_trigger_proxy_generation++,
       .overlapping_zone_count = 0,
@@ -2003,9 +2001,10 @@ bool ScenarioStartupController::current_character_structured_script_active(
   if (scripts == nullptr) {
     return false;
   }
-  return std::ranges::any_of(scripts->instances(), [&owner](const Script::ScriptInstance& instance) {
-    return !instance.completed && instance.launch_context.character_id == owner.character_id;
-  });
+  return std::ranges::any_of(
+      scripts->instances(), [&owner](const Script::ScriptInstance& instance) {
+        return !instance.completed && instance.launch_context.character_id == owner.character_id;
+      });
 }
 
 void ScenarioStartupController::service_current_character_trigger_proxy() {
@@ -2023,8 +2022,7 @@ void ScenarioStartupController::service_current_character_trigger_proxy() {
   }
   const ScenarioRuntime* const scenario{m_manager->world_runtime(proxy.owner.world_scene_id)};
   const Character::RuntimeCharacter* const character{
-      scenario == nullptr ? nullptr
-                          : scenario->character_runtime().find(proxy.owner.character_id)};
+      scenario == nullptr ? nullptr : scenario->character_runtime().find(proxy.owner.character_id)};
   if (character == nullptr || !character->active || !character->area_present) {
     proxy.synchronization_suspended = true;
     proxy.suspension_reason = "current character is not active and AREA-present";
@@ -2050,10 +2048,10 @@ void ScenarioStartupController::service_current_character_trigger_proxy() {
   }
   if (m_current_character_address_placed_this_tick) {
     App::Log::debug(LogCategory::Scenario,
-      "TriggerProxyFrozen — character={} world={} generation={} reason=compact-address",
-      proxy.owner.character_id,
-      proxy.owner.world_scene_id,
-      proxy.generation);
+        "TriggerProxyFrozen — character={} world={} generation={} reason=compact-address",
+        proxy.owner.character_id,
+        proxy.owner.world_scene_id,
+        proxy.generation);
     proxy.synchronization_suspended = true;
     proxy.suspension_reason = "compact address placement occurred this tick";
     return;
@@ -2064,7 +2062,8 @@ void ScenarioStartupController::service_current_character_trigger_proxy() {
                    proxy.position.y != character->transform.translation.y ||
                    proxy.position.z != character->transform.translation.z};
   proxy.position = character->transform.translation;
-  proxy.radius = character->model_resource == nullptr ? 0.0F : character->model_resource->bounds_radius;
+  proxy.radius =
+      character->model_resource == nullptr ? 0.0F : character->model_resource->bounds_radius;
   proxy.heading_degrees = character->principal_orientation_degrees.y;
   proxy.synchronization_suspended = false;
   proxy.suspension_reason.clear();
@@ -2792,9 +2791,9 @@ std::expected<void, std::string> ScenarioStartupController::service_character_sc
   if (auto completed{area_script.complete_character_script_wait(instance_id)}; !completed) {
     return completed;
   }
-    record("AreaScript.CharacterScriptCompleted",
+  record("AreaScript.CharacterScriptCompleted",
       fmt::format("ownerSlot={} instance={}", owner_slot, instance_id));
-    App::Log::info(LogCategory::Script,
+  App::Log::info(LogCategory::Script,
       "CompactWaitResumed — ownerSlot={} area={} scene={} compactIp=+{:#x} target={} "
       "script={} instance={} name='{}' group={} paused={} execution={}/{}",
       owner_slot,
@@ -3240,43 +3239,42 @@ std::expected<void, std::string> ScenarioStartupController::service_zone_contact
       const RuntimeAreaSlot& slot{m_area_slots.at(active_zone.resident_slot)};
       const std::optional<ControlledCharacterRef> current{m_manager->controlled_character()};
       const std::int16_t character_id{
-        current.has_value() ? current->character_id : std::int16_t{-1}};
+          current.has_value() ? current->character_id : std::int16_t{-1}};
       const ScenarioRuntime* const runtime{
-        current.has_value() && current->world_scene_id == slot.world_scene_id
-          ? m_manager->world_runtime(slot.world_scene_id)
-          : nullptr};
+          current.has_value() && current->world_scene_id == slot.world_scene_id
+              ? m_manager->world_runtime(slot.world_scene_id)
+              : nullptr};
       const Character::RuntimeCharacter* const character{
-        runtime == nullptr ? nullptr : runtime->character_runtime().find(character_id)};
-        const CurrentCharacterTriggerProxy* const proxy{
-          m_current_character_trigger_proxy.has_value()
-            ? &m_current_character_trigger_proxy.value()
-            : nullptr};
-          const bool broadphase{proxy != nullptr && proxy->registered && proxy->contact_ready &&
-                  zone_intersects_proxy_bounds(
-                    active_zone.zone, proxy->position, proxy->radius)};
-          const bool polygon{proxy != nullptr && proxy->registered && proxy->contact_ready &&
-                 zone_contains_runtime_xz(active_zone.zone, proxy->position)};
-          const bool heading{proxy != nullptr && proxy->registered && proxy->contact_ready &&
-                 active_zone.zone.accepts_heading_degrees(proxy->heading_degrees)};
+          runtime == nullptr ? nullptr : runtime->character_runtime().find(character_id)};
+      const CurrentCharacterTriggerProxy* const proxy{
+          m_current_character_trigger_proxy.has_value() ? &m_current_character_trigger_proxy.value()
+                                                        : nullptr};
+      const bool broadphase{
+          proxy != nullptr && proxy->registered && proxy->contact_ready &&
+          zone_intersects_proxy_bounds(active_zone.zone, proxy->position, proxy->radius)};
+      const bool polygon{proxy != nullptr && proxy->registered && proxy->contact_ready &&
+                         zone_contains_runtime_xz(active_zone.zone, proxy->position)};
+      const bool heading{proxy != nullptr && proxy->registered && proxy->contact_ready &&
+                         active_zone.zone.accepts_heading_degrees(proxy->heading_degrees)};
       App::Log::info(LogCategory::Scenario,
-        "ZoneQualification — source={} ownerSlot={} area={} scene={} zone={} qualifies={} "
+          "ZoneQualification — source={} ownerSlot={} area={} scene={} zone={} qualifies={} "
           "current={} active={} areaPresent={} controller={} actor=({:.3f},{:.3f},{:.3f}) "
           "proxyRegistered={} contactReady={} proxy=({:.3f},{:.3f},{:.3f}) radius={:.3f} "
           "generation={} "
           "proxyFrozen={} reason='{}' broadphase={} polygon={} heading={}",
-        active_zone.source == ActiveZoneSource::k_area ? "AREA" : "SCENE",
-        active_zone.resident_slot,
-        active_zone.area_id,
-        active_zone.scene_id,
-        active_zone.zone.zone_id,
-        qualifies,
-        character_id,
-        character != nullptr && character->active,
-        character != nullptr && character->area_present,
-        character != nullptr && character->controller_enabled,
-        character == nullptr ? 0.0F : character->transform.translation.x,
-        character == nullptr ? 0.0F : character->transform.translation.y,
-        character == nullptr ? 0.0F : character->transform.translation.z,
+          active_zone.source == ActiveZoneSource::k_area ? "AREA" : "SCENE",
+          active_zone.resident_slot,
+          active_zone.area_id,
+          active_zone.scene_id,
+          active_zone.zone.zone_id,
+          qualifies,
+          character_id,
+          character != nullptr && character->active,
+          character != nullptr && character->area_present,
+          character != nullptr && character->controller_enabled,
+          character == nullptr ? 0.0F : character->transform.translation.x,
+          character == nullptr ? 0.0F : character->transform.translation.y,
+          character == nullptr ? 0.0F : character->transform.translation.z,
           proxy != nullptr && proxy->registered,
           proxy != nullptr && proxy->contact_ready,
           proxy == nullptr ? 0.0F : proxy->position.x,
@@ -3336,19 +3334,19 @@ std::expected<void, std::string> ScenarioStartupController::service_zone_contact
               contact->zone.zone_id,
               serviced.error());
         }
-              const std::optional<std::uint16_t> previous_event{script.active_event()};
+        const std::optional<std::uint16_t> previous_event{script.active_event()};
         const Script::AreaScriptState state{script.run(delta_seconds)};
-              if (previous_event.has_value() && !script.active_event().has_value()) {
-                App::Log::info(LogCategory::Script,
-                "CompactEventEnded — source=ZONE ownerSlot={} area={} scene={} zone={} event={} "
-                "ip=+{:#x}",
-                contact->resident_slot,
-                contact->area_id,
-                contact->scene_id,
-                contact->zone.zone_id,
-                previous_event.value(),
-                script.instruction_pointer());
-              }
+        if (previous_event.has_value() && !script.active_event().has_value()) {
+          App::Log::info(LogCategory::Script,
+              "CompactEventEnded — source=ZONE ownerSlot={} area={} scene={} zone={} event={} "
+              "ip=+{:#x}",
+              contact->resident_slot,
+              contact->area_id,
+              contact->scene_id,
+              contact->zone.zone_id,
+              previous_event.value(),
+              script.instruction_pointer());
+        }
         if (state == Script::AreaScriptState::k_paused_unsupported ||
             state == Script::AreaScriptState::k_failed) {
           App::Log::warn(LogCategory::Script,
@@ -3365,8 +3363,8 @@ std::expected<void, std::string> ScenarioStartupController::service_zone_contact
         return false;
       });
   if (m_current_character_trigger_proxy.has_value()) {
-    m_current_character_trigger_proxy->overlapping_zone_count = static_cast<std::size_t>(
-        std::ranges::count_if(m_zone_contacts, [](const auto& contact) {
+    m_current_character_trigger_proxy->overlapping_zone_count =
+        static_cast<std::size_t>(std::ranges::count_if(m_zone_contacts, [](const auto& contact) {
           return contact != nullptr && contact->overlapping;
         }));
   }

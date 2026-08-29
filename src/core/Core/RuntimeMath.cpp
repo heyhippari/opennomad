@@ -136,8 +136,7 @@ Matrix3 euler_rotation_degrees(const Vec3& degrees) {
 }
 
 Matrix3 additive_euler_orientation(const Matrix3& base, const Vec3& additive_degrees) {
-  if (additive_degrees.x == 0.0F && additive_degrees.y == 0.0F &&
-      additive_degrees.z == 0.0F) {
+  if (additive_degrees.x == 0.0F && additive_degrees.y == 0.0F && additive_degrees.z == 0.0F) {
     return base;
   }
 

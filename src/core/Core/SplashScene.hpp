@@ -44,8 +44,7 @@ class SplashScene final : public Scene {
       int image_width, int image_height, int viewport_width, int viewport_height);
 
  private:
-  explicit SplashScene(
-      Texture2D texture, Shader shader, float duration_seconds);
+  explicit SplashScene(Texture2D texture, Shader shader, float duration_seconds);
 
   /// Fade duration at either end of the five-second splash.
   static constexpr float kFadeInDuration{0.75F};

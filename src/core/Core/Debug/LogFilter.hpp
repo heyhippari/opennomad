@@ -27,8 +27,8 @@ struct LogFilter {
   /// True when an entry passes the current severity, category and text
   /// filters.
   [[nodiscard]] bool matches(const spdlog::level::level_enum level,
-                             const LogCategory category,
-                             const std::string_view line) const {
+      const LogCategory category,
+      const std::string_view line) const {
     if (level < min_level) {
       return false;
     }
@@ -40,8 +40,8 @@ struct LogFilter {
   }
 
  private:
-  [[nodiscard]] static bool contains_ignore_case(const std::string_view haystack,
-                                                 const std::string_view needle) {
+  [[nodiscard]] static bool contains_ignore_case(
+      const std::string_view haystack, const std::string_view needle) {
     if (needle.empty()) {
       return true;
     }

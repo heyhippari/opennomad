@@ -91,7 +91,8 @@ void resolve_bounds(ModelResource& resource) {
 Runtime::Runtime() : Runtime{load_model_resource} {}
 
 Runtime::Runtime(ModelLoader model_loader)
-    : m_model_loader{std::move(model_loader)}, m_ctl_bank_loader{load_ctl_bank} {}
+    : m_model_loader{std::move(model_loader)},
+      m_ctl_bank_loader{load_ctl_bank} {}
 
 void Runtime::set_model_loader(ModelLoader model_loader) {
   m_model_loader = std::move(model_loader);
@@ -110,20 +111,18 @@ std::expected<std::shared_ptr<const Omikron::CtlControlSet>, std::string> Runtim
         std::unexpect, "character definition has an empty adventure control set"};
   }
 
-  const std::filesystem::path control_set_path{std::filesystem::path{K_CONTROL_SET_DIRECTORY} /
+  const std::filesystem::path control_set_path{
+      std::filesystem::path{K_CONTROL_SET_DIRECTORY} /
       (std::string{control_set_name} + std::string{".CTL"})};
   auto control_set_file{load_game_file(control_set_path)};
   if (!control_set_file) {
-    return std::expected<std::shared_ptr<const Omikron::CtlControlSet>, std::string>{
-        std::unexpect,
-        fmt::format(
-            "character control set '{}': {}", control_set_name, control_set_file.error())};
+    return std::expected<std::shared_ptr<const Omikron::CtlControlSet>, std::string>{std::unexpect,
+        fmt::format("character control set '{}': {}", control_set_name, control_set_file.error())};
   }
   auto control_set{
       Omikron::CtlControlSet::load(std::span<const std::byte>{control_set_file->bytes})};
   if (!control_set) {
-    return std::expected<std::shared_ptr<const Omikron::CtlControlSet>, std::string>{
-        std::unexpect,
+    return std::expected<std::shared_ptr<const Omikron::CtlControlSet>, std::string>{std::unexpect,
         fmt::format("character control set '{}': {}", control_set_name, control_set.error())};
   }
   return std::make_shared<const Omikron::CtlControlSet>(std::move(control_set).value());

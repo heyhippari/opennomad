@@ -24,8 +24,7 @@ class BmpImageDecoder {
  public:
   /// Decodes a BMP from memory through SDL's loader (8/24/32 bpp, palettes
   /// and RLE variants included) and converts the pixels to RGBA8.
-  [[nodiscard]] static std::expected<BmpImage, std::string> load(
-      std::span<const std::byte> data);
+  [[nodiscard]] static std::expected<BmpImage, std::string> load(std::span<const std::byte> data);
 };
 
 }  // namespace App::Omikron

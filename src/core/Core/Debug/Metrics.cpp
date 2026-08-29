@@ -1,11 +1,11 @@
 #include "Metrics.hpp"
 
-#include <glad/glad.h>
-
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_platform.h>
 #include <SDL3/SDL_version.h>
 #include <SDL3/SDL_video.h>
+#include <fmt/format.h>
+#include <glad/glad.h>
 
 #include <algorithm>
 #include <array>
@@ -14,8 +14,6 @@
 #include <cstring>
 #include <flat_map>
 #include <string>
-
-#include <fmt/format.h>
 
 namespace App::Debug {
 
@@ -72,35 +70,59 @@ float Metrics::get_fps() const {
   return 1000.0F / m_frame_time_ms;
 }
 
-float Metrics::get_frame_time_ms() const { return m_frame_time_ms; }
+float Metrics::get_frame_time_ms() const {
+  return m_frame_time_ms;
+}
 
 const std::array<float, Metrics::kHistorySize>& Metrics::get_frame_time_history() const {
   return m_frame_time_history;
 }
 
-std::size_t Metrics::get_frame_time_history_head() const { return m_history_head; }
+std::size_t Metrics::get_frame_time_history_head() const {
+  return m_history_head;
+}
 
-std::size_t Metrics::get_frame_time_history_count() const { return m_history_count; }
+std::size_t Metrics::get_frame_time_history_count() const {
+  return m_history_count;
+}
 
-float Metrics::get_frame_time_min() const { return m_frame_time_min; }
+float Metrics::get_frame_time_min() const {
+  return m_frame_time_min;
+}
 
-float Metrics::get_frame_time_avg() const { return m_frame_time_avg; }
+float Metrics::get_frame_time_avg() const {
+  return m_frame_time_avg;
+}
 
-float Metrics::get_frame_time_max() const { return m_frame_time_max; }
+float Metrics::get_frame_time_max() const {
+  return m_frame_time_max;
+}
 
-std::uint64_t Metrics::get_frame_count() const { return m_frame_count; }
+std::uint64_t Metrics::get_frame_count() const {
+  return m_frame_count;
+}
 
-float Metrics::get_total_elapsed() const { return m_total_elapsed; }
+float Metrics::get_total_elapsed() const {
+  return m_total_elapsed;
+}
 
 // --- System info ---
 
-const std::flat_map<std::string, std::string>& Metrics::opengl_info() const { return m_opengl_info; }
+const std::flat_map<std::string, std::string>& Metrics::opengl_info() const {
+  return m_opengl_info;
+}
 
-const std::flat_map<std::string, std::string>& Metrics::sdl_info() const { return m_sdl_info; }
+const std::flat_map<std::string, std::string>& Metrics::sdl_info() const {
+  return m_sdl_info;
+}
 
-const std::flat_map<std::string, std::string>& Metrics::window_info() const { return m_window_info; }
+const std::flat_map<std::string, std::string>& Metrics::window_info() const {
+  return m_window_info;
+}
 
-const std::flat_map<std::string, std::string>& Metrics::audio_info() const { return m_audio_info; }
+const std::flat_map<std::string, std::string>& Metrics::audio_info() const {
+  return m_audio_info;
+}
 
 void Metrics::query_system_info() {
   if (m_system_info_queried) {
@@ -109,9 +131,9 @@ void Metrics::query_system_info() {
   m_system_info_queried = true;
 
   // --- OpenGL ---
-  m_opengl_info["Vendor"]   = gl_string(glGetString(GL_VENDOR));
+  m_opengl_info["Vendor"] = gl_string(glGetString(GL_VENDOR));
   m_opengl_info["Renderer"] = gl_string(glGetString(GL_RENDERER));
-  m_opengl_info["Version"]  = gl_string(glGetString(GL_VERSION));
+  m_opengl_info["Version"] = gl_string(glGetString(GL_VERSION));
   m_opengl_info["GLSL Version"] = gl_string(glGetString(GL_SHADING_LANGUAGE_VERSION));
 
   GLint gl_value{0};
@@ -154,12 +176,16 @@ void Metrics::set_sprite_counters(const SpriteCounters& counters) {
   m_sprite_counters = counters;
 }
 
-const SpriteCounters& Metrics::sprite_counters() const { return m_sprite_counters; }
+const SpriteCounters& Metrics::sprite_counters() const {
+  return m_sprite_counters;
+}
 
 void Metrics::set_i2d_counters(const I2DCounters& counters) {
   m_i2d_counters = counters;
 }
 
-const I2DCounters& Metrics::i2d_counters() const { return m_i2d_counters; }
+const I2DCounters& Metrics::i2d_counters() const {
+  return m_i2d_counters;
+}
 
 }  // namespace App::Debug

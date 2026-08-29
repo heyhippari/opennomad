@@ -1,3 +1,5 @@
+#include "Core/Omikron/SCX.hpp"
+
 #include <doctest/doctest.h>
 
 #include <cstddef>
@@ -6,7 +8,6 @@
 #include <string>
 #include <string_view>
 
-#include "Core/Omikron/SCX.hpp"
 #include "OmikronTestBuffer.hpp"
 
 // NOLINTBEGIN(misc-use-anonymous-namespace, cppcoreguidelines-avoid-do-while, cert-err33-c,
@@ -31,8 +32,10 @@ Buffer& append_sprite_record(Buffer& buffer, const std::string_view name) {
 }
 
 /// Appends one 0x1A-byte DEAD0003 sound descriptor.
-Buffer& append_sound_record(Buffer& buffer, const std::string_view name,
-    const std::uint16_t runtime_id, const std::uint16_t h_id) {
+Buffer& append_sound_record(Buffer& buffer,
+    const std::string_view name,
+    const std::uint16_t runtime_id,
+    const std::uint16_t h_id) {
   buffer.chars(name, 22).u16(runtime_id).u16(h_id);
   return buffer;
 }
@@ -82,8 +85,8 @@ Buffer make_sound_scx(const std::size_t count) {
 }
 
 /// Returns true when an error result's message contains the given text.
-bool error_contains(const std::expected<App::Omikron::ScxData, std::string>& result,
-    const std::string_view text) {
+bool error_contains(
+    const std::expected<App::Omikron::ScxData, std::string>& result, const std::string_view text) {
   return result.error().find(text) != std::string::npos;
 }
 
@@ -224,8 +227,11 @@ TEST_SUITE("Core::Omikron::SCX") {
     descriptor.u32(K_END_TAG);
 
     Buffer stream;
-    stream.u32(K_HEADER_SIZE + descriptor.data().size()).u32(12)
-        .u32(K_RIFF).u32(0).u32(0x12345678U);  // Not WAVE.
+    stream.u32(K_HEADER_SIZE + descriptor.data().size())
+        .u32(12)
+        .u32(K_RIFF)
+        .u32(0)
+        .u32(0x12345678U);  // Not WAVE.
 
     const auto scx{App::Omikron::SCX::load(make_scx(descriptor, stream).data())};
     REQUIRE_FALSE(scx.has_value());
@@ -253,8 +259,11 @@ TEST_SUITE("Core::Omikron::SCX") {
     descriptor.u32(K_END_TAG);
 
     Buffer stream;
-    stream.u32(K_HEADER_SIZE + descriptor.data().size() + 4U).u32(12)
-        .u32(K_RIFF).u32(0).u32(K_WAVE);
+    stream.u32(K_HEADER_SIZE + descriptor.data().size() + 4U)
+        .u32(12)
+        .u32(K_RIFF)
+        .u32(0)
+        .u32(K_WAVE);
 
     const auto scx{App::Omikron::SCX::load(make_scx(descriptor, stream).data())};
     REQUIRE_FALSE(scx.has_value());
@@ -282,8 +291,7 @@ TEST_SUITE("Core::Omikron::SCX") {
     descriptor.u32(K_END_TAG);
 
     Buffer stream;
-    stream.u32(K_HEADER_SIZE + descriptor.data().size()).u32(8).u32(0)
-        .u32(0x12345678U).u32(4);
+    stream.u32(K_HEADER_SIZE + descriptor.data().size()).u32(8).u32(0).u32(0x12345678U).u32(4);
 
     const auto scx{App::Omikron::SCX::load(make_scx(descriptor, stream).data())};
     REQUIRE_FALSE(scx.has_value());
@@ -311,8 +319,7 @@ TEST_SUITE("Core::Omikron::SCX") {
     descriptor.u32(K_END_TAG);
 
     Buffer stream;
-    stream.u32(K_HEADER_SIZE + descriptor.data().size()).u32(8).u32(8)
-        .u32(K_OD3X).u32(4).zeros(4);
+    stream.u32(K_HEADER_SIZE + descriptor.data().size()).u32(8).u32(8).u32(K_OD3X).u32(4).zeros(4);
 
     const auto scx{App::Omikron::SCX::load(make_scx(descriptor, stream).data())};
     REQUIRE_FALSE(scx.has_value());
@@ -326,8 +333,7 @@ TEST_SUITE("Core::Omikron::SCX") {
     descriptor.u32(K_END_TAG);
 
     Buffer stream;
-    stream.u32(K_HEADER_SIZE + descriptor.data().size()).u32(8).u32(0)
-        .u32(K_OD3X).u32(3);
+    stream.u32(K_HEADER_SIZE + descriptor.data().size()).u32(8).u32(0).u32(K_OD3X).u32(3);
 
     const auto scx{App::Omikron::SCX::load(make_scx(descriptor, stream).data())};
     REQUIRE_FALSE(scx.has_value());
@@ -366,8 +372,7 @@ TEST_SUITE("Core::Omikron::SCX") {
     descriptor.u32(K_END_TAG);
 
     Buffer stream;
-    stream.u32(K_HEADER_SIZE + descriptor.data().size()).u32(8).u32(0)
-        .u32(K_OD3X).u32(4).zeros(4);
+    stream.u32(K_HEADER_SIZE + descriptor.data().size()).u32(8).u32(0).u32(K_OD3X).u32(4).zeros(4);
 
     const auto scx{App::Omikron::SCX::load(make_scx(descriptor, stream).data())};
     REQUIRE_FALSE(scx.has_value());
@@ -376,8 +381,7 @@ TEST_SUITE("Core::Omikron::SCX") {
 
   TEST_CASE("Decodes a non-NUL-terminated sprite filename as its full width") {
     Buffer descriptor;
-    descriptor.u32(K_SPRITES_TAG).u32(1).chars("ABCDEFGHIJKLMNOPQRSTUVWX", 24)
-        .u32(0).u32(0).u32(7);
+    descriptor.u32(K_SPRITES_TAG).u32(1).chars("ABCDEFGHIJKLMNOPQRSTUVWX", 24).u32(0).u32(0).u32(7);
     descriptor.u32(K_END_TAG);
 
     Buffer stream;
@@ -391,8 +395,7 @@ TEST_SUITE("Core::Omikron::SCX") {
 
   TEST_CASE("Decodes a non-NUL-terminated sound name safely") {
     Buffer descriptor;
-    descriptor.u32(K_SOUNDS_TAG).u32(1).chars("ABCDEFGHIJKLMNOPQRSTUV", 22)
-        .u16(0xFFFF).u16(0);
+    descriptor.u32(K_SOUNDS_TAG).u32(1).chars("ABCDEFGHIJKLMNOPQRSTUV", 22).u16(0xFFFF).u16(0);
     descriptor.u32(K_END_TAG);
 
     Buffer stream;

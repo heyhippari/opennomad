@@ -34,8 +34,8 @@ std::optional<std::vector<std::byte>> load_game_file(const std::filesystem::path
   if (root == nullptr) {
     return std::nullopt;
   }
-  const std::filesystem::path resolved{App::Resources::resolve_case_insensitive(
-      std::filesystem::path{root} / relative_path)};
+  const std::filesystem::path resolved{
+      App::Resources::resolve_case_insensitive(std::filesystem::path{root} / relative_path)};
   std::size_t size{0};
   void* raw{SDL_LoadFile(resolved.string().c_str(), &size)};
   if (raw == nullptr) {
@@ -70,8 +70,17 @@ TEST_SUITE("Core::Sprite::GameDataSpriteIntegration") {
       const auto resource{App::Sprite::SpriteResource::create(
           bytes, scx->models.at(index), scx->sprites.at(index))};
       REQUIRE(resource.has_value());
-      MESSAGE("sprite ", index, " '", resource->name, "' (id ", resource->sprite_id, "): ",
-          resource->object_count(), " objects, ", resource->images.size(), " textures");
+      MESSAGE("sprite ",
+          index,
+          " '",
+          resource->name,
+          "' (id ",
+          resource->sprite_id,
+          "): ",
+          resource->object_count(),
+          " objects, ",
+          resource->images.size(),
+          " textures");
 
       CHECK_EQ(resource->model.header.frame_count, 0U);  // Provisional fallback applies.
       CHECK_FALSE(resource->images.empty());
@@ -127,9 +136,21 @@ TEST_SUITE("Core::Sprite::GameDataSpriteIntegration") {
 
     const auto first{resource->resolve_frame(object, 0, 0.0F, 0.0F)};
     REQUIRE(first.has_value());
-    MESSAGE("frame 0: ", first->width, " x ", first->height, " units, texture ",
-        first->texture_index, ", uv0 (", first->uv0.at(0), ", ", first->uv0.at(1),
-        "), uv1 (", first->uv1.at(0), ", ", first->uv1.at(1), ")");
+    MESSAGE("frame 0: ",
+        first->width,
+        " x ",
+        first->height,
+        " units, texture ",
+        first->texture_index,
+        ", uv0 (",
+        first->uv0.at(0),
+        ", ",
+        first->uv0.at(1),
+        "), uv1 (",
+        first->uv1.at(0),
+        ", ",
+        first->uv1.at(1),
+        ")");
   }
 }
 

@@ -35,7 +35,7 @@ class Host {
   virtual void destroy_sfx_sprite(Sprite::SpriteHandle handle) = 0;
   [[nodiscard]] virtual std::optional<App::Runtime::Transform> resolve_sfx_character_anchor(
       std::int32_t packed_reference_id) const = 0;
-    [[nodiscard]] virtual std::expected<void, std::string> play_sfx_sound(
+  [[nodiscard]] virtual std::expected<void, std::string> play_sfx_sound(
       std::int32_t authored_h_id, App::Runtime::Vec3 position) = 0;
 };
 

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <SDL3_mixer/SDL_mixer.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -8,8 +10,6 @@
 #include <string_view>
 #include <unordered_map>
 #include <vector>
-
-#include <SDL3_mixer/SDL_mixer.h>
 
 #include "Core/Audio/AudioTypes.hpp"
 
@@ -46,14 +46,22 @@ class SoundResourceTable {
       const std::string& canonical_key);
 
   /// Records decode metadata/status for an entry.
-  void mark_loaded(SoundResourceId id, std::string format, int channels, int frequency,
-      std::int64_t duration_ms, std::size_t byte_size);
+  void mark_loaded(SoundResourceId id,
+      std::string format,
+      int channels,
+      int frequency,
+      std::int64_t duration_ms,
+      std::size_t byte_size);
   void mark_failed(SoundResourceId id, std::string error);
 
   /// Sets the static source identity/metadata (scenario, record, name, hID,
   /// byte size) independent of the decode outcome.
-  void set_metadata(SoundResourceId id, std::string scenario_name, std::size_t record_index,
-      std::string name, std::uint16_t h_id, std::size_t byte_size);
+  void set_metadata(SoundResourceId id,
+      std::string scenario_name,
+      std::size_t record_index,
+      std::string name,
+      std::uint16_t h_id,
+      std::size_t byte_size);
 
   /// One voice started/stopped referencing the resource.
   void add_reference(SoundResourceId id);
@@ -61,8 +69,12 @@ class SoundResourceTable {
 
   [[nodiscard]] const Entry* find(SoundResourceId id) const;
   [[nodiscard]] std::size_t count() const;
-  [[nodiscard]] std::size_t capacity() const { return k_capacity; }
-  [[nodiscard]] const std::vector<Entry>& entries() const { return m_entries; }
+  [[nodiscard]] std::size_t capacity() const {
+    return k_capacity;
+  }
+  [[nodiscard]] const std::vector<Entry>& entries() const {
+    return m_entries;
+  }
 
  private:
   [[nodiscard]] bool valid(SoundResourceId id) const;
@@ -87,8 +99,7 @@ class SoundResourceCache {
   /// Loads (or reuses) a bounded PCM WAV byte span as a cached resource.
   /// `canonical_key` is the dedup identity; scenario/record/name are
   /// diagnostic metadata. Fully predecodes short effects.
-  [[nodiscard]] std::expected<SoundResourceId, std::string> load(
-      const std::string& canonical_key,
+  [[nodiscard]] std::expected<SoundResourceId, std::string> load(const std::string& canonical_key,
       std::string_view scenario_name,
       std::size_t record_index,
       std::string_view name,

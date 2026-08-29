@@ -1,5 +1,9 @@
 #include "Core/Audio/SoundResourceCache.hpp"
 
+#include <SDL3/SDL_audio.h>
+#include <SDL3/SDL_error.h>
+#include <SDL3/SDL_iostream.h>
+#include <SDL3_mixer/SDL_mixer.h>
 #include <fmt/format.h>
 
 #include <cstddef>
@@ -11,11 +15,6 @@
 #include <string_view>
 #include <utility>
 #include <vector>
-
-#include <SDL3/SDL_audio.h>
-#include <SDL3/SDL_error.h>
-#include <SDL3/SDL_iostream.h>
-#include <SDL3_mixer/SDL_mixer.h>
 
 #include "Core/Audio/AudioTypes.hpp"
 #include "Core/Log.hpp"
@@ -29,8 +28,8 @@ namespace {
 constexpr std::uint32_t K_RIFF_MAGIC{0x46464952U};
 
 /// Reads a little-endian u32 from a bounded span at `offset`.
-[[nodiscard]] std::uint32_t read_u32_at(const std::span<const std::byte> bytes,
-    const std::size_t offset) {
+[[nodiscard]] std::uint32_t read_u32_at(
+    const std::span<const std::byte> bytes, const std::size_t offset) {
   const std::span<const std::byte> word{bytes.subspan(offset, 4U)};
   std::uint32_t value{0};
   std::memcpy(&value, word.data(), 4U);
@@ -133,7 +132,9 @@ const SoundResourceTable::Entry* SoundResourceTable::find(const SoundResourceId 
   return &m_entries.at(static_cast<std::size_t>(id.index));
 }
 
-std::size_t SoundResourceTable::count() const { return m_entries.size(); }
+std::size_t SoundResourceTable::count() const {
+  return m_entries.size();
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SoundResourceCache
@@ -143,7 +144,9 @@ SoundResourceCache::SoundResourceCache(MIX_Mixer* mixer) : m_mixer(mixer) {
   m_audio.resize(SoundResourceTable::k_capacity, nullptr);
 }
 
-SoundResourceCache::~SoundResourceCache() { clear(); }
+SoundResourceCache::~SoundResourceCache() {
+  clear();
+}
 
 std::expected<SoundResourceId, std::string> SoundResourceCache::load(
     const std::string& canonical_key,
@@ -246,7 +249,9 @@ const SoundResourceTable::Entry* SoundResourceCache::find_entry(const SoundResou
   return m_table.find(id);
 }
 
-void SoundResourceCache::add_reference(const SoundResourceId id) { m_table.add_reference(id); }
+void SoundResourceCache::add_reference(const SoundResourceId id) {
+  m_table.add_reference(id);
+}
 
 void SoundResourceCache::remove_reference(const SoundResourceId id) {
   m_table.remove_reference(id);
@@ -261,9 +266,13 @@ void SoundResourceCache::clear() {
   }
 }
 
-std::size_t SoundResourceCache::count() const { return m_table.count(); }
+std::size_t SoundResourceCache::count() const {
+  return m_table.count();
+}
 
-std::size_t SoundResourceCache::capacity() const { return m_table.capacity(); }
+std::size_t SoundResourceCache::capacity() const {
+  return m_table.capacity();
+}
 
 std::vector<ResourceDebugInfo> SoundResourceCache::debug_info() const {
   std::vector<ResourceDebugInfo> result;

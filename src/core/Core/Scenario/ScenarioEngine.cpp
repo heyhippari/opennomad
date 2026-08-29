@@ -16,7 +16,8 @@
 namespace App {
 
 ScenarioEngine::ScenarioEngine(ScenarioManager& manager, Startup::StartupTraceRecorder& trace)
-    : m_manager(manager), m_trace(trace) {
+    : m_manager(manager),
+      m_trace(trace) {
   m_startup.set_trace_recorder(&m_trace);
 }
 

@@ -106,8 +106,8 @@ TEST_SUITE("Core::WorldLetterboxState") {
     WorldFadeState fade;
     WorldLetterboxState letterbox;
     WorldPresentationResetObserver observer;
-    REQUIRE(fade.apply_command(
-        App::WorldFadeCommand{.mode = 1U, .color = 0U, .duration_units = 30}));
+    REQUIRE(
+        fade.apply_command(App::WorldFadeCommand{.mode = 1U, .color = 0U, .duration_units = 30}));
     REQUIRE(letterbox.apply_command(WorldLetterboxCommand{.enabled = true}));
     fade.update(0.5F);
     letterbox.update(0.5F);

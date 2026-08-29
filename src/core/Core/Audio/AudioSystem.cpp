@@ -425,8 +425,8 @@ std::expected<void, std::string> AudioSystem::play_voice_over(std::string relati
   if (!decoder) {
     return std::expected<void, std::string>{std::unexpect, decoder.error()};
   }
-  const std::size_t sample_count{static_cast<std::size_t>(
-      decoder->total_frames() * static_cast<std::uint64_t>(decoder->channels()))};
+  const std::size_t sample_count{
+      decoder->total_frames() * static_cast<std::uint64_t>(decoder->channels())};
   auto samples{std::make_shared<std::vector<std::int16_t>>(sample_count)};
   const std::size_t decoded{decoder->decode_frames(std::span<std::int16_t>{*samples})};
   if (decoded != decoder->total_frames()) {
@@ -851,8 +851,8 @@ std::expected<void, std::string> AudioSystem::play_music_track(const MusicTrackR
 
   // First vertical slice: decode the complete track to interleaved S16 PCM
   // and hand it to the mixer (incremental streaming is a later milestone).
-  const std::size_t sample_count{static_cast<std::size_t>(
-      decoder->total_frames() * static_cast<std::uint64_t>(decoder->channels()))};
+  const std::size_t sample_count{
+      decoder->total_frames() * static_cast<std::uint64_t>(decoder->channels())};
   std::vector<std::int16_t> pcm;
   pcm.resize(sample_count);
   const std::size_t decoded{decoder->decode_frames(std::span<std::int16_t>{pcm})};

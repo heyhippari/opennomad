@@ -1,12 +1,12 @@
 #pragma once
 
+#include <SDL3/SDL_audio.h>
+#include <SDL3_mixer/SDL_mixer.h>
+
 #include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
-
-#include <SDL3/SDL_audio.h>
-#include <SDL3_mixer/SDL_mixer.h>
 
 #include "Core/Audio/AudioTypes.hpp"
 

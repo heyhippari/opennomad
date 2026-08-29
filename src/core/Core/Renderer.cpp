@@ -33,8 +33,7 @@ void Renderer::begin_frame(const int width, const int height) {
 
   glViewport(0, 0, width, height);
   constexpr std::array<float, 4> k_clear_color{clear_color()};
-  glClearColor(
-      k_clear_color.at(0), k_clear_color.at(1), k_clear_color.at(2), k_clear_color.at(3));
+  glClearColor(k_clear_color.at(0), k_clear_color.at(1), k_clear_color.at(2), k_clear_color.at(3));
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
 }
 

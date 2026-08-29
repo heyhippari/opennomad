@@ -29,9 +29,12 @@ struct StartupMediaPolicy {
 /// Trace-event base name of a startup video slot ("StartupVideo.Eidos", ...).
 [[nodiscard]] constexpr std::string_view startup_video_event_base(const StartupVideoSlot slot) {
   switch (slot) {
-    case StartupVideoSlot::k_publisher: return "StartupVideo.Eidos";
-    case StartupVideoSlot::k_developer: return "StartupVideo.QuanticDream";
-    case StartupVideoSlot::k_intro:     return "StartupVideo.GameIntro";
+    case StartupVideoSlot::k_publisher:
+      return "StartupVideo.Eidos";
+    case StartupVideoSlot::k_developer:
+      return "StartupVideo.QuanticDream";
+    case StartupVideoSlot::k_intro:
+      return "StartupVideo.GameIntro";
   }
   return "StartupVideo.Unknown";
 }

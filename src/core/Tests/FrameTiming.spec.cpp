@@ -20,8 +20,12 @@ class FakeClock {
  public:
   explicit FakeClock(const std::uint64_t start_ms) : m_now(start_ms) {}
 
-  [[nodiscard]] std::uint64_t now() const { return m_now; }
-  void advance(const std::uint64_t ms) { m_now += ms; }
+  [[nodiscard]] std::uint64_t now() const {
+    return m_now;
+  }
+  void advance(const std::uint64_t ms) {
+    m_now += ms;
+  }
 
  private:
   std::uint64_t m_now{};
@@ -30,10 +34,10 @@ class FakeClock {
 }  // namespace
 
 TEST_SUITE("Core::FrameTiming") {
-  using App::FrameTiming::FrameTimingState;
-  using App::FrameTiming::TimeScaleMode;
   using App::FrameTiming::calculate_delta;
+  using App::FrameTiming::FrameTimingState;
   using App::FrameTiming::run_timed_frame;
+  using App::FrameTiming::TimeScaleMode;
 
   TEST_CASE("The engine callback sees the previous frame's effective delta") {
     FrameTimingState timing;
@@ -44,8 +48,13 @@ TEST_SUITE("Core::FrameTiming") {
     // Frame 1: clock reset; the callback observes the initial delta (1.0)
     // and executes for 16 ms.
     callback_observation.begin_timed_frame();
-    run_timed_frame(timing, true, false,
-        [&clock]() { return clock.now(); },
+    run_timed_frame(
+        timing,
+        true,
+        false,
+        [&clock]() {
+          return clock.now();
+        },
         []() {},
         [&clock, &timing, &deltas_seen, &callback_observation]() {
           callback_observation.record_callback(timing.effective_delta);
@@ -60,8 +69,13 @@ TEST_SUITE("Core::FrameTiming") {
     // freshly measured one.
     clock.advance(8);
     callback_observation.begin_timed_frame();
-    run_timed_frame(timing, false, false,
-        [&clock]() { return clock.now(); },
+    run_timed_frame(
+        timing,
+        false,
+        false,
+        [&clock]() {
+          return clock.now();
+        },
         []() {},
         [&clock, &timing, &deltas_seen, &callback_observation]() {
           callback_observation.record_callback(timing.effective_delta);
@@ -120,10 +134,17 @@ TEST_SUITE("Core::FrameTiming") {
     FrameTimingState timing;
     FakeClock clock{100};
 
-    run_timed_frame(timing, true, false,
-        [&clock]() { return clock.now(); },
+    run_timed_frame(
+        timing,
+        true,
+        false,
+        [&clock]() {
+          return clock.now();
+        },
         []() {},
-        [&clock]() { clock.advance(32); });
+        [&clock]() {
+          clock.advance(32);
+        });
 
     CHECK_EQ(timing.frame_time_ms, 32U);
     CHECK_EQ(timing.current_time_ms, 132U);
@@ -133,19 +154,33 @@ TEST_SUITE("Core::FrameTiming") {
     FrameTimingState timing;
     FakeClock clock{100};
 
-    run_timed_frame(timing, true, false,
-        [&clock]() { return clock.now(); },
+    run_timed_frame(
+        timing,
+        true,
+        false,
+        [&clock]() {
+          return clock.now();
+        },
         []() {},
-        [&clock]() { clock.advance(16); });
+        [&clock]() {
+          clock.advance(16);
+        });
     CHECK_EQ(timing.frame_time_ms, 16U);
 
     // The loop processed events for 8 ms before this frame; without a
     // timing reset that time belongs to the new frame.
     clock.advance(8);
-    run_timed_frame(timing, false, false,
-        [&clock]() { return clock.now(); },
+    run_timed_frame(
+        timing,
+        false,
+        false,
+        [&clock]() {
+          return clock.now();
+        },
         []() {},
-        [&clock]() { clock.advance(16); });
+        [&clock]() {
+          clock.advance(16);
+        });
     CHECK_EQ(timing.frame_time_ms, 24U);
   }
 
@@ -153,19 +188,33 @@ TEST_SUITE("Core::FrameTiming") {
     FrameTimingState timing;
     FakeClock clock{100};
 
-    run_timed_frame(timing, true, false,
-        [&clock]() { return clock.now(); },
+    run_timed_frame(
+        timing,
+        true,
+        false,
+        [&clock]() {
+          return clock.now();
+        },
         []() {},
-        [&clock]() { clock.advance(16); });
+        [&clock]() {
+          clock.advance(16);
+        });
     CHECK_EQ(timing.frame_time_ms, 16U);
 
     // The loop was blocked waiting for events; the resumed frame carries
     // the reset request and rebaselines immediately before input.
     clock.advance(10'000);
-    run_timed_frame(timing, true, false,
-        [&clock]() { return clock.now(); },
+    run_timed_frame(
+        timing,
+        true,
+        false,
+        [&clock]() {
+          return clock.now();
+        },
         []() {},
-        [&clock]() { clock.advance(16); });
+        [&clock]() {
+          clock.advance(16);
+        });
     CHECK_EQ(timing.frame_time_ms, 16U);
   }
 
@@ -173,17 +222,31 @@ TEST_SUITE("Core::FrameTiming") {
     FrameTimingState timing;
     FakeClock clock{100};
 
-    run_timed_frame(timing, true, false,
-        [&clock]() { return clock.now(); },
+    run_timed_frame(
+        timing,
+        true,
+        false,
+        [&clock]() {
+          return clock.now();
+        },
         []() {},
-        [&clock]() { clock.advance(16); });
+        [&clock]() {
+          clock.advance(16);
+        });
     CHECK_EQ(timing.average_frame_time_ms, 8U);
 
     clock.advance(10'000);
-    run_timed_frame(timing, true, false,
-        [&clock]() { return clock.now(); },
+    run_timed_frame(
+        timing,
+        true,
+        false,
+        [&clock]() {
+          return clock.now();
+        },
         []() {},
-        [&clock]() { clock.advance(16); });
+        [&clock]() {
+          clock.advance(16);
+        });
     // (8 + 16) / 2: the pre-reset average was retained.
     CHECK_EQ(timing.average_frame_time_ms, 12U);
   }
@@ -192,8 +255,13 @@ TEST_SUITE("Core::FrameTiming") {
     FrameTimingState timing;
     FakeClock clock{50};
 
-    run_timed_frame(timing, true, false,
-        [&clock]() { return clock.now(); },
+    run_timed_frame(
+        timing,
+        true,
+        false,
+        [&clock]() {
+          return clock.now();
+        },
         []() {},
         []() {});
 
@@ -208,10 +276,17 @@ TEST_SUITE("Core::FrameTiming") {
     timing.average_frame_time_ms = 40;
     FakeClock clock{100};
 
-    run_timed_frame(timing, true, false,
-        [&clock]() { return clock.now(); },
+    run_timed_frame(
+        timing,
+        true,
+        false,
+        [&clock]() {
+          return clock.now();
+        },
         []() {},
-        [&clock]() { clock.advance(16); });
+        [&clock]() {
+          clock.advance(16);
+        });
 
     CHECK_EQ(timing.average_frame_time_ms, 28U);
   }
@@ -221,10 +296,17 @@ TEST_SUITE("Core::FrameTiming") {
     timing.average_frame_time_ms = 20;  // pre-existing average: 50 FPS
     FakeClock clock{100};
 
-    run_timed_frame(timing, true, false,
-        [&clock]() { return clock.now(); },
+    run_timed_frame(
+        timing,
+        true,
+        false,
+        [&clock]() {
+          return clock.now();
+        },
         []() {},
-        [&clock]() { clock.advance(16); });
+        [&clock]() {
+          clock.advance(16);
+        });
 
     CHECK_EQ(timing.current_fps, doctest::Approx(1000.0F / 16.0F));
     CHECK_EQ(timing.average_fps, doctest::Approx(1000.0F / 18.0F));
@@ -264,16 +346,26 @@ TEST_SUITE("Core::FrameTiming") {
     timing.forced_delta = 2.5F;
     FakeClock clock{100};
 
-    run_timed_frame(timing, true, false,
-        [&clock]() { return clock.now(); },
+    run_timed_frame(
+        timing,
+        true,
+        false,
+        [&clock]() {
+          return clock.now();
+        },
         []() {},
         []() {});
     CHECK_EQ(timing.base_delta, doctest::Approx(2.5F));
     CHECK_EQ(timing.effective_delta, doctest::Approx(2.5F));
 
     timing.forced_delta.reset();
-    run_timed_frame(timing, false, false,
-        [&clock]() { return clock.now(); },
+    run_timed_frame(
+        timing,
+        false,
+        false,
+        [&clock]() {
+          return clock.now();
+        },
         []() {},
         []() {});
     CHECK_EQ(timing.base_delta, doctest::Approx(1.0F));
@@ -286,8 +378,13 @@ TEST_SUITE("Core::FrameTiming") {
     timing.gameplay_paused = true;
     FakeClock clock{100};
 
-    run_timed_frame(timing, true, false,
-        [&clock]() { return clock.now(); },
+    run_timed_frame(
+        timing,
+        true,
+        false,
+        [&clock]() {
+          return clock.now();
+        },
         []() {},
         []() {});
 
@@ -303,15 +400,25 @@ TEST_SUITE("Core::FrameTiming") {
     FakeClock clock{100};
     std::vector<float> deltas_seen{};
 
-    run_timed_frame(timing, true, false,
-        [&clock]() { return clock.now(); },
+    run_timed_frame(
+        timing,
+        true,
+        false,
+        [&clock]() {
+          return clock.now();
+        },
         []() {},
         [&clock, &timing, &deltas_seen]() {
           deltas_seen.push_back(timing.effective_delta);
           clock.advance(16);
         });
-    run_timed_frame(timing, false, false,
-        [&clock]() { return clock.now(); },
+    run_timed_frame(
+        timing,
+        false,
+        false,
+        [&clock]() {
+          return clock.now();
+        },
         []() {},
         [&clock, &timing, &deltas_seen]() {
           deltas_seen.push_back(timing.effective_delta);
@@ -329,10 +436,19 @@ TEST_SUITE("Core::FrameTiming") {
     int callbacks{0};
     int polls{0};
 
-    run_timed_frame(timing, true, true,
-        [&clock]() { return clock.now(); },
-        [&polls]() { ++polls; },
-        [&callbacks]() { ++callbacks; });
+    run_timed_frame(
+        timing,
+        true,
+        true,
+        [&clock]() {
+          return clock.now();
+        },
+        [&polls]() {
+          ++polls;
+        },
+        [&callbacks]() {
+          ++callbacks;
+        });
 
     CHECK_EQ(callbacks, 0);
     CHECK_EQ(polls, 1);
@@ -346,8 +462,13 @@ TEST_SUITE("Core::FrameTiming") {
     FakeClock clock{100};
     int polls{0};
 
-    run_timed_frame(timing, true, true,
-        [&clock]() { return clock.now(); },
+    run_timed_frame(
+        timing,
+        true,
+        true,
+        [&clock]() {
+          return clock.now();
+        },
         [&clock, &polls]() {
           ++polls;
           clock.advance(5);  // input snapshot work belongs to the frame
@@ -375,18 +496,39 @@ TEST_SUITE("Core::FrameTiming") {
     int skipped_callbacks{0};
     int paused_callbacks{0};
 
-    run_timed_frame(normal, true, false,
-        [&clock]() { return clock.now(); },
+    run_timed_frame(
+        normal,
+        true,
+        false,
+        [&clock]() {
+          return clock.now();
+        },
         []() {},
-        [&normal_callbacks]() { ++normal_callbacks; });
-    run_timed_frame(skipped, true, true,
-        [&clock]() { return clock.now(); },
+        [&normal_callbacks]() {
+          ++normal_callbacks;
+        });
+    run_timed_frame(
+        skipped,
+        true,
+        true,
+        [&clock]() {
+          return clock.now();
+        },
         []() {},
-        [&skipped_callbacks]() { ++skipped_callbacks; });
-    run_timed_frame(paused, true, false,
-        [&clock]() { return clock.now(); },
+        [&skipped_callbacks]() {
+          ++skipped_callbacks;
+        });
+    run_timed_frame(
+        paused,
+        true,
+        false,
+        [&clock]() {
+          return clock.now();
+        },
         []() {},
-        [&paused_callbacks]() { ++paused_callbacks; });
+        [&paused_callbacks]() {
+          ++paused_callbacks;
+        });
 
     CHECK_EQ(normal_callbacks, 1);
     CHECK_EQ(skipped_callbacks, 0);
@@ -400,23 +542,44 @@ TEST_SUITE("Core::FrameTiming") {
     FrameTimingState timing;
     FakeClock clock{100};
 
-    run_timed_frame(timing, true, false,
-        [&clock]() { return clock.now(); },
+    run_timed_frame(
+        timing,
+        true,
+        false,
+        [&clock]() {
+          return clock.now();
+        },
         []() {},
-        [&clock]() { clock.advance(16); });
+        [&clock]() {
+          clock.advance(16);
+        });
     CHECK_EQ(timing.secondary_frame_clock_ms, 100U);
 
     clock.advance(1'000);
-    run_timed_frame(timing, false, false,
-        [&clock]() { return clock.now(); },
+    run_timed_frame(
+        timing,
+        false,
+        false,
+        [&clock]() {
+          return clock.now();
+        },
         []() {},
-        [&clock]() { clock.advance(16); });
+        [&clock]() {
+          clock.advance(16);
+        });
     CHECK_EQ(timing.secondary_frame_clock_ms, 100U);
 
-    run_timed_frame(timing, true, false,
-        [&clock]() { return clock.now(); },
+    run_timed_frame(
+        timing,
+        true,
+        false,
+        [&clock]() {
+          return clock.now();
+        },
         []() {},
-        [&clock]() { clock.advance(16); });
+        [&clock]() {
+          clock.advance(16);
+        });
     CHECK_EQ(timing.secondary_frame_clock_ms, 1132U);
   }
 
@@ -430,8 +593,13 @@ TEST_SUITE("Core::FrameTiming") {
     FakeClock clock{100};
 
     clock.advance(9'000);  // inactive interval before the resumed frame
-    run_timed_frame(timing, true, false,
-        [&clock]() { return clock.now(); },
+    run_timed_frame(
+        timing,
+        true,
+        false,
+        [&clock]() {
+          return clock.now();
+        },
         []() {},
         []() {});
 

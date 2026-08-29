@@ -87,8 +87,8 @@ AreaVmContextDebugState build_area_vm_context_debug_state(
   }
 
   const std::span<const std::int32_t> variables{runtime.global_variables()};
-  const std::size_t inspectable_count{std::min(variables.size(),
-      static_cast<std::size_t>(std::numeric_limits<std::uint16_t>::max()) + 1U)};
+  const std::size_t inspectable_count{std::min(
+      variables.size(), static_cast<std::size_t>(std::numeric_limits<std::uint16_t>::max()) + 1U)};
   result.variables.reserve(inspectable_count);
   for (std::size_t index{0}; index < inspectable_count; ++index) {
     // std::span has no at(); inspectable_count is clamped to its size above.
@@ -102,8 +102,8 @@ AreaVmContextDebugState build_area_vm_context_debug_state(
 
 namespace {
 
-std::string command_status(const Script::ScriptInstance& instance,
-    const Script::RuntimeScriptCommand& command) {
+std::string command_status(
+    const Script::ScriptInstance& instance, const Script::RuntimeScriptCommand& command) {
   if (instance.paused) {
     return "paused";
   }
@@ -141,9 +141,8 @@ AreaVmTrackedCommandDebugState snapshot_command(const Script::ScriptInstance& in
   return result;
 }
 
-void attach_tracked_script(AreaVmContextDebugState& context,
-    const ScenarioEngine& engine,
-    const std::size_t owner_slot) {
+void attach_tracked_script(
+    AreaVmContextDebugState& context, const ScenarioEngine& engine, const std::size_t owner_slot) {
   std::optional<std::size_t> instance_id;
   if (context.wait.kind == Script::AreaWaitKind::k_character_script) {
     instance_id = context.wait.character_script_instance;
@@ -179,8 +178,8 @@ void attach_tracked_script(AreaVmContextDebugState& context,
       .linked_command_count = instance->linked_commands.size(),
       .active_group_commands = {}};
   if (!instance->root_commands.empty()) {
-    const std::size_t group_index{std::min(
-        instance->current_group_index, instance->root_commands.size() - 1U)};
+    const std::size_t group_index{
+        std::min(instance->current_group_index, instance->root_commands.size() - 1U)};
     const Script::RuntimeScriptCommand& root{instance->root_commands.at(group_index)};
     tracked.active_group_commands.push_back(snapshot_command(*instance, root, group_index, true));
     std::optional<std::uint32_t> linked{root.next_linked_command_index};
@@ -194,12 +193,10 @@ void attach_tracked_script(AreaVmContextDebugState& context,
   context.tracked_script = std::move(tracked);
 }
 
-std::uint64_t context_identity(const AreaVmContextSourceType type,
-    const std::size_t owner_slot,
-    const std::int32_t id) {
+std::uint64_t context_identity(
+    const AreaVmContextSourceType type, const std::size_t owner_slot, const std::int32_t id) {
   return (static_cast<std::uint64_t>(type) << 60U) |
-         (static_cast<std::uint64_t>(owner_slot) << 56U) |
-         static_cast<std::uint32_t>(id);
+         (static_cast<std::uint64_t>(owner_slot) << 56U) | static_cast<std::uint32_t>(id);
 }
 
 }  // namespace
@@ -231,66 +228,67 @@ AreaVmRegistryDebugState build_area_vm_registry_debug_state(const ScenarioEngine
     AreaVmContextDebugState context{build_area_vm_context_debug_state(*runtime,
         AreaVmContextSourceDebugState{.identity = 0,
             .open_nomad_context_index = context_index++,
-        .source_type = AreaVmContextSourceType::k_area,
+            .source_type = AreaVmContextSourceType::k_area,
             .owner_area_slot = static_cast<std::uint8_t>(owner_slot),
             .retail_registry_slot = std::nullopt,
             .area_id = area_id,
-        .scene_id = std::nullopt,
-        .zone_id = std::nullopt,
+            .scene_id = std::nullopt,
+            .zone_id = std::nullopt,
             .source_primary_event_offset = primary_event_offset,
             .source_event_entry_offsets = event_entries,
-        .open_nomad_execution_base_offset = primary_event_offset})};
-    context.source.identity = context_identity(AreaVmContextSourceType::k_area, owner_slot, area_id);
+            .open_nomad_execution_base_offset = primary_event_offset})};
+    context.source.identity =
+        context_identity(AreaVmContextSourceType::k_area, owner_slot, area_id);
     attach_tracked_script(context, engine, owner_slot);
     result.contexts.push_back(std::move(context));
 
     if (slot->scene.has_value() && slot->scene_script.has_value()) {
       const std::uint32_t script_offset{slot->scene->script_offset()};
       AreaVmContextDebugState scene{build_area_vm_context_debug_state(*slot->scene_script,
-        AreaVmContextSourceDebugState{
-          .identity = context_identity(
-            AreaVmContextSourceType::k_scene, owner_slot, slot->scene_id),
-          .open_nomad_context_index = context_index++,
-          .source_type = AreaVmContextSourceType::k_scene,
-          .owner_area_slot = static_cast<std::uint8_t>(owner_slot),
-          .retail_registry_slot = std::nullopt,
-          .area_id = area_id,
-          .scene_id = slot->scene_id,
-          .zone_id = std::nullopt,
-          .source_primary_event_offset = script_offset,
-          .source_event_entry_offsets = {script_offset, std::nullopt, std::nullopt},
-          .open_nomad_execution_base_offset = script_offset})};
+          AreaVmContextSourceDebugState{
+              .identity =
+                  context_identity(AreaVmContextSourceType::k_scene, owner_slot, slot->scene_id),
+              .open_nomad_context_index = context_index++,
+              .source_type = AreaVmContextSourceType::k_scene,
+              .owner_area_slot = static_cast<std::uint8_t>(owner_slot),
+              .retail_registry_slot = std::nullopt,
+              .area_id = area_id,
+              .scene_id = slot->scene_id,
+              .zone_id = std::nullopt,
+              .source_primary_event_offset = script_offset,
+              .source_event_entry_offsets = {script_offset, std::nullopt, std::nullopt},
+              .open_nomad_execution_base_offset = script_offset})};
       attach_tracked_script(scene, engine, owner_slot);
       result.contexts.push_back(std::move(scene));
     }
-    }
+  }
 
-    for (std::size_t index{0}; index < engine.zone_contact_count(); ++index) {
+  for (std::size_t index{0}; index < engine.zone_contact_count(); ++index) {
     const ZoneContactContext* const contact{engine.zone_contact(index)};
     if (contact == nullptr || contact->script == nullptr) {
       continue;
     }
     const std::int32_t zone_identity_id{
-      (contact->source == ActiveZoneSource::k_scene ? 1 << 16 : 0) |
-      static_cast<std::uint16_t>(contact->zone.zone_id)};
+        (contact->source == ActiveZoneSource::k_scene ? 1 << 16 : 0) |
+        static_cast<std::uint16_t>(contact->zone.zone_id)};
     AreaVmContextDebugState zone{build_area_vm_context_debug_state(*contact->script,
-      AreaVmContextSourceDebugState{
-        .identity = context_identity(
-          AreaVmContextSourceType::k_zone, contact->resident_slot, zone_identity_id),
-        .open_nomad_context_index = context_index++,
-        .source_type = AreaVmContextSourceType::k_zone,
-        .owner_area_slot = static_cast<std::uint8_t>(contact->resident_slot),
-        .retail_registry_slot = std::nullopt,
-        .area_id = contact->area_id,
-        .scene_id = contact->source == ActiveZoneSource::k_scene
-                ? std::optional<std::int32_t>{contact->scene_id}
-                : std::nullopt,
-        .zone_id = contact->zone.zone_id,
-        .source_primary_event_offset = contact->zone.event_offsets.at(0),
-        .source_event_entry_offsets = {contact->zone.event_offsets.at(0),
-          contact->zone.event_offsets.at(1),
-          contact->zone.event_offsets.at(2)},
-        .open_nomad_execution_base_offset = 0U})};
+        AreaVmContextSourceDebugState{
+            .identity = context_identity(
+                AreaVmContextSourceType::k_zone, contact->resident_slot, zone_identity_id),
+            .open_nomad_context_index = context_index++,
+            .source_type = AreaVmContextSourceType::k_zone,
+            .owner_area_slot = static_cast<std::uint8_t>(contact->resident_slot),
+            .retail_registry_slot = std::nullopt,
+            .area_id = contact->area_id,
+            .scene_id = contact->source == ActiveZoneSource::k_scene
+                            ? std::optional<std::int32_t>{contact->scene_id}
+                            : std::nullopt,
+            .zone_id = contact->zone.zone_id,
+            .source_primary_event_offset = contact->zone.event_offsets.at(0),
+            .source_event_entry_offsets = {contact->zone.event_offsets.at(0),
+                contact->zone.event_offsets.at(1),
+                contact->zone.event_offsets.at(2)},
+            .open_nomad_execution_base_offset = 0U})};
     attach_tracked_script(zone, engine, contact->resident_slot);
     result.contexts.push_back(std::move(zone));
   }

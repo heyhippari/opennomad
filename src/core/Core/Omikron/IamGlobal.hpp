@@ -21,8 +21,7 @@ class IamGlobal {
   static constexpr std::size_t k_offset_camera_table{0x14U};
   static constexpr std::size_t k_offset_camera_count{0x1EU};
 
-  [[nodiscard]] static std::expected<IamGlobal, std::string> load(
-      std::span<const std::byte> data);
+  [[nodiscard]] static std::expected<IamGlobal, std::string> load(std::span<const std::byte> data);
 
   [[nodiscard]] std::span<const IamCameraRecord> cameras() const {
     return m_cameras;

@@ -234,14 +234,14 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     std::optional<AreaObjectPlacementStateRequest> placement_request;
     std::optional<AreaSceneAttachRequest> attach_request;
     runtime.set_object_placement_state_sink(
-        [&placement_request](const AreaObjectPlacementStateRequest& request)
-            -> std::expected<void, std::string> {
+        [&placement_request](
+            const AreaObjectPlacementStateRequest& request) -> std::expected<void, std::string> {
           placement_request = request;
           return {};
         });
     runtime.set_area_scene_attach_sink(
-        [&attach_request](const AreaSceneAttachRequest& request)
-            -> std::expected<void, std::string> {
+        [&attach_request](
+            const AreaSceneAttachRequest& request) -> std::expected<void, std::string> {
           attach_request = request;
           return {};
         });
@@ -267,8 +267,8 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
 
     std::optional<AreaObjectPlacementStateRequest> request;
     runtime.set_object_placement_state_sink(
-        [&request](const AreaObjectPlacementStateRequest& value)
-            -> std::expected<void, std::string> {
+        [&request](
+            const AreaObjectPlacementStateRequest& value) -> std::expected<void, std::string> {
           request = value;
           return {};
         });
@@ -1180,8 +1180,9 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     bytes.u8(0x76).u32(0x00123456U).u16(30).u16(2).u8(0x00);  // unknown opcode next.
     AreaScriptRuntime runtime{bytes.data()};
     std::optional<AreaPresentationRequest> presentation;
-    runtime.set_presentation_sink(
-        [&presentation](const AreaPresentationRequest& request) { presentation = request; });
+    runtime.set_presentation_sink([&presentation](const AreaPresentationRequest& request) {
+      presentation = request;
+    });
     runtime.queue_event(1);
     runtime.activate();
     const AreaScriptState yielded{runtime.run()};
@@ -1730,12 +1731,11 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
           scripts.push_back(request);
           return 42U;
         });
-    runtime.set_camera_sink(
-        [&next_camera_operation](const AreaCameraRequest& request)
-            -> std::expected<AreaCameraOperationHandle, std::string> {
-          return AreaCameraOperationHandle{
-              .generation = request.wait_for_completion ? next_camera_operation++ : 0U};
-        });
+    runtime.set_camera_sink([&next_camera_operation](const AreaCameraRequest& request)
+                                -> std::expected<AreaCameraOperationHandle, std::string> {
+      return AreaCameraOperationHandle{
+          .generation = request.wait_for_completion ? next_camera_operation++ : 0U};
+    });
     wire_startup_character_sinks(runtime);
 
     runtime.queue_event(1);
@@ -1775,12 +1775,13 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
 
     // A large VM delta cannot expire state 7: WorldCamera owns the only clock.
     CHECK(runtime.run(100.0F / 30.0F) == AreaScriptState::k_waiting);
-    REQUIRE_FALSE(runtime.complete_camera_wait(
-        AreaCameraOperationHandle{.generation = camera_2154.generation + 100U})
-                      .has_value());
+    REQUIRE_FALSE(runtime
+            .complete_camera_wait(
+                AreaCameraOperationHandle{.generation = camera_2154.generation + 100U})
+            .has_value());
     CHECK(runtime.state() == AreaScriptState::k_waiting);
     REQUIRE(runtime.complete_camera_wait(camera_2154).has_value());
- 
+
     // The presentation-owned completion resumes into 0x76, which records
     // presentation mode 1 and yields before camera 2158.
     REQUIRE(runtime.run() == AreaScriptState::k_running);
@@ -1792,7 +1793,7 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     CHECK_EQ(runtime.last_camera_request()->camera_id, 2158U);
     REQUIRE(runtime.wait_info().camera_operation.has_value());
     const AreaCameraOperationHandle camera_2158{runtime.wait_info().camera_operation.value()};
- 
+
     // The exact second camera completion resumes into 0x04, which lands
     // exactly on +0x11F and executes the event terminator 0x03.
     REQUIRE(runtime.complete_camera_wait(camera_2158).has_value());
