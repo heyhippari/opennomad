@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cinttypes>
 #include <cstddef>
 #include <cstdint>
 #include <flat_map>
@@ -123,8 +124,7 @@ void DebugUI::show_frame_timing() {
     } else {
       ImGui::TextUnformatted("Clamp: no");
     }
-    ImGui::Text(
-        "Script tick count: %llu", static_cast<unsigned long long>(script_runtime->tick_count()));
+    ImGui::Text("Script tick count: %" PRIu64, script_runtime->tick_count());
   }
 
   ImGui::SeparatorText("Interface timing");
@@ -239,7 +239,7 @@ void DebugUI::show_system_info() {
     ImGui::Indent();
     ImGui::Text("Name:      OpenNomad");
     ImGui::Text("Version:   0.0.1");
-#if DEBUG
+#ifdef DEBUG
     ImGui::Text("Build:     Debug");
 #else
     ImGui::Text("Build:     Release");
@@ -300,10 +300,10 @@ void DebugUI::show_profiler() {
         display_name = "..." + display_name.substr(display_name.size() - 52);
       }
 
-      ImGui::Text("%-6zu %-50s %12lld %8zu",
+      ImGui::Text("%-6zu %-50s %12" PRId64 " %8zu",
           rank,
           display_name.c_str(),
-          static_cast<long long>(scope_stats.total_time.count()),
+          scope_stats.total_time.count(),
           scope_stats.call_count);
       ++rank;
     }

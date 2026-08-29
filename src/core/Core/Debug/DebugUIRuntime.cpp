@@ -2,6 +2,7 @@
 #include <imgui.h>
 
 #include <algorithm>
+#include <cinttypes>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -259,7 +260,7 @@ void DebugUI::show_scx_script_inspector() {
   ImGui::SeparatorText("Scenario");
   ImGui::Text("Path: %s", fmt::format("{}", scenario_runtime->script_scenario_name()).c_str());
   ImGui::Text("State: %s", script_run_state_name(runtime->run_state()));
-  ImGui::Text("Tick: %llu", static_cast<unsigned long long>(runtime->tick_count()));
+  ImGui::Text("Tick: %" PRIu64, runtime->tick_count());
   ImGui::Text("Scripts: %zu, shared values: %zu",
       runtime->scx().scripts.size(),
       runtime->scx().shared_values.size());

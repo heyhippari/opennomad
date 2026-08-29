@@ -19,12 +19,44 @@ permissions:
 
 jobs:
   format-check:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
+    env:
+      CXX: g++-16
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up CMake and Ninja
+        uses: lukka/get-cmake@fffaaafeea488556c2c12dad60690008bc1caacb # v4.4.2
+        with:
+          cmakeVersion: 4.4.2
+          ninjaVersion: 1.13.2
+      - name: Install Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            g++-16 nasm autoconf autoconf-archive automake libtool \
+            libx11-dev libxft-dev libxext-dev libltdl-dev \
+            libwayland-dev libxkbcommon-dev libegl1-mesa-dev \
+            libibus-1.0-dev libdecor-0-dev libgl1-mesa-dev
       - name: Install LLVM 22.1.8
         run: |
-          wget -qO- https://apt.llvm.org/llvm.sh | sudo bash /dev/stdin 22
+          readonly llvm_root="$RUNNER_TEMP/llvm-22.1.8"
+          mkdir -p "$llvm_root"
+          curl --fail --location --retry 3 --silent --show-error \
+            --output "$RUNNER_TEMP/LLVM-22.1.8-Linux-X64.tar.xz" \
+            https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.8/LLVM-22.1.8-Linux-X64.tar.xz
+          echo 'df0e1ecf16caf3489a272a5eea4eec9b0d82878f6477fa309504f918a0006384  '$RUNNER_TEMP'/LLVM-22.1.8-Linux-X64.tar.xz' | sha256sum --check --strict
+          tar --extract --file "$RUNNER_TEMP/LLVM-22.1.8-Linux-X64.tar.xz" \
+            --xz --strip-components=1 --directory "$llvm_root"
+          rm "$RUNNER_TEMP/LLVM-22.1.8-Linux-X64.tar.xz"
+          echo "OPENNOMAD_LLVM_ROOT=$llvm_root" >> "$GITHUB_ENV"
+          echo "$llvm_root/bin" >> "$GITHUB_PATH"
+      - name: Set up vcpkg
+        uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2 # v11.6
+        with:
+          vcpkgDirectory: '${{ github.workspace }}/vcpkg'
+          vcpkgJsonGlob: 'vcpkg.json'
       - name: Print tool versions
         run: |
           cmake --version | head -n 1
@@ -34,16 +66,27 @@ jobs:
         run: cmake --preset quality
       - name: Run format check
         run: cmake --build --preset quality --target check-format
+      - name: Run static analysis
+        run: cmake --build --preset quality --target tidy
 
   linux-debug:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
+    env:
+      CXX: g++-16
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up CMake and Ninja
+        uses: lukka/get-cmake@fffaaafeea488556c2c12dad60690008bc1caacb # v4.4.2
+        with:
+          cmakeVersion: 4.4.2
+          ninjaVersion: 1.13.2
       - name: Install Linux system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            nasm autoconf autoconf-archive automake libtool \
+            g++-16 nasm autoconf autoconf-archive automake libtool \
             libx11-dev libxft-dev libxext-dev libltdl-dev \
             libwayland-dev libxkbcommon-dev libegl1-mesa-dev \
             libibus-1.0-dev libdecor-0-dev libgl1-mesa-dev
@@ -56,7 +99,7 @@ jobs:
         run: |
           cmake --version | head -n 1
           ninja --version
-          gcc --version | head -n 1
+          "$CXX" --version | head -n 1
       - name: Configure
         run: cmake --preset linux-debug
       - name: Build
@@ -65,9 +108,26 @@ jobs:
         run: ctest --preset linux-debug --output-on-failure
 
   linux-release:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
+    env:
+      CXX: g++-16
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up CMake and Ninja
+        uses: lukka/get-cmake@fffaaafeea488556c2c12dad60690008bc1caacb # v4.4.2
+        with:
+          cmakeVersion: 4.4.2
+          ninjaVersion: 1.13.2
+      - name: Install Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            g++-16 nasm autoconf autoconf-archive automake libtool \
+            libx11-dev libxft-dev libxext-dev libltdl-dev \
+            libwayland-dev libxkbcommon-dev libegl1-mesa-dev \
+            libibus-1.0-dev libdecor-0-dev libgl1-mesa-dev
       - name: Set up vcpkg
         uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2 # v11.6
         with:
@@ -81,12 +141,26 @@ jobs:
         run: ctest --preset linux-release --output-on-failure
 
   linux-sanitize:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
+    env:
+      CXX: g++-16
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Install LLVM 22.1.8
+        with:
+          persist-credentials: false
+      - name: Set up CMake and Ninja
+        uses: lukka/get-cmake@fffaaafeea488556c2c12dad60690008bc1caacb # v4.4.2
+        with:
+          cmakeVersion: 4.4.2
+          ninjaVersion: 1.13.2
+      - name: Install Linux system dependencies
         run: |
-          wget -qO- https://apt.llvm.org/llvm.sh | sudo bash /dev/stdin 22
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            g++-16 nasm autoconf autoconf-archive automake libtool \
+            libx11-dev libxft-dev libxext-dev libltdl-dev \
+            libwayland-dev libxkbcommon-dev libegl1-mesa-dev \
+            libibus-1.0-dev libdecor-0-dev libgl1-mesa-dev
       - name: Set up vcpkg
         uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2 # v11.6
         with:
@@ -103,6 +177,13 @@ jobs:
     runs-on: macos-26
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up CMake and Ninja
+        uses: lukka/get-cmake@fffaaafeea488556c2c12dad60690008bc1caacb # v4.4.2
+        with:
+          cmakeVersion: 4.4.2
+          ninjaVersion: 1.13.2
       - name: Set up vcpkg
         uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2 # v11.6
         with:
@@ -115,10 +196,40 @@ jobs:
       - name: Test
         run: ctest --preset macos-debug --output-on-failure
 
+  macos-release:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up CMake and Ninja
+        uses: lukka/get-cmake@fffaaafeea488556c2c12dad60690008bc1caacb # v4.4.2
+        with:
+          cmakeVersion: 4.4.2
+          ninjaVersion: 1.13.2
+      - name: Set up vcpkg
+        uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2 # v11.6
+        with:
+          vcpkgDirectory: '${{ github.workspace }}/vcpkg'
+          vcpkgJsonGlob: 'vcpkg.json'
+      - name: Configure
+        run: cmake --preset macos-release
+      - name: Build
+        run: cmake --build --preset macos-release
+      - name: Test
+        run: ctest --preset macos-release --output-on-failure
+
   windows-debug:
     runs-on: windows-2025-vs2026
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up CMake and Ninja
+        uses: lukka/get-cmake@fffaaafeea488556c2c12dad60690008bc1caacb # v4.4.2
+        with:
+          cmakeVersion: 4.4.2
+          ninjaVersion: 1.13.2
       - name: Set up vcpkg
         uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2 # v11.6
         with:
@@ -130,3 +241,26 @@ jobs:
         run: cmake --build --preset windows-debug
       - name: Test
         run: ctest --preset windows-debug --output-on-failure
+
+  windows-release:
+    runs-on: windows-2025-vs2026
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up CMake and Ninja
+        uses: lukka/get-cmake@fffaaafeea488556c2c12dad60690008bc1caacb # v4.4.2
+        with:
+          cmakeVersion: 4.4.2
+          ninjaVersion: 1.13.2
+      - name: Set up vcpkg
+        uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2 # v11.6
+        with:
+          vcpkgDirectory: '${{ github.workspace }}/vcpkg'
+          vcpkgJsonGlob: 'vcpkg.json'
+      - name: Configure
+        run: cmake --preset windows-release
+      - name: Build
+        run: cmake --build --preset windows-release
+      - name: Test
+        run: ctest --preset windows-release --output-on-failure

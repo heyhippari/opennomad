@@ -242,7 +242,8 @@ std::expected<std::uint8_t, std::string> GameState::packed_state(const std::size
   }
   const std::size_t shift{(index % K_PACKED_VALUES_PER_BYTE) * 2U};
   return static_cast<std::uint8_t>(
-      (m_packed_state.at(index / K_PACKED_VALUES_PER_BYTE) >> shift) & 0x03U);
+      (static_cast<std::uint32_t>(m_packed_state.at(index / K_PACKED_VALUES_PER_BYTE)) >> shift) &
+      0x03U);
 }
 
 std::expected<void, std::string> GameState::set_packed_state(

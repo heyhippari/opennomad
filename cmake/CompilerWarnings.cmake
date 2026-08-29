@@ -48,12 +48,7 @@ function(set_project_warnings project_name)
     -Wundef)
 
   set(CLANG_WARNINGS
-    ${CLANG_COMMON_WARNINGS}
-    -Wmisleading-indentation
-    -Wduplicated-cond
-    -Wduplicated-branches
-    -Wlogical-op
-    -Wuseless-cast)
+    ${CLANG_COMMON_WARNINGS})
 
   set(GCC_WARNINGS
     ${CLANG_COMMON_WARNINGS}

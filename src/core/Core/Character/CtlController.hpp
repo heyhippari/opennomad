@@ -18,7 +18,7 @@
 
 namespace App::Character {
 
-class RuntimeCharacter;
+struct RuntimeCharacter;
 
 /// Canonical CTL input mask value when no profile slot is held. No ordinary
 /// action sets this bit itself (Runtime controller initialization seeds it).

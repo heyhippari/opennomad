@@ -200,7 +200,7 @@ inline const char* current_function_name(
 
 }  // namespace App::Debug
 
-#if APP_PROFILE
+#ifdef APP_PROFILE
 #define JOIN_AGAIN(x, y) x##y
 #define JOIN(x, y) JOIN_AGAIN(x, y)
 #define APP_PROFILE_BEGIN_SESSION(name) ::App::Debug::Instrumentor::get().begin_session(name)
