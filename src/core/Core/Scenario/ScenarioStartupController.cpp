@@ -1634,14 +1634,14 @@ std::expected<void, std::string> ScenarioStartupController::attach_area_scene(
     slot.scene_id = -1;
     return std::expected<void, std::string>{std::unexpect, materialize_error};
   }
-  if (slot.scene->script_offset() != 0U) {
+  if (slot.scene->primary_event_offset() != 0U) {
     const auto compact_program{Script::CompactProgramView::create(
-        slot.scene->script_bytes(), slot.scene->script_offset())};
+        slot.scene->bytecode_pool(), slot.scene->bytecode_pool_offset())};
     if (!compact_program) {
       return std::expected<void, std::string>{std::unexpect, compact_program.error()};
     }
     const auto primary_entry{
-        compact_program->rebase_entry(slot.scene->script_offset(), "SCENE primary event")};
+        compact_program->rebase_entry(slot.scene->primary_event_offset(), "SCENE primary event")};
     if (!primary_entry) {
       return std::expected<void, std::string>{std::unexpect, primary_entry.error()};
     }
@@ -3216,8 +3216,8 @@ std::expected<void, std::string> ScenarioStartupController::create_zone_contact(
           slot.primary->bytecode_pool(), slot.primary->bytecode_pool_offset());
     }
   } else if (slot.scene.has_value()) {
-    compact_program =
-        Script::CompactProgramView::create(slot.scene->script_bytes(), slot.scene->script_offset());
+    compact_program = Script::CompactProgramView::create(
+        slot.scene->bytecode_pool(), slot.scene->bytecode_pool_offset());
   }
   if (!compact_program) {
     return std::expected<void, std::string>{std::unexpect, compact_program.error()};

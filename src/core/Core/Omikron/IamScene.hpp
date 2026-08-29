@@ -50,7 +50,7 @@ class IamSceneRecord {
   static constexpr std::size_t k_header_size{0x44};
   static constexpr std::size_t k_table_count{8};
   static constexpr std::size_t k_offset_runtime_context{0x00};
-  static constexpr std::size_t k_offset_script{0x04};
+  static constexpr std::size_t k_offset_primary_event{0x04};
   static constexpr std::size_t k_offset_table_offsets{0x08};
   static constexpr std::size_t k_offset_table_counts{0x28};
 
@@ -61,15 +61,21 @@ class IamSceneRecord {
     return m_bytes.size();
   }
   [[nodiscard]] std::uint32_t runtime_context_placeholder() const;
-  [[nodiscard]] std::uint32_t script_offset() const;
+  /// Record-relative primary/default compact-event entrypoint. Zero means no
+  /// primary event and does not imply an empty bytecode pool.
+  [[nodiscard]] std::uint32_t primary_event_offset() const;
   [[nodiscard]] std::uint32_t table_offset(std::size_t index) const;
   [[nodiscard]] std::int16_t table_count(std::size_t index) const;
   [[nodiscard]] std::expected<std::span<const std::byte>, std::string> table_view(
       std::size_t index) const;
 
-  /// SCENE top-level code is exactly [script_offset, table6_offset); it never
-  /// includes the physically following camera records.
-  [[nodiscard]] std::span<const std::byte> script_bytes() const;
+  /// Record-relative start of the physical compact bytecode pool: the end of
+  /// table 7, independent of the primary event entrypoint.
+  [[nodiscard]] std::uint32_t bytecode_pool_offset() const;
+
+  /// Complete compact bytecode pool `[table7 end, table6 offset)`. Camera
+  /// records are never part of this span.
+  [[nodiscard]] std::span<const std::byte> bytecode_pool() const;
 
   /// Complete immutable serialized record used by record-relative zone events.
   [[nodiscard]] std::span<const std::byte> record_bytes() const {

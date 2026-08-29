@@ -20,7 +20,7 @@ struct RetailExpectation {
 
 }  // namespace
 
-TEST_CASE("retail dialog 272 3DM streams match recovered physical facts") {
+TEST_CASE("[RETAIL] dialog 272 3DM streams match recovered physical facts") {
   constexpr RetailExpectation K_EXPECTATIONS[]{{.basename = "125338",
                                                    .file_size = 3465536U,
                                                    .field_08 = 911U,

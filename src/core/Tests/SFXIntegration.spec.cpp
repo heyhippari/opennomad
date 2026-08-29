@@ -11,7 +11,7 @@
 #include "Core/Omikron/SCX.hpp"
 #include "Core/Omikron/SFX.hpp"
 
-TEST_CASE("GRID retail SFX matches the recovered package and authored sprite mappings") {
+TEST_CASE("[RETAIL] GRID SFX matches the recovered package and authored sprite mappings") {
   const auto sfx_file{App::load_game_file("SCPTDATA/GRID.SFX")};
   if (!sfx_file) {
     FAIL(sfx_file.error());

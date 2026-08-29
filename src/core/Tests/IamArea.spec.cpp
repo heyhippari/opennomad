@@ -132,7 +132,7 @@ TEST_SUITE("Core::Omikron::IamAreaRecord") {
     CHECK(record.error().find("primary") != std::string::npos);
   }
 
-  TEST_CASE("[OPENNOMAD] AREA rejects a zone event outside its bytecode pool") {
+  TEST_CASE("[FORMAT] AREA rejects a zone event outside its bytecode pool") {
     constexpr std::size_t k_zone_offset{0xB4U};
     constexpr std::size_t k_pool_offset{k_zone_offset + 0x44U};
     std::vector<std::byte> data(k_pool_offset + 0x10U, std::byte{});
@@ -147,7 +147,7 @@ TEST_SUITE("Core::Omikron::IamAreaRecord") {
     CHECK(record.error().find("zone 0 event 1") != std::string::npos);
   }
 
-  TEST_CASE("[OPENNOMAD] AREA rejects a table-7 event outside its bytecode pool") {
+  TEST_CASE("[FORMAT] AREA rejects a table-7 event outside its bytecode pool") {
     constexpr std::size_t k_link_offset{0xB4U};
     constexpr std::size_t k_pool_offset{k_link_offset + 0x08U};
     constexpr std::size_t k_pool_end{k_pool_offset + 0x10U};
@@ -163,7 +163,7 @@ TEST_SUITE("Core::Omikron::IamAreaRecord") {
     CHECK(record.error().find("table-7 program 0") != std::string::npos);
   }
 
-  TEST_CASE("[OPENNOMAD] AREA rejects reversed bytecode and camera ordering") {
+  TEST_CASE("[FORMAT] AREA rejects reversed bytecode and camera ordering") {
     std::vector<std::byte> data(0xC0U, std::byte{});
     write_u32(data, 0x28U + (6U * 4U), 0xB4U);
     write_u32(data, 0x28U + (7U * 4U), 0xC0U);
@@ -173,7 +173,7 @@ TEST_SUITE("Core::Omikron::IamAreaRecord") {
     CHECK(record.error().find("reversed bounds") != std::string::npos);
   }
 
-  TEST_CASE("[OPENNOMAD] AREA rejects camera overlap with physical table 7") {
+  TEST_CASE("[FORMAT] AREA rejects camera overlap with physical table 7") {
     constexpr std::size_t k_link_offset{0xB4U};
     constexpr std::size_t k_camera_offset{0xC0U};
     std::vector<std::byte> data(k_camera_offset + 0x2CU, std::byte{});

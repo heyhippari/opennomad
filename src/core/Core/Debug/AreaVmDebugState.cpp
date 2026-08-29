@@ -210,40 +210,42 @@ AreaVmRegistryDebugState build_area_vm_registry_debug_state(const ScenarioEngine
   // of relabelling whichever context is currently presented as initial AREA 118.
   for (std::size_t owner_slot{0}; owner_slot < 2U; ++owner_slot) {
     const RuntimeAreaSlot* const slot{engine.runtime_area_slot(owner_slot)};
-    const Script::AreaScriptRuntime* const runtime{engine.area_script(owner_slot)};
-    if (slot == nullptr || runtime == nullptr || !slot->primary.has_value()) {
+    if (slot == nullptr || !slot->primary.has_value()) {
       continue;
     }
 
     const Omikron::IamAreaRecord& record{slot->primary.value()};
     const std::int32_t area_id{slot->primary_area_id};
-    const std::uint32_t primary_event_offset{record.primary_event_offset()};
-    std::array<std::optional<std::uint32_t>, 3> event_entries{};
-    // Primary resident contexts currently model the AREA header's default/event
-    // 1 entry only. Event 2/3 source mappings remain deliberately absent.
-    event_entries.at(0) = primary_event_offset;
+    if (const Script::AreaScriptRuntime* const runtime{engine.area_script(owner_slot)};
+        runtime != nullptr) {
+      const std::uint32_t primary_event_offset{record.primary_event_offset()};
+      std::array<std::optional<std::uint32_t>, 3> event_entries{};
+      // Primary resident contexts currently model the AREA header's default/event
+      // 1 entry only. Event 2/3 source mappings remain deliberately absent.
+      event_entries.at(0) = primary_event_offset;
 
-    // Stable across active-world switches and distinct for the two resident
-    // owners even if malformed/test data were ever to reuse an AREA ID.
-    AreaVmContextDebugState context{build_area_vm_context_debug_state(*runtime,
-        AreaVmContextSourceDebugState{.identity = 0,
-            .open_nomad_context_index = context_index++,
-            .source_type = AreaVmContextSourceType::k_area,
-            .owner_area_slot = static_cast<std::uint8_t>(owner_slot),
-            .retail_registry_slot = std::nullopt,
-            .area_id = area_id,
-            .scene_id = std::nullopt,
-            .zone_id = std::nullopt,
-            .source_primary_event_offset = primary_event_offset,
-            .source_event_entry_offsets = event_entries,
-            .open_nomad_execution_base_offset = record.bytecode_pool_offset()})};
-    context.source.identity =
-        context_identity(AreaVmContextSourceType::k_area, owner_slot, area_id);
-    attach_tracked_script(context, engine, owner_slot);
-    result.contexts.push_back(std::move(context));
+      // Stable across active-world switches and distinct for the two resident
+      // owners even if malformed/test data were ever to reuse an AREA ID.
+      AreaVmContextDebugState context{build_area_vm_context_debug_state(*runtime,
+          AreaVmContextSourceDebugState{.identity = 0,
+              .open_nomad_context_index = context_index++,
+              .source_type = AreaVmContextSourceType::k_area,
+              .owner_area_slot = static_cast<std::uint8_t>(owner_slot),
+              .retail_registry_slot = std::nullopt,
+              .area_id = area_id,
+              .scene_id = std::nullopt,
+              .zone_id = std::nullopt,
+              .source_primary_event_offset = primary_event_offset,
+              .source_event_entry_offsets = event_entries,
+              .open_nomad_execution_base_offset = record.bytecode_pool_offset()})};
+      context.source.identity =
+          context_identity(AreaVmContextSourceType::k_area, owner_slot, area_id);
+      attach_tracked_script(context, engine, owner_slot);
+      result.contexts.push_back(std::move(context));
+    }
 
     if (slot->scene.has_value() && slot->scene_script.has_value()) {
-      const std::uint32_t script_offset{slot->scene->script_offset()};
+      const std::uint32_t primary_event_offset{slot->scene->primary_event_offset()};
       AreaVmContextDebugState scene{build_area_vm_context_debug_state(*slot->scene_script,
           AreaVmContextSourceDebugState{
               .identity =
@@ -255,9 +257,9 @@ AreaVmRegistryDebugState build_area_vm_registry_debug_state(const ScenarioEngine
               .area_id = area_id,
               .scene_id = slot->scene_id,
               .zone_id = std::nullopt,
-              .source_primary_event_offset = script_offset,
-              .source_event_entry_offsets = {script_offset, std::nullopt, std::nullopt},
-              .open_nomad_execution_base_offset = script_offset})};
+              .source_primary_event_offset = primary_event_offset,
+              .source_event_entry_offsets = {primary_event_offset, std::nullopt, std::nullopt},
+              .open_nomad_execution_base_offset = slot->scene->bytecode_pool_offset()})};
       attach_tracked_script(scene, engine, owner_slot);
       result.contexts.push_back(std::move(scene));
     }

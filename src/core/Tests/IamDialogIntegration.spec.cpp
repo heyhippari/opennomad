@@ -14,7 +14,7 @@
 #include "Core/GameDataLoader.hpp"
 #include "Core/Omikron/IamDialog.hpp"
 
-TEST_CASE("Retail IAM/DIALOG record 272 matches the recovered graph") {
+TEST_CASE("[RETAIL] IAM/DIALOG record 272 matches the recovered graph") {
   const auto file{App::load_game_file("IAM/DIALOG")};
   REQUIRE(file.has_value());
   auto record{App::Omikron::IamDialogRecord::load_from_archive(file->bytes, 272)};

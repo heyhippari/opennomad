@@ -132,9 +132,9 @@ std::expected<IamSceneRecord, std::string> IamSceneRecord::load(
         std::unexpect, "IAM/SCENE record: table 7 starts before table 4/string region ends"};
   }
 
-  if (counts.at(6) != 0 && offsets.at(6) < ends.at(7)) {
+  if (offsets.at(6) < ends.at(7)) {
     return std::expected<IamSceneRecord, std::string>{
-        std::unexpect, "IAM/SCENE record: table 6 cameras start before table 7/script region ends"};
+        std::unexpect, "IAM/SCENE record: table 6 cameras start before the bytecode pool"};
   }
 
   const std::size_t bytecode_pool_start{ends.at(7)};
@@ -156,14 +156,10 @@ std::expected<IamSceneRecord, std::string> IamSceneRecord::load(
     return {};
   };
 
-  const std::uint32_t script_offset{read_at<std::uint32_t>(data, k_offset_script)};
-  if (script_offset != 0U &&
-      (script_offset < bytecode_pool_start || script_offset >= bytecode_pool_end)) {
-    return std::expected<IamSceneRecord, std::string>{std::unexpect,
-        fmt::format("IAM/SCENE record: script offset {:#x} is outside [{:#x}, {:#x})",
-            script_offset,
-            bytecode_pool_start,
-            bytecode_pool_end)};
+  const auto primary_event{
+      validate_event_offset(read_at<std::uint32_t>(data, k_offset_primary_event), "primary event")};
+  if (!primary_event) {
+    return std::expected<IamSceneRecord, std::string>{std::unexpect, primary_event.error()};
   }
 
   const std::size_t definition_count{static_cast<std::size_t>(counts.at(4))};
@@ -231,8 +227,8 @@ std::uint32_t IamSceneRecord::runtime_context_placeholder() const {
   return read_at<std::uint32_t>(m_bytes, k_offset_runtime_context);
 }
 
-std::uint32_t IamSceneRecord::script_offset() const {
-  return read_at<std::uint32_t>(m_bytes, k_offset_script);
+std::uint32_t IamSceneRecord::primary_event_offset() const {
+  return read_at<std::uint32_t>(m_bytes, k_offset_primary_event);
 }
 
 std::uint32_t IamSceneRecord::table_offset(const std::size_t index) const {
@@ -275,11 +271,15 @@ std::expected<std::span<const std::byte>, std::string> IamSceneRecord::table_vie
   return std::span<const std::byte>{m_bytes}.subspan(offset, size);
 }
 
-std::span<const std::byte> IamSceneRecord::script_bytes() const {
-  if (script_offset() == 0U) {
-    return {};
-  }
-  const std::size_t start{script_offset()};
+std::uint32_t IamSceneRecord::bytecode_pool_offset() const {
+  constexpr std::size_t k_link_table_index{7U};
+  constexpr std::uint32_t k_link_stride{0x08U};
+  return table_offset(k_link_table_index) +
+         (static_cast<std::uint32_t>(table_count(k_link_table_index)) * k_link_stride);
+}
+
+std::span<const std::byte> IamSceneRecord::bytecode_pool() const {
+  const std::size_t start{bytecode_pool_offset()};
   const std::size_t end{table_offset(6)};
   return std::span<const std::byte>{m_bytes}.subspan(start, end - start);
 }

@@ -91,22 +91,26 @@ TEST_SUITE("Core::Omikron::SCXIntegration") {
     for (std::size_t index{0}; index < scx->models.size(); ++index) {
       const App::Omikron::ScxModelResource& resource{scx->models.at(index)};
       const std::string& name{scx->sprites.at(index).name};
+      CAPTURE(index);
+      CAPTURE(name);
 
       auto model{
           App::Omikron::Model3DO::load(all.subspan(resource.core_offset, resource.core_size))};
       if (!model) {
-        MESSAGE("Model '", name, "' failed to decode: ", model.error());
+        CHECK_MESSAGE(model.has_value(), "Model '", name, "' failed to decode: ", model.error());
         continue;
       }
       auto groups{App::Omikron::Model3DO::build_static_geometry(model.value())};
       if (!groups) {
-        MESSAGE("Model '", name, "' failed to build geometry: ", groups.error());
+        CHECK_MESSAGE(
+            groups.has_value(), "Model '", name, "' failed to build geometry: ", groups.error());
         continue;
       }
       auto images{App::Omikron::Texture3DT::load(
           all.subspan(resource.auxiliary_offset, resource.auxiliary_size), model->materials)};
       if (!images) {
-        MESSAGE("Model '", name, "' failed to decode textures: ", images.error());
+        CHECK_MESSAGE(
+            images.has_value(), "Model '", name, "' failed to decode textures: ", images.error());
         continue;
       }
 
@@ -125,7 +129,7 @@ TEST_SUITE("Core::Omikron::SCXIntegration") {
       }
     }
 
-    CHECK_GT(decoded_count, 0U);
+    CHECK_EQ(decoded_count, scx->models.size());
     CHECK(selected_model_decoded);
   }
 

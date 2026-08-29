@@ -50,7 +50,7 @@ struct RuntimeAreaSlot {
   /// Stable ScenarioManager world-scene identity owned by this resident slot.
   /// This is not an IAM AREA ID or an array index.
   std::uint32_t world_scene_id{0};
-  /// Independent compact IAM context for the attached SCENE top-level script.
+  /// Independent compact IAM context for the attached SCENE primary event.
   std::optional<Script::AreaScriptRuntime> scene_script;
 };
 

@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "Core/Character/CharacterRuntime.hpp"
+#include "Core/Debug/AreaVmDebugState.hpp"
 #include "Core/Omikron/Model3DO.hpp"
 #include "Core/Scenario/ScenarioEngine.hpp"
 #include "Core/Scenario/ScenarioManager.hpp"
@@ -117,7 +118,8 @@ std::vector<std::byte> make_area_archive(const std::vector<std::byte>& prefix) {
   return data;
 }
 
-std::vector<std::byte> make_transition_area_archive(const std::vector<std::byte>& source_prefix) {
+std::vector<std::byte> make_transition_area_archive(
+    const std::vector<std::byte>& source_prefix, const bool target_has_primary = true) {
   constexpr std::size_t k_source_offset{0x800};
   constexpr std::uint32_t k_source_size{0x9C0};
   constexpr std::size_t k_target_offset{0x1200};
@@ -137,7 +139,7 @@ std::vector<std::byte> make_transition_area_archive(const std::vector<std::byte>
   const std::size_t target_entry{222U * 8U};
   write_u32(data, target_entry, static_cast<std::uint32_t>(k_target_offset));
   write_u32(data, target_entry + 4U, k_target_size);
-  write_u32(data, k_target_offset + 0x04, 0x100);
+  write_u32(data, k_target_offset + 0x04, target_has_primary ? 0x100U : 0U);
   write_u32(data, k_target_offset + 0x28U + (6U * 4U), 0x101U);
   write_u32(data, k_target_offset + 0x28U + (7U * 4U), 0x100U);
   write_name(data, k_target_offset + 0x58, "AIMPASSE");
@@ -161,6 +163,7 @@ std::vector<std::byte> make_transition_scene_archive() {
   write_u32(data, (k_scene_id * 8U) + 4U, 0x45U);
   write_u32(data, k_record_offset + 0x04U, 0x44U);
   write_u32(data, k_record_offset + 0x08U + (6U * 4U), 0x45U);
+  write_u32(data, k_record_offset + 0x08U + (7U * 4U), 0x44U);
   // Deliberately unsupported sentinel: the attachment test only needs to
   // prove the independent SCENE compact context was activated.
   data.at(k_record_offset + 0x44U) = std::byte{0x99};
@@ -299,13 +302,16 @@ void write_dialog_boot_fixtures(const TempDirectory& temp, const bool action_cho
   write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_minimal_scx());
 }
 
-void write_transition_boot_fixtures(const TempDirectory& temp, const bool include_target_scx) {
+void write_transition_boot_fixtures(const TempDirectory& temp,
+    const bool include_target_scx,
+    const bool target_has_primary = true) {
   Buffer script;
   script.u8(0x2F).u16(222).u16(0xFFFF).u16(0xFFFF);
   script.u8(0x47).u16(222).u16(55).u8(0x03);
   write_bytes(temp.root() / "IAM" / "START", make_start());
   write_bytes(temp.root() / "IAM" / "GLOBAL", App::Tests::make_empty_iam_global());
-  write_bytes(temp.root() / "IAM" / "AREA", make_transition_area_archive(script.data()));
+  write_bytes(temp.root() / "IAM" / "AREA",
+      make_transition_area_archive(script.data(), target_has_primary));
   write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
   write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_minimal_scx());
   if (include_target_scx) {
@@ -722,6 +728,49 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
     const std::size_t trace_size{engine.area_script()->trace().size()};
     REQUIRE(engine.update(1.0F / 30.0F).has_value());
     CHECK_EQ(engine.area_script()->trace().size(), trace_size);
+  }
+
+  TEST_CASE("[OPENNOMAD] zero-primary AREA does not hide its attached SCENE VM") {
+    const TempDirectory temp;
+    write_transition_boot_fixtures(temp, true, false);
+    const ScopedGameDataRoot root{temp.root()};
+
+    App::Startup::StartupTraceRecorder recorder;
+    App::ScenarioManager manager;
+    App::ScenarioEngine engine{manager, recorder};
+    REQUIRE(engine.select_permanent_mode_script().has_value());
+    REQUIRE(engine.enter_mode(App::ScenarioMode::k_new_session, 0).has_value());
+    REQUIRE(engine.enter_mode(App::ScenarioMode::k_tick, 0).has_value());
+    REQUIRE(engine.update(1.0F / 30.0F).has_value());
+
+    const App::RuntimeAreaSlot* const target{engine.runtime_area_slot(1)};
+    REQUIRE(target != nullptr);
+    REQUIRE(target->primary.has_value());
+    CHECK_EQ(target->primary->primary_event_offset(), 0U);
+    CHECK(engine.area_script(1) == nullptr);
+    REQUIRE(target->scene.has_value());
+    REQUIRE(target->scene_script.has_value());
+
+    const App::Debug::AreaVmRegistryDebugState registry{
+        App::Debug::build_area_vm_registry_debug_state(engine)};
+    bool target_area_context_found{false};
+    const App::Debug::AreaVmContextDebugState* scene_context{nullptr};
+    for (const App::Debug::AreaVmContextDebugState& context : registry.contexts) {
+      if (context.source.source_type == App::Debug::AreaVmContextSourceType::k_area &&
+          context.source.area_id == 222) {
+        target_area_context_found = true;
+      }
+      if (context.source.source_type == App::Debug::AreaVmContextSourceType::k_scene &&
+          context.source.area_id == 222 && context.source.scene_id == 55) {
+        scene_context = &context;
+      }
+    }
+    CHECK_FALSE(target_area_context_found);
+    REQUIRE(scene_context != nullptr);
+    CHECK_EQ(scene_context->source.owner_area_slot, std::optional<std::uint8_t>{1U});
+    CHECK_EQ(
+        scene_context->source.source_primary_event_offset, std::optional<std::uint32_t>{0x44U});
+    CHECK_EQ(scene_context->source.open_nomad_execution_base_offset, 0x44U);
   }
 
   TEST_CASE("failed 0x2F target preparation preserves the source AREA and active world") {

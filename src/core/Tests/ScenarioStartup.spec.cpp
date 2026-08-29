@@ -540,12 +540,12 @@ std::vector<std::byte> make_handoff_scene_archive() {
   constexpr std::size_t k_table0_offset{0x44};
   constexpr std::size_t k_table2_offset{k_table0_offset + 0x14U};
   constexpr std::size_t k_table4_offset{k_table2_offset + 0x44U};
-  constexpr std::size_t k_script_offset{k_table4_offset + 0x114U};
-  const std::size_t table6_offset{k_script_offset + script.data().size()};
+  constexpr std::size_t k_bytecode_pool_offset{k_table4_offset + 0x114U};
+  const std::size_t table6_offset{k_bytecode_pool_offset + script.data().size()};
   std::vector<std::byte> data(k_record_offset + table6_offset, std::byte{});
   write_u32(data, 0, static_cast<std::uint32_t>(k_record_offset));
   write_u32(data, 4, static_cast<std::uint32_t>(table6_offset));
-  write_u32(data, k_record_offset + 0x04U, static_cast<std::uint32_t>(k_script_offset));
+  write_u32(data, k_record_offset + 0x04U, static_cast<std::uint32_t>(k_bytecode_pool_offset));
   write_u32(data, k_record_offset + 0x08U, static_cast<std::uint32_t>(k_table0_offset));
   write_u16(data, k_record_offset + 0x28U, 1);
   write_u32(data, k_record_offset + 0x08U + (1U * 4U), static_cast<std::uint32_t>(k_table2_offset));
@@ -558,7 +558,9 @@ std::vector<std::byte> make_handoff_scene_archive() {
   write_u16(data, k_record_offset + 0x28U + (2U * 2U), 1);
   write_u16(data, k_record_offset + 0x28U + (4U * 2U), 1);
   write_u32(data, k_record_offset + 0x08U + (6U * 4U), static_cast<std::uint32_t>(table6_offset));
-  write_u32(data, k_record_offset + 0x08U + (7U * 4U), static_cast<std::uint32_t>(k_script_offset));
+  write_u32(data,
+      k_record_offset + 0x08U + (7U * 4U),
+      static_cast<std::uint32_t>(k_bytecode_pool_offset));
 
   write_u16(data, k_record_offset + k_table0_offset + 0x00U, 0xFFFF);
   write_u16(data, k_record_offset + k_table0_offset + 0x02U, 57);
@@ -566,8 +568,9 @@ std::vector<std::byte> make_handoff_scene_archive() {
   write_u32(data, k_record_offset + k_table0_offset + 0x08U, static_cast<std::uint32_t>(-511));
   write_u32(data, k_record_offset + k_table0_offset + 0x0CU, 19386U);
   write_u16(data, k_record_offset + k_table0_offset + 0x10U, 4073);
-  write_u32(
-      data, k_record_offset + k_table2_offset + 0x00U, static_cast<std::uint32_t>(k_script_offset));
+  write_u32(data,
+      k_record_offset + k_table2_offset + 0x00U,
+      static_cast<std::uint32_t>(k_bytecode_pool_offset));
   write_u16(data, k_record_offset + k_table2_offset + 0x40U, 5);
   constexpr std::string_view k_name{"LOCAL CHARACTER"};
   constexpr std::string_view k_model{"DE1_FN"};
@@ -576,8 +579,9 @@ std::vector<std::byte> make_handoff_scene_archive() {
   std::memcpy(
       data.data() + k_record_offset + k_table4_offset + 0x90U, k_model.data(), k_model.size());
   write_u16(data, k_record_offset + k_table4_offset + 0x110U, 57);
-  std::memcpy(
-      data.data() + k_record_offset + k_script_offset, script.data().data(), script.data().size());
+  std::memcpy(data.data() + k_record_offset + k_bytecode_pool_offset,
+      script.data().data(),
+      script.data().size());
   return data;
 }
 
@@ -1068,22 +1072,29 @@ std::vector<std::byte> make_scene_zone_boundary_area_archive() {
   return data;
 }
 
-std::vector<std::byte> make_scene_zone_boundary_archive() {
+std::vector<std::byte> make_scene_zone_boundary_archive(const bool zero_primary_event) {
   constexpr std::size_t k_record_offset{0x800U};
   constexpr std::size_t k_table2_offset{0x44U};
-  constexpr std::size_t k_script_offset{k_table2_offset + 0x44U};
-  constexpr std::size_t k_zone_event_offset{k_script_offset + 1U};
-  constexpr std::size_t k_camera_offset{k_zone_event_offset + 3U};
+  constexpr std::size_t k_table7_offset{k_table2_offset + 0x44U};
+  constexpr std::size_t k_pool_offset{k_table7_offset + 0x08U};
+  constexpr std::size_t k_zone_event_offset{k_pool_offset + 0x04U};
+  constexpr std::size_t k_link_event_offset{k_pool_offset + 0x0AU};
+  constexpr std::size_t k_primary_event_offset{k_pool_offset + 0x10U};
+  constexpr std::size_t k_camera_offset{k_pool_offset + 0x20U};
+  constexpr std::size_t k_zone_boundary_write{k_camera_offset - 3U};
   constexpr std::size_t k_record_size{k_camera_offset + 0x2CU};
   std::vector<std::byte> data(k_record_offset + k_record_size, std::byte{});
   write_u32(data, 0U, k_record_offset);
   write_u32(data, 4U, k_record_size);
-  write_u32(data, k_record_offset + 0x04U, k_script_offset);
+  write_u32(data,
+      k_record_offset + 0x04U,
+      zero_primary_event ? 0U : static_cast<std::uint32_t>(k_primary_event_offset));
   write_u32(data, k_record_offset + 0x08U + (2U * 4U), k_table2_offset);
   write_u16(data, k_record_offset + 0x28U + (2U * 2U), 1U);
   write_u32(data, k_record_offset + 0x08U + (6U * 4U), k_camera_offset);
   write_u16(data, k_record_offset + 0x28U + (6U * 2U), 1U);
-  write_u32(data, k_record_offset + 0x08U + (7U * 4U), k_script_offset);
+  write_u32(data, k_record_offset + 0x08U + (7U * 4U), k_table7_offset);
+  write_u16(data, k_record_offset + 0x28U + (7U * 2U), 1U);
   write_u32(data, k_record_offset + k_table2_offset, k_zone_event_offset);
   constexpr std::array<std::array<std::uint32_t, 3>, 4> k_vertices = {
       {{0U, 0U, 0U}, {400U, 400U, 0U}, {400U, 400U, 400U}, {0U, 0U, 400U}}};
@@ -1096,18 +1107,31 @@ std::vector<std::byte> make_scene_zone_boundary_archive() {
   }
   write_u16(data, k_record_offset + k_table2_offset + 0x3CU, 4090U);
   write_u16(data, k_record_offset + k_table2_offset + 0x40U, 5U);
-  data.at(k_record_offset + k_script_offset) = std::byte{0x03};
+  write_u32(data, k_record_offset + k_table7_offset, k_link_event_offset);
   data.at(k_record_offset + k_zone_event_offset) = std::byte{0x0D};
   write_u16(data, k_record_offset + k_zone_event_offset + 1U, 70U);
+  data.at(k_record_offset + k_zone_event_offset + 3U) = std::byte{0x04};
+  write_u16(data,
+      k_record_offset + k_zone_event_offset + 4U,
+      static_cast<std::uint16_t>(k_zone_boundary_write - (k_zone_event_offset + 6U)));
+  data.at(k_record_offset + k_link_event_offset) = std::byte{0x0D};
+  write_u16(data, k_record_offset + k_link_event_offset + 1U, 73U);
+  data.at(k_record_offset + k_link_event_offset + 3U) = std::byte{0x03};
+  data.at(k_record_offset + k_primary_event_offset) = std::byte{0x0D};
+  write_u16(data, k_record_offset + k_primary_event_offset + 1U, 72U);
+  data.at(k_record_offset + k_primary_event_offset + 3U) = std::byte{0x03};
+  data.at(k_record_offset + k_zone_boundary_write) = std::byte{0x0D};
+  write_u16(data, k_record_offset + k_zone_boundary_write + 1U, 74U);
   write_u32(data, k_record_offset + k_camera_offset, 0x0000470DU);
   return data;
 }
 
-void write_scene_zone_boundary_fixtures(const TempDirectory& temp) {
+void write_scene_zone_boundary_fixtures(
+    const TempDirectory& temp, const bool zero_primary_event = false) {
   write_bytes(temp.root() / "IAM" / "START", make_start());
   write_bytes(temp.root() / "IAM" / "GLOBAL", App::Tests::make_empty_iam_global());
   write_bytes(temp.root() / "IAM" / "AREA", make_scene_zone_boundary_area_archive());
-  write_bytes(temp.root() / "IAM" / "SCENE", make_scene_zone_boundary_archive());
+  write_bytes(temp.root() / "IAM" / "SCENE", make_scene_zone_boundary_archive(zero_primary_event));
   write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
   write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_minimal_scx());
 }
@@ -1347,9 +1371,47 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     for (std::size_t tick{0}; tick < 8U; ++tick) {
       REQUIRE(controller.tick(1.0F / 30.0F).has_value());
     }
+    const App::RuntimeAreaSlot* const slot{controller.runtime_area_slot(0)};
+    REQUIRE(slot != nullptr);
+    REQUIRE(slot->scene.has_value());
+    REQUIRE(slot->scene_script.has_value());
+    CHECK_EQ(slot->scene->bytecode_pool_offset(), 0x90U);
+    CHECK_EQ(slot->scene->primary_event_offset(), 0xA0U);
+    CHECK_EQ(slot->scene_script->event_entries().event1, std::optional<std::size_t>{0x10U});
     REQUIRE(manager.game_state() != nullptr);
     CHECK_EQ(manager.game_state()->global_variable(70).value(), 1);
     CHECK_EQ(manager.game_state()->global_variable(71).value(), 0);
+    CHECK_EQ(manager.game_state()->global_variable(72).value(), 1);
+    CHECK_EQ(manager.game_state()->global_variable(74).value(), 1);
+  }
+
+  TEST_CASE("[FORMAT] zero-primary SCENE retains its pool and services zone events") {
+    const TempDirectory temp;
+    write_scene_zone_boundary_fixtures(temp, true);
+    const ScopedGameDataRoot root{temp.root()};
+
+    App::ScenarioManager manager;
+    App::ScenarioStartupController controller;
+    REQUIRE(controller.initialize(manager).has_value());
+    App::ScenarioRuntime* runtime{manager.world_runtime(0)};
+    REQUIRE(runtime != nullptr);
+    install_empty_character_model_loader(*runtime);
+
+    for (std::size_t tick{0}; tick < 8U; ++tick) {
+      REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+    }
+    const App::RuntimeAreaSlot* const slot{controller.runtime_area_slot(0)};
+    REQUIRE(slot != nullptr);
+    REQUIRE(slot->scene.has_value());
+    CHECK_EQ(slot->scene->primary_event_offset(), 0U);
+    CHECK_EQ(slot->scene->bytecode_pool_offset(), 0x90U);
+    CHECK_FALSE(slot->scene->bytecode_pool().empty());
+    CHECK_FALSE(slot->scene_script.has_value());
+    REQUIRE(manager.game_state() != nullptr);
+    CHECK_EQ(manager.game_state()->global_variable(70).value(), 1);
+    CHECK_EQ(manager.game_state()->global_variable(71).value(), 0);
+    CHECK_EQ(manager.game_state()->global_variable(72).value(), 0);
+    CHECK_EQ(manager.game_state()->global_variable(74).value(), 1);
   }
 
   TEST_CASE("[FORMAT] zero-primary AREA completes startup and launches a resident zone event") {

@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -40,8 +41,11 @@ std::vector<std::byte> valid_scene() {
   constexpr std::size_t k_signs{k_table4 + 0x114U};
   constexpr std::size_t k_interests{k_signs + 16U};
   constexpr std::size_t k_table7{k_interests + 16U};
-  constexpr std::size_t k_script{k_table7 + 0x08U};
-  constexpr std::size_t k_table6{k_script + 0x02U};
+  constexpr std::size_t k_pool{k_table7 + 0x08U};
+  constexpr std::size_t k_zone_event{k_pool + 0x04U};
+  constexpr std::size_t k_link_event{k_pool + 0x08U};
+  constexpr std::size_t k_primary_event{k_pool + 0x18U};
+  constexpr std::size_t k_table6{k_pool + 0x38U};
   std::vector<std::byte> data(k_table6 + 0x2CU, std::byte{});
 
   table(data, 0, k_table0, 1);
@@ -52,7 +56,7 @@ std::vector<std::byte> valid_scene() {
   table(data, 5, 0, 0);
   table(data, 6, k_table6, 1);
   table(data, 7, k_table7, 1);
-  write(data, IamSceneRecord::k_offset_script, static_cast<std::uint32_t>(k_script));
+  write(data, IamSceneRecord::k_offset_primary_event, static_cast<std::uint32_t>(k_primary_event));
 
   write(data, k_table0 + 0x00U, static_cast<std::int16_t>(-1));
   write(data, k_table0 + 0x02U, static_cast<std::int16_t>(57));
@@ -78,9 +82,9 @@ std::vector<std::byte> valid_scene() {
   constexpr char k_object_model[]{"RINGS3"};
   std::memcpy(data.data() + k_table3 + 0x0EU, k_object_model, sizeof(k_object_model));
 
-  write(data, k_table2 + 0x00U, static_cast<std::uint32_t>(k_script));
-  write(data, k_table2 + 0x04U, static_cast<std::uint32_t>(k_script + 1U));
-  write(data, k_table2 + 0x08U, static_cast<std::uint32_t>(k_script));
+  write(data, k_table2 + 0x00U, static_cast<std::uint32_t>(k_zone_event));
+  write(data, k_table2 + 0x04U, static_cast<std::uint32_t>(k_primary_event));
+  write(data, k_table2 + 0x08U, static_cast<std::uint32_t>(k_zone_event));
   data.at(k_table2 + 0x0CU) = std::byte{0x12};
   data.at(k_table2 + 0x3DU) = std::byte{0x34};
   write(data, k_table2 + 0x3EU, static_cast<std::int16_t>(-12));
@@ -104,10 +108,17 @@ std::vector<std::byte> valid_scene() {
   constexpr char k_interests_text[]{"Ancient books"};
   std::memcpy(data.data() + k_signs, k_signs_text, sizeof(k_signs_text));
   std::memcpy(data.data() + k_interests, k_interests_text, sizeof(k_interests_text));
-  write(data, k_table7 + 0x00U, static_cast<std::uint32_t>(k_script));
+  write(data, k_table7 + 0x00U, static_cast<std::uint32_t>(k_link_event));
   write(data, k_table7 + 0x04U, static_cast<std::int32_t>(3));
-  data.at(k_script) = std::byte{0x57};
-  data.at(k_script + 1U) = std::byte{0x03};
+  data.at(k_zone_event) = std::byte{0x0D};
+  write(data, k_zone_event + 1U, static_cast<std::uint16_t>(60U));
+  data.at(k_zone_event + 3U) = std::byte{0x03};
+  data.at(k_link_event) = std::byte{0x0D};
+  write(data, k_link_event + 1U, static_cast<std::uint16_t>(61U));
+  data.at(k_link_event + 3U) = std::byte{0x03};
+  data.at(k_primary_event) = std::byte{0x0D};
+  write(data, k_primary_event + 1U, static_cast<std::uint16_t>(62U));
+  data.at(k_primary_event + 3U) = std::byte{0x03};
   write(data, k_table6 + 0x18U, static_cast<std::int16_t>(2172));
   return data;
 }
@@ -115,11 +126,12 @@ std::vector<std::byte> valid_scene() {
 }  // namespace
 
 TEST_SUITE("Core::Omikron::IamSceneRecord") {
-  TEST_CASE("Minimum header represents a no-script empty SCENE") {
+  TEST_CASE("[FORMAT] minimum header has no primary event and an empty bytecode pool") {
     const std::vector<std::byte> data(IamSceneRecord::k_header_size, std::byte{});
     const auto scene{IamSceneRecord::load(data)};
     REQUIRE(scene.has_value());
-    CHECK(scene->script_bytes().empty());
+    CHECK_EQ(scene->primary_event_offset(), 0U);
+    CHECK(scene->bytecode_pool().empty());
   }
 
   TEST_CASE("Known SCENE table strides are exact") {
@@ -133,12 +145,12 @@ TEST_SUITE("Core::Omikron::IamSceneRecord") {
     CHECK_EQ(IamSceneRecord::table_stride(7), std::optional<std::size_t>{0x08});
   }
 
-  TEST_CASE("Parser retains data and terminates script before cameras") {
+  TEST_CASE("[FORMAT] SCENE entries share the full bounded pool before cameras") {
     const auto scene{IamSceneRecord::load(valid_scene())};
     REQUIRE(scene.has_value());
-    REQUIRE_EQ(scene->script_bytes().size(), 2U);
-    CHECK_EQ(scene->script_bytes()[0],
-        std::byte{0x57});  // NOLINT(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
+    CHECK_EQ(scene->bytecode_pool_offset(), 0x208U);
+    REQUIRE_EQ(scene->bytecode_pool().size(), 0x38U);
+    CHECK_EQ(scene->primary_event_offset(), 0x220U);
     const auto character{scene->character_by_id(57)};
     REQUIRE(character.has_value());
     CHECK_EQ(character->serialized_position.at(0), 49457);
@@ -173,18 +185,35 @@ TEST_SUITE("Core::Omikron::IamSceneRecord") {
 
     const std::vector<App::Omikron::IamSceneZoneRecord> zones{scene->zones()};
     REQUIRE_EQ(zones.size(), 1U);
-    CHECK_EQ(zones.front().event_offsets.at(0), scene->script_offset());
-    CHECK_EQ(zones.front().event_offsets.at(1), scene->script_offset() + 1U);
-    CHECK_EQ(zones.front().event_offsets.at(2), scene->script_offset());
+    CHECK_EQ(zones.front().event_offsets.at(0), 0x20CU);
+    CHECK_EQ(zones.front().event_offsets.at(1), scene->primary_event_offset());
+    CHECK_EQ(zones.front().event_offsets.at(2), 0x20CU);
     CHECK_EQ(zones.front().serialized_vertices.at(0).at(0), 0x12);
     CHECK_EQ(zones.front().orientation_span_units, -12);
     CHECK_EQ(zones.front().zone_id, 9);
     CHECK_EQ(static_cast<std::uint16_t>(zones.front().unknown_42), 0x7856U);
     const std::vector<App::Omikron::IamSceneScriptLinkRecord> links{scene->script_links()};
     REQUIRE_EQ(links.size(), 1U);
-    CHECK_EQ(links.front().program_offset, scene->script_offset());
+    CHECK_EQ(links.front().program_offset, 0x210U);
+    CHECK_LT(zones.front().event_offsets.at(0), scene->primary_event_offset());
+    CHECK_LT(links.front().program_offset, scene->primary_event_offset());
     CHECK_EQ(links.front().field_04, 3);
     REQUIRE(scene->camera_by_id(2172).has_value());
+  }
+
+  TEST_CASE("[FORMAT] zero primary event retains a nonempty shared bytecode pool") {
+    auto data{valid_scene()};
+    write(data, IamSceneRecord::k_offset_primary_event, std::uint32_t{0U});
+
+    const auto scene{IamSceneRecord::load(data)};
+    REQUIRE(scene.has_value());
+    CHECK_EQ(scene->primary_event_offset(), 0U);
+    CHECK_EQ(scene->bytecode_pool_offset(), 0x208U);
+    CHECK_EQ(scene->bytecode_pool().size(), 0x38U);
+    REQUIRE_EQ(scene->zones().size(), 1U);
+    CHECK_EQ(scene->zones().front().event_offsets.at(0), 0x20CU);
+    REQUIRE_EQ(scene->script_links().size(), 1U);
+    CHECK_EQ(scene->script_links().front().program_offset, 0x210U);
   }
 
   TEST_CASE("Negative counts and out-of-bounds table spans are rejected") {
@@ -210,26 +239,28 @@ TEST_SUITE("Core::Omikron::IamSceneRecord") {
     CHECK(arithmetic_overflow_scene.error().find("span") != std::string::npos);
   }
 
-  TEST_CASE("Unsupported table 5 and script after camera table are rejected") {
+  TEST_CASE("[FORMAT] unsupported table 5 and primary events outside the pool are rejected") {
     auto table5{valid_scene()};
     table(table5, 5, 0x44, 1);
     const auto table5_scene{IamSceneRecord::load(table5)};
     REQUIRE_FALSE(table5_scene.has_value());
     CHECK(table5_scene.error().find("table 5") != std::string::npos);
 
-    auto script{valid_scene()};
-    write(script, IamSceneRecord::k_offset_script, static_cast<std::uint32_t>(script.size()));
-    const auto script_scene{IamSceneRecord::load(script)};
-    REQUIRE_FALSE(script_scene.has_value());
-    CHECK(script_scene.error().find("script offset") != std::string::npos);
+    auto primary{valid_scene()};
+    write(primary,
+        IamSceneRecord::k_offset_primary_event,
+        static_cast<std::uint32_t>(primary.size()));
+    const auto primary_scene{IamSceneRecord::load(primary)};
+    REQUIRE_FALSE(primary_scene.has_value());
+    CHECK(primary_scene.error().find("primary event") != std::string::npos);
 
     auto camera_boundary{valid_scene()};
     write(camera_boundary,
-        IamSceneRecord::k_offset_script,
+        IamSceneRecord::k_offset_primary_event,
         static_cast<std::uint32_t>(camera_boundary.size() - 0x2CU));
     const auto camera_boundary_scene{IamSceneRecord::load(camera_boundary)};
     REQUIRE_FALSE(camera_boundary_scene.has_value());
-    CHECK(camera_boundary_scene.error().find("script offset") != std::string::npos);
+    CHECK(camera_boundary_scene.error().find("primary event") != std::string::npos);
   }
 
   TEST_CASE("Table-4 strings and program offsets are bounded and NUL terminated") {
@@ -249,10 +280,10 @@ TEST_SUITE("Core::Omikron::IamSceneRecord") {
     CHECK(link_scene.error().find("script link") != std::string::npos);
   }
 
-  TEST_CASE("[OPENNOMAD] SCENE event entries cannot target the camera table") {
+  TEST_CASE("[FORMAT] SCENE event entries cannot target the camera table") {
     constexpr std::size_t k_table2_offset{0x70U};
     constexpr std::size_t k_table7_offset{0x200U};
-    constexpr std::uint32_t k_table6_offset{0x20AU};
+    constexpr std::uint32_t k_table6_offset{0x240U};
 
     auto zone{valid_scene()};
     write(zone, k_table2_offset, k_table6_offset);

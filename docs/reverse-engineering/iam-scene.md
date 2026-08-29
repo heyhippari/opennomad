@@ -1,7 +1,7 @@
 # Omikron IAM `SCENE` archive and attached-scene lifecycle
 
 > **Status:** recovered serialized format and implemented OpenNomad support.  
-> **Last updated:** 2026-08-24
+> **Last updated:** 2026-08-29
 
 `IAM/SCENE` uses the same paged indexed-IAM archive as `IAM/AREA`: `0x800`-byte
 index pages with little-endian `{ uint32 offset, uint32 size }` entries. The
@@ -11,17 +11,17 @@ record alignment, define every record's bounds.
 ## Record layout
 
 Every record has a little-endian `0x44`-byte header: a runtime-context
-placeholder at `+0x00`, top-level script offset at `+0x04`, eight `uint32`
-table offsets at `+0x08`, eight signed `int16` table counts at `+0x28`, and a
-12-byte reserved/runtime tail at `+0x38`.
+placeholder at `+0x00`, primary/default compact-event entrypoint at `+0x04`,
+eight `uint32` table offsets at `+0x08`, eight signed `int16` table counts at
+`+0x28`, and a 12-byte reserved/runtime tail at `+0x38`.
 
 Counts are signed; negative counts are malformed. Table 5 is empty in the
 supported format (`offset = 0`, `count = 0`). Pointer-shaped fields are kept as
 immutable serialized offsets, never relocated into process pointers.
 
 Physical order is: header; tables 0, 1, 2, 3, and 4; optional table-4 strings;
-table 7; top-level compact bytecode when present; table-6 cameras; EOF. It is
-not numeric table order.
+table 7; the shared compact bytecode pool; table-6 cameras; EOF. It is not
+numeric table order.
 
 | Table | Stride | Representation |
 | --- | ---: | --- |
@@ -34,8 +34,28 @@ not numeric table order.
 | 6 | `0x2C` | shared `IamCameraRecord` |
 | 7 | `0x08` | neutral script-link records |
 
-The top-level script is exactly `[script_offset, table6_offset)`. Camera bytes
-must never be interpreted as compact VM code.
+The compact bytecode pool is exactly `[end(table7), table6_offset)`. Header
+`+0x04` is one record-relative entrypoint into that pool, not its start. A zero
+primary entry does not imply an empty pool. Camera bytes must never be
+interpreted as compact VM code.
+
+## Runtime pointer-relocation evidence
+
+These addresses refer to Runtime.exe SHA-256
+`55f7120bfea7891b048c64e3682f3259cdbf2719a43fa24e42254b753c95d2ef`.
+
+The retail SCENE loader begins around `0x0040C120`. It independently relocates
+every nonzero record-relative compact pointer against the SCENE record base:
+
+- header `+0x04` around `0x0040C1A0..0x0040C1AA`;
+- each table-2 zone entry at `+0x00/+0x04/+0x08`;
+- each table-7 program dword around `0x0040C49C..0x0040C4B7`.
+
+The primary context registration path around `0x0040BFB0` passes the relocated
+AREA or SCENE `+0x04` entry to the common compact-context constructor at
+`0x00406290`, then queues event 1 through `0x004063D0`. These independent
+relocations establish that primary, zone, and table-7 pointers are peer
+record-relative entries into one shared bounded pool.
 
 ## Recovered table fields
 
@@ -69,15 +89,18 @@ definitions use Runtime's fixed slot-ordered AREA/SCENE namespace followed by
 
 SCENE uses the same compact IAM interpreter as AREA; OpenNomad retains the
 historical `AreaScriptRuntime` class name for this shared context. Attaching a
-scene creates a separate context over the SCENE script span, queues event 1,
-and activates it for normal scheduler service. It is never run recursively by
-the attach opcode, and an unsupported SCENE opcode pauses only that context.
+scene with a nonzero primary event creates a separate context over the complete
+bounded SCENE bytecode pool, installs the rebased primary entry as event 1, and
+activates it for normal scheduler service. It is never run recursively by the
+attach opcode, and an unsupported SCENE opcode pauses only that context.
 
-The top-level and zone contexts can see only `script_bytes()`:
-`[script_offset, table6_offset)`. Their serialized record-relative event
-offsets are range-checked before rebasing by `script_offset`; no context uses
-the complete SCENE record as VM storage, so table-6 cameras cannot execute as
-compact instructions.
+Primary and zone contexts can see only `bytecode_pool()`:
+`[end(table7), table6_offset)`. OpenNomad preserves serialized offsets in the
+parsed record, validates each nonzero entry against that pool, then subtracts
+`bytecode_pool_offset()` through `CompactProgramView`. Another zone or table-7
+entry may therefore precede the primary event. No context uses the complete
+SCENE record as VM storage, so table-6 cameras cannot execute as compact
+instructions.
 
 OpenNomad has two resident AREA slots. Each owns an AREA plus optional attached
 SCENE record/ID and SCENE compact context. `secondary_area_id` remains the
@@ -108,7 +131,7 @@ active-zone registry. It is rebuilt, not incrementally deduplicated, whenever
 resident AREA/SCENE data or persistent ZONE enablement changes; it contains
 only records whose START-backed ZONE bit is enabled. A first qualifying contact
 of the session current controlled character creates one compact zone context
-over the complete owning record and queues event 1 once. Event 2 is not
+over the complete bounded SCENE bytecode pool and queues event 1 once. Event 2 is not
 synthesized per frame. A persistent disable stops future contacts but does not
 destroy a currently executing context; physical record residency removal does.
 
