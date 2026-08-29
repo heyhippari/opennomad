@@ -34,6 +34,39 @@ class AudioSystem;
 
 namespace App {
 
+struct CinSfxChannelPlayback {
+  bool active{false};
+  bool enabled{false};
+  bool in_window{false};
+  std::int32_t definition_id{0};
+  std::string definition_name;
+  std::int32_t object_reference{0};
+  float elapsed{0.0F};
+  float start{0.0F};
+  float end{0.0F};
+  Runtime::Vec3 cached_position{};
+  std::optional<std::size_t> resolved_object_index;
+  std::string resolved_object_name;
+  std::uint32_t resolved_object_script_id{0};
+  std::size_t emissions_this_execution{0};
+  bool attachment_missing{false};
+};
+
+struct CinSfxPlayback {
+  std::size_t character_instance_id{0};
+  std::int16_t character_id{0};
+  std::size_t script_instance_id{0};
+  std::size_t animation_index{0};
+  std::uint32_t animation_id{0};
+  std::string animation_name;
+  std::size_t association_record_index{0};
+  std::uint32_t association_id{0};
+  std::uint64_t last_service_sequence{0};
+  float body_previous_progress{0.0F};
+  float body_current_progress{0.0F};
+  std::array<CinSfxChannelPlayback, 2> channels;
+};
+
 /// Scene-independent owner of the SCX gameplay subsystem: the sprite instance
 /// pool, the decoded sprite resources and their GPU textures, the SCX script
 /// runtime and the scenario sound resources.
@@ -89,6 +122,9 @@ class ScenarioRuntime final : public Script::ScriptWorld, private Sfx::Host {
   [[nodiscard]] Sfx::Runtime* sfx_runtime();
   [[nodiscard]] const Sfx::Runtime* sfx_runtime() const;
   [[nodiscard]] Sfx::Diagnostics sfx_diagnostics() const;
+  [[nodiscard]] std::span<const CinSfxPlayback> cin_sfx_playbacks() const {
+    return m_cin_sfx_playbacks;
+  }
 
   // --- Runtime characters --------------------------------------------------
 
@@ -235,9 +271,21 @@ class ScenarioRuntime final : public Script::ScriptWorld, private Sfx::Host {
       std::size_t resource_index);
   [[nodiscard]] bool should_log_body_animation_identity(
       std::int16_t character_id, std::uint32_t animation_index, std::size_t selected_object_index);
+  [[nodiscard]] CinSfxPlayback& ensure_cin_sfx_playback(
+      const Character::RuntimeCharacter& character,
+      std::size_t script_instance_id,
+      std::size_t animation_index,
+      std::size_t record_index,
+      const Omikron::SfxData& sfx_data);
+  [[nodiscard]] static std::optional<std::size_t> find_cin_sfx_attachment(
+      const Character::RuntimeCharacter& character, std::uint32_t script_id);
+  void service_cin_sfx_channel(
+      Character::RuntimeCharacter& character, CinSfxPlayback& playback, std::size_t channel_index);
   [[nodiscard]] std::expected<const Omikron::Path3DP*, std::string> path_resource(
       std::size_t resource_index);
-  void service_cin_sfx(Character::RuntimeCharacter& character, std::size_t animation_index);
+  void service_cin_sfx(Character::RuntimeCharacter& character,
+      std::size_t script_instance_id,
+      std::size_t animation_index);
 
   std::vector<std::byte> m_scx_bytes;
   Omikron::ScxData m_scx;
@@ -262,6 +310,8 @@ class ScenarioRuntime final : public Script::ScriptWorld, private Sfx::Host {
   std::optional<Omikron::SfxData> m_sfx_data;
   std::unique_ptr<Sfx::Runtime> m_sfx_runtime;
   std::vector<std::optional<std::size_t>> m_cin_sfx_bindings;
+  std::vector<CinSfxPlayback> m_cin_sfx_playbacks;
+  std::uint64_t m_cin_sfx_service_sequence{0};
   std::unordered_set<std::uint64_t> m_logged_body_animation_identities;
   /// Runtime sound resources parallel to `m_scx.sounds` (lazily loaded).
   std::vector<Audio::SoundResourceId> m_sound_resources;

@@ -96,6 +96,36 @@ struct RuntimeCharacterObjectPoseDebugState {
   std::array<float, 9> world_matrix{};
 };
 
+struct CinSfxChannelDebugState {
+  bool enabled{false};
+  bool active{false};
+  bool in_window{false};
+  std::int32_t definition_id{0};
+  std::string definition_name;
+  std::int32_t object_reference{0};
+  std::optional<std::size_t> resolved_object_index;
+  std::string resolved_object_name;
+  std::uint32_t resolved_object_script_id{0};
+  float start{0.0F};
+  float end{0.0F};
+  float elapsed{0.0F};
+  std::array<float, 3> cached_position{};
+  std::size_t emissions_this_execution{0};
+  bool attachment_missing{false};
+};
+
+struct CinSfxPlaybackDebugState {
+  std::size_t script_instance_id{0};
+  std::size_t animation_index{0};
+  std::uint32_t animation_id{0};
+  std::string animation_name;
+  std::size_t association_record_index{0};
+  std::uint32_t association_id{0};
+  float body_previous_progress{0.0F};
+  float body_current_progress{0.0F};
+  std::array<CinSfxChannelDebugState, 2> channels;
+};
+
 struct RuntimeCharacterDebugState {
   std::size_t instance_id{0};
   std::int16_t character_id{0};
@@ -151,6 +181,7 @@ struct RuntimeCharacterDebugState {
   std::array<float, 3> accumulated_visual_translation{};
   std::array<float, 3> accumulated_logical_actor_translation{};
   std::vector<RuntimeCharacterObjectPoseDebugState> object_poses;
+  std::optional<CinSfxPlaybackDebugState> cin_sfx;
 
   /// Which subsystem owns the visible base pose (model defaults / scripted
   /// body animation / CTL controller), as a display string.

@@ -968,6 +968,7 @@ HandlerResult ScriptRuntime::handle_select_body_animation(
   const float previous{instance.value_pool.at(base + 2U).as_float()};
   const float current{instance.value_pool.at(base + 3U).as_float()};
   const BodyAnimationRequest request{.character_id = instance.launch_context.character_id.value(),
+      .script_instance_id = instance.instance_id,
       .object_binding = source.binding_table_a.entries.at(binding_index).name,
       .animation_index = instance.value_pool.at(base + 1U).as_unsigned(),
       .previous_progress = previous,
@@ -1021,6 +1022,7 @@ HandlerResult ScriptRuntime::handle_select_relative_body_animation(
   const float current{instance.value_pool.at(base + 3U).as_float()};
   const RelativeBodyAnimationRequest request{
       .character_id = instance.launch_context.character_id.value(),
+      .script_instance_id = instance.instance_id,
       .object_binding = source.binding_table_a.entries.at(binding_index).name,
       .animation_index = instance.value_pool.at(base + 1U).as_unsigned(),
       .previous_progress = previous,

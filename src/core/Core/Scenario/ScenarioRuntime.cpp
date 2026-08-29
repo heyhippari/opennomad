@@ -424,6 +424,8 @@ std::expected<void, std::string> ScenarioRuntime::initialize(const Omikron::ScxD
   m_sfx_runtime.reset();
   m_sfx_data.reset();
   m_cin_sfx_bindings.clear();
+  m_cin_sfx_playbacks.clear();
+  m_cin_sfx_service_sequence = 0U;
   m_logged_body_animation_identities.clear();
 
   const std::size_t count{m_scx.models.size()};
@@ -1040,65 +1042,239 @@ std::expected<const Omikron::Path3DP*, std::string> ScenarioRuntime::path_resour
   return m_path_resources.at(resource_index).get();
 }
 
-void ScenarioRuntime::service_cin_sfx(
-    Character::RuntimeCharacter& character, const std::size_t animation_index) {
+CinSfxPlayback& ScenarioRuntime::ensure_cin_sfx_playback(
+    const Character::RuntimeCharacter& character,
+    const std::size_t script_instance_id,
+    const std::size_t animation_index,
+    const std::size_t record_index,
+    const Omikron::SfxData& sfx_data) {
+  const auto existing{std::ranges::find_if(m_cin_sfx_playbacks,
+      [&character, script_instance_id, animation_index](const CinSfxPlayback& playback) {
+        return playback.character_instance_id == character.instance_id &&
+               playback.script_instance_id == script_instance_id &&
+               playback.animation_index == animation_index;
+      })};
+  if (existing != m_cin_sfx_playbacks.end()) {
+    return *existing;
+  }
+
+  const Omikron::SfxCinAnimationRecord& record{sfx_data.records_b.at(record_index)};
+  const auto definition_name = [&sfx_data](const std::int32_t definition_id) {
+    const auto definition{std::ranges::find(
+        sfx_data.definitions, definition_id, &Omikron::SfxDefinition::definition_id)};
+    return definition == sfx_data.definitions.end() ? std::string{} : definition->name;
+  };
+  const auto make_channel = [&definition_name](const bool enabled,
+                                const std::int32_t definition_id,
+                                const std::int32_t object_reference,
+                                const float start,
+                                const float end) {
+    CinSfxChannelPlayback channel;
+    channel.enabled = enabled;
+    channel.definition_id = definition_id;
+    channel.definition_name = definition_name(definition_id);
+    channel.object_reference = object_reference;
+    channel.start = start;
+    channel.end = end;
+    return channel;
+  };
+  m_cin_sfx_playbacks.push_back(CinSfxPlayback{.character_instance_id = character.instance_id,
+      .character_id = character.character_id,
+      .script_instance_id = script_instance_id,
+      .animation_index = animation_index,
+      .animation_id = m_scx.animations.at(animation_index).animation_id,
+      .animation_name = m_scx.animations.at(animation_index).name,
+      .association_record_index = record_index,
+      .association_id = record.association_id,
+      .last_service_sequence = 0U,
+      .body_previous_progress = character.body_animation.previous_progress,
+      .body_current_progress = character.body_animation.current_progress,
+      .channels = {make_channel(record.channel1_enabled(),
+                       record.channel1_definition_id,
+                       record.channel1_object_ref,
+                       record.channel1_start,
+                       record.channel1_end),
+          make_channel(record.channel2_enabled(),
+              record.channel2_definition_id,
+              record.channel2_object_ref,
+              record.channel2_start,
+              record.channel2_end)}});
+  return m_cin_sfx_playbacks.back();
+}
+
+std::optional<std::size_t> ScenarioRuntime::find_cin_sfx_attachment(
+    const Character::RuntimeCharacter& character, const std::uint32_t script_id) {
+  if (character.model_resource == nullptr) {
+    return std::nullopt;
+  }
+  const Omikron::Model3DOData& model{character.model_resource->model};
+  const std::size_t selected_index{character.body_animation.selected_object_index};
+  if (selected_index >= model.meshes.size() ||
+      model.hierarchy_first_child_index.size() != model.meshes.size() ||
+      model.hierarchy_next_sibling_index.size() != model.meshes.size()) {
+    return std::nullopt;
+  }
+
+  std::vector<std::size_t> pending{selected_index};
+  std::vector<bool> visited(model.meshes.size(), false);
+  while (!pending.empty()) {
+    const std::size_t object_index{pending.back()};
+    pending.pop_back();
+    if (object_index >= model.meshes.size() || visited.at(object_index)) {
+      continue;
+    }
+    visited.at(object_index) = true;
+    if (model.meshes.at(object_index).script_id == script_id) {
+      return object_index;
+    }
+
+    std::int32_t child_index{model.hierarchy_first_child_index.at(object_index)};
+    std::size_t sibling_steps{0};
+    while (child_index >= 0 && std::cmp_less(child_index, model.meshes.size()) &&
+           sibling_steps < model.meshes.size()) {
+      const std::size_t child{static_cast<std::size_t>(child_index)};
+      pending.push_back(child);
+      child_index = model.hierarchy_next_sibling_index.at(child);
+      ++sibling_steps;
+    }
+  }
+  return std::nullopt;
+}
+
+void ScenarioRuntime::service_cin_sfx_channel(Character::RuntimeCharacter& character,
+    CinSfxPlayback& playback,
+    const std::size_t channel_index) {
+  CinSfxChannelPlayback& channel{playback.channels.at(channel_index)};
+  const std::uint8_t channel_number{static_cast<std::uint8_t>(channel_index + 1U)};
+  if (channel.active && playback.body_current_progress < channel.elapsed) {
+    App::Log::info(LogCategory::Scenario,
+        "CinSfxWrapped — animation='{}' channel={} progress={:.3f} elapsed={:.3f}",
+        playback.animation_name,
+        channel_number,
+        playback.body_current_progress,
+        channel.elapsed);
+    channel.active = false;
+    channel.in_window = false;
+    channel.elapsed = 0.0F;
+    channel.emissions_this_execution = 0U;
+    channel.resolved_object_index.reset();
+    channel.resolved_object_name.clear();
+    channel.resolved_object_script_id = 0U;
+    channel.attachment_missing = false;
+    return;
+  }
+
+  if (!channel.active) {
+    channel.active = true;
+    channel.elapsed = 0.0F;
+    channel.emissions_this_execution = 0U;
+    App::Log::info(LogCategory::Scenario,
+        "CinSfxInitialized — animation='{}' id={} association={} record={} channel={} "
+        "enabled={} definition={}:'{}' objectRef={} window=[{:.3f},{:.3f}]",
+        playback.animation_name,
+        playback.animation_id,
+        playback.association_id,
+        playback.association_record_index,
+        channel_number,
+        channel.enabled,
+        channel.definition_id,
+        channel.definition_name,
+        channel.object_reference,
+        channel.start,
+        channel.end);
+  }
+
+  const bool was_in_window{channel.in_window};
+  channel.in_window = channel.elapsed >= channel.start && channel.elapsed <= channel.end;
+  if (!was_in_window && channel.in_window) {
+    App::Log::info(LogCategory::Scenario,
+        "CinSfxWindowEntered — animation='{}' channel={} elapsed={:.3f}",
+        playback.animation_name,
+        channel_number,
+        channel.elapsed);
+  } else if (was_in_window && !channel.in_window) {
+    App::Log::info(LogCategory::Scenario,
+        "CinSfxWindowExited — animation='{}' channel={} elapsed={:.3f}",
+        playback.animation_name,
+        channel_number,
+        channel.elapsed);
+  }
+
+  if (channel.elapsed <= channel.end) {
+    const std::uint32_t script_id{channel.object_reference > 0
+                                      ? static_cast<std::uint32_t>(channel.object_reference - 1)
+                                      : 0U};
+    const std::optional<std::size_t> object_index{find_cin_sfx_attachment(character, script_id)};
+    if (!object_index.has_value()) {
+      if (!channel.attachment_missing) {
+        channel.attachment_missing = true;
+        App::Log::warn(LogCategory::Scenario,
+            "CinSfxAttachmentMissing — animation='{}' channel={} for Cin-SFX, Object with hID {} "
+            "not found",
+            playback.animation_name,
+            channel_number,
+            channel.object_reference);
+      }
+    } else {
+      const std::optional<Runtime::Transform> object_world{
+          character.object_world_transform(object_index.value())};
+      if (object_world.has_value()) {
+        const Omikron::MeshDescriptor& object{
+            character.model_resource->model.meshes.at(object_index.value())};
+        channel.cached_position = object_world->translation;
+        channel.resolved_object_index = object_index;
+        channel.resolved_object_name = object.name;
+        channel.resolved_object_script_id = object.script_id;
+        channel.attachment_missing = false;
+      }
+    }
+  }
+
+  if (channel.enabled && channel.in_window && channel.resolved_object_index.has_value()) {
+    m_sfx_runtime->emit_definition(channel.definition_id,
+        channel.cached_position,
+        Sfx::EmissionProvenance{.origin = Sfx::EmissionOriginKind::k_cin_sfx,
+            .node_id = std::nullopt,
+            .structured_script_trigger_id = std::nullopt,
+            .animation_id = playback.animation_id,
+            .animation_name = playback.animation_name,
+            .cin_channel = channel_number});
+    ++channel.emissions_this_execution;
+    App::Log::info(LogCategory::Scenario,
+        "CinSfxEmit — animation='{}' channel={} elapsed={:.3f} definition={}:'{}' "
+        "object=[{}:'{}' script={}] xyz=({:.3f},{:.3f},{:.3f}) count={}",
+        playback.animation_name,
+        channel_number,
+        channel.elapsed,
+        channel.definition_id,
+        channel.definition_name,
+        channel.resolved_object_index.value(),
+        channel.resolved_object_name,
+        channel.resolved_object_script_id,
+        channel.cached_position.x,
+        channel.cached_position.y,
+        channel.cached_position.z,
+        channel.emissions_this_execution);
+  }
+  channel.elapsed += 1.0F;
+}
+
+void ScenarioRuntime::service_cin_sfx(Character::RuntimeCharacter& character,
+    const std::size_t script_instance_id,
+    const std::size_t animation_index) {
   if (m_sfx_runtime == nullptr || !m_sfx_data.has_value() ||
       animation_index >= m_cin_sfx_bindings.size() ||
       !m_cin_sfx_bindings.at(animation_index).has_value() || character.model_resource == nullptr) {
     return;
   }
   const std::size_t record_index{m_cin_sfx_bindings.at(animation_index).value_or(0U)};
-  const Omikron::SfxCinAnimationRecord& record{m_sfx_data.value().records_b.at(record_index)};
-  const float elapsed{character.body_animation.previous_progress};
-  const auto emit_channel = [this, &character, &record, elapsed, animation_index](
-                                const bool enabled,
-                                const std::int32_t definition_id,
-                                const float start,
-                                const float end,
-                                const std::int32_t object_reference,
-                                const std::uint8_t cin_channel) {
-    if (!enabled || elapsed < start || elapsed > end) {
-      return;
-    }
-    const std::uint32_t script_id{
-        object_reference > 0 ? static_cast<std::uint32_t>(object_reference - 1) : 0U};
-    const auto mesh{std::ranges::find(
-        character.model_resource->model.meshes, script_id, &Omikron::MeshDescriptor::script_id)};
-    if (mesh == character.model_resource->model.meshes.end()) {
-      App::Log::warn(LogCategory::Scenario,
-          "Cin-SFX object reference {} not found in character {}",
-          object_reference,
-          character.character_id);
-      return;
-    }
-    const std::size_t mesh_index{static_cast<std::size_t>(
-        std::distance(character.model_resource->model.meshes.begin(), mesh))};
-    const std::optional<Runtime::Transform> object_world{
-        character.object_world_transform(mesh_index)};
-    if (!object_world.has_value()) {
-      return;
-    }
-    m_sfx_runtime->emit_definition(definition_id,
-        object_world->translation,
-        Sfx::EmissionProvenance{.origin = Sfx::EmissionOriginKind::k_cin_sfx,
-            .node_id = std::nullopt,
-            .structured_script_trigger_id = std::nullopt,
-            .animation_id = m_scx.animations.at(animation_index).animation_id,
-            .animation_name = m_scx.animations.at(animation_index).name,
-            .cin_channel = cin_channel});
-  };
-  emit_channel(record.channel1_enabled(),
-      record.channel1_definition_id,
-      record.channel1_start,
-      record.channel1_end,
-      record.channel1_object_ref,
-      1U);
-  emit_channel(record.channel2_enabled(),
-      record.channel2_definition_id,
-      record.channel2_start,
-      record.channel2_end,
-      record.channel2_object_ref,
-      2U);
+  CinSfxPlayback& playback{ensure_cin_sfx_playback(
+      character, script_instance_id, animation_index, record_index, m_sfx_data.value())};
+  playback.last_service_sequence = ++m_cin_sfx_service_sequence;
+  playback.body_previous_progress = character.body_animation.previous_progress;
+  playback.body_current_progress = character.body_animation.current_progress;
+  service_cin_sfx_channel(character, playback, 0U);
+  service_cin_sfx_channel(character, playback, 1U);
 }
 
 std::string_view ScenarioRuntime::sfx_sound_name(const std::int32_t authored_h_id) const {
@@ -1181,7 +1357,7 @@ ScenarioRuntime::select_body_animation(const Script::BodyAnimationRequest& reque
     return std::expected<Script::BodyAnimationResult, Script::BodyAnimationFailure>{
         std::unexpect, std::move(applied).error()};
   }
-  service_cin_sfx(*character, request.animation_index);
+  service_cin_sfx(*character, request.script_instance_id, request.animation_index);
   return Script::BodyAnimationResult{.max_frame_index = animation.max_frame_index};
 }
 
@@ -1276,7 +1452,7 @@ ScenarioRuntime::select_relative_body_animation(
     return std::expected<Script::RelativeBodyAnimationResult, Script::RelativeBodyAnimationFailure>{
         std::unexpect, std::move(applied).error()};
   }
-  service_cin_sfx(*character, request.animation_index);
+  service_cin_sfx(*character, request.script_instance_id, request.animation_index);
   return Script::RelativeBodyAnimationResult{.max_frame_index = animation.max_frame_index};
 }
 

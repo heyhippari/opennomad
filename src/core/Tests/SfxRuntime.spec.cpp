@@ -202,6 +202,25 @@ std::unique_ptr<App::Sfx::Runtime> create_runtime(
 }  // namespace
 
 TEST_SUITE("Core::Sfx::Runtime") {
+  TEST_CASE("structured node sound starts retain their trigger ID provenance") {
+    FakeHost host;
+    auto data{basic_data()};
+    data.definitions.front().sound_id = 50;
+    data.nodes.front().trigger_type = 0;
+    data.nodes.front().trigger_id = 221;
+    auto runtime{create_runtime(data, host)};
+    CHECK_EQ(runtime->trigger(0, 221), 1U);
+
+    runtime->step();
+
+    REQUIRE_EQ(runtime->sound_start_diagnostics().size(), 1U);
+    const App::Sfx::SoundStartDiagnostic& diagnostic{runtime->sound_start_diagnostics().front()};
+    CHECK(diagnostic.provenance.origin == App::Sfx::EmissionOriginKind::k_node);
+    CHECK_EQ(diagnostic.provenance.node_id, std::optional<std::int32_t>{1});
+    CHECK_EQ(
+        diagnostic.provenance.structured_script_trigger_id, std::optional<std::uint16_t>{221U});
+  }
+
   TEST_CASE("automatic and explicit triggers use exact type and ID matches") {
     FakeHost host;
     auto data{basic_data()};

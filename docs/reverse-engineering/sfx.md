@@ -203,14 +203,40 @@ invalid. A valid SFX sound ID is a DEAD0003 sound record `h_id`, not a
 sound-table index. It is resolved by hID equality and submitted through the
 scenario audio path.
 
-Cin-SFX is serviced after each successful `SelectBodyAnimation` and
-`SelectRelativeBodyAnimation` pose application. Each enabled channel emits its
-ordinary SFX definition repeatedly during its inclusive `[start,end]` window.
-The channel object reference is normalized as `ref > 0 ? ref - 1 : 0` and
-matched against `MeshDescriptor::script_id`. Its position comes from the live
-animated `RuntimeObjectState::world_translation`, composed through the actor's
-current presentation orientation and translation. It then enters the ordinary
-SFX request, countdown, particle, and sound paths.
+Cin-SFX is serviced by Runtime routine `0x004A4130` after each successful
+`SelectBodyAnimation` and `SelectRelativeBodyAnimation` pose application.
+`0x0044F370` lazily expands the associated serialized `0x2C` record into a
+mutable `0x54`-byte state block referenced through the SCX animation's runtime
+field at `+0x1C`:
+
+```text
++0x00 association_id
++0x04/+0x08/+0x0C/+0x10/+0x14/+0x18/+0x1C/+0x20..28
+  channel 1 active/enabled/definition/object/elapsed/start/end/cached XYZ
++0x2C/+0x30/+0x34/+0x38/+0x3C/+0x40/+0x44/+0x48..50
+  channel 2 active/enabled/definition/object/elapsed/start/end/cached XYZ
+```
+
+Each channel owns an independent mutable clock. First service sets `active=1`
+and `elapsed=0`. Every service compares current animation progress with channel
+elapsed. Progress wrapping behind elapsed clears active state and elapsed; the
+following service initializes the next execution. Otherwise the channel updates
+its attachment before and during its window, emits once per service when enabled
+and `start <= elapsed <= end`, then increments elapsed by exactly `1.0` from
+Runtime global `0x004C30D8`. Fractional animation progress is not the channel
+clock.
+
+OpenNomad scopes this mutable state by structured script instance, character
+instance, and SCX animation index. Immutable `SfxData` and shared animation
+descriptors are never mutated or used as shared channel clocks.
+
+Attachment helper `0x004A4050` normalizes the reference as
+`ref > 0 ? ref - 1 : 0`. Lookup traverses only the selected animated object and
+its descendants, matching `MeshDescriptor::script_id`; an equal ID outside that
+hierarchy is not eligible. OpenNomad obtains the resulting position through
+`RuntimeCharacter::object_world_transform()`, preserving the shared visual
+hierarchy plus logical actor composition. Emission then enters the ordinary SFX
+request, countdown, particle, and sound paths.
 
 Each burst creates `spawn_count` ordinary attached sprites up to the retail
 particle capacity of 1000. Creation selects the resource's default object and

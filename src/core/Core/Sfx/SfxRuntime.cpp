@@ -422,11 +422,16 @@ void Runtime::service_node(const std::size_t node_index) {
     }
   }
   if (definition != nullptr) {
+    const std::optional<std::uint16_t> script_trigger{
+        source.trigger_type == 0 && source.trigger_id >= 0 &&
+                std::cmp_less_equal(source.trigger_id, std::numeric_limits<std::uint16_t>::max())
+            ? std::optional<std::uint16_t>{static_cast<std::uint16_t>(source.trigger_id)}
+            : std::nullopt};
     enqueue_request(*definition,
         node.current_position,
         EmissionProvenance{.origin = EmissionOriginKind::k_node,
             .node_id = source.node_id,
-            .structured_script_trigger_id = std::nullopt,
+            .structured_script_trigger_id = script_trigger,
             .animation_id = std::nullopt,
             .animation_name = {},
             .cin_channel = std::nullopt});

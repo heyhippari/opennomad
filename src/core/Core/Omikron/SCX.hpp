@@ -60,8 +60,10 @@ struct ScxSection0Record {
 struct ScxAnimationRecord {
   std::string name;                               ///< +0x00, fixed 24-byte field.
   std::uint32_t runtime_resource_placeholder{0};  ///< +0x18.
-  std::uint32_t serialized_field_1c{0};           ///< +0x1C, unresolved.
-  std::uint32_t animation_id{0};                  ///< +0x20.
+  /// +0x1C serialized placeholder; Runtime stores a lazily allocated mutable
+  /// 0x54-byte Cin-SFX channel-state pointer here.
+  std::uint32_t serialized_field_1c{0};
+  std::uint32_t animation_id{0};  ///< +0x20.
   std::size_t file_offset{0};
 };
 

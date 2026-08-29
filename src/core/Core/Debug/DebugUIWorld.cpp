@@ -548,6 +548,51 @@ void DebugUI::show_world_inspector() {
             static_cast<double>(character.accumulated_logical_actor_translation.at(0)),
             static_cast<double>(character.accumulated_logical_actor_translation.at(1)),
             static_cast<double>(character.accumulated_logical_actor_translation.at(2)));
+        if (character.cin_sfx.has_value()) {
+          const Debug::CinSfxPlaybackDebugState& cin_sfx{character.cin_sfx.value()};
+          ImGui::SeparatorText("Cin-SFX");
+          ImGui::Text("Script instance: %zu, animation: [%zu] id %u %s",
+              cin_sfx.script_instance_id,
+              cin_sfx.animation_index,
+              cin_sfx.animation_id,
+              cin_sfx.animation_name.c_str());
+          ImGui::Text("Association: record %zu, id %u",
+              cin_sfx.association_record_index,
+              cin_sfx.association_id);
+          ImGui::Text("Body progress: %.3f -> %.3f",
+              static_cast<double>(cin_sfx.body_previous_progress),
+              static_cast<double>(cin_sfx.body_current_progress));
+          for (std::size_t channel_index{0}; channel_index < cin_sfx.channels.size();
+              ++channel_index) {
+            const Debug::CinSfxChannelDebugState& channel{cin_sfx.channels.at(channel_index)};
+            ImGui::PushID(static_cast<int>(channel_index));
+            ImGui::Text("Channel %zu: enabled %s, active %s, in-window %s",
+                channel_index + 1U,
+                channel.enabled ? "yes" : "no",
+                channel.active ? "yes" : "no",
+                channel.in_window ? "yes" : "no");
+            ImGui::Text("Definition: %d %s",
+                channel.definition_id,
+                channel.definition_name.empty() ? "<unnamed>" : channel.definition_name.c_str());
+            ImGui::Text("Object ref: %d -> [%zu] %s (script %u)%s",
+                channel.object_reference,
+                channel.resolved_object_index.value_or(0U),
+                channel.resolved_object_name.empty() ? "<unresolved>"
+                                                     : channel.resolved_object_name.c_str(),
+                channel.resolved_object_script_id,
+                channel.attachment_missing ? " missing" : "");
+            ImGui::Text("Clock: %.3f, window [%.3f, %.3f]",
+                static_cast<double>(channel.elapsed),
+                static_cast<double>(channel.start),
+                static_cast<double>(channel.end));
+            ImGui::Text("World XYZ: %.3f, %.3f, %.3f",
+                static_cast<double>(channel.cached_position.at(0)),
+                static_cast<double>(channel.cached_position.at(1)),
+                static_cast<double>(channel.cached_position.at(2)));
+            ImGui::Text("Emissions this execution: %zu", channel.emissions_this_execution);
+            ImGui::PopID();
+          }
+        }
         if (ImGui::TreeNode("Object pose")) {
           for (std::size_t pose_index{0}; pose_index < character.object_poses.size();
               ++pose_index) {

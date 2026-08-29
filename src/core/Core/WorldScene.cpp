@@ -582,6 +582,7 @@ std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state
                   animation.accumulated_logical_actor_translation.y,
                   animation.accumulated_logical_actor_translation.z},
           .object_poses = {},
+          .cin_sfx = std::nullopt,
           .pose_owner = {},
           .has_controller = false,
           .ctl_control_set = {},
@@ -602,6 +603,47 @@ std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state
           .ctl_candidate_translation = {},
           .ctl_accepted_translation = {},
           .ctl_markers_fired = 0U};
+      const CinSfxPlayback* cin_sfx{nullptr};
+      for (const CinSfxPlayback& playback : world_context->runtime->cin_sfx_playbacks()) {
+        if (playback.character_instance_id == character.instance_id &&
+            playback.animation_index == animation.animation_descriptor_index &&
+            (cin_sfx == nullptr ||
+                playback.last_service_sequence > cin_sfx->last_service_sequence)) {
+          cin_sfx = &playback;
+        }
+      }
+      if (cin_sfx != nullptr) {
+        const auto channel_debug = [](const CinSfxChannelPlayback& channel) {
+          return Debug::CinSfxChannelDebugState{.enabled = channel.enabled,
+              .active = channel.active,
+              .in_window = channel.in_window,
+              .definition_id = channel.definition_id,
+              .definition_name = channel.definition_name,
+              .object_reference = channel.object_reference,
+              .resolved_object_index = channel.resolved_object_index,
+              .resolved_object_name = channel.resolved_object_name,
+              .resolved_object_script_id = channel.resolved_object_script_id,
+              .start = channel.start,
+              .end = channel.end,
+              .elapsed = channel.elapsed,
+              .cached_position = {channel.cached_position.x,
+                  channel.cached_position.y,
+                  channel.cached_position.z},
+              .emissions_this_execution = channel.emissions_this_execution,
+              .attachment_missing = channel.attachment_missing};
+        };
+        debug_character.cin_sfx =
+            Debug::CinSfxPlaybackDebugState{.script_instance_id = cin_sfx->script_instance_id,
+                .animation_index = cin_sfx->animation_index,
+                .animation_id = cin_sfx->animation_id,
+                .animation_name = cin_sfx->animation_name,
+                .association_record_index = cin_sfx->association_record_index,
+                .association_id = cin_sfx->association_id,
+                .body_previous_progress = cin_sfx->body_previous_progress,
+                .body_current_progress = cin_sfx->body_current_progress,
+                .channels = {channel_debug(cin_sfx->channels.at(0)),
+                    channel_debug(cin_sfx->channels.at(1))}};
+      }
       switch (character.pose_owner) {
         case Character::PoseOwner::k_model_defaults:
           debug_character.pose_owner = "model defaults";

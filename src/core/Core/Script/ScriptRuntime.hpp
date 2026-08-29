@@ -221,6 +221,7 @@ struct CameraEditingPose {
 /// coordinates and progress values remain in Runtime-native units.
 struct BodyAnimationRequest {
   std::int16_t character_id{0};
+  std::size_t script_instance_id{0};
   std::string_view object_binding;
   std::uint32_t animation_index{0};
   float previous_progress{0.0F};
@@ -237,6 +238,7 @@ struct BodyAnimationRequest {
 /// All coordinates and progress values remain in Runtime-native units.
 struct RelativeBodyAnimationRequest {
   std::int16_t character_id{0};
+  std::size_t script_instance_id{0};
   std::string_view object_binding;
   std::uint32_t animation_index{0};
   float previous_progress{0.0F};

@@ -153,6 +153,44 @@ std::shared_ptr<const App::Character::ModelResource> make_split_actor_model_reso
   return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
 }
 
+std::shared_ptr<const App::Character::ModelResource> make_cin_sfx_model_resource() {
+  auto resource{std::make_shared<App::Character::ModelResource>()};
+  resource->name = "CIN_SFX";
+  resource->model.materials.push_back(App::Omikron::Material{});
+  resource->model.meshes = {App::Omikron::MeshDescriptor{.mesh_id = 100,
+                                .script_id = 2,
+                                .name = "SelectedRoot",
+                                .parent_id = -1,
+                                .first_child_id = 300,
+                                .next_sibling_id = 200},
+      App::Omikron::MeshDescriptor{.mesh_id = 200,
+          .script_id = 9,
+          .name = "OutsideSelectedHierarchy",
+          .parent_id = -1,
+          .first_child_id = -1,
+          .next_sibling_id = -1},
+      App::Omikron::MeshDescriptor{.mesh_id = 300,
+          .script_id = 3,
+          .name = "SelectedChild",
+          .parent_id = 100,
+          .first_child_id = -1,
+          .next_sibling_id = -1,
+          .bone_position = {.x = 2.0F}}};
+  resource->model.polygons.resize(3U);
+  resource->model.root_mesh_index = 0;
+  resource->actor_object_index = 0U;
+  resource->model.hierarchy_parent_index = {-1, -1, 0};
+  resource->model.hierarchy_first_child_index = {2, -1, -1};
+  resource->model.hierarchy_next_sibling_index = {1, -1, -1};
+  resource->model.hierarchy_reachable = {1U, 1U, 1U};
+  resource->model.skin_parent_index = {-1, -1, 0};
+  resource->model.runtime_objects = {App::Omikron::Model3DOData::RuntimeObjectState{},
+      App::Omikron::Model3DOData::RuntimeObjectState{.local_offset = {.x = 50.0F}},
+      App::Omikron::Model3DOData::RuntimeObjectState{.local_offset = {.x = 2.0F}}};
+  resource->groups.push_back(App::Omikron::MaterialGroup{});
+  return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
+}
+
 struct BodyResourcesFixture {
   App::Omikron::ScxData scx;
   std::vector<std::byte> bytes;
@@ -160,7 +198,8 @@ struct BodyResourcesFixture {
 
 BodyResourcesFixture make_body_resources(const App::Runtime::Vec3 reference = {},
     const App::Runtime::Vec3 root_motion = {.x = 10.0F},
-    const bool child_translation = false) {
+    const bool child_translation = false,
+    const std::uint32_t sample_count = 4U) {
   Buffer path;
   path.u32(1).chars("UBas.p1", 20).u32(2).u32(3);
   for (std::uint32_t key{0}; key < 3U; ++key) {
@@ -175,36 +214,36 @@ BodyResourcesFixture make_body_resources(const App::Runtime::Vec3 reference = {}
   }
 
   constexpr std::uint32_t descriptor_end{8U + (2U * 0x28U)};
-  constexpr std::uint32_t root_translation_size{4U * 12U};
+  const std::uint32_t root_translation_size{sample_count * 12U};
   const std::uint32_t child_translation_offset{descriptor_end + root_translation_size};
   const std::uint32_t root_rotation_offset{
       child_translation_offset + (child_translation ? root_translation_size : 0U)};
-  const std::uint32_t child_rotation_offset{root_rotation_offset + (4U * 16U)};
+  const std::uint32_t child_rotation_offset{root_rotation_offset + (sample_count * 16U)};
   Buffer animation;
-  animation.u32(3).u32(2);
+  animation.u32(sample_count - 1U).u32(2);
   animation.u32(2)
       .chars("RootBody", 20)
-      .u32(4)
+      .u32(sample_count)
       .u32(descriptor_end)
-      .u32(4)
+      .u32(sample_count)
       .u32(root_rotation_offset);
   // mesh_id is 200, but the animation must bind this channel by script_id 3.
   animation.u32(3)
       .chars("Child", 20)
-      .u32(4)
+      .u32(sample_count)
       .u32(child_translation ? child_translation_offset : 0U)
-      .u32(4)
+      .u32(sample_count)
       .u32(child_rotation_offset);
   // Translation sample zero is the reference position; each later sample is
   // an interval-local root-motion vector. Keep the vectors uniform so a
   // fractional interval is an unambiguous fraction of root_motion.
   animation.f32(reference.x).f32(reference.y).f32(reference.z);
-  for (std::uint32_t frame{1}; frame < 4U; ++frame) {
+  for (std::uint32_t frame{1}; frame < sample_count; ++frame) {
     animation.f32(root_motion.x).f32(root_motion.y).f32(root_motion.z);
   }
   if (child_translation) {
     animation.f32(reference.x).f32(reference.y).f32(reference.z);
-    for (std::uint32_t frame{1}; frame < 4U; ++frame) {
+    for (std::uint32_t frame{1}; frame < sample_count; ++frame) {
       animation.f32(root_motion.x).f32(root_motion.y).f32(root_motion.z);
     }
   }
@@ -212,7 +251,10 @@ BodyResourcesFixture make_body_resources(const App::Runtime::Vec3 reference = {}
   animation.f32(0.0F).f32(0.0F).f32(0.0F).f32(1.0F);
   animation.f32(1.0F).f32(0.0F).f32(0.0F).f32(0.0F);
   animation.f32(1.0F).f32(0.0F).f32(0.0F).f32(0.0F);
-  for (std::uint32_t frame{0}; frame < 4U; ++frame) {
+  for (std::uint32_t frame{4U}; frame < sample_count; ++frame) {
+    animation.f32(1.0F).f32(0.0F).f32(0.0F).f32(0.0F);
+  }
+  for (std::uint32_t frame{0}; frame < sample_count; ++frame) {
     animation.f32(1.0F).f32(0.0F).f32(0.0F).f32(0.0F);
   }
 
@@ -403,6 +445,60 @@ App::Omikron::SfxData make_script_trigger_sfx() {
   return data;
 }
 
+App::Omikron::SfxData make_cin_sfx_data(const std::uint32_t flags,
+    const float channel1_start,
+    const float channel1_end,
+    const std::int32_t channel1_object_ref,
+    const float channel2_start,
+    const float channel2_end,
+    const std::int32_t channel2_object_ref) {
+  App::Omikron::SfxData data;
+  data.magic = App::Omikron::k_sfx_magic;
+  const auto definition = [](const std::int32_t id, const std::string_view name) {
+    return App::Omikron::SfxDefinition{.definition_id = id,
+        .sound_id = 0x0000FFFF,
+        .sprite_id_raw = 9U,
+        .flags = 0U,
+        .direction = {},
+        .vertical_acceleration = 0.0F,
+        .lifetime = 5.0F,
+        .sound_delay = 0.0F,
+        .emission_delay = 0.0F,
+        .raw_2c = 0.0F,
+        .start_color_rgb = 0x00FFFFFFU,
+        .end_color_rgb = 0x00FFFFFFU,
+        .initial_scale = 1.0F,
+        .cone_angle_degrees = 0.0F,
+        .angular_velocity_degrees = 0.0F,
+        .spawn_count = 1,
+        .name = std::string{name},
+        .sprite_render_mode = 4U,
+        .raw_4f = 0U};
+  };
+  data.definitions = {definition(10, "narrow"), definition(20, "range")};
+  data.records_b.push_back(App::Omikron::SfxCinAnimationRecord{.association_id = 1234U,
+      .animation_lookup_raw = 77U,
+      .flags = flags,
+      .channel1_definition_id = 10,
+      .channel1_start = channel1_start,
+      .channel1_end = channel1_end,
+      .channel1_object_ref = channel1_object_ref,
+      .channel2_definition_id = 20,
+      .channel2_start = channel2_start,
+      .channel2_end = channel2_end,
+      .channel2_object_ref = channel2_object_ref});
+  return data;
+}
+
+void add_cin_sfx_sprite(App::Omikron::ScxData& scx) {
+  scx.sprites.push_back(App::Omikron::ScxSpriteEntry{.name = "effect",
+      .sprite_id = 9U,
+      .runtime_sprite_placeholder = 0U,
+      .serialized_field_1c = 0U,
+      .file_offset = 0U});
+  scx.models.push_back(App::Omikron::ScxModelResource{});
+}
+
 App::Omikron::ScxData make_sfx_script_scx() {
   App::Omikron::ScxData scx;
   scx.scripts.push_back(make_script("arrival", 1));
@@ -419,6 +515,139 @@ App::Omikron::ScxData make_sfx_script_scx() {
 }  // namespace
 
 TEST_SUITE("Core::Scenario::ScenarioRuntime") {
+  TEST_CASE("Cin-SFX channels use independent inclusive logical clocks and restart on wrap") {
+    BodyResourcesFixture resources{make_body_resources({}, {}, false, 14U)};
+    resources.scx.section0_records.clear();
+    resources.scx.section0_resources.clear();
+    add_cin_sfx_sprite(resources.scx);
+    App::Omikron::SfxData sfx{make_cin_sfx_data(0x98U, 10.0F, 10.0F, 4, 10.0F, 12.0F, 4)};
+    const auto model{make_cin_sfx_model_resource()};
+
+    App::ScenarioRuntime runtime;
+    REQUIRE(runtime.initialize(resources.scx, resources.bytes, "cin-clock", nullptr, false, &sfx)
+            .has_value());
+    runtime.character_runtime().set_model_loader(
+        [model](const std::string_view)
+            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
+          return model;
+        });
+    REQUIRE(runtime
+            .activate_character(118,
+                make_character_area(),
+                App::Script::AreaCharacterActivationRequest{
+                    .character_id = 310, .apply_area_transform = true})
+            .has_value());
+
+    App::Script::BodyAnimationRequest request{.character_id = 310,
+        .script_instance_id = 11U,
+        .object_binding = "SelectedRoot",
+        .animation_index = 0,
+        .body_animation_vector = {},
+        .authored_offset = {},
+        .execution_count = 0,
+        .execution_limit = 2};
+    for (std::uint32_t service{0}; service < 13U; ++service) {
+      request.previous_progress = static_cast<float>(service) - 0.4F;
+      request.current_progress = static_cast<float>(service) + 0.6F;
+      request.first_tick = service == 0U;
+      REQUIRE(runtime.select_body_animation(request).has_value());
+    }
+
+    REQUIRE_EQ(runtime.cin_sfx_playbacks().size(), 1U);
+    const App::CinSfxPlayback& playback{runtime.cin_sfx_playbacks().front()};
+    CHECK_EQ(playback.association_id, 1234U);
+    CHECK_EQ(playback.body_previous_progress, doctest::Approx(11.6F));
+    CHECK_EQ(playback.body_current_progress, doctest::Approx(12.6F));
+    CHECK_EQ(playback.channels.at(0).elapsed, doctest::Approx(13.0F));
+    CHECK_EQ(playback.channels.at(1).elapsed, doctest::Approx(13.0F));
+    CHECK_EQ(playback.channels.at(0).emissions_this_execution, 1U);
+    CHECK_EQ(playback.channels.at(1).emissions_this_execution, 3U);
+    CHECK_EQ(runtime.sfx_diagnostics().queued_request_count, 4U);
+
+    request.previous_progress = 0.0F;
+    request.current_progress = 1.0F;
+    request.first_tick = false;
+    request.execution_count = 1U;
+    REQUIRE(runtime.select_body_animation(request).has_value());
+    CHECK_FALSE(playback.channels.at(0).active);
+    CHECK_EQ(playback.channels.at(0).elapsed, doctest::Approx(0.0F));
+    CHECK_EQ(playback.channels.at(0).emissions_this_execution, 0U);
+
+    request.previous_progress = 1.0F;
+    request.current_progress = 2.0F;
+    REQUIRE(runtime.select_body_animation(request).has_value());
+    CHECK(playback.channels.at(0).active);
+    CHECK_EQ(playback.channels.at(0).elapsed, doctest::Approx(1.0F));
+
+    App::Script::BodyAnimationRequest second_instance{request};
+    second_instance.script_instance_id = 12U;
+    second_instance.previous_progress = 0.0F;
+    second_instance.current_progress = 1.0F;
+    second_instance.first_tick = true;
+    second_instance.execution_count = 0U;
+    REQUIRE(runtime.select_body_animation(second_instance).has_value());
+    REQUIRE_EQ(runtime.cin_sfx_playbacks().size(), 2U);
+    CHECK_EQ(runtime.cin_sfx_playbacks()[0].script_instance_id, 11U);
+    CHECK_EQ(runtime.cin_sfx_playbacks()[0].channels.at(0).elapsed, doctest::Approx(1.0F));
+    CHECK_EQ(runtime.cin_sfx_playbacks()[1].script_instance_id, 12U);
+    CHECK_EQ(runtime.cin_sfx_playbacks()[1].channels.at(0).elapsed, doctest::Approx(1.0F));
+  }
+
+  TEST_CASE("Cin-SFX attachment stays within the selected hierarchy and uses visual world XYZ") {
+    BodyResourcesFixture resources{make_body_resources({}, {}, false, 4U)};
+    resources.scx.section0_records.clear();
+    resources.scx.section0_resources.clear();
+    add_cin_sfx_sprite(resources.scx);
+    App::Omikron::SfxData sfx{make_cin_sfx_data(0x88U, 0.0F, 0.0F, 4, 0.0F, 2.0F, 10)};
+    const auto model{make_cin_sfx_model_resource()};
+
+    App::ScenarioRuntime runtime;
+    REQUIRE(
+        runtime.initialize(resources.scx, resources.bytes, "cin-attachment", nullptr, false, &sfx)
+            .has_value());
+    runtime.character_runtime().set_model_loader(
+        [model](const std::string_view)
+            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
+          return model;
+        });
+    REQUIRE(runtime
+            .activate_character(118,
+                make_character_area(),
+                App::Script::AreaCharacterActivationRequest{
+                    .character_id = 310, .apply_area_transform = true})
+            .has_value());
+
+    const App::Script::BodyAnimationRequest request{.character_id = 310,
+        .object_binding = "SelectedRoot",
+        .animation_index = 0,
+        .previous_progress = 0.0F,
+        .current_progress = 0.6F,
+        .body_animation_vector = {},
+        .authored_offset = {},
+        .first_tick = true,
+        .execution_count = 0,
+        .execution_limit = 1};
+    REQUIRE(runtime.select_body_animation(request).has_value());
+
+    const App::Character::RuntimeCharacter* character{runtime.character_runtime().find(310)};
+    REQUIRE(character != nullptr);
+    const auto expected{character->object_world_transform(2U)};
+    REQUIRE(expected.has_value());
+    REQUIRE_EQ(runtime.cin_sfx_playbacks().size(), 1U);
+    const App::CinSfxPlayback& playback{runtime.cin_sfx_playbacks().front()};
+    CHECK_EQ(playback.channels.at(0).resolved_object_index, std::optional<std::size_t>{2U});
+    CHECK_EQ(playback.channels.at(0).cached_position.x, doctest::Approx(expected->translation.x));
+    CHECK_EQ(playback.channels.at(0).cached_position.y, doctest::Approx(expected->translation.y));
+    CHECK_EQ(playback.channels.at(0).cached_position.z, doctest::Approx(expected->translation.z));
+    CHECK_EQ(playback.channels.at(0).emissions_this_execution, 1U);
+    CHECK(playback.channels.at(1).active);
+    CHECK_FALSE(playback.channels.at(1).enabled);
+    CHECK_EQ(playback.channels.at(1).elapsed, doctest::Approx(1.0F));
+    CHECK_FALSE(playback.channels.at(1).resolved_object_index.has_value());
+    CHECK(playback.channels.at(1).attachment_missing);
+    CHECK_EQ(runtime.sfx_diagnostics().queued_request_count, 1U);
+  }
+
   TEST_CASE("Structured 3DO cameras select and mutate an instance-local camera A") {
     App::ScenarioRuntime runtime;
     const App::Omikron::Model3DOData decor{make_camera_decor()};
