@@ -101,24 +101,29 @@ each child belongs to its containing move by those authored counts
 | Bit | Meaning |
 | --- | ------- |
 | `0x00000001` | with `0x00008000`: end/goto family; without both: persistent restart family (§4.4) |
-| `0x00000002` | transparent chained state: has no animation key, follows goto, does not remain logical current |
+| `0x00000002` | transparent chained control/goto state: no serialized animation key, entry side effects run, `transition_value` propagates as the phase seed, `goto_state` is followed until a non-transparent state; the node never becomes the logical current state (§4.5) |
 | `0x00000010` | a 12-byte deferred callback name is serialized |
 | `0x00000020` | default state of its move |
-| `0x00000040`/`0x00000100` | consumes the 0x18-byte orientation auxiliary block |
-| `0x00000080`/`0x00000200` | consumes the 0x14-byte local-movement auxiliary block |
-| `0x00008000` | resident transition/blend state: has no animation key, remains logical current for `transition_count` lifetime, animation comes from goto |
+| `0x00000040` | **continuous** orientation auxiliary block: the +0x00/+0x04 floats are a phase window; the Vec3 is applied per tick scaled by the traversed interval's overlap with the window |
+| `0x00000100` | **one-shot** orientation auxiliary block: applied by the transient helper pass (§4.4a), not at presentation |
+| `0x00000080` | **continuous** local-movement auxiliary block (phase-window overlap, per tick) |
+| `0x00000200` | **one-shot** local-movement auxiliary block (transient helper pass) |
+| `0x00008000` | resident transition/blend state (without bit 2): no serialized animation key, **remains the logical current state** for its authored `transition_count` lifetime; the presentation animation resolves through its goto chain to the first key-bearing state |
+| `0x00010000` | phase-synchronized transition: destination phase = `(current_phase / current_effective_end) * destination_effective_end + phase_offset`, then 1-based wrapping (§4.5) |
+| `0x00020000` | blend-count rule when leaving a keyless resident state: inherit the previous `transition_count` instead of the remaining-lifetime formula (§4.5) |
 | `0x00080000` | input condition requires exact equality instead of the ordinary matcher |
 | `0x00002000` | current state enables the owner-move fallback scan (Runtime 0x004A8BD0) |
 | `0x00004000` | candidate requirement of the owner-move fallback scan; fallback candidates must have this flag |
-| `0x00100000` | drop oldest input history entry on state entry |
-| `0x01000000` | reset input history to no-input sentinel on state entry |
-| `0x00400000` | drop oldest input history entry on state exit |
-| `0x04000000` | reset input history to no-input sentinel on state exit |
-| `0x00200000` | transient callback-helper flag (part of transient helper pass semantics) |
-| `0x10000000` | clear current-input latch to 0 on state entry |
-| `0x20000000` | collapse input history before recording new change |
+| `0x00100000` | on state entry: drop the oldest input-history entry |
+| `0x00800000` | after the animation service of each tick in this state: drop the oldest input-history entry |
+| `0x01000000` | on state entry: **reset** input history to the `[0x40000000]` singleton (count 1) — not the same as `0x00100000` |
+| `0x00400000` | on state exit: drop the oldest input-history entry |
+| `0x04000000` | on state exit: **reset** input history to the `[0x40000000]` singleton (count 1) — not the same as `0x00400000` |
+| `0x00200000` | transient callback-helper gate: a helper's `0x10` callback is only enqueued when this flag is also set (§4.4a). NOT the owner-fallback flag |
+| `0x10000000` | on state entry: clear the current-input latch to 0 (a held input re-records as a fresh change) |
+| `0x20000000` | current state, before recording an input change: collapse the history (count > 1 → count 1; a lone `0x40000000` entry is cleared to count 0) |
 | `0x02000000` | consumes the neutral 0x28-byte auxiliary block |
-| `0x40000000` | input-suppression producer flag: insert input_condition into suppression set (transient helper semantics) |
+| `0x40000000` | input-suppression producer: the state's `input_condition` is inserted into the sparse 20-slot suppression set |
 
 Unflagged bits are preserved without semantics.
 
@@ -133,10 +138,13 @@ children in **serialized child order**:
 2. **Child references** — `child_ref_count` u32 authored **state IDs**.
 3. **Parent references** — `parent_ref_count` u32 authored **state IDs**.
 4. **0x18-byte auxiliary block** — states with
-   `flags & (0x100 | 0x40)`. `+0x00/+0x04` f32 raw (neutral), `+0x08` Vec3
+   `flags & (0x100 | 0x40)`. `+0x00/+0x04` f32 are the phase-window bounds
+   `[start, end]` for the continuous `0x40` variant (unused by the one-shot
+   `0x100` helper variant), `+0x08` Vec3
    **authored orientation delta** (confirmed), `+0x14` f32 raw (neutral).
 5. **0x14-byte auxiliary block** — states with `flags & (0x200 | 0x80)`.
-   `+0x00/+0x04` f32 raw (neutral), `+0x08` Vec3 **authored local movement
+   `+0x00/+0x04` f32 are the phase-window bounds for the continuous `0x80`
+   variant, `+0x08` Vec3 **authored local movement
    delta** (confirmed; transformed through the live actor orientation).
 6. **Callback names** — `char[12]` for states with `flags & 0x10`. These are
    deferred side-effect routines, not movement-state names.
@@ -237,27 +245,51 @@ condition's `0x2000` ceiling, so `0x80000000` does not match it.
 
 Two separate mechanisms exist:
 
-### Input History
-A fixed **16-entry chronological input history** (oldest→newest, not reversed):
-- Initialized at state `history[0] = 0x40000000` (no-input sentinel), count 1
-- Records canonical input *changes* at `history[count]`
-- At capacity 16, the oldest entry is shifted out when a new change occurs
-- **State-driven mutations** (flags applied on state entry/exit):
-  - `0x00100000` (entry): reset to NO_INPUT singleton, clear count → 0
-  - `0x01000000` (entry): reset to NO_INPUT singleton, clear count → 0 (same semantic as 0x100000)
-  - `0x10000000` (entry): clear latch to 0 (no longer hold the current input)
-  - `0x20000000` (pre-record): if count > 1, collapse to single NO_INPUT entry before recording change; if count == 1 and entry is NO_INPUT, clear history
-  - `0x00400000` (exit): drop oldest entry via left-shift before next state activation
-  - `0x04000000` (exit): drop oldest entry via left-shift before next state activation (same as 0x00400000)
+### Input history
 
-### Input Suppression Set
-A fixed **20-entry sparse suppression set** with first-empty-slot insertion:
-- Each nonzero canonical mask in the set that still matches the current input strips its bits (`current &= ~mask`)
-- An entry that no longer matches is removed via swap-and-pop (no auto-compaction, sparse slots allowed)
-- Duplicate masks are rejected (only first insertion of unique mask succeeds)
-- Zero masks (0) are always ignored
-- At capacity 20, no new entries are added (silent overflow)
-- Uniqueness is the controlling constraint: re-entering the suppression set uses first-empty slot if available
+A fixed **16-entry chronological input history** (oldest at `[0]`, newest at
+`[count-1]`; the order is **not** reversed):
+
+- Initialized as `history[0] = 0x40000000` (no-input sentinel), count 1.
+- Canonical input **changes** append at `history[count]`; at capacity 16 the
+  oldest entry shifts out. Holding the same mask never appends.
+- **State-driven mutations** use distinct flags per timing and operation:
+
+  | Timing | Flag | Operation |
+  | ------ | ---- | --------- |
+  | state exit | `0x00400000` | drop oldest entry |
+  | state exit | `0x04000000` | **reset** to `[0x40000000]`, count 1 |
+  | state entry | `0x00100000` | drop oldest entry |
+  | state entry | `0x01000000` | **reset** to `[0x40000000]`, count 1 |
+  | state entry | `0x10000000` | clear the current-input latch to 0 |
+  | current state, before recording a change | `0x20000000` | collapse: count > 1 → count 1; a lone `0x40000000` entry is cleared to count 0 |
+  | after each tick's animation service | `0x00800000` | drop oldest entry |
+
+  Dropping the oldest entry of a singleton history clears the sole entry and
+  sets count 0; only an empty history is a no-op. The drop (`0x00100000`/
+  `0x00400000`) and reset (`0x01000000`/`0x04000000`) operations are
+  **distinct**: drop removes one entry, reset replaces the whole history.
+
+### Input suppression set
+
+A fixed **sparse 20-slot array** of canonical masks:
+
+- Insertion: mask 0 is ignored; duplicates are rejected; the mask occupies
+  the **first zero slot** of all 20; a full array ignores the insertion.
+  Entries are never reordered.
+- Service (every tick, scanning **all 20 slots**, never a count boundary): a
+  zero slot is ignored; an entry whose `ctl_condition_matches(mask, input)`
+  still holds strips its bits (`input &= ~mask`); an entry that no longer
+  matches **expires in place** (the slot is zeroed — no swap, no compaction,
+  no reordering; holes stay holes and later entries never move).
+- Reset (compact 0x3F move selection) clears the **entire** 20-slot array,
+  not merely a count; masks can be reinserted afterwards.
+- States and helpers with `flags & 0x40000000` produce suppression: their
+  `input_condition` is inserted into the set (helper-produced masks strip
+  their own bits from the working input immediately, as the next tick's scan
+  would).
+
+This prevents held buttons from endlessly retriggering edge-like states.
 
 ---
 
@@ -336,10 +368,11 @@ bool timing_matches(float previous, float current, float start, float end)
    wins with authored order breaking ties. Without priority mode the first
    valid candidate wins.
 6. **Owner-move fallback**: when no child candidate was selected and the
-   current state has `flags & 0x00200000`, scan every state of the owner move
+   current state has `flags & 0x00002000`, scan every state of the owner move
    in contiguous authored order; fallback candidates additionally require
-   `flags & 0x00400000`, then the same input/timing/priority predicates
-   apply.
+   `flags & 0x00004000`, then the same input/timing/priority predicates
+   apply. (`0x00200000` is the unrelated transient callback-helper gate —
+   never the fallback enable.)
 
 **Deferred transitions**: a selected candidate with `defer_ticks != 0` is
 stored as pending with a counter starting at 1; later logical services
@@ -347,8 +380,38 @@ increment it, and the transition becomes eligible when
 `pending_tick_count > defer_ticks`, then clears. These are controller-service
 ticks, not milliseconds.
 
-## 4.4 State end behavior — Confirmed — Runtime
+## 4.4 Transient helper pass — Confirmed — Runtime
 
+Before ordinary transition selection on every logical CTL tick, the
+evaluator runs conceptually with `required_flags_a = 0x00000002`,
+`required_flags_b = 0x00000310`, timing enabled: candidates need bit 2 AND
+one of `0x10` (callback), `0x100` (orientation), `0x200` (movement). Helper
+states never become the logical current state. Per matching helper:
+
+- `flags & 0x100`: apply the one-shot orientation Vec3 (angle-wrapped) and
+  consume the helper's `input_condition` from the working input.
+- `flags & 0x200`: transform the one-shot local movement Vec3 through the
+  live actor orientation, add it to the CTL candidate position, and consume
+  the helper's `input_condition`.
+- `flags & 0x10` AND `flags & 0x00200000`: enqueue the deferred callback and
+  consume the helper's `input_condition`.
+- `flags & 0x40000000`: insert the helper's `input_condition` into the
+  sparse suppression set (it strips its own bits immediately, as the next
+  tick's scan would).
+
+After a helper consumes input the selection reruns against the **same**
+logical current state with the reduced working input, so multiple helpers
+fire within one tick; the loop is bounded for malformed data. After the
+helper pass, ordinary transition evaluation runs with both flag filters
+disabled.
+
+## 4.5 State end behavior — Confirmed — Runtime
+
+- Keyless **resident** states (`0x00008000` without bit 2) remain logical
+  current for their authored `transition_count` lifetime (phase units); at
+  its end they follow their authored lifecycle/goto behavior. A resident
+  state with no lifetime and no resolvable animation source waits for
+  input-driven transitions only.
 - `(state.flags & 0x00008001) == 0`: persistent/restart family. At the
   effective animation end with no winning transition, the **same state
   re-enters at phase 1.0**. This is how standing/walk/run loop — there is no
@@ -357,16 +420,56 @@ ticks, not milliseconds.
   transition, activate `goto_state` using `transition_value` as the authored
   phase seed.
 
-## 4.5 State activation — Runtime 0x004A7B80 — Confirmed — Runtime
+## 4.6 State activation — Runtime 0x004A7B80 — Confirmed — Runtime
 
-Central activation performs same-state restart bookkeeping
-(`new == old ? ++count : count = 0`; direct-control `0x81` forces zero),
-installs the state's animation resource, seeds the phase, computes the
-effective end, queues the authored callback (deferred, capacity 10), resets
-per-execution audio-marker firing state, and preserves null-animation
-transition states correctly (they never blindly reset the character pose).
+Central activation, in order:
 
-## 4.6 Pose application and root motion — Confirmed — Runtime/data
+1. **Transparent bit-2 chain resolution**: while the target has
+   `flags & 0x00000002`, the node is collected (never installed as logical
+   current), its `transition_value` propagates as the next phase seed and its
+   `goto_state` is followed. Cycles (chain longer than the bank's state
+   count) and null targets abort the activation, keeping the previous state.
+2. **Exit input-history mutations** of the previous logical state
+   (`0x00400000` drop oldest / `0x04000000` reset).
+3. **Entry side effects** of every collected transparent node, in chain
+   order (entry history mutations, callback queueing, `0x40000000`
+   suppression production).
+4. **Entry input-history mutations** of the final state (`0x00100000` drop
+   oldest / `0x01000000` reset / `0x10000000` clear latch).
+5. **Same-state restart bookkeeping** (`new == old ? ++count : count = 0`;
+   direct-control `0x81` forces zero).
+6. **Blend-count bookkeeping** when the previous logical state was a keyless
+   resident (`0x8000`) transition state: if the new state has
+   `flags & 0x00020000`, `blend_count = previous.transition_count`;
+   otherwise `blend_count = 1` when `previous.transition_count <
+   current_phase`, else `blend_count = previous.transition_count -
+   floor(current_phase) + 1`. The pose-blend interpolation kernel itself is
+   **unrecovered**: OpenNomad keeps it as an explicit neutral seam and models
+   only this state/phase/count timing.
+7. **Animation-source resolution**: the logical current state is the final
+   target; its presentation animation is the first key-bearing state reached
+   through its goto chain (the state itself when key-bearing). A valid
+   existing pose is never cleared merely because a state has no animation of
+   its own — the initial-state path (construction, compact 0x3F) uses the
+   same resolution, so a keyless `0x8000` initial state presents its
+   downstream key-bearing animation.
+8. **Phase seeding**: normally the incoming seed (or propagated transparent
+   `transition_value`). With `flags & 0x00010000` the phase synchronizes:
+
+```cpp
+float phase = (current_phase / current_effective_end)
+            * destination_effective_end + phase_offset;
+while (phase >= destination_effective_end)
+    phase = phase - destination_effective_end + 1.0F;  // 1-based wrap
+```
+
+   guarded against zero/invalid effective ends.
+9. Deferred callback queueing (capacity 10), `0x40000000` suppression
+   production, per-execution audio-marker reset, and presentation
+   (immediately with a character, deferred to the first enabled service
+   otherwise).
+
+## 4.7 Pose application and root motion — Confirmed — Runtime/data
 
 - Channels map to model objects by `Animation3DAChannel::channel_id ==
   MeshDescriptor::script_id` — never by vector index or `mesh_id`.
@@ -376,20 +479,30 @@ transition states correctly (they never blindly reset the character pose).
   result is transformed through the character's live root orientation before
   updating the candidate character position. Lateral (sidestep) displacement
   is exactly this generic root motion; there is no separate strafe velocity.
-- The orientation auxiliary block applies its authored principal Euler delta
-  with angle wrapping (helpers 0x0045C080/0x0045C1B0); the local-movement
-  block transforms its local vector through the live orientation into the
-  candidate position (0x0045C2F0).
+- **One-shot** auxiliary orientation (`0x100`) and local-movement (`0x200`)
+  blocks belong to the transient helper pass (§4.4); presentation never
+  applies them wholesale.
+- **Continuous** auxiliary blocks (`0x40` orientation, `0x80` movement) use
+  the block's +0x00/+0x04 floats as a phase window `[start, end]`: each tick
+  the authored Vec3 scales by the traversed interval's overlap with the
+  window (`min(current, end) - max(previous, start)`, clamped at zero) and
+  applies for that tick only — orientation with angle wrapping (helpers
+  0x0045C080/0x0045C1B0), movement transformed through the live orientation
+  into the candidate position (0x0045C2F0).
 - OpenNomad's Phase 4.1 motion model keeps a candidate/accepted position
   pair: CTL updates the candidate full XYZ and Phase 4.1 accepts it directly;
   Phase 4.2 inserts gravity/collision/floor resolution between the two
   (**OpenNomad-only** seam).
 
-## 4.7 Callbacks — Runtime 0x0045D0E0 queue — Confirmed — Runtime
+## 4.8 Callbacks — Runtime 0x0045D0E0 queue — Confirmed — Runtime
 
-Callbacks are queued at state activation and dispatched by a later
-character/frame service — never recursively inside transition evaluation.
-Unknown names log once and remain nonfatal. Recovered subset:
+Callbacks are queued at state activation (and by the transient helper pass)
+and drained **after each logical 30 Hz tick** inside the service accumulator
+loop — a callback produced during logical tick N takes effect before tick
+N+1. They stay deferred relative to transition evaluation (never invoked
+recursively inside evaluator code), leaving the Phase 4.2 seam `CTL tick ->
+callbacks -> [physics] -> [contacts] -> next CTL tick` intact. Unknown names
+log once and remain nonfatal. Recovered subset:
 
 | Name | Address | Behavior |
 | ---- | ------- | -------- |
@@ -423,10 +536,16 @@ The structured selected camera is **frame-published** state, not persistent
 state: each scenario update clears the scene's selected camera, services
 structured scripts (active `Script_SelectCamera` / camera-editing commands
 republish), and publishes the result to the live camera controller. A script
-that stopped publishing leaves no stale selection. When no structured camera
-is live and controller mode 13 is active with an established player
-character, the camera controller logically switches to mode 0 (the normal
-automatic player camera; its follow mathematics are Phase 4.3).
+that stopped publishing leaves no stale selection. The camera controller
+logically switches mode 13 to mode 0 (the normal automatic player camera;
+its follow mathematics are Phase 4.3) only when **all** of these hold:
+
+- the structured camera source ended (none published this frame),
+- the camera controller mode is 13,
+- the legacy `[Preferences] autocameraplayer` value is nonzero (retail
+  default `"0"`; OpenNomad models it as explicit camera/session state
+  defaulting to false, never aliased to the fight camera), and
+- a current player character exists.
 
 ---
 

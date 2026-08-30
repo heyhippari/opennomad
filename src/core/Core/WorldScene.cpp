@@ -1075,18 +1075,22 @@ void WorldScene::update(const float delta_time, const Input::InputManager& input
     m_scenarios->world_presentation().enqueue_camera_completion(completed.value());
   }
 
-  // Runtime's structured camera is frame-published: when no structured
-  // script republished a camera this frame and controller mode 13 is active,
-  // ownership logically releases to mode 0 (automatic player camera; the
-  // actual follow mathematics are Phase 4.3). The renderer keeps the last
-  // valid pose as a presentation fallback inside release_structured_controller.
+  // Runtime's structured camera is frame-published: ownership of controller
+  // mode 13 logically releases to mode 0 (automatic player camera; the actual
+  // follow mathematics are Phase 4.3) only when no structured script
+  // republished a camera this frame AND the legacy [Preferences]
+  // autocameraplayer gate is enabled AND a current player character exists.
+  // The renderer keeps the last valid pose as a presentation fallback inside
+  // release_structured_controller.
   if (m_camera.active_controller_mode() == 13U) {
     const ScenarioRuntime* const runtime{
         context == nullptr || context->runtime == nullptr ? nullptr : context->runtime.get()};
     const bool structured_published{
         runtime != nullptr && runtime->selected_structured_camera() != nullptr};
-    if (!structured_published && m_scenarios != nullptr &&
-        m_scenarios->controlled_character().has_value()) {
+    const bool player_character_exists{
+        m_scenarios != nullptr && m_scenarios->controlled_character().has_value()};
+    if (m_camera.should_release_structured_controller(
+            structured_published, player_character_exists)) {
       m_camera.release_structured_controller();
       App::Log::debug(LogCategory::Renderer,
           "structured camera source ended — camera controller released to mode 0");

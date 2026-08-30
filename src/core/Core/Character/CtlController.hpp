@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -103,8 +104,10 @@ class CtlController {
   /// Controller/input flag 0x08: swaps profile slots 0 and 1.
   void set_swap_turn_slots(bool enabled);
 
-  /// Adds one mask to the fixed 20-entry transition/input suppression set.
-  /// Kept separate from the 16-entry canonical input history.
+  /// Adds one mask to the fixed sparse 20-entry transition/input suppression
+  /// set: mask 0 is ignored, duplicates are rejected, and the mask occupies
+  /// the first zero slot (no reordering, no compaction). Kept separate from
+  /// the 16-entry canonical input history.
   void add_input_suppression(std::uint32_t mask);
 
   /// Advances the controller in the recovered 30 Hz logical domain using a
@@ -151,8 +154,17 @@ class CtlController {
   [[nodiscard]] std::span<const std::uint32_t> input_history() const {
     return {m_input_history.data(), m_history_count};
   }
+  /// Number of nonzero entries in the sparse suppression set (diagnostics;
+  /// never used as an iteration boundary by the service scan).
   [[nodiscard]] std::size_t suppression_count() const {
-    return m_suppression_count;
+    return static_cast<std::size_t>(
+        std::ranges::count_if(m_suppression, [](const std::uint32_t mask) {
+          return mask != 0U;
+        }));
+  }
+  /// Raw view of the complete fixed sparse suppression array (diagnostics).
+  [[nodiscard]] std::span<const std::uint32_t> suppression_slots() const {
+    return m_suppression;
   }
   [[nodiscard]] bool transition_pending() const {
     return m_pending_transition.has_value();
@@ -187,6 +199,20 @@ class CtlController {
   [[nodiscard]] const App::Runtime::Vec3& accepted_translation() const {
     return m_accepted_translation;
   }
+  /// Presentation source state of a keyless resident (0x8000) logical state:
+  /// the first key-bearing state reached through its goto chain. Equals the
+  /// logical current state for ordinary key-bearing states; null when the
+  /// chain is unresolvable.
+  [[nodiscard]] const Omikron::CtlState* animation_source_state() const {
+    return m_animation_source;
+  }
+  /// Recovered remaining blend-count bookkeeping when the previous logical
+  /// state was a keyless resident (0x8000) transition state. The pose-blend
+  /// interpolation kernel itself is an unrecovered neutral seam; only the
+  /// state/phase/count timing is modeled.
+  [[nodiscard]] std::uint32_t transition_blend_count() const {
+    return m_transition_blend_count;
+  }
   [[nodiscard]] std::size_t markers_fired_this_execution() const;
 
  private:
@@ -201,17 +227,35 @@ class CtlController {
   /// Runtime 0x0045A9A0: fixed 16-entry history reset, seeding the canonical
   /// no-input sentinel as the only entry.
   void reset_input_history();
-  /// Drops the oldest history entry and shifts remaining entries left.
+  /// Drops the oldest history entry and shifts remaining entries left. With a
+  /// single entry the entry is cleared and the count becomes zero; only an
+  /// empty history is a no-op.
   void drop_oldest_input_history();
+  /// Clears the complete fixed sparse 20-slot suppression array.
+  void reset_input_suppression();
+  /// Recovered entry input-history mutations of `state` (0x00100000 drop
+  /// oldest, 0x01000000 reset to the no-input singleton, 0x10000000 clear the
+  /// current-input latch to 0).
+  void apply_entry_input_history_mutations(const Omikron::CtlState& state);
+  /// Queues the state's deferred callback (flags & 0x10), capacity 10.
+  void queue_state_callback(const Omikron::CtlState& state);
+  /// Resolves the presentation animation source of `state`: the state itself
+  /// when key-bearing, otherwise the first key-bearing state reached through
+  /// its goto chain. Cycle/null guarded; returns null when unresolvable.
+  [[nodiscard]] const Omikron::CtlState* resolve_animation_source(
+      const Omikron::CtlState& state) const;
   /// Runtime 0x004A7B80: central state activation. Same-state restart
-  /// bookkeeping, animation install, phase seeding, callback queueing and
-  /// per-execution marker reset. With a null character the presentation half
-  /// is deferred to the first enabled service.
+  /// bookkeeping, transparent bit-2 chain resolution, keyless 0x8000
+  /// animation-source resolution, phase seeding/synchronization, blend-count
+  /// bookkeeping, callback queueing, suppression production and per-execution
+  /// marker reset. With a null character the presentation half is deferred to
+  /// the first enabled service.
   void activate_state(const Omikron::CtlState& state, float phase, RuntimeCharacter* character);
-  /// Installs the current state's authored animation as the character's base
-  /// pose (fresh instance-local hierarchy from immutable model defaults,
-  /// channels matched by MeshDescriptor::script_id) and applies the authored
-  /// auxiliary orientation/local-movement blocks.
+  /// Installs the resolved animation source as the character's base pose
+  /// (fresh instance-local hierarchy from immutable model defaults, channels
+  /// matched by MeshDescriptor::script_id). Auxiliary one-shot/continuous
+  /// side effects deliberately do NOT run here: one-shots belong to the
+  /// transient-helper pass and continuous blocks apply per tick.
   void present_current_state(RuntimeCharacter& character);
   /// Samples object rotations at `phase`, resolves runtime transforms and
   /// rebuilds posed geometry.
@@ -219,6 +263,15 @@ class CtlController {
       RuntimeCharacter& character, const Omikron::Animation3DA& animation, float phase);
   /// One logical 30 Hz controller tick.
   void tick_once(std::uint32_t profile_input, RuntimeCharacter& character);
+  /// Transient helper pre-pass (flags 0x2 & 0x310 candidates): one-shot
+  /// orientation/movement, deferred callbacks and suppression production
+  /// against the same logical current state, repeated with the reduced
+  /// working input until no helper matches (bounded for malformed data).
+  void run_transient_helpers(std::uint32_t& working_input, RuntimeCharacter& character);
+  /// Continuous auxiliary blocks (flags 0x40 orientation / 0x80 movement):
+  /// applies the authored Vec3 scaled by the phase-window overlap of the
+  /// traversed animation interval [previous, current], this tick only.
+  void service_continuous_auxiliary(float previous, float current, RuntimeCharacter& character);
   /// Services one-shot animation markers crossed by [previous, current].
   void service_audio_markers(const Omikron::CtlState& state, float previous, float current);
   void drain_callbacks(RuntimeCharacter& character);
@@ -232,17 +285,27 @@ class CtlController {
   std::string m_resource_name;
 
   const Omikron::CtlMove* m_current_move{nullptr};
+  /// Logical current state. Keyless resident (0x8000) states remain logical
+  /// current while their presentation animation comes from
+  /// `m_animation_source`.
   const Omikron::CtlState* m_current_state{nullptr};
+  /// Presentation source state: the first key-bearing state reached through
+  /// the logical state's goto chain (the state itself when key-bearing).
+  const Omikron::CtlState* m_animation_source{nullptr};
   const Omikron::Animation3DA* m_animation{nullptr};
   float m_previous_progress{1.0F};
   float m_current_progress{1.0F};
   float m_effective_end{0.0F};
+  /// Recovered blend-count bookkeeping for transitions out of keyless
+  /// resident (0x8000) states; the pose-blend kernel is a neutral seam.
+  std::uint32_t m_transition_blend_count{0};
 
   std::uint32_t m_current_input{K_CTL_NO_INPUT};
   std::array<std::uint32_t, K_INPUT_HISTORY_CAPACITY> m_input_history{};
   std::size_t m_history_count{0};
+  /// Fixed sparse 20-slot suppression set: zero slots are empty, entries are
+  /// never reordered or compacted.
   std::array<std::uint32_t, K_SUPPRESSION_CAPACITY> m_suppression{};
-  std::size_t m_suppression_count{0};
   std::optional<PendingTransition> m_pending_transition;
   std::uint32_t m_same_state_restart_count{0};
   std::uint16_t m_priority_threshold{0xFFFFU};

@@ -219,7 +219,8 @@ std::unique_ptr<App::Sfx::Runtime> create_runtime(
 TEST_SUITE("Core::Sfx::Runtime") {
   TEST_CASE("static emitters bind by first-four-byte prefix and follow live object positions") {
     FakeHost host;
-    host.static_objects = {App::Sfx::StaticEmitterObject{.object_index = 0U, .name = "gril01", .flags = 0x40000000U},
+    host.static_objects = {
+        App::Sfx::StaticEmitterObject{.object_index = 0U, .name = "gril01", .flags = 0x40000000U},
         App::Sfx::StaticEmitterObject{.object_index = 1U, .name = "gril02", .flags = 0x00000000U},
         App::Sfx::StaticEmitterObject{.object_index = 2U, .name = "neon01", .flags = 0x40000000U},
         App::Sfx::StaticEmitterObject{.object_index = 3U, .name = "grip01", .flags = 0x40000000U}};
@@ -250,9 +251,7 @@ TEST_SUITE("Core::Sfx::Runtime") {
     CHECK(runtime->static_emitter_state(1).definition_id == 10);
     runtime->step();
     REQUIRE(host.spawned.size() >= 2U);
-    const auto has_position = [&host](const float x,
-                                  const float y,
-                                  const float z) {
+    const auto has_position = [&host](const float x, const float y, const float z) {
       for (const App::Sprite::SpriteHandle handle : host.spawned) {
         const App::Sprite::SpriteInstance* sprite{host.pool.find(handle)};
         if (sprite == nullptr) {

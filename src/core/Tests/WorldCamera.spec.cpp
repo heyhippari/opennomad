@@ -542,6 +542,30 @@ TEST_SUITE("Core::WorldCameraSystem") {
     CHECK_EQ(camera.active_controller_mode().value_or(0xFFFFU), 0U);
   }
 
+  TEST_CASE("autocameraplayer gates the mode-13 release to mode 0") {
+    WorldCameraSystem camera;
+    camera.apply_command(WorldCameraCommand{
+        .kind = App::WorldCameraCommandKind::k_controller_mode, .controller_mode = 13U});
+    REQUIRE_EQ(camera.active_controller_mode().value_or(0U), 13U);
+
+    // Legacy default "0": no release even with the source ended and a player
+    // character present.
+    CHECK_FALSE(camera.autocameraplayer());
+    CHECK_FALSE(camera.should_release_structured_controller(false, true));
+
+    // Enabled: the release still requires the structured source to have ended
+    // and a current player character to exist.
+    camera.set_autocameraplayer(true);
+    CHECK(camera.should_release_structured_controller(false, true));
+    CHECK_FALSE(camera.should_release_structured_controller(true, true));
+    CHECK_FALSE(camera.should_release_structured_controller(false, false));
+
+    // Without mode 13 active there is nothing to release.
+    WorldCameraSystem plain;
+    plain.set_autocameraplayer(true);
+    CHECK_FALSE(plain.should_release_structured_controller(false, true));
+  }
+
   TEST_CASE("Tracked mode-12 transition exposes its exact completion once") {
     WorldCameraSystem camera;
     camera.apply_command(camera_2172());

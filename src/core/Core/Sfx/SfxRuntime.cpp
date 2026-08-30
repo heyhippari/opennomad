@@ -187,8 +187,8 @@ Diagnostics Runtime::diagnostics() const {
       static_cast<std::size_t>(std::ranges::count_if(m_nodes, [](const NodeState& node) {
         return node.active();
       }))};
-  const std::size_t active_static_emitters{
-      static_cast<std::size_t>(std::ranges::count_if(m_static_emitters, [](const StaticEmitterState& state) {
+  const std::size_t active_static_emitters{static_cast<std::size_t>(
+      std::ranges::count_if(m_static_emitters, [](const StaticEmitterState& state) {
         return state.active;
       }))};
   return Diagnostics{.loaded = true,
@@ -220,8 +220,8 @@ float Runtime::random01() {
 
 std::size_t Runtime::random_int32() {
   if (m_injected_random) {
-    return static_cast<std::size_t>(std::min<std::size_t>(32767U,
-        static_cast<std::size_t>(std::clamp(m_injected_random(), 0.0F, 1.0F) * 32767.0F)));
+    return static_cast<std::size_t>(std::min<std::size_t>(
+        32767U, static_cast<std::size_t>(std::clamp(m_injected_random(), 0.0F, 1.0F) * 32767.0F)));
   }
   return static_cast<std::size_t>(m_runtime_rand(m_generator));
 }
@@ -608,8 +608,7 @@ void Runtime::bind_static_emitters() {
       if (m_static_emitters.size() >= 256U) {
         if (!m_static_emitter_capacity_warned) {
           m_static_emitter_capacity_warned = true;
-          App::Log::warn(
-              LogCategory::Scenario, "Static SFX emitter capacity {} reached", 256U);
+          App::Log::warn(LogCategory::Scenario, "Static SFX emitter capacity {} reached", 256U);
         }
         break;
       }
@@ -630,8 +629,7 @@ void Runtime::bind_static_emitters() {
         const float positive_interval{record.emission_interval};
         const int integral_interval{static_cast<int>(positive_interval)};
         if (integral_interval > 0) {
-          const std::size_t interval_seed{
-              static_cast<std::size_t>(integral_interval)};
+          const std::size_t interval_seed{static_cast<std::size_t>(integral_interval)};
           state.interval_phase = static_cast<float>(random_int32() % interval_seed);
         }
       }

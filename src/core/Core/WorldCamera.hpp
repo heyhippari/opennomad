@@ -51,6 +51,24 @@ class WorldCameraSystem {
   /// claims a scripted source.
   void release_structured_controller();
 
+  /// Legacy [Preferences] autocameraplayer gate (retail default "0").
+  /// Modern explicit camera/session state: default false, consumers and
+  /// tests set it explicitly. It is NOT aliased to the fight camera.
+  void set_autocameraplayer(bool enabled) {
+    m_autocameraplayer = enabled;
+  }
+  [[nodiscard]] bool autocameraplayer() const {
+    return m_autocameraplayer;
+  }
+  /// Recovered mode-13 -> mode-0 release predicate: the structured camera
+  /// source ended AND controller mode 13 is active AND autocameraplayer is
+  /// enabled AND a current player character exists.
+  [[nodiscard]] bool should_release_structured_controller(
+      const bool structured_source_live, const bool player_character_exists) const {
+    return !structured_source_live && m_active_controller_mode == 13U && m_autocameraplayer &&
+           player_character_exists;
+  }
+
   /// Installs a diagnostic camera which frames the loaded decor. It is used
   /// only until the first scripted IAM camera is received.
   void set_fallback_pose(const std::array<float, 3>& center, float radius);
@@ -139,6 +157,8 @@ class WorldCameraSystem {
   bool m_has_scripted_pose{false};
   std::optional<std::uint16_t> m_active_camera_id;
   std::optional<std::uint16_t> m_active_controller_mode;
+  /// Legacy [Preferences] autocameraplayer gate; default false.
+  bool m_autocameraplayer{false};
   float m_controller_transition_elapsed{0.0F};
   float m_controller_transition_duration{0.0F};
   std::optional<WorldCameraOperationCompletion> m_active_operation;

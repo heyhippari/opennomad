@@ -29,6 +29,13 @@ struct MarkerSpec {
   std::uint16_t hid{0};
 };
 
+/// Auxiliary block: +0x00/+0x04 phase-window bounds plus the authored Vec3.
+struct AuxBlockSpec {
+  float window_start{0.0F};
+  float window_end{0.0F};
+  App::Runtime::Vec3 delta{};
+};
+
 struct CtlStateSpec {
   std::uint32_t id{0};
   std::uint32_t flags{0};
@@ -38,14 +45,16 @@ struct CtlStateSpec {
   float transition_value{0.0F};
   std::uint32_t goto_id{0};
   std::uint16_t animation_mode{0};
+  std::uint16_t transition_count{0};
+  std::uint16_t phase_offset{0};
   std::uint16_t defer_ticks{0};
   std::uint16_t priority{0};
   bool key_bearing{false};
   std::string key;
   std::vector<std::uint32_t> child_refs;
   std::vector<std::uint32_t> parent_refs;
-  std::optional<App::Runtime::Vec3> orientation;
-  std::optional<App::Runtime::Vec3> movement;
+  std::optional<AuxBlockSpec> orientation;
+  std::optional<AuxBlockSpec> movement;
   std::string callback;
   std::vector<MarkerSpec> markers;
 };
@@ -57,8 +66,12 @@ struct CtlMoveSpec {
   std::vector<CtlStateSpec> states;
 };
 
-/// No-animation-key flag pair for transition-only synthetic states.
-constexpr std::uint32_t K_NO_KEY{0x8002U};
+/// Resident keyless flag (0x8000 without transparent bit2): no serialized
+/// animation key; remains logical current with its animation resolved through
+/// the goto chain. This is the fixture default for plain keyless states.
+constexpr std::uint32_t K_NO_KEY{0x8000U};
+/// Transparent chained control/goto state (bit2): never stays logical current.
+constexpr std::uint32_t K_TRANSPARENT{0x2U};
 /// Default-state flag within a move.
 constexpr std::uint32_t K_DEFAULT_STATE{0x20U};
 /// Exact-input candidate flag.
@@ -68,6 +81,25 @@ constexpr std::uint32_t K_FALLBACK_ENABLE{0x00002000U};
 constexpr std::uint32_t K_FALLBACK_CANDIDATE{0x00004000U};
 /// Deferred callback flag.
 constexpr std::uint32_t K_CALLBACK{0x10U};
+/// Helper one-shot blocks and the transient callback-helper gate.
+constexpr std::uint32_t K_HELPER_ORIENTATION{0x100U};
+constexpr std::uint32_t K_HELPER_MOVEMENT{0x200U};
+constexpr std::uint32_t K_HELPER_TRANSIENT_CALLBACK{0x00200000U};
+/// Continuous (phase-windowed) auxiliary block flags.
+constexpr std::uint32_t K_CONTINUOUS_ORIENTATION{0x40U};
+constexpr std::uint32_t K_CONTINUOUS_MOVEMENT{0x80U};
+/// Suppression producer flag.
+constexpr std::uint32_t K_SUPPRESSION_PRODUCER{0x40000000U};
+/// Phase-synchronized transition / blend-inherit flags.
+constexpr std::uint32_t K_PHASE_SYNC{0x00010000U};
+constexpr std::uint32_t K_BLEND_INHERIT{0x00020000U};
+/// Input-history mutation flags.
+constexpr std::uint32_t K_ENTRY_DROP_HISTORY{0x00100000U};
+constexpr std::uint32_t K_POST_SERVICE_DROP_HISTORY{0x00800000U};
+constexpr std::uint32_t K_ENTRY_RESET_HISTORY{0x01000000U};
+constexpr std::uint32_t K_EXIT_DROP_HISTORY{0x00400000U};
+constexpr std::uint32_t K_EXIT_RESET_HISTORY{0x04000000U};
+constexpr std::uint32_t K_ENTRY_CLEAR_LATCH{0x10000000U};
 
 /// Minimal ordinary single-channel 3DA payload: one reference translation
 /// sample followed by uniform per-interval root-motion increments and
@@ -140,8 +172,8 @@ Buffer build_ctl(
           .u32(0)
           .u32(0)
           .u16(state.animation_mode)
-          .u16(0)
-          .u16(0)
+          .u16(state.transition_count)
+          .u16(state.phase_offset)
           .u16(state.defer_ticks)
           .u16(state.priority)
           .u8(static_cast<std::uint8_t>(state.parent_refs.size()))
@@ -172,15 +204,17 @@ Buffer build_ctl(
   });
   each_state([&ctl](const CtlStateSpec& state) {
     if (state.orientation.has_value()) {
-      ctl.f32(0.0F).f32(0.0F);
-      ctl.f32(state.orientation->x).f32(state.orientation->y).f32(state.orientation->z);
+      ctl.f32(state.orientation->window_start).f32(state.orientation->window_end);
+      ctl.f32(state.orientation->delta.x)
+          .f32(state.orientation->delta.y)
+          .f32(state.orientation->delta.z);
       ctl.f32(0.0F);
     }
   });
   each_state([&ctl](const CtlStateSpec& state) {
     if (state.movement.has_value()) {
-      ctl.f32(0.0F).f32(0.0F);
-      ctl.f32(state.movement->x).f32(state.movement->y).f32(state.movement->z);
+      ctl.f32(state.movement->window_start).f32(state.movement->window_end);
+      ctl.f32(state.movement->delta.x).f32(state.movement->delta.y).f32(state.movement->delta.z);
     }
   });
   each_state([&ctl](const CtlStateSpec& state) {
@@ -680,50 +714,69 @@ TEST_SUITE("Core::Character::CtlController") {
     CHECK_FALSE(character.transform.translation.z == doctest::Approx(0.0F));
   }
 
-  TEST_CASE("authored orientation and local-movement blocks apply at activation") {
+  TEST_CASE("transient helpers: one-shot orientation consumes input without becoming current") {
     const std::vector<CtlMoveSpec> moves{CtlMoveSpec{.id = 1,
         .flags = 1,
         .name = "Aux",
         .states = {
             CtlStateSpec{.id = 1, .flags = K_NO_KEY | K_DEFAULT_STATE, .child_refs = {2, 4}},
             CtlStateSpec{.id = 2,
-                .flags = K_NO_KEY | 0x0100U,
+                .flags = K_TRANSPARENT | K_HELPER_ORIENTATION,
                 .input = 0x1U,
-                .child_refs = {3},
-                .orientation = App::Runtime::Vec3{.x = 0.0F, .y = 25.0F, .z = 0.0F}},
-            CtlStateSpec{.id = 3,
-                .flags = K_NO_KEY | 0x0080U,
-                .input = 0x2U,
-                .movement = App::Runtime::Vec3{.x = 0.0F, .y = 0.0F, .z = 30.0F}},
+                .goto_id = 1,
+                .orientation = AuxBlockSpec{.delta = {.x = 0.0F, .y = 25.0F, .z = 0.0F}}},
             CtlStateSpec{.id = 4,
-                .flags = K_NO_KEY | 0x0100U,
+                .flags = K_TRANSPARENT | K_HELPER_ORIENTATION,
                 .input = 0x8U,
-                .orientation = App::Runtime::Vec3{.x = 0.0F, .y = -60.0F, .z = 0.0F}},
+                .goto_id = 1,
+                .orientation = AuxBlockSpec{.delta = {.x = 0.0F, .y = -60.0F, .z = 0.0F}}},
         }}};
     auto created{App::Character::CtlController::create(make_bank(moves), "TEST")};
     REQUIRE(created.has_value());
     App::Character::RuntimeCharacter character{make_character()};
     character.set_principal_orientation({.x = 0.0F, .y = 350.0F, .z = 0.0F});
 
-    // Turn-left style state: the authored +25 degree yaw delta wraps 375 -> 15.
+    // Turn-left style helper: the authored +25 degree yaw delta wraps 375 -> 15.
+    // The helper never becomes the logical current state.
     created->service(K_TICK, 0x1U, character);
-    CHECK_EQ(created->current_state()->state_id, 2U);
+    CHECK_EQ(created->current_state()->state_id, 1U);
     CHECK(character.principal_orientation_degrees.y == doctest::Approx(15.0F));
 
-    // Local +Z 30 transforms through the updated live orientation.
+    // A negative authored delta: 15 - 60 wraps to -45.
+    created->service(K_TICK, 0x8U, character);
+    CHECK_EQ(created->current_state()->state_id, 1U);
+    CHECK(character.principal_orientation_degrees.y == doctest::Approx(-45.0F));
+
+    // Helpers re-fire per tick while their condition matches (authored banks
+    // use the 0x40000000 suppression producer when retriggering is unwanted).
+    created->service(K_TICK, 0x8U, character);
+    CHECK(character.principal_orientation_degrees.y == doctest::Approx(-105.0F));
+  }
+
+  TEST_CASE("transient helpers: one-shot movement transforms through the live orientation") {
+    const std::vector<CtlMoveSpec> moves{CtlMoveSpec{.id = 1,
+        .flags = 1,
+        .name = "Aux",
+        .states = {
+            CtlStateSpec{.id = 1, .flags = K_NO_KEY | K_DEFAULT_STATE, .child_refs = {3}},
+            CtlStateSpec{.id = 3,
+                .flags = K_TRANSPARENT | K_HELPER_MOVEMENT,
+                .input = 0x2U,
+                .goto_id = 1,
+                .movement = AuxBlockSpec{.delta = {.x = 0.0F, .y = 0.0F, .z = 30.0F}}},
+        }}};
+    auto created{App::Character::CtlController::create(make_bank(moves), "TEST")};
+    REQUIRE(created.has_value());
+    App::Character::RuntimeCharacter character{make_character()};
+    character.set_principal_orientation({.x = 0.0F, .y = 30.0F, .z = 0.0F});
+
+    // Local +Z 30 transforms through the live orientation; no state change.
     created->service(K_TICK, 0x2U, character);
-    CHECK_EQ(created->current_state()->state_id, 3U);
+    CHECK_EQ(created->current_state()->state_id, 1U);
     const App::Runtime::Vec3 expected{App::Runtime::transform_vector(
         App::Runtime::Vec3{.x = 0.0F, .y = 0.0F, .z = 30.0F}, character.live_root_orientation())};
     CHECK(character.transform.translation.x == doctest::Approx(expected.x));
     CHECK(character.transform.translation.z == doctest::Approx(expected.z));
-
-    // A negative authored delta: 15 - 60 wraps to -45.
-    static_cast<void>(created->select_move(1));
-    character.set_principal_orientation({.x = 0.0F, .y = 15.0F, .z = 0.0F});
-    created->service(K_TICK, 0x8U, character);
-    CHECK_EQ(created->current_state()->state_id, 4U);
-    CHECK(character.principal_orientation_degrees.y == doctest::Approx(-45.0F));
   }
 
   TEST_CASE("MDWALK snapshots the restart count; direct control keeps zero") {
@@ -1025,8 +1078,653 @@ TEST_SUITE("Core::Character::CtlController") {
     created->add_input_suppression(0x10U);
     CHECK_LT(created->suppression_count(), 20U);
   }
+
+  TEST_CASE("input suppression: expired slots stay holes and later entries never move") {
+    auto created{App::Character::CtlController::create(
+        make_simple_bank(make_3da(10), make_3da(10)), "TEST")};
+    REQUIRE(created.has_value());
+    App::Character::RuntimeCharacter character{make_character()};
+
+    created->add_input_suppression(0x1U);
+    created->add_input_suppression(0x2U);
+    created->add_input_suppression(0x4U);
+    REQUIRE_EQ(created->suppression_slots()[0], 0x1U);
+    REQUIRE_EQ(created->suppression_slots()[1], 0x2U);
+    REQUIRE_EQ(created->suppression_slots()[2], 0x4U);
+
+    // Input 0x5 keeps masks 0x1/0x4 matching but expires the middle 0x2 mask.
+    // The hole stays a hole; the later 0x4 entry does NOT move into it.
+    created->service(K_TICK, 0x5U, character);
+    CHECK_EQ(created->suppression_slots()[0], 0x1U);
+    CHECK_EQ(created->suppression_slots()[1], 0x0U);
+    CHECK_EQ(created->suppression_slots()[2], 0x4U);
+    CHECK_EQ(created->suppression_count(), 2U);
+
+    // A new insertion fills the FIRST zero slot without reordering.
+    created->add_input_suppression(0x8U);
+    CHECK_EQ(created->suppression_slots()[0], 0x1U);
+    CHECK_EQ(created->suppression_slots()[1], 0x8U);
+    CHECK_EQ(created->suppression_slots()[2], 0x4U);
+
+    // An expired mask can be reinserted after its release.
+    created->add_input_suppression(0x2U);
+    CHECK_EQ(created->suppression_count(), 4U);
+  }
+
+  TEST_CASE("input suppression: move selection resets the physical slots") {
+    auto created{App::Character::CtlController::create(
+        make_simple_bank(make_3da(10), make_3da(10)), "TEST")};
+    REQUIRE(created.has_value());
+    App::Character::RuntimeCharacter character{make_character()};
+
+    created->add_input_suppression(0x1U);
+    created->add_input_suppression(0x1000U);
+    CHECK_EQ(created->suppression_count(), 2U);
+
+    // Compact 0x3F clears the ENTIRE 20-slot array, not merely a count.
+    REQUIRE(created->select_move(100).has_value());
+    for (const std::uint32_t slot : created->suppression_slots()) {
+      CHECK_EQ(slot, 0x0U);
+    }
+    CHECK_EQ(created->suppression_count(), 0U);
+
+    // Masks can be reinserted after the reset and work immediately.
+    created->add_input_suppression(0x4U);
+    created->service(K_TICK, 0x4U, character);
+    CHECK_EQ(created->current_input(), App::Character::K_CTL_NO_INPUT);
+    CHECK_EQ(created->current_state()->state_id, 1U);
+  }
+
+  TEST_CASE("input history: singleton drop clears the entry (count becomes zero)") {
+    const std::vector<CtlMoveSpec> moves{CtlMoveSpec{.id = 1,
+        .flags = 1,
+        .name = "History",
+        .states = {
+            CtlStateSpec{.id = 1,
+                .flags = K_DEFAULT_STATE | 0x1U,
+                .transition_value = 1.0F,
+                .goto_id = 2,
+                .key_bearing = true,
+                .key = "LOOP"},
+            CtlStateSpec{.id = 2, .flags = K_NO_KEY | K_ENTRY_DROP_HISTORY, .goto_id = 2},
+        }}};
+    auto created{
+        App::Character::CtlController::create(make_bank(moves, {{"LOOP", make_3da(1)}}), "TEST")};
+    REQUIRE(created.has_value());
+    App::Character::RuntimeCharacter character{make_character()};
+
+    // Initial history is the [NO_INPUT] singleton. The one-frame state 1
+    // ends without an input change, so the goto enters state 2 with the
+    // singleton history intact.
+    REQUIRE_EQ(created->input_history().size(), 1U);
+    created->service(K_TICK, 0x0U, character);
+    CHECK_EQ(created->current_state()->state_id, 2U);
+    // 0x00100000 on entry with a singleton: the sole entry is cleared and the
+    // count becomes zero (only an empty history is a no-op).
+    CHECK_EQ(created->input_history().size(), 0U);
+  }
+
+  TEST_CASE("input history: entry drop and entry reset are distinct mutations") {
+    const std::vector<CtlMoveSpec> moves{CtlMoveSpec{.id = 1,
+        .flags = 1,
+        .name = "History",
+        .states = {
+            CtlStateSpec{.id = 1, .flags = K_NO_KEY | K_DEFAULT_STATE, .child_refs = {2, 3}},
+            CtlStateSpec{
+                .id = 2, .flags = K_NO_KEY | K_ENTRY_DROP_HISTORY, .input = 0x4U, .goto_id = 2},
+            CtlStateSpec{
+                .id = 3, .flags = K_NO_KEY | K_ENTRY_RESET_HISTORY, .input = 0x8U, .goto_id = 3},
+        }}};
+    auto created{App::Character::CtlController::create(make_bank(moves), "TEST")};
+    REQUIRE(created.has_value());
+    App::Character::RuntimeCharacter character{make_character()};
+
+    // Build a 3-entry history: [NO_INPUT, 0x1, 0x2].
+    created->service(K_TICK, 0x1U, character);
+    created->service(K_TICK, 0x2U, character);
+    REQUIRE_EQ(created->input_history().size(), 3U);
+
+    // 0x00100000 on entry drops exactly the oldest entry. The 0x4 change is
+    // recorded before the transition, so [NO_INPUT, 0x1, 0x2, 0x4] drops to
+    // [0x1, 0x2, 0x4].
+    created->service(K_TICK, 0x4U, character);
+    CHECK_EQ(created->current_state()->state_id, 2U);
+    CHECK_EQ(created->input_history().size(), 3U);
+    CHECK_EQ(created->input_history()[0], 0x1U);
+    CHECK_EQ(created->input_history()[1], 0x2U);
+    CHECK_EQ(created->input_history()[2], 0x4U);
+
+    // Rebuild, then 0x01000000 on entry RESETS to the no-input singleton.
+    REQUIRE(created->select_move(1).has_value());
+    created->service(K_TICK, 0x1U, character);
+    created->service(K_TICK, 0x2U, character);
+    REQUIRE_EQ(created->input_history().size(), 3U);
+    created->service(K_TICK, 0x8U, character);
+    CHECK_EQ(created->current_state()->state_id, 3U);
+    CHECK_EQ(created->input_history().size(), 1U);
+    CHECK_EQ(created->input_history()[0], App::Character::K_CTL_NO_INPUT);
+  }
+
+  TEST_CASE("input history: exit drop and exit reset are distinct mutations") {
+    const std::vector<CtlMoveSpec> moves{CtlMoveSpec{.id = 1,
+        .flags = 1,
+        .name = "History",
+        .states = {
+            CtlStateSpec{.id = 1,
+                .flags = K_NO_KEY | K_DEFAULT_STATE | K_EXIT_DROP_HISTORY,
+                .child_refs = {2}},
+            CtlStateSpec{.id = 2, .flags = K_NO_KEY, .input = 0x4U, .goto_id = 2},
+        }}};
+    auto created{App::Character::CtlController::create(make_bank(moves), "TEST")};
+    REQUIRE(created.has_value());
+    App::Character::RuntimeCharacter character{make_character()};
+
+    // History [NO_INPUT, 0x1]; then the 0x4 change records before the switch.
+    created->service(K_TICK, 0x1U, character);
+    created->service(K_TICK, 0x4U, character);
+    CHECK_EQ(created->current_state()->state_id, 2U);
+    // 0x00400000 on exit drops exactly the oldest entry.
+    CHECK_EQ(created->input_history().size(), 2U);
+    CHECK_EQ(created->input_history()[0], 0x1U);
+    CHECK_EQ(created->input_history()[1], 0x4U);
+
+    // The reset-on-exit variant replaces the whole history with the singleton.
+    const std::vector<CtlMoveSpec> reset_moves{CtlMoveSpec{.id = 1,
+        .flags = 1,
+        .name = "History",
+        .states = {
+            CtlStateSpec{.id = 1,
+                .flags = K_NO_KEY | K_DEFAULT_STATE | K_EXIT_RESET_HISTORY,
+                .child_refs = {2}},
+            CtlStateSpec{.id = 2, .flags = K_NO_KEY, .input = 0x4U, .goto_id = 2},
+        }}};
+    auto resetting{App::Character::CtlController::create(make_bank(reset_moves), "TEST")};
+    REQUIRE(resetting.has_value());
+    resetting->service(K_TICK, 0x1U, character);
+    resetting->service(K_TICK, 0x4U, character);
+    CHECK_EQ(resetting->input_history().size(), 1U);
+    CHECK_EQ(resetting->input_history()[0], App::Character::K_CTL_NO_INPUT);
+  }
+
+  TEST_CASE("input history: 0x00800000 drops the oldest entry after animation service") {
+    const std::vector<CtlMoveSpec> moves{CtlMoveSpec{.id = 1,
+        .flags = 1,
+        .name = "History",
+        .states = {CtlStateSpec{
+            .id = 1, .flags = K_NO_KEY | K_DEFAULT_STATE | K_POST_SERVICE_DROP_HISTORY}}}};
+    auto created{App::Character::CtlController::create(make_bank(moves), "TEST")};
+    REQUIRE(created.has_value());
+    App::Character::RuntimeCharacter character{make_character()};
+
+    // Each tick records the new input, then the post-service flag drops the
+    // oldest entry again: the history holds only the newest change.
+    created->service(K_TICK, 0x1U, character);
+    CHECK_EQ(created->input_history().size(), 1U);
+    CHECK_EQ(created->input_history()[0], 0x1U);
+    created->service(K_TICK, 0x2U, character);
+    CHECK_EQ(created->input_history().size(), 1U);
+    CHECK_EQ(created->input_history()[0], 0x2U);
+  }
+
+  TEST_CASE("input history: 0x10000000 clears the latch so held input re-records") {
+    const std::vector<CtlMoveSpec> moves{CtlMoveSpec{.id = 1,
+        .flags = 1,
+        .name = "History",
+        .states = {
+            CtlStateSpec{.id = 1, .flags = K_NO_KEY | K_DEFAULT_STATE, .child_refs = {2}},
+            CtlStateSpec{
+                .id = 2, .flags = K_NO_KEY | K_ENTRY_CLEAR_LATCH, .input = 0x4U, .goto_id = 2},
+        }}};
+    auto created{App::Character::CtlController::create(make_bank(moves), "TEST")};
+    REQUIRE(created.has_value());
+    App::Character::RuntimeCharacter character{make_character()};
+
+    created->service(K_TICK, 0x4U, character);
+    CHECK_EQ(created->current_state()->state_id, 2U);
+    // The entry mutation cleared the latch to 0 (not the no-input sentinel).
+    CHECK_EQ(created->current_input(), 0x0U);
+    CHECK_EQ(created->input_history().size(), 2U);
+    // The same physical input is therefore recorded as a fresh change.
+    created->service(K_TICK, 0x4U, character);
+    CHECK_EQ(created->input_history().size(), 3U);
+  }
+
+  TEST_CASE("transparent bit2 states chain through goto without staying logical current") {
+    const std::vector<CtlMoveSpec> moves{CtlMoveSpec{.id = 1,
+        .flags = 1,
+        .name = "Chain",
+        .states = {
+            CtlStateSpec{.id = 1,
+                .flags = K_DEFAULT_STATE,
+                .key_bearing = true,
+                .key = "STAND",
+                .child_refs = {2}},
+            CtlStateSpec{.id = 2,
+                .flags = K_TRANSPARENT | K_ENTRY_RESET_HISTORY,
+                .input = 0x4U,
+                .transition_value = 3.0F,
+                .goto_id = 3},
+            CtlStateSpec{.id = 3,
+                .flags = 0x1U,
+                .transition_value = 1.0F,
+                .goto_id = 1,
+                .key_bearing = true,
+                .key = "MOVE"},
+        }}};
+    auto created{App::Character::CtlController::create(
+        make_bank(moves, {{"STAND", make_3da(10)}, {"MOVE", make_3da(10)}}), "TEST")};
+    REQUIRE(created.has_value());
+    App::Character::RuntimeCharacter character{make_character()};
+
+    created->service(K_TICK, 0x4U, character);
+    // The transparent node 2 chained to state 3: state 2 never became the
+    // logical current state; its transition value seeded the phase.
+    CHECK_EQ(created->current_state()->state_id, 3U);
+    CHECK(created->current_progress() == doctest::Approx(3.0F));
+    CHECK_EQ(created->animation_source_state()->state_id, 3U);
+    // The transparent node's entry side effect (history reset) ran.
+    CHECK_EQ(created->input_history().size(), 1U);
+    CHECK_EQ(created->input_history()[0], App::Character::K_CTL_NO_INPUT);
+  }
+
+  TEST_CASE("transparent bit2 chains guard cycles and null targets") {
+    const std::vector<CtlMoveSpec> cycle_moves{CtlMoveSpec{.id = 1,
+        .flags = 1,
+        .name = "Cycle",
+        .states = {
+            CtlStateSpec{.id = 1,
+                .flags = K_DEFAULT_STATE,
+                .key_bearing = true,
+                .key = "STAND",
+                .child_refs = {2}},
+            CtlStateSpec{.id = 2, .flags = K_TRANSPARENT, .input = 0x4U, .goto_id = 2},
+        }}};
+    auto cycled{App::Character::CtlController::create(
+        make_bank(cycle_moves, {{"STAND", make_3da(10)}}), "TEST")};
+    REQUIRE(cycled.has_value());
+    App::Character::RuntimeCharacter character{make_character()};
+    cycled->service(K_TICK, 0x4U, character);
+    // The cyclic chain was rejected: the previous logical state survives.
+    CHECK_EQ(cycled->current_state()->state_id, 1U);
+
+    const std::vector<CtlMoveSpec> null_moves{CtlMoveSpec{.id = 1,
+        .flags = 1,
+        .name = "Null",
+        .states = {
+            CtlStateSpec{.id = 1,
+                .flags = K_DEFAULT_STATE,
+                .key_bearing = true,
+                .key = "STAND",
+                .child_refs = {2}},
+            CtlStateSpec{.id = 2, .flags = K_TRANSPARENT, .input = 0x4U, .goto_id = 0},
+        }}};
+    auto null_target{App::Character::CtlController::create(
+        make_bank(null_moves, {{"STAND", make_3da(10)}}), "TEST")};
+    REQUIRE(null_target.has_value());
+    null_target->service(K_TICK, 0x4U, character);
+    CHECK_EQ(null_target->current_state()->state_id, 1U);
+  }
+
+  TEST_CASE("resident 0x8000 state stays logical current with a downstream animation source") {
+    const std::vector<CtlMoveSpec> moves{CtlMoveSpec{.id = 1,
+        .flags = 1,
+        .name = "Resident",
+        .states = {
+            CtlStateSpec{.id = 1,
+                .flags = K_DEFAULT_STATE,
+                .key_bearing = true,
+                .key = "STAND",
+                .child_refs = {2}},
+            CtlStateSpec{.id = 2,
+                .flags = 0x8000U | 0x1U,
+                .input = 0x4U,
+                .transition_value = 1.0F,
+                .goto_id = 3,
+                .transition_count = 5},
+            CtlStateSpec{.id = 3,
+                .flags = 0x1U,
+                .transition_value = 1.0F,
+                .goto_id = 1,
+                .key_bearing = true,
+                .key = "MOVE"},
+        }}};
+    auto created{App::Character::CtlController::create(
+        make_bank(moves, {{"STAND", make_3da(10)}, {"MOVE", make_3da(20)}}), "TEST")};
+    REQUIRE(created.has_value());
+    App::Character::RuntimeCharacter character{make_character()};
+
+    created->service(K_TICK, 0x4U, character);
+    // Logical current is the keyless resident state; its presentation
+    // animation comes from the first key-bearing state of its goto chain.
+    CHECK_EQ(created->current_state()->state_id, 2U);
+    REQUIRE(created->animation_source_state() != nullptr);
+    CHECK_EQ(created->animation_source_state()->state_id, 3U);
+    CHECK(created->effective_animation_end() == doctest::Approx(20.0F));
+
+    // The resident state remains active for its transition_count lifetime of
+    // 5 phase units (seeded at 1): ticks 2..4 stay, tick 5 follows the goto.
+    created->service(K_TICK, 0x0U, character);  // phase 2
+    CHECK_EQ(created->current_state()->state_id, 2U);
+    created->service(K_TICK, 0x0U, character);  // phase 3
+    CHECK_EQ(created->current_state()->state_id, 2U);
+    created->service(K_TICK, 0x0U, character);  // phase 4
+    CHECK_EQ(created->current_state()->state_id, 2U);
+    created->service(K_TICK, 0x0U, character);  // phase 5: lifetime ends
+    CHECK_EQ(created->current_state()->state_id, 3U);
+    CHECK(created->current_progress() == doctest::Approx(1.0F));
+  }
+
+  TEST_CASE("phase-synchronized transitions rescale the outgoing normalized phase") {
+    const std::vector<CtlMoveSpec> moves{CtlMoveSpec{.id = 1,
+        .flags = 1,
+        .name = "Sync",
+        .states = {
+            CtlStateSpec{.id = 1,
+                .flags = K_DEFAULT_STATE,
+                .key_bearing = true,
+                .key = "STAND",
+                .child_refs = {2}},
+            CtlStateSpec{.id = 2,
+                .flags = 0x1U | K_PHASE_SYNC,
+                .input = 0x4U,
+                .transition_value = 1.0F,
+                .goto_id = 1,
+                .phase_offset = 2,
+                .key_bearing = true,
+                .key = "MOVE"},
+        }}};
+    auto created{App::Character::CtlController::create(
+        make_bank(moves, {{"STAND", make_3da(10)}, {"MOVE", make_3da(20)}}), "TEST")};
+    REQUIRE(created.has_value());
+    App::Character::RuntimeCharacter character{make_character()};
+
+    // The transition fires on the interval [1, 2]: (2/10) * 20 + 2 = 6.
+    created->service(K_TICK, 0x4U, character);
+    CHECK_EQ(created->current_state()->state_id, 2U);
+    CHECK(created->current_progress() == doctest::Approx(6.0F));
+  }
+
+  TEST_CASE("phase-synchronized transitions wrap 1-based beyond the destination end") {
+    const std::vector<CtlMoveSpec> moves{CtlMoveSpec{.id = 1,
+        .flags = 1,
+        .name = "SyncWrap",
+        .states = {
+            CtlStateSpec{.id = 1,
+                .flags = K_DEFAULT_STATE,
+                .key_bearing = true,
+                .key = "STAND",
+                .child_refs = {2}},
+            CtlStateSpec{.id = 2,
+                .flags = 0x1U | K_PHASE_SYNC,
+                .input = 0x4U,
+                .transition_value = 1.0F,
+                .goto_id = 1,
+                .phase_offset = 30,
+                .key_bearing = true,
+                .key = "MOVE"},
+        }}};
+    auto created{App::Character::CtlController::create(
+        make_bank(moves, {{"STAND", make_3da(10)}, {"MOVE", make_3da(20)}}), "TEST")};
+    REQUIRE(created.has_value());
+    App::Character::RuntimeCharacter character{make_character()};
+
+    // (2/10) * 20 + 30 = 34 >= 20 wraps: 34 - 20 + 1 = 15.
+    created->service(K_TICK, 0x4U, character);
+    CHECK_EQ(created->current_state()->state_id, 2U);
+    CHECK(created->current_progress() == doctest::Approx(15.0F));
+  }
+
+  TEST_CASE("leaving a resident 0x8000 state records the recovered blend count") {
+    const auto make_blend_bank{[](const std::uint32_t target_flags) {
+      const std::vector<CtlMoveSpec> moves{CtlMoveSpec{.id = 1,
+          .flags = 1,
+          .name = "Blend",
+          .states = {
+              CtlStateSpec{.id = 1,
+                  .flags = K_DEFAULT_STATE,
+                  .key_bearing = true,
+                  .key = "STAND",
+                  .child_refs = {2}},
+              CtlStateSpec{.id = 2,
+                  .flags = 0x8000U | 0x1U,
+                  .input = 0x4U,
+                  .transition_value = 1.0F,
+                  .goto_id = 3,
+                  .transition_count = 10,
+                  .child_refs = {4}},
+              CtlStateSpec{.id = 3,
+                  .flags = 0x1U,
+                  .transition_value = 1.0F,
+                  .goto_id = 1,
+                  .key_bearing = true,
+                  .key = "MOVE"},
+              CtlStateSpec{.id = 4,
+                  .flags = target_flags,
+                  .input = 0x8U,
+                  .transition_value = 1.0F,
+                  .goto_id = 1,
+                  .key_bearing = true,
+                  .key = "MOVE"},
+          }}};
+      return make_bank(moves, {{"STAND", make_3da(10)}, {"MOVE", make_3da(10)}});
+    }};
+
+    // Without 0x00020000 on the new state: the previous lifetime (10) is not
+    // below the outgoing phase (3), so blend = 10 - floor(3) + 1 = 8.
+    auto created{App::Character::CtlController::create(make_blend_bank(0x1U), "TEST")};
+    REQUIRE(created.has_value());
+    App::Character::RuntimeCharacter character{make_character()};
+    created->service(K_TICK, 0x4U, character);  // enter resident state 2
+    created->service(K_TICK, 0x0U, character);  // phase 2
+    created->service(K_TICK, 0x8U, character);  // phase 3, transition to 4
+    CHECK_EQ(created->current_state()->state_id, 4U);
+    CHECK_EQ(created->transition_blend_count(), 8U);
+
+    // With 0x00020000 on the new state: the blend count inherits the previous
+    // state's full transition_count.
+    auto inherited{
+        App::Character::CtlController::create(make_blend_bank(0x1U | K_BLEND_INHERIT), "TEST")};
+    REQUIRE(inherited.has_value());
+    inherited->service(K_TICK, 0x4U, character);
+    inherited->service(K_TICK, 0x0U, character);
+    inherited->service(K_TICK, 0x8U, character);
+    CHECK_EQ(inherited->current_state()->state_id, 4U);
+    CHECK_EQ(inherited->transition_blend_count(), 10U);
+  }
+
+  TEST_CASE("transient helpers: callback helpers queue through the 0x00200000 gate") {
+    const std::vector<CtlMoveSpec> moves{CtlMoveSpec{.id = 1,
+        .flags = 1,
+        .name = "HelperCallback",
+        .states = {
+            CtlStateSpec{.id = 1, .flags = K_NO_KEY | K_DEFAULT_STATE, .child_refs = {2}},
+            CtlStateSpec{.id = 2,
+                .flags = K_TRANSPARENT | K_CALLBACK | K_HELPER_TRANSIENT_CALLBACK,
+                .input = 0x4U,
+                .goto_id = 1,
+                .callback = "MDROT000"},
+        }}};
+    auto created{App::Character::CtlController::create(make_bank(moves), "TEST")};
+    REQUIRE(created.has_value());
+    App::Character::RuntimeCharacter character{make_character()};
+
+    // The helper enqueues and the per-tick drain dispatches within the same
+    // service; the helper never becomes logical current.
+    created->service(K_TICK, 0x4U, character);
+    CHECK_EQ(created->current_state()->state_id, 1U);
+    CHECK_EQ(created->callback_queue_size(), 0U);
+    CHECK(character.suppress_automatic_movement_heading);
+  }
+
+  TEST_CASE("transient helpers: multiple helpers chain within one tick") {
+    const std::vector<CtlMoveSpec> moves{CtlMoveSpec{.id = 1,
+        .flags = 1,
+        .name = "Multi",
+        .states = {
+            CtlStateSpec{.id = 1, .flags = K_NO_KEY | K_DEFAULT_STATE, .child_refs = {2, 3}},
+            CtlStateSpec{.id = 2,
+                .flags = K_TRANSPARENT | K_HELPER_ORIENTATION,
+                .input = 0x1U,
+                .goto_id = 1,
+                .orientation = AuxBlockSpec{.delta = {.x = 0.0F, .y = 25.0F, .z = 0.0F}}},
+            CtlStateSpec{.id = 3,
+                .flags = K_TRANSPARENT | K_HELPER_MOVEMENT,
+                .input = 0x2U,
+                .goto_id = 1,
+                .movement = AuxBlockSpec{.delta = {.x = 0.0F, .y = 0.0F, .z = 30.0F}}},
+        }}};
+    auto created{App::Character::CtlController::create(make_bank(moves), "TEST")};
+    REQUIRE(created.has_value());
+    App::Character::RuntimeCharacter character{make_character()};
+
+    // Input 0x3: the orientation helper consumes 0x1, then the movement
+    // helper consumes 0x2 — both against the same logical current state.
+    created->service(K_TICK, 0x3U, character);
+    CHECK_EQ(created->current_state()->state_id, 1U);
+    CHECK(character.principal_orientation_degrees.y == doctest::Approx(25.0F));
+    const App::Runtime::Vec3 expected{App::Runtime::transform_vector(
+        App::Runtime::Vec3{.x = 0.0F, .y = 0.0F, .z = 30.0F}, character.live_root_orientation())};
+    CHECK(character.transform.translation.x == doctest::Approx(expected.x));
+    CHECK(character.transform.translation.z == doctest::Approx(expected.z));
+  }
+
+  TEST_CASE("suppression producer flag 0x40000000 feeds the sparse suppression set") {
+    const std::vector<CtlMoveSpec> moves{CtlMoveSpec{.id = 1,
+        .flags = 1,
+        .name = "Producer",
+        .states = {
+            CtlStateSpec{.id = 1, .flags = K_NO_KEY | K_DEFAULT_STATE, .child_refs = {2}},
+            CtlStateSpec{.id = 2,
+                .flags = K_TRANSPARENT | K_HELPER_ORIENTATION | K_SUPPRESSION_PRODUCER,
+                .input = 0x1U,
+                .goto_id = 1,
+                .orientation = AuxBlockSpec{.delta = {.x = 0.0F, .y = 25.0F, .z = 0.0F}}},
+        }}};
+    auto created{App::Character::CtlController::create(make_bank(moves), "TEST")};
+    REQUIRE(created.has_value());
+    App::Character::RuntimeCharacter character{make_character()};
+
+    // The helper fires once and inserts its input condition into the set.
+    created->service(K_TICK, 0x1U, character);
+    CHECK(character.principal_orientation_degrees.y == doctest::Approx(25.0F));
+    CHECK_EQ(created->suppression_count(), 1U);
+
+    // The next tick's suppression scan strips the held input before the
+    // helper pass: the helper does not re-fire.
+    created->service(K_TICK, 0x1U, character);
+    CHECK(character.principal_orientation_degrees.y == doctest::Approx(25.0F));
+  }
+
+  TEST_CASE("continuous 0x40 orientation block applies per phase-window overlap") {
+    const std::vector<CtlMoveSpec> moves{CtlMoveSpec{.id = 1,
+        .flags = 1,
+        .name = "Continuous",
+        .states = {CtlStateSpec{.id = 1,
+            .flags = K_DEFAULT_STATE | K_CONTINUOUS_ORIENTATION,
+            .key_bearing = true,
+            .key = "STAND",
+            .orientation = AuxBlockSpec{.window_start = 2.0F,
+                .window_end = 4.0F,
+                .delta = {.x = 0.0F, .y = 10.0F, .z = 0.0F}}}}}};
+    auto created{
+        App::Character::CtlController::create(make_bank(moves, {{"STAND", make_3da(10)}}), "TEST")};
+    REQUIRE(created.has_value());
+    App::Character::RuntimeCharacter character{make_character()};
+
+    // Interval [1,2] has zero overlap with [2,4]: no rotation yet.
+    created->service(K_TICK, 0x0U, character);
+    CHECK(character.principal_orientation_degrees.y == doctest::Approx(0.0F));
+    // Intervals [2,3] and [3,4] overlap by one phase unit each: +10 per tick.
+    created->service(K_TICK, 0x0U, character);
+    CHECK(character.principal_orientation_degrees.y == doctest::Approx(10.0F));
+    created->service(K_TICK, 0x0U, character);
+    CHECK(character.principal_orientation_degrees.y == doctest::Approx(20.0F));
+    // Interval [4,5] is past the window: no further rotation.
+    created->service(K_TICK, 0x0U, character);
+    CHECK(character.principal_orientation_degrees.y == doctest::Approx(20.0F));
+  }
+
+  TEST_CASE("continuous 0x80 movement block applies per phase-window overlap") {
+    const std::vector<CtlMoveSpec> moves{CtlMoveSpec{.id = 1,
+        .flags = 1,
+        .name = "Continuous",
+        .states = {CtlStateSpec{.id = 1,
+            .flags = K_DEFAULT_STATE | K_CONTINUOUS_MOVEMENT,
+            .key_bearing = true,
+            .key = "STAND",
+            .movement = AuxBlockSpec{.window_start = 1.0F,
+                .window_end = 3.0F,
+                .delta = {.x = 0.0F, .y = 0.0F, .z = 5.0F}}}}}};
+    auto created{
+        App::Character::CtlController::create(make_bank(moves, {{"STAND", make_3da(10)}}), "TEST")};
+    REQUIRE(created.has_value());
+    App::Character::RuntimeCharacter character{make_character()};
+
+    // Intervals [1,2] and [2,3] overlap by one unit each: +5 Z per tick.
+    created->service(K_TICK, 0x0U, character);
+    CHECK(character.transform.translation.z == doctest::Approx(5.0F));
+    created->service(K_TICK, 0x0U, character);
+    CHECK(character.transform.translation.z == doctest::Approx(10.0F));
+    // Interval [3,4] is past the window.
+    created->service(K_TICK, 0x0U, character);
+    CHECK(character.transform.translation.z == doctest::Approx(10.0F));
+  }
+
+  TEST_CASE("callbacks drained in tick N affect tick N+1 of the same service call") {
+    const std::vector<CtlMoveSpec> moves{
+        CtlMoveSpec{.id = 1,
+            .flags = 1,
+            .name = "Main",
+            .states =
+                {
+                    CtlStateSpec{.id = 1,
+                        .flags = K_DEFAULT_STATE | K_CALLBACK,
+                        .key_bearing = true,
+                        .key = "LOOP",
+                        .child_refs = {2},
+                        .callback = "MDRUN"},
+                    CtlStateSpec{.id = 2,
+                        .flags = K_NO_KEY | 0x1U | K_CALLBACK,
+                        .input = 0x4U,
+                        .goto_id = 2,
+                        .callback = "MDSTOPR"},
+                }},
+        CtlMoveSpec{.id = 164,
+            .flags = 0,
+            .name = "RunBreathe",
+            .states =
+                {
+                    CtlStateSpec{.id = 1641,
+                        .flags = K_NO_KEY | K_DEFAULT_STATE,
+                        .goto_id = 1641,
+                        .child_refs = {1642}},
+                    CtlStateSpec{
+                        .id = 1642, .flags = K_NO_KEY | 0x1U, .input = 0x4U, .goto_id = 1642},
+                }},
+    };
+    auto created{
+        App::Character::CtlController::create(make_bank(moves, {{"LOOP", make_3da(1)}}), "TEST")};
+    REQUIRE(created.has_value());
+    App::Character::RuntimeCharacter character{make_character()};
+
+    // 40 one-frame executions: the run snapshot exceeds the recovered limit.
+    for (std::uint32_t tick{0}; tick < 40U; ++tick) {
+      created->service(K_TICK, 0x0U, character);
+    }
+    REQUIRE(created->run_restart_snapshot() > 30U);
+
+    // One service call covering THREE logical ticks with forward held:
+    //   tick 1: transition 1 -> 2 queues MDSTOPR; the per-tick drain switches
+    //           to move 164 (snapshot > 30) immediately;
+    //   tick 2: the new move's state 1641 evaluates its child 1642 against
+    //           the still-held input and transitions;
+    //   tick 3: state 1642 idles.
+    // With callbacks drained only after the accumulator loop, the move switch
+    // would happen after all three ticks and the final state would be 1641.
+    created->service(3.0F * K_TICK, 0x4U, character);
+    CHECK_EQ(created->current_move()->move_id, 164U);
+    CHECK_EQ(created->current_state()->state_id, 1642U);
+  }
 }
-
-
 
 // NOLINTEND
