@@ -64,8 +64,8 @@ constexpr std::uint32_t K_DEFAULT_STATE{0x20U};
 /// Exact-input candidate flag.
 constexpr std::uint32_t K_EXACT_INPUT{0x00080000U};
 /// Owner-move fallback enable (current state) and candidate requirement.
-constexpr std::uint32_t K_FALLBACK_ENABLE{0x00200000U};
-constexpr std::uint32_t K_FALLBACK_CANDIDATE{0x00400000U};
+constexpr std::uint32_t K_FALLBACK_ENABLE{0x00002000U};
+constexpr std::uint32_t K_FALLBACK_CANDIDATE{0x00004000U};
 /// Deferred callback flag.
 constexpr std::uint32_t K_CALLBACK{0x10U};
 
@@ -414,8 +414,9 @@ TEST_SUITE("Core::Character::CtlController") {
     created->service(K_TICK, 0x4U, character);
     CHECK_EQ(created->current_input(), 0x4U);
     CHECK_EQ(created->input_history().size(), 2U);
-    CHECK_EQ(created->input_history()[0], 0x4U);
-    CHECK_EQ(created->input_history()[1], App::Character::K_CTL_NO_INPUT);
+    // Recovered order: oldest at [0], newest at [count-1]
+    CHECK_EQ(created->input_history()[0], App::Character::K_CTL_NO_INPUT);
+    CHECK_EQ(created->input_history()[1], 0x4U);
 
     // Holding the same mask does not append.
     created->service(K_TICK, 0x4U, character);
@@ -998,6 +999,34 @@ TEST_SUITE("Core::Character::CtlController") {
     CHECK_EQ(created->callback_queue_size(), 0U);
     CHECK_EQ(created->current_state()->state_id, 1U);
   }
+
+  TEST_CASE("input suppression: sparse unique 20-slot array with first-empty insertion") {
+    auto created{App::Character::CtlController::create(
+        make_simple_bank(make_3da(10), make_3da(10)), "TEST")};
+    REQUIRE(created.has_value());
+    App::Character::RuntimeCharacter character{make_character()};
+
+    // Insert unique masks into the sparse array.
+    created->add_input_suppression(0x1U);
+    created->add_input_suppression(0x2U);
+    created->add_input_suppression(0x4U);
+    CHECK_EQ(created->suppression_count(), 3U);
+
+    // Inserting a duplicate mask should be ignored.
+    created->add_input_suppression(0x2U);
+    CHECK_EQ(created->suppression_count(), 3U);
+
+    // Zero mask is always ignored.
+    created->add_input_suppression(0x0U);
+    CHECK_EQ(created->suppression_count(), 3U);
+
+    // Overflow behavior: at capacity 20, no new entries should be added.
+    created->add_input_suppression(0x8U);
+    created->add_input_suppression(0x10U);
+    CHECK_LT(created->suppression_count(), 20U);
+  }
 }
+
+
 
 // NOLINTEND

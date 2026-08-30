@@ -1,7 +1,7 @@
 # CTL character control sets
 
 > **Status:** recovered format and controller documentation for OpenNomad
-> **Last updated:** 2026-08-28
+> **Last updated:** 2026-08-30
 >
 > CTL is Omikron's authored character-control/state-machine resource. One CTL
 > bank per character role is named by the IAM character definition
@@ -40,12 +40,14 @@ layout claim).
 | Offset | Type | Meaning |
 | ------ | ---- | ------- |
 | `+0x00` | u32 | magic `0x30374543` (bytes `"CE70"`) |
-| `+0x04` | u32 | format/version (H1AVNT: `0x00000101`) |
+| `+0x04` | u32 | format/version (must equal `0x00000101`; other versions are rejected) |
 | `+0x08` | u32 | unresolved; preserved |
 | `+0x0C` | u32 | top-level move count |
 | `+0x10..+0x57` | — | unresolved/pointer-era fields; preserved for diagnostics only |
 
-The first top-level move record begins at `0x58`.
+The first top-level move record begins at `0x58`. Runtime validates both the
+magic and version strictly; files with version != `0x101` are rejected with a
+structured error.
 
 ## 1.2 Top-level move record (0x20 bytes) — Confirmed — Runtime/data
 
@@ -99,15 +101,24 @@ each child belongs to its containing move by those authored counts
 | Bit | Meaning |
 | --- | ------- |
 | `0x00000001` | with `0x00008000`: end/goto family; without both: persistent restart family (§4.4) |
+| `0x00000002` | transparent chained state: has no animation key, follows goto, does not remain logical current |
 | `0x00000010` | a 12-byte deferred callback name is serialized |
 | `0x00000020` | default state of its move |
 | `0x00000040`/`0x00000100` | consumes the 0x18-byte orientation auxiliary block |
 | `0x00000080`/`0x00000200` | consumes the 0x14-byte local-movement auxiliary block |
-| `0x00008000`/`0x00000002` | state bears **no** serialized animation key |
+| `0x00008000` | resident transition/blend state: has no animation key, remains logical current for `transition_count` lifetime, animation comes from goto |
 | `0x00080000` | input condition requires exact equality instead of the ordinary matcher |
-| `0x00200000` | current state enables the owner-move fallback scan |
-| `0x00400000` | candidate requirement of the owner-move fallback scan |
+| `0x00002000` | current state enables the owner-move fallback scan (Runtime 0x004A8BD0) |
+| `0x00004000` | candidate requirement of the owner-move fallback scan; fallback candidates must have this flag |
+| `0x00100000` | drop oldest input history entry on state entry |
+| `0x01000000` | reset input history to no-input sentinel on state entry |
+| `0x00400000` | drop oldest input history entry on state exit |
+| `0x04000000` | reset input history to no-input sentinel on state exit |
+| `0x00200000` | transient callback-helper flag (part of transient helper pass semantics) |
+| `0x10000000` | clear current-input latch to 0 on state entry |
+| `0x20000000` | collapse input history before recording new change |
 | `0x02000000` | consumes the neutral 0x28-byte auxiliary block |
+| `0x40000000` | input-suppression producer flag: insert input_condition into suppression set (transient helper semantics) |
 
 Unflagged bits are preserved without semantics.
 
@@ -226,13 +237,27 @@ condition's `0x2000` ceiling, so `0x80000000` does not match it.
 
 Two separate mechanisms exist:
 
-- a fixed **16-entry canonical input history** (reset 0x0045A9A0: all zero,
-  `history[0] = 0x40000000`, count 1); the controller records canonical input
-  *changes* rather than appending identical masks;
-- a fixed **20-entry transition/input suppression set**: each active nonzero
-  mask that still matches the current input strips its bits
-  (`current &= ~mask`); an entry that no longer matches is removed. This
-  prevents held buttons from endlessly retriggering edge-like states.
+### Input History
+A fixed **16-entry chronological input history** (oldest→newest, not reversed):
+- Initialized at state `history[0] = 0x40000000` (no-input sentinel), count 1
+- Records canonical input *changes* at `history[count]`
+- At capacity 16, the oldest entry is shifted out when a new change occurs
+- **State-driven mutations** (flags applied on state entry/exit):
+  - `0x00100000` (entry): reset to NO_INPUT singleton, clear count → 0
+  - `0x01000000` (entry): reset to NO_INPUT singleton, clear count → 0 (same semantic as 0x100000)
+  - `0x10000000` (entry): clear latch to 0 (no longer hold the current input)
+  - `0x20000000` (pre-record): if count > 1, collapse to single NO_INPUT entry before recording change; if count == 1 and entry is NO_INPUT, clear history
+  - `0x00400000` (exit): drop oldest entry via left-shift before next state activation
+  - `0x04000000` (exit): drop oldest entry via left-shift before next state activation (same as 0x00400000)
+
+### Input Suppression Set
+A fixed **20-entry sparse suppression set** with first-empty-slot insertion:
+- Each nonzero canonical mask in the set that still matches the current input strips its bits (`current &= ~mask`)
+- An entry that no longer matches is removed via swap-and-pop (no auto-compaction, sparse slots allowed)
+- Duplicate masks are rejected (only first insertion of unique mask succeeds)
+- Zero masks (0) are always ignored
+- At capacity 20, no new entries are added (silent overflow)
+- Uniqueness is the controlling constraint: re-entering the suppression set uses first-empty slot if available
 
 ---
 

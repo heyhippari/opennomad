@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <span>
@@ -29,14 +30,20 @@ namespace {
 
 /// Candidate flag switching input matching to exact equality.
 constexpr std::uint32_t K_STATE_EXACT_INPUT_FLAG{0x00080000U};
-/// Current-state flag enabling the owner-move fallback scan.
-constexpr std::uint32_t K_STATE_OWNER_FALLBACK_FLAG{0x00200000U};
-/// Required flag on fallback candidates of the owner-move scan.
-constexpr std::uint32_t K_STATE_FALLBACK_CANDIDATE_FLAG{0x00400000U};
+/// Current-state flag enabling the owner-move fallback scan (Runtime 0x00002000).
+constexpr std::uint32_t K_STATE_OWNER_FALLBACK_FLAG{0x00002000U};
+/// Required flag on fallback candidates of the owner-move scan (Runtime 0x00004000).
+constexpr std::uint32_t K_STATE_FALLBACK_CANDIDATE_FLAG{0x00004000U};
 /// Current-state flag reversing child-reference traversal order.
 constexpr std::uint16_t K_STATE_REVERSE_TRAVERSAL_MODE{0x0020U};
 /// State flags selecting the persistent/restart end family.
 constexpr std::uint32_t K_STATE_PERSISTENT_FAMILY_MASK{0x00008001U};
+/// State flags indicating no serialized animation key (bit2 OR 0x8000 or both).
+constexpr std::uint32_t K_STATE_NO_ANIMATION_KEY_FLAGS{0x00008002U};
+/// Bit2: transparent chained state (follows goto, does not remain logical current).
+constexpr std::uint32_t K_STATE_TRANSPARENT_CHAIN_FLAG{0x00000002U};
+/// Bit15: resident transition/blend state (remains logical current, animation from goto).
+constexpr std::uint32_t K_STATE_RESIDENT_TRANSITION_FLAG{0x00008000U};
 /// animation_mode high nibble: packed/segmented sampler segment count.
 constexpr std::uint32_t K_ANIMATION_SEGMENT_SHIFT{12U};
 /// animation_mode bit appending the dynamic audio-marker block.
@@ -139,6 +146,17 @@ void CtlController::reset_input_history() {
   m_history_count = 1U;
 }
 
+void CtlController::drop_oldest_input_history() {
+  if (m_history_count <= 1U) {
+    return;
+  }
+  // Shift all entries left, dropping the oldest (at index 0).
+  for (std::size_t index{0}; index < m_history_count - 1U; ++index) {
+    m_input_history.at(index) = m_input_history.at(index + 1U);
+  }
+  --m_history_count;
+}
+
 std::expected<void, std::string> CtlController::select_move(const std::uint32_t move_id) {
   const Omikron::CtlMove* const move{m_bank->move_by_id(move_id)};
   if (move == nullptr) {
@@ -189,11 +207,28 @@ void CtlController::set_swap_turn_slots(const bool enabled) {
 }
 
 void CtlController::add_input_suppression(const std::uint32_t mask) {
-  if (mask == 0U || m_suppression_count >= m_suppression.size()) {
+  if (mask == 0U) {
     return;
   }
-  m_suppression.at(m_suppression_count) = mask;
-  ++m_suppression_count;
+  // Retail sparse 20-slot suppression set: unique masks using first-empty-slot insertion.
+  // Scan for existing mask (duplicate) and first empty slot in a single pass.
+  std::size_t first_empty{std::numeric_limits<std::size_t>::max()};
+  for (std::size_t index{0}; index < K_SUPPRESSION_CAPACITY; ++index) {
+    if (m_suppression.at(index) == mask) {
+      // Mask already exists; no insertion needed.
+      return;
+    }
+    if (m_suppression.at(index) == 0U && first_empty == std::numeric_limits<std::size_t>::max()) {
+      first_empty = index;
+    }
+  }
+  // Insert into the first empty slot if found; ignore if no capacity.
+  if (first_empty != std::numeric_limits<std::size_t>::max()) {
+    m_suppression.at(first_empty) = mask;
+    // Update suppression count only if we're filling in gaps; the array maintains sparse
+    // layout, so the count tracks active entries.
+    m_suppression_count = std::max(m_suppression_count, first_empty + 1U);
+  }
 }
 
 const Omikron::CtlState* CtlController::evaluate_transition(const std::uint32_t current_input,
@@ -371,13 +406,28 @@ void CtlController::tick_once(const std::uint32_t profile_input, RuntimeCharacte
   }
 
   // The controller records canonical input changes rather than appending the
-  // same mask forever.
+  // same mask forever. Retail history is chronological: oldest at [0], newest at [count-1].
   if (input != m_current_input) {
-    for (std::size_t index{m_input_history.size() - 1U}; index > 0U; --index) {
-      m_input_history.at(index) = m_input_history.at(index - 1U);
+    // Before appending a new change, check for current-state collapse flag 0x20000000.
+    if ((m_current_state->flags & 0x20000000U) != 0U) {
+      if (m_history_count > 1U) {
+        m_history_count = 1U;
+      } else if (m_history_count == 1U && m_input_history.at(0) == K_CTL_NO_INPUT) {
+        m_input_history.at(0) = 0U;
+        m_history_count = 0U;
+      }
     }
-    m_input_history.at(0) = input;
-    m_history_count = std::min(m_history_count + 1U, m_input_history.size());
+    // Append the new input at history[count]; shift count up if not at capacity.
+    if (m_history_count < m_input_history.size()) {
+      m_input_history.at(m_history_count) = input;
+      ++m_history_count;
+    } else {
+      // At capacity: shift everything left and append at the end.
+      for (std::size_t index{0}; index < m_input_history.size() - 1U; ++index) {
+        m_input_history.at(index) = m_input_history.at(index + 1U);
+      }
+      m_input_history.at(m_input_history.size() - 1U) = input;
+    }
     m_current_input = input;
   }
 
@@ -466,6 +516,33 @@ void CtlController::tick_once(const std::uint32_t profile_input, RuntimeCharacte
 
 void CtlController::activate_state(
     const Omikron::CtlState& state, const float phase, RuntimeCharacter* const character) {
+  // Recovered state-driven input history mutations.
+  // When LEAVING the previous state:
+  if (m_current_state != nullptr) {
+    if ((m_current_state->flags & 0x00400000U) != 0U) {
+      // Drop oldest history entry.
+      drop_oldest_input_history();
+    }
+    if ((m_current_state->flags & 0x04000000U) != 0U) {
+      // Reset history to no-input sentinel.
+      reset_input_history();
+    }
+  }
+
+  // When ACTIVATING the new state:
+  if ((state.flags & 0x00100000U) != 0U) {
+    // Drop oldest history entry.
+    drop_oldest_input_history();
+  }
+  if ((state.flags & 0x01000000U) != 0U) {
+    // Reset history to no-input sentinel.
+    reset_input_history();
+  }
+  if ((state.flags & 0x10000000U) != 0U) {
+    // Clear current-input latch so it can be recorded freshly.
+    m_current_input = 0U;
+  }
+
   if (m_current_state == &state) {
     ++m_same_state_restart_count;
   } else {

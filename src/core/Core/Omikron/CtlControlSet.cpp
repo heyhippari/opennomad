@@ -79,6 +79,13 @@ std::expected<CtlControlSet, std::string> CtlControlSet::load(
         fmt::format("CTL magic {:#010x} does not match {:#010x}", magic, K_CTL_MAGIC)};
   }
   const std::uint32_t format_version{reader.read_u32()};
+  constexpr std::uint32_t K_CTL_REQUIRED_VERSION{0x00000101U};
+  if (format_version != K_CTL_REQUIRED_VERSION) {
+    return std::expected<CtlControlSet, std::string>{std::unexpect,
+        fmt::format(
+            "CTL format version {:#010x} does not match required {:#010x}", format_version,
+            K_CTL_REQUIRED_VERSION)};
+  }
   const std::uint32_t raw_08{reader.read_u32()};
   const std::uint32_t move_count{reader.read_u32()};
   const std::span<const std::byte> reserved{reader.read_bytes(0x48U)};

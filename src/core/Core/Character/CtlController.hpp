@@ -201,6 +201,8 @@ class CtlController {
   /// Runtime 0x0045A9A0: fixed 16-entry history reset, seeding the canonical
   /// no-input sentinel as the only entry.
   void reset_input_history();
+  /// Drops the oldest history entry and shifts remaining entries left.
+  void drop_oldest_input_history();
   /// Runtime 0x004A7B80: central state activation. Same-state restart
   /// bookkeeping, animation install, phase seeding, callback queueing and
   /// per-execution marker reset. With a null character the presentation half
