@@ -262,6 +262,9 @@ class ScenarioRuntime final : public Script::ScriptWorld, private Sfx::Host {
     return m_scenario_name;
   }
   [[nodiscard]] std::string_view sfx_sound_name(std::int32_t authored_h_id) const override;
+  [[nodiscard]] std::span<const Sfx::StaticEmitterObject> static_emitter_objects() const override;
+  [[nodiscard]] std::optional<Runtime::Vec3> resolve_static_emitter_world_position(
+      std::size_t object_index) const override;
 
   /// Decodes one embedded sprite resource and uploads its GPU textures on
   /// first use (idempotent).
@@ -320,6 +323,7 @@ class ScenarioRuntime final : public Script::ScriptWorld, private Sfx::Host {
   /// One-shot guard for the XYZ-pool fallback diagnostic (POC).
   bool m_xyz_fallback_logged{false};
   const Omikron::Model3DOData* m_decor_model{nullptr};
+  std::vector<Sfx::StaticEmitterObject> m_static_emitter_objects;
   std::vector<Omikron::Model3DOData::RuntimeObjectState> m_decor_runtime_objects;
   std::vector<Omikron::CameraRecord> m_decor_cameras;
   std::optional<std::size_t> m_selected_decor_camera_index;

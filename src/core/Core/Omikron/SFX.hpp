@@ -45,8 +45,24 @@ struct SfxCinAnimationRecord {
   }
 };
 
-struct SfxRawRecord10 {
-  std::array<std::byte, 0x10> bytes{};
+struct SfxStaticEmitterRecord {
+  std::int32_t definition_id{0};
+  std::array<char, 4> object_name_prefix{};
+  float duration{0.0F};
+  float emission_interval{0.0F};
+  std::size_t file_offset{0};
+
+  [[nodiscard]] std::string prefix_string() const {
+    std::string value;
+    value.reserve(4U);
+    for (const char character : object_name_prefix) {
+      if (character == '\0') {
+        break;
+      }
+      value.push_back(character);
+    }
+    return value;
+  }
 };
 
 struct SfxDefinition {
@@ -126,7 +142,7 @@ struct SfxData {
   std::vector<SfxRawRecord28> records_a;
   std::vector<SfxCinAnimationRecord> records_b;
   std::vector<SfxDefinition> definitions;
-  std::vector<SfxRawRecord10> section_d;
+  std::vector<SfxStaticEmitterRecord> section_d;
   std::vector<SfxNode> nodes;
   std::vector<SfxTrack> tracks;
 };

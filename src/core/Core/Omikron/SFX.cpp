@@ -113,6 +113,18 @@ SfxCinAnimationRecord read_cin_animation_record(BinaryReader& reader) {
   return record;
 }
 
+SfxStaticEmitterRecord read_static_emitter_record(BinaryReader& reader) {
+  SfxStaticEmitterRecord record;
+  record.file_offset = reader.tell();
+  record.definition_id = reader.read_i32();
+  for (std::size_t index{0}; index < record.object_name_prefix.size(); ++index) {
+    record.object_name_prefix.at(index) = static_cast<char>(reader.read_u8());
+  }
+  record.duration = reader.read_f32();
+  record.emission_interval = reader.read_f32();
+  return record;
+}
+
 SfxNode read_node(BinaryReader& reader) {
   SfxNode node;
   node.node_id = reader.read_i32();
@@ -224,7 +236,7 @@ std::expected<SfxData, std::string> SFX::load(const std::span<const std::byte> d
   }
   result.section_d.reserve(section_d_count);
   for (std::size_t index{0}; index < section_d_count; ++index) {
-    result.section_d.push_back(SfxRawRecord10{.bytes = read_raw<K_SECTION_D_SIZE>(reader)});
+    result.section_d.push_back(read_static_emitter_record(reader));
   }
 
   result.raw_node_count = reader.read_u32();

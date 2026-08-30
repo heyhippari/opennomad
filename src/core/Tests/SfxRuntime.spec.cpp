@@ -100,10 +100,25 @@ class FakeHost final : public App::Sfx::Host {
     return spawned.empty() ? nullptr : pool.find(spawned.front());
   }
 
+  std::span<const App::Sfx::StaticEmitterObject> static_emitter_objects() const override {
+    return static_objects;
+  }
+
+  std::optional<App::Runtime::Vec3> resolve_static_emitter_world_position(
+      const std::size_t object_index) const override {
+    const auto found{object_positions.find(object_index)};
+    if (found == object_positions.end()) {
+      return std::nullopt;
+    }
+    return found->second;
+  }
+
   std::unordered_map<std::uint16_t, std::size_t> sprite_ids;
   std::unordered_map<std::int32_t, App::Runtime::Transform> character_anchors;
   App::Sprite::SpritePool pool;
   std::vector<App::Sprite::SpriteHandle> spawned;
+  std::vector<App::Sfx::StaticEmitterObject> static_objects;
+  std::unordered_map<std::size_t, App::Runtime::Vec3> object_positions;
   std::size_t frame_count{5U};
   std::size_t destroyed_count{0U};
   struct SoundRequest {
@@ -202,6 +217,61 @@ std::unique_ptr<App::Sfx::Runtime> create_runtime(
 }  // namespace
 
 TEST_SUITE("Core::Sfx::Runtime") {
+  TEST_CASE("static emitters bind by first-four-byte prefix and follow live object positions") {
+    FakeHost host;
+    host.static_objects = {App::Sfx::StaticEmitterObject{.object_index = 0U, .name = "gril01", .flags = 0x40000000U},
+        App::Sfx::StaticEmitterObject{.object_index = 1U, .name = "gril02", .flags = 0x00000000U},
+        App::Sfx::StaticEmitterObject{.object_index = 2U, .name = "neon01", .flags = 0x40000000U},
+        App::Sfx::StaticEmitterObject{.object_index = 3U, .name = "grip01", .flags = 0x40000000U}};
+    host.object_positions.emplace(0U, App::Runtime::Vec3{.x = 10.0F, .y = 20.0F, .z = 30.0F});
+    host.object_positions.emplace(2U, App::Runtime::Vec3{.x = 40.0F, .y = 50.0F, .z = 60.0F});
+    App::Omikron::SfxData data;
+    data.magic = App::Omikron::k_sfx_magic;
+    data.definitions.push_back(make_definition(11U, 9U));
+    data.definitions.push_back(make_definition(10U, 10U));
+    data.section_d.push_back(App::Omikron::SfxStaticEmitterRecord{
+        .definition_id = 11,
+        .object_name_prefix = {'g', 'r', 'i', 'l'},
+        .duration = 9999999.0F,
+        .emission_interval = 0.0F,
+    });
+    data.section_d.push_back(App::Omikron::SfxStaticEmitterRecord{
+        .definition_id = 10,
+        .object_name_prefix = {'n', 'e', 'o', 'n'},
+        .duration = 9999999.0F,
+        .emission_interval = 0.0F,
+    });
+    auto runtime{create_runtime(data, host)};
+    runtime->bind_static_emitters();
+    REQUIRE(runtime->static_emitter_count() == 2U);
+    CHECK(runtime->static_emitter_state(0).object_name == "gril01");
+    CHECK(runtime->static_emitter_state(0).definition_id == 11);
+    CHECK(runtime->static_emitter_state(1).object_name == "neon01");
+    CHECK(runtime->static_emitter_state(1).definition_id == 10);
+    runtime->step();
+    REQUIRE(host.spawned.size() >= 2U);
+    const auto has_position = [&host](const float x,
+                                  const float y,
+                                  const float z) {
+      for (const App::Sprite::SpriteHandle handle : host.spawned) {
+        const App::Sprite::SpriteInstance* sprite{host.pool.find(handle)};
+        if (sprite == nullptr) {
+          continue;
+        }
+        if (sprite->position.at(0) == doctest::Approx(x) &&
+            sprite->position.at(1) == doctest::Approx(y) &&
+            sprite->position.at(2) == doctest::Approx(z)) {
+          return true;
+        }
+      }
+      return false;
+    };
+    CHECK(has_position(40.0F, 50.0F, 60.0F));
+    host.object_positions.at(0U) = App::Runtime::Vec3{.x = 100.0F, .y = 200.0F, .z = 300.0F};
+    runtime->step();
+    CHECK(has_position(100.0F, 200.0F, 300.0F));
+  }
+
   TEST_CASE("structured node sound starts retain their trigger ID provenance") {
     FakeHost host;
     auto data{basic_data()};

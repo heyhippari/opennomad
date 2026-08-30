@@ -24,10 +24,19 @@ struct SpawnedSprite {
   std::size_t frame_count{0};
 };
 
+struct StaticEmitterObject {
+  std::size_t object_index{0};
+  std::string name;
+  std::uint32_t flags{0};
+};
+
 /// Scenario bridge used by the CPU-only SFX simulation.
 class Host {
  public:
   virtual ~Host() = default;
+  [[nodiscard]] virtual std::span<const StaticEmitterObject> static_emitter_objects() const = 0;
+  [[nodiscard]] virtual std::optional<App::Runtime::Vec3> resolve_static_emitter_world_position(
+      std::size_t object_index) const = 0;
   [[nodiscard]] virtual std::expected<std::size_t, std::string> resolve_sfx_sprite_id(
       std::uint16_t authored_sprite_id) const = 0;
   [[nodiscard]] virtual std::expected<SpawnedSprite, std::string> spawn_sfx_sprite(
@@ -45,6 +54,7 @@ class Host {
 enum class EmissionOriginKind : std::uint8_t {
   k_node,
   k_cin_sfx,
+  k_static_object,
 };
 
 struct EmissionProvenance {
@@ -54,6 +64,10 @@ struct EmissionProvenance {
   std::optional<std::uint32_t> animation_id;
   std::string animation_name;
   std::optional<std::uint8_t> cin_channel;
+  std::optional<std::size_t> static_object_index;
+  std::string static_object_name;
+  std::string static_object_prefix;
+  std::optional<std::size_t> section_d_record_index;
 };
 
 struct SoundStartDiagnostic {
@@ -93,6 +107,8 @@ struct Diagnostics {
   std::size_t node_count{0};
   std::size_t track_count{0};
   std::size_t active_node_count{0};
+  std::size_t static_emitter_count{0};
+  std::size_t active_static_emitter_count{0};
   std::size_t queued_request_count{0};
   std::size_t active_particle_count{0};
   std::size_t attached_sprite_count{0};
@@ -105,6 +121,19 @@ class Runtime {
   static constexpr std::size_t k_request_capacity{100U};
   static constexpr std::size_t k_particle_capacity{1000U};
   static constexpr float k_fixed_step_seconds{1.0F / 30.0F};
+
+  struct StaticEmitterState {
+    std::size_t source_record_index{0};
+    std::int32_t definition_id{0};
+    std::size_t object_index{0};
+    std::string object_name;
+    float remaining_duration{0.0F};
+    float emission_interval{0.0F};
+    float interval_phase{0.0F};
+    std::size_t emission_count{0};
+    std::uint64_t last_emission_tick{0};
+    bool active{false};
+  };
 
   [[nodiscard]] static std::expected<std::unique_ptr<Runtime>, std::string> create(
       const Omikron::SfxData& data, Host& host, Random01 random01 = {});
@@ -120,6 +149,9 @@ class Runtime {
   [[nodiscard]] std::size_t trigger(std::int32_t type, std::int32_t id);
   void emit_definition(
       std::int32_t definition_id, App::Runtime::Vec3 position, EmissionProvenance provenance = {});
+  void bind_static_emitters();
+  [[nodiscard]] std::size_t static_emitter_count() const;
+  [[nodiscard]] const StaticEmitterState& static_emitter_state(std::size_t index) const;
   [[nodiscard]] Diagnostics diagnostics() const;
   [[nodiscard]] std::span<const NodeState> nodes() const;
   [[nodiscard]] std::span<const SoundStartDiagnostic> sound_start_diagnostics() const {
@@ -148,6 +180,8 @@ class Runtime {
   [[nodiscard]] static float traversal_duration(const Omikron::SfxTrack& track);
   [[nodiscard]] float random01();
   void clear_particles();
+  void service_static_emitters();
+  [[nodiscard]] std::size_t random_int32();
 
   const Omikron::SfxData& m_data;
   Host& m_host;
@@ -160,11 +194,13 @@ class Runtime {
   std::vector<std::size_t> m_definition_sprite_resources;
   std::vector<EmissionRequest> m_requests;
   std::vector<Particle> m_particles;
+  std::vector<StaticEmitterState> m_static_emitters;
   std::vector<SoundStartDiagnostic> m_sound_start_diagnostics;
   std::uint64_t m_logical_tick{0};
   float m_accumulator{0.0F};
   bool m_request_capacity_warned{false};
   bool m_particle_capacity_warned{false};
+  bool m_static_emitter_capacity_warned{false};
   bool m_acceleration_mode_warned{false};
 };
 

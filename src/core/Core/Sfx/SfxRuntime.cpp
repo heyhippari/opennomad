@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <expected>
 #include <iterator>
 #include <memory>
@@ -186,14 +187,28 @@ Diagnostics Runtime::diagnostics() const {
       static_cast<std::size_t>(std::ranges::count_if(m_nodes, [](const NodeState& node) {
         return node.active();
       }))};
+  const std::size_t active_static_emitters{
+      static_cast<std::size_t>(std::ranges::count_if(m_static_emitters, [](const StaticEmitterState& state) {
+        return state.active;
+      }))};
   return Diagnostics{.loaded = true,
       .definition_count = m_data.definitions.size(),
       .node_count = m_data.nodes.size(),
       .track_count = m_data.tracks.size(),
       .active_node_count = active_nodes,
+      .static_emitter_count = m_static_emitters.size(),
+      .active_static_emitter_count = active_static_emitters,
       .queued_request_count = m_requests.size(),
       .active_particle_count = m_particles.size(),
       .attached_sprite_count = m_particles.size()};
+}
+
+std::size_t Runtime::static_emitter_count() const {
+  return m_static_emitters.size();
+}
+
+const Runtime::StaticEmitterState& Runtime::static_emitter_state(const std::size_t index) const {
+  return m_static_emitters.at(index);
 }
 
 float Runtime::random01() {
@@ -201,6 +216,14 @@ float Runtime::random01() {
     return std::clamp(m_injected_random(), 0.0F, 1.0F);
   }
   return static_cast<float>(m_runtime_rand(m_generator)) * (1.0F / 32767.0F);
+}
+
+std::size_t Runtime::random_int32() {
+  if (m_injected_random) {
+    return static_cast<std::size_t>(std::min<std::size_t>(32767U,
+        static_cast<std::size_t>(std::clamp(m_injected_random(), 0.0F, 1.0F) * 32767.0F)));
+  }
+  return static_cast<std::size_t>(m_runtime_rand(m_generator));
 }
 
 float Runtime::traversal_duration(const Omikron::SfxTrack& track) {
@@ -434,7 +457,11 @@ void Runtime::service_node(const std::size_t node_index) {
             .structured_script_trigger_id = script_trigger,
             .animation_id = std::nullopt,
             .animation_name = {},
-            .cin_channel = std::nullopt});
+            .cin_channel = std::nullopt,
+            .static_object_index = std::nullopt,
+            .static_object_name = {},
+            .static_object_prefix = {},
+            .section_d_record_index = std::nullopt});
   }
 
   node.elapsed += 1.0F;
@@ -550,6 +577,140 @@ void Runtime::service_requests() {
     } else {
       ++index;
     }
+  }
+}
+
+void Runtime::bind_static_emitters() {
+  m_static_emitters.clear();
+  const std::span<const StaticEmitterObject> objects{m_host.static_emitter_objects()};
+  for (std::size_t record_index{0}; record_index < m_data.section_d.size(); ++record_index) {
+    const Omikron::SfxStaticEmitterRecord& record{m_data.section_d.at(record_index)};
+    const auto found_definition{m_definition_indices.find(record.definition_id)};
+    if (found_definition == m_definition_indices.end()) {
+      App::Log::warn(LogCategory::Scenario,
+          "StaticSfxDefinitionMissing — record={} def={} prefix={}"
+          " (definition not found)",
+          record_index,
+          record.definition_id,
+          record.prefix_string());
+      continue;
+    }
+    for (const StaticEmitterObject& object : objects) {
+      if ((object.flags & 0x40000000U) == 0U) {
+        continue;
+      }
+      if (object.name.size() < 4U) {
+        continue;
+      }
+      if (std::memcmp(object.name.data(), record.object_name_prefix.data(), 4U) != 0) {
+        continue;
+      }
+      if (m_static_emitters.size() >= 256U) {
+        if (!m_static_emitter_capacity_warned) {
+          m_static_emitter_capacity_warned = true;
+          App::Log::warn(
+              LogCategory::Scenario, "Static SFX emitter capacity {} reached", 256U);
+        }
+        break;
+      }
+      const std::int32_t definition_id{record.definition_id};
+      StaticEmitterState state{
+          .source_record_index = record_index,
+          .definition_id = definition_id,
+          .object_index = object.object_index,
+          .object_name = object.name,
+          .remaining_duration = record.duration,
+          .emission_interval = record.emission_interval,
+          .interval_phase = 0.0F,
+          .emission_count = 0U,
+          .last_emission_tick = 0U,
+          .active = true,
+      };
+      if (record.emission_interval > 0.0F) {
+        const float positive_interval{record.emission_interval};
+        const int integral_interval{static_cast<int>(positive_interval)};
+        if (integral_interval > 0) {
+          const std::size_t interval_seed{
+              static_cast<std::size_t>(integral_interval)};
+          state.interval_phase = static_cast<float>(random_int32() % interval_seed);
+        }
+      }
+      m_static_emitters.push_back(state);
+      App::Log::info(LogCategory::Scenario,
+          "StaticSfxBound — record={} prefix={} object_index={} object='{}' definition={}:'{}'",
+          record_index,
+          record.prefix_string(),
+          object.object_index,
+          object.name,
+          record.definition_id,
+          m_data.definitions.at(found_definition->second).name);
+    }
+  }
+}
+
+void Runtime::service_static_emitters() {
+  for (std::size_t index{0}; index < m_static_emitters.size();) {
+    StaticEmitterState& state{m_static_emitters.at(index)};
+    if (!state.active) {
+      ++index;
+      continue;
+    }
+    if (state.remaining_duration <= 0.0F) {
+      state.active = false;
+      App::Log::info(LogCategory::Scenario,
+          "StaticSfxExpired — record={} object_index={} definition={} object='{}'",
+          state.source_record_index,
+          state.object_index,
+          state.definition_id,
+          state.object_name);
+      ++index;
+      continue;
+    }
+    state.remaining_duration -= 1.0F;
+    if (state.emission_interval > 0.0F && state.interval_phase < state.emission_interval) {
+      state.interval_phase += 1.0F;
+      ++index;
+      continue;
+    }
+    state.interval_phase = 0.0F;
+    const auto position{m_host.resolve_static_emitter_world_position(state.object_index)};
+    if (!position.has_value()) {
+      App::Log::warn(LogCategory::Scenario,
+          "StaticSfxBindingMissing — record={} object_index={} object='{}'",
+          state.source_record_index,
+          state.object_index,
+          state.object_name);
+      state.active = false;
+      ++index;
+      continue;
+    }
+    const auto definition_it{m_definition_indices.find(state.definition_id)};
+    if (definition_it == m_definition_indices.end()) {
+      App::Log::warn(LogCategory::Scenario,
+          "StaticSfxDefinitionMissing — record={} def={} prefix={} object='{}'",
+          state.source_record_index,
+          state.definition_id,
+          state.object_name,
+          state.object_name);
+      state.active = false;
+      ++index;
+      continue;
+    }
+    const Omikron::SfxDefinition& definition{m_data.definitions.at(definition_it->second)};
+    const EmissionProvenance provenance{.origin = EmissionOriginKind::k_static_object,
+        .node_id = std::nullopt,
+        .structured_script_trigger_id = std::nullopt,
+        .animation_id = std::nullopt,
+        .animation_name = {},
+        .cin_channel = std::nullopt,
+        .static_object_index = state.object_index,
+        .static_object_name = state.object_name,
+        .static_object_prefix = state.object_name.substr(0U, 4U),
+        .section_d_record_index = state.source_record_index};
+    enqueue_request(definition, position.value(), provenance);
+    state.emission_count += 1U;
+    state.last_emission_tick = m_logical_tick;
+    ++index;
   }
 }
 
@@ -717,6 +878,7 @@ void Runtime::step() {
   for (std::size_t index{0}; index < m_nodes.size(); ++index) {
     service_node(index);
   }
+  service_static_emitters();
   service_requests();
   service_particles();
 }

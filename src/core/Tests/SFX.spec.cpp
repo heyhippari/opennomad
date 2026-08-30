@@ -229,6 +229,55 @@ TEST_SUITE("Core::Omikron::SFX") {
     CHECK(parsed->tracks.size() == 2U);
   }
 
+  TEST_CASE("reads a typed section-D record with exact prefix and float values") {
+    Buffer buffer;
+    buffer.u32(App::Omikron::k_sfx_magic)
+        .u32(0U)
+        .u32(0U)
+        .u32(0U)
+        .u32(1U)
+        .i32(-12345)
+        .chars("gril", 4U)
+        .f32(42.5F)
+        .f32(3.25F);
+    const auto parsed{App::Omikron::SFX::load(buffer.data())};
+    REQUIRE(parsed.has_value());
+    REQUIRE(parsed->section_d.size() == 1U);
+    const App::Omikron::SfxStaticEmitterRecord& record{parsed->section_d.front()};
+    CHECK(record.definition_id == -12345);
+    CHECK(record.object_name_prefix[0] == 'g');
+    CHECK(record.object_name_prefix[1] == 'r');
+    CHECK(record.object_name_prefix[2] == 'i');
+    CHECK(record.object_name_prefix[3] == 'l');
+    CHECK(record.duration == doctest::Approx(42.5F));
+    CHECK(record.emission_interval == doctest::Approx(3.25F));
+    CHECK(record.prefix_string() == "gril");
+  }
+
+  TEST_CASE("retains multiple section-D records in file order and preserves 4-byte prefixes") {
+    Buffer buffer;
+    buffer.u32(App::Omikron::k_sfx_magic)
+        .u32(0U)
+        .u32(0U)
+        .u32(0U)
+        .u32(2U)
+        .i32(10)
+        .chars("neon", 4U)
+        .f32(9999999.0F)
+        .f32(0.0F)
+        .i32(11)
+        .chars("gril", 4U)
+        .f32(9999999.0F)
+        .f32(3.0F);
+    const auto parsed{App::Omikron::SFX::load(buffer.data())};
+    REQUIRE(parsed.has_value());
+    REQUIRE(parsed->section_d.size() == 2U);
+    CHECK(parsed->section_d.at(0).definition_id == 10);
+    CHECK(parsed->section_d.at(0).prefix_string() == "neon");
+    CHECK(parsed->section_d.at(1).definition_id == 11);
+    CHECK(parsed->section_d.at(1).prefix_string() == "gril");
+  }
+
   TEST_CASE("accepts the recovered tail being absent after definitions") {
     const auto parsed{App::Omikron::SFX::load(bytes({App::Omikron::k_sfx_magic, 0U, 0U, 0U}))};
     REQUIRE(parsed.has_value());

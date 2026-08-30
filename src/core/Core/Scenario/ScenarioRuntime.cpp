@@ -1238,7 +1238,11 @@ void ScenarioRuntime::service_cin_sfx_channel(Character::RuntimeCharacter& chara
             .structured_script_trigger_id = std::nullopt,
             .animation_id = playback.animation_id,
             .animation_name = playback.animation_name,
-            .cin_channel = channel_number});
+            .cin_channel = channel_number,
+            .static_object_index = std::nullopt,
+            .static_object_name = {},
+            .static_object_prefix = {},
+            .section_d_record_index = std::nullopt});
     ++channel.emissions_this_execution;
     App::Log::info(LogCategory::Scenario,
         "CinSfxEmit — animation='{}' channel={} elapsed={:.3f} definition={}:'{}' "
@@ -1587,10 +1591,25 @@ void ScenarioRuntime::bind_decor_model(const Omikron::Model3DOData* const decor_
                                 : decor_model->runtime_objects;
   m_decor_cameras =
       decor_model == nullptr ? std::vector<Omikron::CameraRecord>{} : decor_model->cameras;
+  m_static_emitter_objects.clear();
+  if (decor_model != nullptr) {
+    m_static_emitter_objects.reserve(decor_model->meshes.size());
+    for (std::size_t index{0}; index < decor_model->meshes.size(); ++index) {
+      const Omikron::MeshDescriptor& mesh{decor_model->meshes.at(index)};
+      m_static_emitter_objects.push_back(Sfx::StaticEmitterObject{
+          .object_index = index,
+          .name = mesh.name,
+          .flags = mesh.flags,
+      });
+    }
+  }
   m_selected_decor_camera_index.reset();
   m_camera_editing_camera.reset();
   m_structured_camera_source = StructuredCameraSource::k_none;
   m_decor_pose_revision = 0;
+  if (m_sfx_runtime != nullptr) {
+    m_sfx_runtime->bind_static_emitters();
+  }
 }
 
 const Omikron::Model3DOData* ScenarioRuntime::decor_model() const {
@@ -1600,6 +1619,18 @@ const Omikron::Model3DOData* ScenarioRuntime::decor_model() const {
 std::span<const Omikron::Model3DOData::RuntimeObjectState> ScenarioRuntime::decor_runtime_objects()
     const {
   return m_decor_runtime_objects;
+}
+
+std::span<const Sfx::StaticEmitterObject> ScenarioRuntime::static_emitter_objects() const {
+  return m_static_emitter_objects;
+}
+
+std::optional<Runtime::Vec3> ScenarioRuntime::resolve_static_emitter_world_position(
+    const std::size_t object_index) const {
+  if (object_index >= m_decor_runtime_objects.size()) {
+    return std::nullopt;
+  }
+  return m_decor_runtime_objects.at(object_index).world_translation;
 }
 
 std::uint64_t ScenarioRuntime::decor_pose_revision() const {
