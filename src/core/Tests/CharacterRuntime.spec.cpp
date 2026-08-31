@@ -350,16 +350,14 @@ TEST_SUITE("Core::Character::Runtime") {
     CHECK_EQ(loads, 1U);
     CHECK(character->active);
     CHECK(character->area_present);
-    CHECK_FALSE(character->presentation_enabled);
-    CHECK_FALSE(character->renderable());
-    REQUIRE(runtime.set_presentation_enabled(57, true).has_value());
     CHECK(character->presentation_enabled);
     CHECK(character->renderable());
     CHECK_EQ(character->transform.translation.x,
         static_cast<float>(App::Runtime::area_position_to_inches(49457)));
 
-    // Preload establishes a logical resident body so a bound SCX script may
-    // start before visibility. Compact 0x4E changes presentation separately.
+    // SCENE materialization creates the resident body normally. Presentation
+    // is changed only by an explicit authored visibility operation; attaching
+    // a SCENE must not manufacture a hidden state for every new character.
     REQUIRE(runtime.ensure_scene_character(222, 55, scene, 57).has_value());
     character = runtime.find(57);
     REQUIRE(character != nullptr);

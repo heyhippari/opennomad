@@ -1844,6 +1844,18 @@ std::expected<void, std::string> ScenarioStartupController::set_current_characte
     return std::expected<void, std::string>{
         std::unexpect, "current controlled character is not established"};
   }
+
+  // Runtime's actor dispatcher does not service the ordinary controller path
+  // while a character-bound structured child owns the current actor. Launching
+  // that child puts the actor in native state 4; state 1/CTL resumes only after
+  // the child has completed and a later ordinary actor update occurs.
+  //
+  // Keep controller_enabled/direct-control state intact: 0x68/0x69 gate CTL
+  // participation independently of structured-script actor ownership.
+  if (current_character_structured_script_active(current.value())) {
+    return {};
+  }
+
   ScenarioRuntime* const runtime{m_manager->world_runtime(current->world_scene_id)};
   if (runtime == nullptr) {
     return std::expected<void, std::string>{std::unexpect,

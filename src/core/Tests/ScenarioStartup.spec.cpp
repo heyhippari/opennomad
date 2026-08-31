@@ -1427,7 +1427,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK_EQ(controller.zone_contact_count(), 1U);
   }
 
-  TEST_CASE("fire-and-forget current-character script freezes proxy synchronization") {
+  TEST_CASE("fire-and-forget current-character script freezes proxy and CTL service") {
     constexpr std::int16_t k_zone_id{17};
     const TempDirectory temp;
     write_zone_contact_fixtures(temp, false, k_zone_id, false, false, 50U, 4090, 0, true);
@@ -1457,12 +1457,22 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(scripts != nullptr);
     REQUIRE_EQ(scripts->instances().size(), 1U);
     CHECK_FALSE(scripts->instances().front().completed);
+
+    App::Character::RuntimeCharacter* character{runtime->character_runtime().find(136)};
+    REQUIRE(character != nullptr);
+    REQUIRE(character->ctl_controller.has_value());
+    character->controller_enabled = true;
+    character->ctl_controller->set_player_direct_control(true);
+    const float ctl_progress_before{character->ctl_controller->current_progress()};
+
     REQUIRE(controller.tick(1.0F / 30.0F).has_value());
     CHECK(controller.current_character_trigger_proxy()->synchronization_suspended);
     CHECK_EQ(controller.current_character_trigger_proxy()->suspension_reason,
         "current-character structured script active");
     CHECK_FALSE(controller.current_character_trigger_proxy()->contact_ready);
     CHECK_EQ(controller.zone_contact_count(), 0U);
+    CHECK_EQ(character->ctl_controller->current_progress(), ctl_progress_before);
+    CHECK(character->ctl_controller->direct_control_active());
   }
 
   TEST_CASE("zone contact follows live runtime position instead of the AREA placement snapshot") {
