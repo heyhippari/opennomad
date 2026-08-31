@@ -131,6 +131,7 @@ struct RuntimeScriptCommand {
 /// retain their character ID and otherwise-uninterpreted third operand.
 struct ScriptLaunchContext {
   std::optional<std::int16_t> character_id;
+  std::optional<std::size_t> character_instance_id;
   std::int16_t parameter{0};
 };
 

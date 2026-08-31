@@ -167,6 +167,10 @@ struct RuntimeCharacter {
   std::vector<BodyAnimationObjectPose> object_poses;
   std::vector<Omikron::MaterialGroup> posed_groups;
   std::uint64_t pose_revision{0};
+  /// Advances only when this actor receives Runtime's ordinary spatial-service
+  /// equivalent (native state-1 -> 0x00467770). Structured body animation may
+  /// mutate `transform.translation` without advancing this counter.
+  std::uint64_t ordinary_actor_service_generation{0};
   BodyAnimationPlayback body_animation;
   std::optional<DialogPerformanceOverlay> dialog_performance;
 

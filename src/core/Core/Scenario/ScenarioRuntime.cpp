@@ -579,7 +579,9 @@ std::expected<std::size_t, std::string> ScenarioRuntime::spawn_character_script_
         fmt::format("runtime character {} is not active in the current AREA", character_id)};
   }
   auto created{m_script_runtime->create_instance(source_script_index,
-      Script::ScriptLaunchContext{.character_id = character_id, .parameter = parameter})};
+      Script::ScriptLaunchContext{.character_id = character_id,
+          .character_instance_id = character->instance_id,
+          .parameter = parameter})};
   if (!created) {
     return created;
   }

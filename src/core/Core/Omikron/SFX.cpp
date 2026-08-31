@@ -239,18 +239,29 @@ std::expected<SfxData, std::string> SFX::load(const std::span<const std::byte> d
     result.section_d.push_back(read_static_emitter_record(reader));
   }
 
+  if (reader.remaining() == 0U) {
+    return result;
+  }
+
   result.raw_node_count = reader.read_u32();
   if (reader.has_error()) {
     return std::expected<SfxData, std::string>{
         std::unexpect, fmt::format("SFX node count: {}", reader.error())};
   }
   const std::size_t node_count{parsed_count(result.raw_node_count)};
+  if (reader.remaining() == 0U) {
+    return result;
+  }
   if (auto valid{require_records(reader, node_count, K_NODE_SIZE, "node")}; !valid) {
     return std::expected<SfxData, std::string>{std::unexpect, std::move(valid).error()};
   }
   result.nodes.reserve(node_count);
   for (std::size_t index{0}; index < node_count; ++index) {
     result.nodes.push_back(read_node(reader));
+  }
+
+  if (reader.remaining() == 0U) {
+    return result;
   }
 
   result.raw_track_count = reader.read_u32();

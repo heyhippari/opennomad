@@ -1323,7 +1323,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK(contact->script->wait_info().kind == App::Script::AreaWaitKind::k_camera);
   }
 
-  TEST_CASE("compact address placement does not synchronize the trigger proxy") {
+  TEST_CASE("compact address placement updates the trigger proxy through ordinary service") {
     constexpr std::int16_t k_zone_id{14};
     const TempDirectory temp;
     write_zone_contact_fixtures(temp, false, k_zone_id, false, true);
@@ -1350,9 +1350,89 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(controller.current_character_trigger_proxy().has_value());
     CHECK_EQ(character->serialized_area_position.at(0), 500);
     CHECK_EQ(controller.current_character_trigger_proxy()->position.x,
-        App::Runtime::area_position_to_inches(50));
-    CHECK(controller.current_character_trigger_proxy()->synchronization_suspended);
+        character->transform.translation.x);
+    CHECK_FALSE(controller.current_character_trigger_proxy()->synchronization_suspended);
     CHECK_EQ(controller.zone_contact_count(), 0U);
+  }
+
+  TEST_CASE(
+      "structured ownership resolves through the live runtime body and ordinary service "
+      "generation") {
+    const TempDirectory temp;
+    write_zone_contact_fixtures(temp, false, 18, false, false, 50U, 4090, 0, true);
+    const ScopedGameDataRoot root{temp.root()};
+
+    App::ScenarioManager manager;
+    App::ScenarioStartupController controller;
+    REQUIRE(controller.initialize(manager).has_value());
+    App::ScenarioRuntime* runtime{manager.world_runtime(0)};
+    REQUIRE(runtime != nullptr);
+    runtime->character_runtime().set_model_loader(
+        [](const std::string_view name)
+            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
+          auto resource{std::make_shared<App::Character::ModelResource>()};
+          resource->name = name;
+          resource->groups.push_back(App::Omikron::MaterialGroup{});
+          return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
+        });
+    install_stub_ctl_loader(*runtime);
+
+    REQUIRE(controller.tick().has_value());
+    App::Character::RuntimeCharacter* character{runtime->character_runtime().find(136)};
+    REQUIRE(character != nullptr);
+    REQUIRE(controller.current_character_trigger_proxy().has_value());
+    CHECK_EQ(character->ordinary_actor_service_generation, 0U);
+    CHECK_EQ(
+        controller.current_character_trigger_proxy()->last_consumed_actor_spatial_generation, 0U);
+
+    const auto instance_id{runtime->script_runtime()->instances().front().instance_id};
+    REQUIRE(instance_id > 0U);
+    const auto& launch_context{runtime->script_runtime()->instances().front().launch_context};
+    CHECK_EQ(launch_context.character_id, std::optional<std::int16_t>{136});
+    CHECK_EQ(
+        launch_context.character_instance_id, std::optional<std::size_t>{character->instance_id});
+
+    character->transform.translation.x += 100.0F;
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+    CHECK_EQ(character->ordinary_actor_service_generation, 0U);
+    CHECK_EQ(
+        controller.current_character_trigger_proxy()->last_consumed_actor_spatial_generation, 0U);
+    CHECK(controller.current_character_trigger_proxy()->synchronization_suspended);
+  }
+
+  TEST_CASE("ordinary actor service advances generation before proxy synchronization") {
+    const TempDirectory temp;
+    write_zone_contact_fixtures(temp, false, 19, false, false);
+    const ScopedGameDataRoot root{temp.root()};
+
+    App::ScenarioManager manager;
+    App::ScenarioStartupController controller;
+    REQUIRE(controller.initialize(manager).has_value());
+    App::ScenarioRuntime* runtime{manager.world_runtime(0)};
+    REQUIRE(runtime != nullptr);
+    runtime->character_runtime().set_model_loader(
+        [](const std::string_view name)
+            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
+          auto resource{std::make_shared<App::Character::ModelResource>()};
+          resource->name = name;
+          resource->groups.push_back(App::Omikron::MaterialGroup{});
+          return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
+        });
+    install_stub_ctl_loader(*runtime);
+
+    REQUIRE(controller.tick().has_value());
+    App::Character::RuntimeCharacter* character{runtime->character_runtime().find(136)};
+    REQUIRE(character != nullptr);
+    REQUIRE(controller.current_character_trigger_proxy().has_value());
+    CHECK_EQ(character->ordinary_actor_service_generation, 1U);
+    CHECK_EQ(
+        controller.current_character_trigger_proxy()->last_consumed_actor_spatial_generation, 1U);
+
+    character->transform.translation.x += 200.0F;
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+    CHECK_EQ(character->ordinary_actor_service_generation, 2U);
+    CHECK_EQ(
+        controller.current_character_trigger_proxy()->last_consumed_actor_spatial_generation, 2U);
   }
 
   TEST_CASE("ordinary proxy synchronization may create contact while controller is disabled") {

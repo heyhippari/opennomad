@@ -17,9 +17,9 @@ using App::WorldPresentationState;
 TEST_SUITE("Core::WorldLetterboxState") {
   TEST_CASE("Cinematic mask leaves a 1.85 to 1 visible image") {
     CHECK(WorldLetterboxState::target_bar_height(640.0F, 480.0F) ==
-        doctest::Approx(67.027027F).epsilon(0.0001));
+          doctest::Approx(67.027027F).epsilon(0.0001));
     CHECK(WorldLetterboxState::target_bar_height(1920.0F, 1080.0F) ==
-        doctest::Approx(21.081081F).epsilon(0.0001));
+          doctest::Approx(21.081081F).epsilon(0.0001));
     CHECK_EQ(WorldLetterboxState::target_bar_height(1850.0F, 1000.0F), 0.0F);
     CHECK_EQ(WorldLetterboxState::target_bar_height(2560.0F, 1080.0F), 0.0F);
   }

@@ -116,7 +116,12 @@ struct CurrentCharacterTriggerProxy {
   Runtime::Vec3 position{};
   float radius{0.0F};
   float heading_degrees{0.0F};
+  /// The actor spatial-service generation most recently consumed by this proxy.
+  /// This is not a movement counter; it advances only when the current actor
+  /// genuinely receives the ordinary service path that copies logical XYZ into
+  /// the registered spatial proxy.
   std::uint64_t generation{0};
+  std::uint64_t last_consumed_actor_spatial_generation{0};
   std::size_t overlapping_zone_count{0};
   bool synchronization_suspended{false};
   std::string suspension_reason;
@@ -350,6 +355,7 @@ class ScenarioStartupController {
   /// once per scenario tick, before zone-contact production, using the
   /// session's current CTL profile input mask.
   void service_ctl_controller(float delta_seconds);
+  void service_current_character_actor(float delta_seconds);
   /// Starts a compact-owned dialog and enters the session-global scheduling
   /// takeover shared by AREA, SCENE, and contact contexts.
   [[nodiscard]] std::expected<void, std::string> start_compact_dialog(
@@ -487,8 +493,6 @@ class ScenarioStartupController {
   ScenarioManager* m_manager{nullptr};
   /// Global scheduling takeover entered by any successful compact 0x3D.
   bool m_dialog_takeover_active{false};
-  bool m_current_character_address_placed_this_tick{false};
-  bool m_current_character_proxy_registered_this_tick{false};
   std::optional<std::int16_t> m_dialog_takeover_id;
   /// UI dispatch; pure transport, no lifecycle policy.
   InterfaceDispatcher m_dispatcher;

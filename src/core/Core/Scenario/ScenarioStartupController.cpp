@@ -1987,15 +1987,71 @@ void ScenarioStartupController::service_ctl_controller(const float delta_seconds
     return;
   }
 
+  // Runtime suppresses the ordinary CTL path while a character-bound structured
+  // child owns the current actor. `service_current_character_actor()` owns that
+  // gate, so CTL here is only reached for an actual ordinary service.
   Character::CtlController& controller{character->ctl_controller.value()};
   controller.service(delta_seconds, m_manager->ctl_input_mask(), *character);
 
-  // One-shot animation-linked audio markers resolve through the owner
-  // world's SCX DEAD0003 hID table at the live character position.
   for (const Character::CtlController::SoundMarkerEvent& event :
       controller.take_sound_marker_events()) {
     runtime->play_ctl_sound_marker(event.sound_hid, character->transform.translation);
   }
+}
+
+void ScenarioStartupController::service_current_character_actor(const float delta_seconds) {
+  if (m_manager == nullptr) {
+    return;
+  }
+  const std::optional<ControlledCharacterRef> current{m_manager->controlled_character()};
+  if (!current.has_value()) {
+    return;
+  }
+  ScenarioRuntime* const runtime{m_manager->world_runtime(current->world_scene_id)};
+  Character::RuntimeCharacter* const character{
+      runtime == nullptr ? nullptr : runtime->character_runtime().find(current->character_id)};
+  if (character == nullptr || !character->active || !character->area_present) {
+    return;
+  }
+
+  const Script::ScriptRuntime* const scripts{
+      runtime == nullptr ? nullptr : runtime->script_runtime()};
+  const bool structured_owner{
+      scripts != nullptr &&
+      std::ranges::any_of(
+          scripts->instances(), [character](const Script::ScriptInstance& instance) {
+            return !instance.completed &&
+                   instance.launch_context.character_instance_id.has_value() &&
+                   instance.launch_context.character_instance_id.value() == character->instance_id;
+          })};
+  if (structured_owner) {
+    App::Log::debug(LogCategory::Scenario,
+        "CurrentActorServiceSuppressed — character={} world={} instance={} reason=structured-owner",
+        current->character_id,
+        current->world_scene_id,
+        character->instance_id);
+    return;
+  }
+
+  if (character->ctl_controller.has_value() && character->controller_enabled) {
+    character->ctl_controller->service(delta_seconds, m_manager->ctl_input_mask(), *character);
+    for (const Character::CtlController::SoundMarkerEvent& event :
+        character->ctl_controller->take_sound_marker_events()) {
+      runtime->play_ctl_sound_marker(event.sound_hid, character->transform.translation);
+    }
+  }
+
+  ++character->ordinary_actor_service_generation;
+  App::Log::info(LogCategory::Scenario,
+      "CurrentActorServiced — character={} world={} generation={} xyz=({:.3f},{:.3f},{:.3f}) "
+      "radius={:.3f}",
+      current->character_id,
+      current->world_scene_id,
+      character->ordinary_actor_service_generation,
+      character->transform.translation.x,
+      character->transform.translation.y,
+      character->transform.translation.z,
+      character->model_resource == nullptr ? 0.0F : character->model_resource->bounds_radius);
 }
 
 void ScenarioStartupController::register_current_character_trigger_proxy(
@@ -2007,11 +2063,11 @@ void ScenarioStartupController::register_current_character_trigger_proxy(
       .radius =
           character.model_resource == nullptr ? 0.0F : character.model_resource->bounds_radius,
       .heading_degrees = character.principal_orientation_degrees.y,
-      .generation = m_next_trigger_proxy_generation++,
+      .generation = character.ordinary_actor_service_generation,
+      .last_consumed_actor_spatial_generation = character.ordinary_actor_service_generation,
       .overlapping_zone_count = 0,
       .synchronization_suspended = false,
       .suspension_reason = {}};
-  m_current_character_proxy_registered_this_tick = true;
   App::Log::info(LogCategory::Scenario,
       "TriggerProxyRegistered — character={} world={} generation={} xyz=({:.3f},{:.3f},{:.3f}) "
       "radius={:.3f}",
@@ -2030,14 +2086,23 @@ bool ScenarioStartupController::current_character_structured_script_active(
     return false;
   }
   const ScenarioRuntime* const scenario{m_manager->world_runtime(owner.world_scene_id)};
+  const Character::RuntimeCharacter* const character{
+      scenario == nullptr ? nullptr : scenario->character_runtime().find(owner.character_id)};
   const Script::ScriptRuntime* const scripts{
       scenario == nullptr ? nullptr : scenario->script_runtime()};
-  if (scripts == nullptr) {
+  if (character == nullptr || scripts == nullptr) {
     return false;
   }
   return std::ranges::any_of(
-      scripts->instances(), [&owner](const Script::ScriptInstance& instance) {
-        return !instance.completed && instance.launch_context.character_id == owner.character_id;
+      scripts->instances(), [character](const Script::ScriptInstance& instance) {
+        if (instance.completed) {
+          return false;
+        }
+        if (instance.launch_context.character_instance_id.has_value()) {
+          return instance.launch_context.character_instance_id.value() == character->instance_id;
+        }
+        return instance.launch_context.character_id.has_value() &&
+               instance.launch_context.character_id.value() == character->character_id;
       });
 }
 
@@ -2062,62 +2127,42 @@ void ScenarioStartupController::service_current_character_trigger_proxy() {
     proxy.suspension_reason = "current character is not active and AREA-present";
     return;
   }
-  if (m_current_character_proxy_registered_this_tick) {
-    proxy.synchronization_suspended = true;
-    proxy.suspension_reason = "registered this tick; awaiting ordinary actor update";
-    return;
-  }
-  if (current_character_structured_script_active(proxy.owner)) {
-    if (!proxy.synchronization_suspended ||
-        proxy.suspension_reason != "current-character structured script active") {
-      App::Log::info(LogCategory::Scenario,
-          "TriggerProxyFrozen — character={} world={} generation={} reason=structured-script",
-          proxy.owner.character_id,
-          proxy.owner.world_scene_id,
-          proxy.generation);
-    }
+  const bool structured_active{current_character_structured_script_active(proxy.owner)};
+  if (structured_active) {
     proxy.synchronization_suspended = true;
     proxy.suspension_reason = "current-character structured script active";
     return;
   }
-  if (m_current_character_address_placed_this_tick) {
-    App::Log::debug(LogCategory::Scenario,
-        "TriggerProxyFrozen — character={} world={} generation={} reason=compact-address",
-        proxy.owner.character_id,
-        proxy.owner.world_scene_id,
-        proxy.generation);
-    proxy.synchronization_suspended = true;
-    proxy.suspension_reason = "compact address placement occurred this tick";
+  if (proxy.last_consumed_actor_spatial_generation >=
+      character->ordinary_actor_service_generation) {
+    if (!proxy.contact_ready) {
+      proxy.synchronization_suspended = true;
+      proxy.suspension_reason = "ordinary actor service not yet consumed";
+      return;
+    }
+    proxy.synchronization_suspended = false;
+    proxy.suspension_reason.clear();
     return;
   }
-
-  const bool was_suspended{proxy.synchronization_suspended};
-  const bool moved{proxy.position.x != character->transform.translation.x ||
-                   proxy.position.y != character->transform.translation.y ||
-                   proxy.position.z != character->transform.translation.z};
   proxy.position = character->transform.translation;
   proxy.radius =
       character->model_resource == nullptr ? 0.0F : character->model_resource->bounds_radius;
   proxy.heading_degrees = character->principal_orientation_degrees.y;
+  proxy.last_consumed_actor_spatial_generation = character->ordinary_actor_service_generation;
+  proxy.generation = proxy.last_consumed_actor_spatial_generation;
+  proxy.contact_ready = true;
   proxy.synchronization_suspended = false;
   proxy.suspension_reason.clear();
-  const bool first_ready_sync{!proxy.contact_ready};
-  proxy.contact_ready = true;
-  if (moved) {
-    ++proxy.generation;
-  }
-  if (was_suspended || first_ready_sync) {
-    App::Log::info(LogCategory::Scenario,
-        "TriggerProxySynchronized — character={} world={} generation={} xyz=({:.3f},{:.3f},{:.3f}) "
-        "radius={:.3f}",
-        proxy.owner.character_id,
-        proxy.owner.world_scene_id,
-        proxy.generation,
-        proxy.position.x,
-        proxy.position.y,
-        proxy.position.z,
-        proxy.radius);
-  }
+  App::Log::info(LogCategory::Scenario,
+      "TriggerProxySynchronized — character={} world={} generation={} xyz=({:.3f},{:.3f},{:.3f}) "
+      "radius={:.3f}",
+      proxy.owner.character_id,
+      proxy.owner.world_scene_id,
+      proxy.generation,
+      proxy.position.x,
+      proxy.position.y,
+      proxy.position.z,
+      proxy.radius);
 }
 
 std::expected<void, std::string> ScenarioStartupController::start_compact_dialog(
@@ -2561,7 +2606,6 @@ std::expected<void, std::string> ScenarioStartupController::place_current_charac
   auto placed{runtime->character_runtime().place_character_at_address(
       current->character_id, resolved_address.value())};
   if (placed) {
-    m_current_character_address_placed_this_tick = true;
     App::Log::info(
         LogCategory::Scenario, "current character placed at address {}", request.address_id);
   }
@@ -3414,8 +3458,6 @@ std::expected<void, std::string> ScenarioStartupController::tick(const float del
   }
 
   m_ticked = true;
-  m_current_character_address_placed_this_tick = false;
-  m_current_character_proxy_registered_this_tick = false;
   if (auto cameras{service_camera_completions()}; !cameras) {
     m_last_error = cameras.error();
     return std::expected<void, std::string>{std::unexpect, m_last_error};
@@ -3491,10 +3533,10 @@ std::expected<void, std::string> ScenarioStartupController::tick(const float del
   // owning AREA context. Service them after resident primary AREA contexts.
   service_scene_scripts(delta_seconds);
 
-  // Input -> enabled CTL controller -> accepted position -> zone contacts.
-  // Phase 4.2 inserts physics/collision resolution between the CTL candidate
-  // and the accepted position without changing this ordering.
-  service_ctl_controller(delta_seconds);
+  // Runtime services the ordinary current-character actor before anything else
+  // consumes its spatial state; CTL and the trigger proxy both gate on that
+  // generation, and structured child ownership suppresses the ordinary path.
+  service_current_character_actor(delta_seconds);
   service_current_character_trigger_proxy();
 
   if (auto zones{service_zone_contacts(delta_seconds)}; !zones) {
