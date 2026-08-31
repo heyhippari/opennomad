@@ -975,6 +975,23 @@ void write_current_character_script_fixtures(const TempDirectory& temp) {
   write_bytes(temp.root() / "MESHES" / "DECORS" / "GRID.3DO", make_minimal_3do());
 }
 
+/// Fixture for structured-child completion testing: Sets current character first, then
+/// launches a tracked character script.
+void write_structured_child_completion_fixtures(const TempDirectory& temp) {
+  Buffer script;
+  script.u8(0x38).u16(136);  // SetCurrentCharacter 136
+  script.u8(0x2E).u16(221).u16(0).u8(0x03);  // StartCurrentCharacterScriptTracked, wait, EndEvent
+  std::vector<std::byte> area{make_area_archive()};
+  std::memcpy(area.data() + 0x800U + 0x3FCU, script.data().data(), script.data().size());
+
+  write_bytes(temp.root() / "IAM" / "START", make_start());
+  write_bytes(temp.root() / "IAM" / "GLOBAL", App::Tests::make_empty_iam_global());
+  write_bytes(temp.root() / "IAM" / "AREA", area);
+  write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
+  write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_kayl_arrives_scx(221));
+  write_bytes(temp.root() / "MESHES" / "DECORS" / "GRID.3DO", make_minimal_3do());
+}
+
 void write_character_value_fixtures(const TempDirectory& temp) {
   Buffer script;
   script.u8(0x38).u16(136);
@@ -1398,6 +1415,48 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK_EQ(
         controller.current_character_trigger_proxy()->last_consumed_actor_spatial_generation, 0U);
     CHECK(controller.current_character_trigger_proxy()->synchronization_suspended);
+  }
+
+  TEST_CASE("exact structured-child completion suppresses ordinary service and proxy sync") {
+    const TempDirectory temp;
+    write_structured_child_completion_fixtures(temp);
+    const ScopedGameDataRoot root{temp.root()};
+
+    App::ScenarioManager manager;
+    App::ScenarioStartupController controller;
+    REQUIRE(controller.initialize(manager).has_value());
+    App::ScenarioRuntime* runtime{manager.world_runtime(0)};
+    REQUIRE(runtime != nullptr);
+    runtime->character_runtime().set_model_loader(
+        [](const std::string_view name)
+            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
+          auto resource{std::make_shared<App::Character::ModelResource>()};
+          resource->name = name;
+          resource->groups.push_back(App::Omikron::MaterialGroup{});
+          return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
+        });
+    install_stub_ctl_loader(*runtime);
+
+    INFO(controller.last_error());
+    REQUIRE(controller.tick().has_value());
+    REQUIRE(controller.current_character_trigger_proxy().has_value());
+    App::Character::RuntimeCharacter* character{runtime->character_runtime().find(136)};
+    REQUIRE(character != nullptr);
+    const auto* instance{runtime->script_runtime()->instance(
+        runtime->script_runtime()->instances().front().instance_id)};
+    REQUIRE(instance != nullptr);
+    CHECK_FALSE(instance->completed);
+
+    runtime->script_runtime()->tick(1.0F / 30.0F);
+    CHECK(instance->completed);
+
+    const auto tick_result{controller.tick(1.0F / 30.0F)};
+    INFO(controller.last_error());
+    REQUIRE(tick_result.has_value());
+    CHECK_EQ(character->ordinary_actor_service_generation, 0U);
+    CHECK_EQ(controller.current_character_trigger_proxy()->last_consumed_actor_spatial_generation, 0U);
+    const auto& proxy{*controller.current_character_trigger_proxy()};
+    CHECK((proxy.synchronization_suspended || !proxy.contact_ready));
   }
 
   TEST_CASE("ordinary actor service advances generation before proxy synchronization") {

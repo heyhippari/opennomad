@@ -1846,13 +1846,10 @@ std::expected<void, std::string> ScenarioStartupController::set_current_characte
   }
 
   // Runtime's actor dispatcher does not service the ordinary controller path
-  // while a character-bound structured child owns the current actor. Launching
-  // that child puts the actor in native state 4; state 1/CTL resumes only after
-  // the child has completed and a later ordinary actor update occurs.
-  //
-  // Keep controller_enabled/direct-control state intact: 0x68/0x69 gate CTL
-  // participation independently of structured-script actor ownership.
-  if (current_character_structured_script_active(current.value())) {
+  // while a character-bound structured child owns the current actor. Keep the
+  // controller state alive but suppress the ordinary service path while the exact
+  // structured owner is active.
+  if (m_current_character_structured_owner.has_value()) {
     return {};
   }
 
@@ -2014,24 +2011,33 @@ void ScenarioStartupController::service_current_character_actor(const float delt
     return;
   }
 
-  const Script::ScriptRuntime* const scripts{
-      runtime == nullptr ? nullptr : runtime->script_runtime()};
-  const bool structured_owner{
-      scripts != nullptr &&
-      std::ranges::any_of(
-          scripts->instances(), [character](const Script::ScriptInstance& instance) {
-            return !instance.completed &&
-                   instance.launch_context.character_body_identity.has_value() &&
-                   instance.launch_context.character_body_identity.value() ==
-                       character->body_identity;
-          })};
-  if (structured_owner) {
-    App::Log::debug(LogCategory::Scenario,
-        "CurrentActorServiceSuppressed — character={} world={} instance={} reason=structured-owner",
-        current->character_id,
-        current->world_scene_id,
-        character->instance_id);
-    return;
+  if (m_current_character_structured_owner.has_value()) {
+    const CurrentCharacterStructuredOwner& owner{m_current_character_structured_owner.value()};
+    const Script::ScriptRuntime* const scripts{runtime->script_runtime()};
+    const Script::ScriptInstance* const instance{
+        scripts == nullptr ? nullptr : scripts->instance(owner.script_instance_id)};
+    if (instance != nullptr && instance->launch_context.character_body_identity.has_value() &&
+        instance->launch_context.character_body_identity.value() == owner.body_identity) {
+      App::Log::debug(LogCategory::Scenario,
+          "CurrentActorServiceSuppressed — character={} world={} scriptInstance={} "
+          "reason={}",
+          current->character_id,
+          current->world_scene_id,
+          owner.script_instance_id,
+          instance->completed ? "structured-owner-completed" : "structured-owner-active");
+      return;
+    }
+
+    if (instance == nullptr || !instance->launch_context.character_body_identity.has_value() ||
+        instance->launch_context.character_body_identity.value() != owner.body_identity) {
+      App::Log::debug(LogCategory::Scenario,
+          "CurrentActorStructuredHandoff — character={} world={} scriptInstance={} "
+          "reason=structured-owner-stale",
+          current->character_id,
+          current->world_scene_id,
+          owner.script_instance_id);
+      m_current_character_structured_owner.reset();
+    }
   }
 
   if (character->ctl_controller.has_value() && character->controller_enabled) {
@@ -2058,6 +2064,7 @@ void ScenarioStartupController::service_current_character_actor(const float delt
 void ScenarioStartupController::register_current_character_trigger_proxy(
     const ControlledCharacterRef& owner, const Character::RuntimeCharacter& character) {
   m_current_character_trigger_proxy = CurrentCharacterTriggerProxy{.owner = owner,
+      .body_identity = character.body_identity,
       .registered = true,
       .contact_ready = false,
       .position = character.transform.translation,
@@ -2081,33 +2088,6 @@ void ScenarioStartupController::register_current_character_trigger_proxy(
       m_current_character_trigger_proxy->radius);
 }
 
-bool ScenarioStartupController::current_character_structured_script_active(
-    const ControlledCharacterRef& owner) const {
-  if (m_manager == nullptr) {
-    return false;
-  }
-  const ScenarioRuntime* const scenario{m_manager->world_runtime(owner.world_scene_id)};
-  const Character::RuntimeCharacter* const character{
-      scenario == nullptr ? nullptr : scenario->character_runtime().find(owner.character_id)};
-  const Script::ScriptRuntime* const scripts{
-      scenario == nullptr ? nullptr : scenario->script_runtime()};
-  if (character == nullptr || scripts == nullptr) {
-    return false;
-  }
-  return std::ranges::any_of(
-      scripts->instances(), [character](const Script::ScriptInstance& instance) {
-        if (instance.completed) {
-          return false;
-        }
-        if (instance.launch_context.character_body_identity.has_value()) {
-          return instance.launch_context.character_body_identity.value() ==
-                 character->body_identity;
-        }
-        return instance.launch_context.character_id.has_value() &&
-               instance.launch_context.character_id.value() == character->character_id;
-      });
-}
-
 void ScenarioStartupController::service_current_character_trigger_proxy() {
   if (m_manager == nullptr || !m_current_character_trigger_proxy.has_value() ||
       !m_current_character_trigger_proxy->registered) {
@@ -2129,11 +2109,28 @@ void ScenarioStartupController::service_current_character_trigger_proxy() {
     proxy.suspension_reason = "current character is not active and AREA-present";
     return;
   }
-  const bool structured_active{current_character_structured_script_active(proxy.owner)};
-  if (structured_active) {
+  if (character->body_identity != proxy.body_identity) {
+    proxy.registered = false;
     proxy.synchronization_suspended = true;
-    proxy.suspension_reason = "current-character structured script active";
+    proxy.suspension_reason = "current character body identity changed";
     return;
+  }
+  if (m_current_character_structured_owner.has_value()) {
+    const CurrentCharacterStructuredOwner& owner{m_current_character_structured_owner.value()};
+    const Script::ScriptRuntime* const scripts{scenario->script_runtime()};
+    const Script::ScriptInstance* const instance{
+        scripts == nullptr ? nullptr : scripts->instance(owner.script_instance_id)};
+    if (instance != nullptr && instance->launch_context.character_body_identity.has_value() &&
+        instance->launch_context.character_body_identity.value() == owner.body_identity) {
+      proxy.synchronization_suspended = true;
+      proxy.suspension_reason = instance->completed ? "current-character structured script completed"
+                                                    : "current-character structured script active";
+      return;
+    }
+    if (instance == nullptr || !instance->launch_context.character_body_identity.has_value() ||
+        instance->launch_context.character_body_identity.value() != owner.body_identity) {
+      m_current_character_structured_owner.reset();
+    }
   }
   if (proxy.last_consumed_actor_spatial_generation >=
       character->ordinary_actor_service_generation) {
@@ -2543,6 +2540,16 @@ std::expected<std::size_t, std::string> ScenarioStartupController::launch_charac
 
   const bool tracked{request.mode == Script::AreaCharacterScriptLaunchMode::k_tracked};
   const Omikron::ScxScript& script{scx->scripts.at(source_script_index.value())};
+  const std::optional<ControlledCharacterRef> current{m_manager->controlled_character()};
+  if (current.has_value() && current->world_scene_id == slot.world_scene_id &&
+      current->character_id == character_id) {
+    m_current_character_structured_owner = CurrentCharacterStructuredOwner{.body_identity =
+            scenario_runtime->character_runtime().find(character_id) != nullptr
+                ? scenario_runtime->character_runtime().find(character_id)->body_identity
+                : Character::BodyIdentity{0},
+        .world_scene_id = slot.world_scene_id,
+        .script_instance_id = created.value()};
+  }
   record("AreaScript.CharacterScriptStarted",
       fmt::format(
           "ownerSlot={} target={} character={} script={} name='{}' cameraDuration={} mode={} "
@@ -3490,6 +3497,30 @@ std::expected<void, std::string> ScenarioStartupController::begin_tick(const flo
   m_ticked = true;
   m_actor_phase_enabled_for_tick = false;
 
+  if (m_current_character_structured_owner.has_value()) {
+    const CurrentCharacterStructuredOwner owner{m_current_character_structured_owner.value()};
+    const std::optional<ControlledCharacterRef> current{m_manager->controlled_character()};
+    if (!current.has_value() || current->world_scene_id != owner.world_scene_id) {
+      m_current_character_structured_owner.reset();
+    } else {
+      ScenarioRuntime* const runtime{m_manager->world_runtime(owner.world_scene_id)};
+      const Character::RuntimeCharacter* const character{
+          runtime == nullptr ? nullptr : runtime->character_runtime().find(current->character_id)};
+      if (character == nullptr || character->body_identity != owner.body_identity) {
+        m_current_character_structured_owner.reset();
+      } else {
+        const Script::ScriptRuntime* const scripts{runtime->script_runtime()};
+        const Script::ScriptInstance* const instance{
+            scripts == nullptr ? nullptr : scripts->instance(owner.script_instance_id)};
+        if (instance == nullptr ||
+            !instance->launch_context.character_body_identity.has_value() ||
+            instance->launch_context.character_body_identity.value() != owner.body_identity) {
+          m_current_character_structured_owner.reset();
+        }
+      }
+    }
+  }
+
   if (auto cameras{service_camera_completions()}; !cameras) {
     m_last_error = cameras.error();
     return std::expected<void, std::string>{std::unexpect, m_last_error};
@@ -3586,18 +3617,14 @@ std::expected<void, std::string> ScenarioStartupController::finish_tick(const fl
   }
   m_actor_phase_enabled_for_tick = false;
 
-  // This is now after ScenarioRuntime::tick()/Script_PlayScriptList.
+  // This is after ScriptRuntime::tick() has advanced. Spatial zone
+  // reconciliation runs after the actor/proxy service state is finalized; newly
+  // created contact contexts are activated for the next begin_tick() rather than
+  // retroactively executing in the same finish_tick() pass.
   service_current_character_actor(delta_seconds);
   service_current_character_trigger_proxy();
   if (auto zones{reconcile_zone_contacts()}; !zones) {
     m_last_error = zones.error();
-    return std::expected<void, std::string>{std::unexpect, m_last_error};
-  }
-
-  // For single-frame tick() compatibility, run newly-created zone contact event 1.
-  // In ScenarioEngine flow, this runs in next begin_tick() instead.
-  if (auto contacts{service_zone_contact_scripts(delta_seconds)}; !contacts) {
-    m_last_error = contacts.error();
     return std::expected<void, std::string>{std::unexpect, m_last_error};
   }
   return {};

@@ -110,8 +110,15 @@ struct ZoneQualificationDiagnostic {
 
 /// Session-owned spatial trigger proxy for the durable current character.
 /// Runtime updates this independently from scripted presentation transforms.
+struct CurrentCharacterStructuredOwner {
+  Character::BodyIdentity body_identity{0};
+  std::uint32_t world_scene_id{0};
+  std::size_t script_instance_id{0};
+};
+
 struct CurrentCharacterTriggerProxy {
   ControlledCharacterRef owner;
+  Character::BodyIdentity body_identity{0};
   bool registered{false};
   bool contact_ready{false};
   Runtime::Vec3 position{};
@@ -425,8 +432,6 @@ class ScenarioStartupController {
   void register_current_character_trigger_proxy(
       const ControlledCharacterRef& owner, const Character::RuntimeCharacter& character);
   void service_current_character_trigger_proxy();
-  [[nodiscard]] bool current_character_structured_script_active(
-      const ControlledCharacterRef& owner) const;
   [[nodiscard]] std::expected<void, std::string> create_zone_contact(
       const ActiveZoneRef& active_zone);
   [[nodiscard]] std::optional<std::size_t> resident_area_slot(std::int32_t area_id) const;
@@ -482,6 +487,7 @@ class ScenarioStartupController {
   std::vector<ActiveZoneRef> m_active_zones;
   std::vector<std::unique_ptr<ZoneContactContext>> m_zone_contacts;
   std::vector<ZoneQualificationDiagnostic> m_zone_qualification_diagnostics;
+  std::optional<CurrentCharacterStructuredOwner> m_current_character_structured_owner;
   std::optional<CurrentCharacterTriggerProxy> m_current_character_trigger_proxy;
   std::uint64_t m_next_trigger_proxy_generation{1};
 
