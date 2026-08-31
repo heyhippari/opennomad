@@ -1223,4 +1223,9 @@ void WorldScene::resize(const int width, const int height) {
   }
 }
 
+void WorldScene::post_scenario_update(const float /* delta_time */) {
+  // Post-scenario update (after scenario frame). Currently no action needed;
+  // world camera operations and presentation update already completed in update().
+}
+
 }  // namespace App

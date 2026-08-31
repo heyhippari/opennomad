@@ -25,6 +25,9 @@ struct AreaCharacterActivationRequest;
 }
 
 namespace App::Character {
+/// Session/process-unique logical body token. Unlike `instance_id`, this is not
+/// a vector index and survives Runtime-to-Runtime body transfer.
+using BodyIdentity = std::uint64_t;
 
 /// CPU-side model resource shared by every runtime instance using the same
 /// authored character model. GPU presentation resources are owned separately
@@ -110,6 +113,11 @@ enum class PoseOwner : std::uint8_t {
 
 /// Persistent logical character materialized in one world runtime.
 struct RuntimeCharacter {
+  /// Stable logical body identity. Never renumber on vector erase/adoption.
+  BodyIdentity body_identity{0};
+  /// Runtime-local dense/index-like diagnostic identity. This may change when
+  /// the containing Runtime vector is compacted or when the body is adopted by
+  /// another world and MUST NOT be used for structured ownership.
   std::size_t instance_id{0};
   std::int16_t character_id{0};
   std::int32_t area_id{0};
@@ -287,12 +295,14 @@ class Runtime {
   [[nodiscard]] std::expected<void, std::string> deactivate_character(std::int16_t character_id);
 
   /// Moves one complete logical body out of this world. The extracted value
-  /// retains every mutable runtime field and its immutable shared resource.
+  /// retains every mutable runtime field, its immutable shared resource, and
+  /// its stable `body_identity`. Local `instance_id` values may be renumbered.
   [[nodiscard]] std::expected<RuntimeCharacter, std::string> extract_character(
       std::int16_t character_id);
 
   /// Adopts a body moved from another world without invoking the model loader.
-  /// The target-local instance ID is assigned on adoption.
+  /// The target-local instance ID is assigned on adoption; stable body identity
+  /// is preserved.
   [[nodiscard]] std::expected<void, std::string> adopt_character(RuntimeCharacter character);
 
   /// Transfers one body to a target world without reloading or duplicating it.

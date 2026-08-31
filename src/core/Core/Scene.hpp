@@ -17,8 +17,16 @@ class Scene {
   Scene& operator=(Scene&& other) = delete;
 
   /// Advance the scene state by delta_time seconds. `input` carries the
-  /// frame's resolved action values (see Input::InputManager).
+  /// frame's resolved action values (see Input::InputManager). This is the
+  /// pre-scenario/input phase; scenario-owned presentation must not be
+  /// finalized here.
   virtual void update(float delta_time, const Input::InputManager& input) = 0;
+
+  /// Reconcile presentation after the scenario scheduler has completed for
+  /// this engine frame. WorldScene uses this to consume same-frame scenario
+  /// camera/presentation state without advancing it twice. Non-world scenes
+  /// have no post-scenario work by default.
+  virtual void post_scenario_update(float /*delta_time*/) {}
 
   /// Draw the scene; the GL context is current and the framebuffer cleared.
   virtual void render() = 0;

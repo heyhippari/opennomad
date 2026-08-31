@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "Core/Character/CharacterRuntime.hpp"
 #include "Core/Interface/InterfaceDispatcher.hpp"
 #include "Core/Omikron/IamArchive.hpp"
 #include "Core/Omikron/IamArea.hpp"
@@ -175,6 +176,13 @@ class ScenarioStartupController {
 
   /// Executes one area-script interpreter tick (mode 1).
   [[nodiscard]] std::expected<void, std::string> tick(float delta_seconds = 0.0F);
+
+  /// Compact phase: AREA, SCENE, zone contact VM execution. Call before Script_PlayScriptList.
+  [[nodiscard]] std::expected<void, std::string> begin_tick(float delta_seconds);
+
+  /// Actor phase: current-character actor, trigger proxy, zone contact qualification. After
+  /// structured scripts.
+  [[nodiscard]] std::expected<void, std::string> finish_tick(float delta_seconds);
 
   /// True once the new session has been initialized (area script exists).
   [[nodiscard]] bool initialized() const {
@@ -406,7 +414,10 @@ class ScenarioStartupController {
   [[nodiscard]] std::expected<std::optional<Script::AreaCameraOperationHandle>, std::string>
   enqueue_compact_camera(std::size_t owner_slot, const Script::AreaCameraRequest& request);
   void service_scene_scripts(float delta_seconds);
-  [[nodiscard]] std::expected<void, std::string> service_zone_contacts(float delta_seconds);
+  /// Compact phase: Zone contact VM execution (waits, script.run, events).
+  [[nodiscard]] std::expected<void, std::string> service_zone_contact_scripts(float delta_seconds);
+  /// Post-actor phase: Zone contact qualification, creation, spatial matching, lifecycle.
+  [[nodiscard]] std::expected<void, std::string> reconcile_zone_contacts();
   [[nodiscard]] bool zone_contact_backing_resident(const ZoneContactContext& contact) const;
   [[nodiscard]] bool zone_contact_spatially_matches(const ZoneContactContext& contact) const;
   [[nodiscard]] bool zone_contact_reporting_enabled(const ZoneContactContext& contact) const;
@@ -485,6 +496,9 @@ class ScenarioStartupController {
   std::string m_last_error;
   bool m_initialized{false};
   bool m_ticked{false};
+  /// Gating flag for phase separation: set true at end of begin_tick(), cleared at start of
+  /// finish_tick().
+  bool m_actor_phase_enabled_for_tick{false};
   /// Optional startup trace recorder (fine-grained events).
   Startup::StartupTraceRecorder* m_trace{nullptr};
   /// Application audio system (may be null; music is non-fatal).

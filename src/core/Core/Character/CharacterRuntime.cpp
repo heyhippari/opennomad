@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cctype>
 #include <cmath>
 #include <cstddef>
@@ -58,6 +59,13 @@ namespace {
 constexpr std::string_view K_CHARACTER_MODEL_DIRECTORY{"MESHES/PERSOS"};
 /// Runtime generically loads character control sets from ANIMS/<name>.
 constexpr std::string_view K_CONTROL_SET_DIRECTORY{"ANIMS"};
+
+[[nodiscard]] BodyIdentity allocate_body_identity() {
+  // Identity only needs uniqueness/monotonicity; it carries no synchronization
+  // semantics of its own.
+  static std::atomic_uint64_t next_identity{1U};
+  return next_identity.fetch_add(1U, std::memory_order_relaxed);
+}
 
 /// Cache key for shared CTL banks: the authored control-set name uppercased
 /// (original data uses inconsistent casing).
@@ -450,6 +458,7 @@ std::expected<RuntimeCharacter, std::string> Runtime::extract_character(
   }
   RuntimeCharacter extracted{std::move(*found)};
   m_characters.erase(found);
+  // instance_id is deliberately Runtime-local and dense; body_identity is not.
   for (std::size_t index{0}; index < m_characters.size(); ++index) {
     m_characters.at(index).instance_id = index;
   }
@@ -464,6 +473,7 @@ std::expected<void, std::string> Runtime::adopt_character(RuntimeCharacter chara
   if (character.model_resource != nullptr && !character.model_resource_name.empty()) {
     m_model_resources.try_emplace(character.model_resource_name, character.model_resource);
   }
+  // Preserve `body_identity`: this is the same logical Runtime actor/body.
   character.instance_id = m_characters.size();
   m_characters.push_back(std::move(character));
   return {};
@@ -531,7 +541,8 @@ std::expected<void, std::string> Runtime::materialize_character(const std::int32
 
   RuntimeCharacter* character{find(character_id)};
   if (character == nullptr) {
-    m_characters.push_back(RuntimeCharacter{.instance_id = m_characters.size(),
+    m_characters.push_back(RuntimeCharacter{.body_identity = allocate_body_identity(),
+        .instance_id = m_characters.size(),
         .character_id = character_id,
         .area_id = area_id,
         .scene_id = scene_id,

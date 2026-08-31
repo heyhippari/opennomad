@@ -1389,8 +1389,8 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(instance_id > 0U);
     const auto& launch_context{runtime->script_runtime()->instances().front().launch_context};
     CHECK_EQ(launch_context.character_id, std::optional<std::int16_t>{136});
-    CHECK_EQ(
-        launch_context.character_instance_id, std::optional<std::size_t>{character->instance_id});
+    CHECK_EQ(launch_context.character_body_identity,
+        std::optional<std::uint64_t>{character->body_identity});
 
     character->transform.translation.x += 100.0F;
     REQUIRE(controller.tick(1.0F / 30.0F).has_value());

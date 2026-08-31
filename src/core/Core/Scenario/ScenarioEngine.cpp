@@ -93,14 +93,23 @@ std::expected<void, std::string> ScenarioEngine::update(const float delta_second
   // dialog-takeover gate for this path and ScenarioMode::k_tick. It may skip
   // AREA while a dialog is active; gameplay/world runtimes still advance so
   // character animation and presentation remain alive.
-  if (auto result{m_startup.tick(delta_seconds)}; !result) {
+  //
+  // begin_tick() runs compact IAM (AREA/SCENE/zone VM execution).
+  // finish_tick() runs ordinary actor service and zone reconciliation after
+  // structured Script_PlayScriptList has completed.
+  if (auto result{m_startup.begin_tick(delta_seconds)}; !result) {
     return result;
   }
+
   if (auto* runtime{m_manager.gameplay_runtime()}) {
     runtime->tick(delta_seconds);
   }
   for (auto* runtime : m_manager.active_world_runtimes()) {
     runtime->tick(delta_seconds);
+  }
+
+  if (auto result{m_startup.finish_tick(delta_seconds)}; !result) {
+    return result;
   }
   m_manager.service_dialog_performance(delta_seconds);
   return {};

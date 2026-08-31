@@ -47,6 +47,7 @@ class WorldScene final : public Scene, public Debug::SceneDebugView {
   WorldScene& operator=(WorldScene&&) = delete;
 
   void update(float delta_time, const Input::InputManager& input) override;
+  void post_scenario_update(float delta_time) override;
   void render() override;
   void resize(int width, int height) override;
 
@@ -68,9 +69,14 @@ class WorldScene final : public Scene, public Debug::SceneDebugView {
   WorldScene(ScenarioManager& scenarios, Interface::InterfaceManager& interfaces);
 
   void synchronize_presentation_reset();
+  [[nodiscard]] WorldSceneContext* synchronize_world_context();
+  void consume_camera_commands(const WorldSceneContext* context);
   void consume_fade_commands();
   void consume_letterbox_commands();
   void consume_object_presentation_commands(const WorldSceneContext* context);
+  void service_camera_completion(const WorldSceneContext* context);
+  void service_structured_camera_release(const WorldSceneContext* context);
+  void update_audio_listener(const WorldSceneContext* context);
   [[nodiscard]] bool update_dialog_input(float delta_time, const Input::InputManager& input);
 
   ScenarioManager* m_scenarios{nullptr};

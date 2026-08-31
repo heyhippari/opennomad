@@ -580,7 +580,7 @@ std::expected<std::size_t, std::string> ScenarioRuntime::spawn_character_script_
   }
   auto created{m_script_runtime->create_instance(source_script_index,
       Script::ScriptLaunchContext{.character_id = character_id,
-          .character_instance_id = character->instance_id,
+          .character_body_identity = character->body_identity,
           .parameter = parameter})};
   if (!created) {
     return created;

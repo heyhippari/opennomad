@@ -875,9 +875,19 @@ void Application::run_engine_frame() {
   // or resumed AREA script progressing without re-entering a scenario mode.
   update_scenario(delta_seconds);
 
+  // Runtime evaluates presentation cameras after compact/structured script
+  // service and actor service, not before them. WorldScene::update() above is
+  // deliberately the input/UI phase; this post-scenario phase consumes the
+  // camera controller command and structured camera source published during
+  // update_scenario() in the SAME engine frame.
+  if (m_scene != nullptr) {
+    m_scene->post_scenario_update(delta_seconds);
+  }
+
   // Update the audio subsystem once per executed frame using real seconds
   // (never Omikron 30 Hz delta units). SDL3_mixer mixes asynchronously, but
-  // the main-thread update drains events and rebuilds diagnostics.
+  // the main-thread update drains events and rebuilds diagnostics. WorldScene
+  // has already committed the final camera/listener pose for this frame.
   if (m_audio != nullptr) {
     m_audio->update(delta_seconds);
   }
