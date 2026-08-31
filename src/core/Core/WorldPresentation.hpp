@@ -352,22 +352,22 @@ class WorldTextState {
 
 /// CPU-only state for OpenNomad's cinematic top/bottom presentation mask.
 ///
-/// Runtime confirms the global state machine, 60-unit duration, and 64/480
-/// geometry. OpenNomad currently approximates the native two-tone intensity
-/// ramp by interpolating visible bar height; exact raster fidelity is deferred.
+/// Runtime confirms the global state machine and 60-unit duration. OpenNomad
+/// currently approximates the native two-tone intensity ramp by interpolating
+/// visible bar height; exact raster fidelity is deferred.
 class WorldLetterboxState {
  public:
-  static constexpr float k_retail_bar_fraction{2.0F / 15.0F};
+  static constexpr float k_target_aspect_ratio{1.85F};
   static constexpr float k_transition_duration_seconds{2.0F};
   static constexpr std::uint32_t k_transition_runtime_units{60U};
 
-  /// Runtime scales the retail 64-pixel bar from the 480-line reference
-  /// viewport. Width/aspect ratio does not participate in native mask geometry.
+  /// Returns the top/bottom bar height that leaves a 1.85:1 visible image.
+  /// A viewport already wider than the target receives no horizontal bars.
   [[nodiscard]] static float target_bar_height(float width, float height) {
     if (width <= 0.0F || height <= 0.0F) {
       return 0.0F;
     }
-    return height * k_retail_bar_fraction;
+    return std::max((height - (width / k_target_aspect_ratio)) * 0.5F, 0.0F);
   }
 
   [[nodiscard]] float current_bar_height(float width, float height) const {
