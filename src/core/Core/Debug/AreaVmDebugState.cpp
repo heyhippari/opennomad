@@ -54,7 +54,7 @@ AreaVmContextDebugState build_area_vm_context_debug_state(
       .bytecode_size = runtime.bytecode().size(),
       .executed_instruction_count = runtime.executed_instruction_count(),
       .current_instruction = std::nullopt,
-      .last_run_yielded = runtime.last_run_yielded(),
+      .last_run_returned_early = runtime.last_run_returned_early(),
       .queued_events = {runtime.queued_events().begin(), runtime.queued_events().end()},
       .evaluation_stack = runtime.evaluation_stack(),
       .wait = runtime.wait_info(),

@@ -319,7 +319,7 @@ constexpr std::array<AreaOpcodeInfo, 51> K_AREA_OPCODE_TABLE{
         .name = "StartDialog",
         .support = OpcodeSupport::k_supported,
         .provisional = false,
-        .notes = "starts an IAM/DIALOG conversation and forces dispatcher yield without "
+        .notes = "starts an IAM/DIALOG conversation and returns from compact dispatch without "
                  "entering a typed AREA wait",
         .operands = K_OPERANDS_I16.data(),
         .operand_count = K_OPERANDS_I16.size()},
@@ -403,7 +403,7 @@ constexpr std::array<AreaOpcodeInfo, 51> K_AREA_OPCODE_TABLE{
         .name = "ObjectActivate",
         .support = OpcodeSupport::k_supported,
         .provisional = false,
-        .notes = "submits a nonblocking IAM/OBJECT presentation and yields one dispatcher turn",
+        .notes = "submits a nonblocking IAM/OBJECT presentation and continues",
         .operands = K_OPERANDS_5C.data(),
         .operand_count = K_OPERANDS_5C.size()},
     AreaOpcodeInfo{.opcode = K_OP_CAMERA_SELECT,
@@ -866,7 +866,7 @@ std::span<const std::int32_t> AreaScriptRuntime::global_variables() const {
 AreaScriptState AreaScriptRuntime::run(const float /*real_delta_seconds*/) {
   APP_PROFILE_FUNCTION();
 
-  m_last_run_yielded = false;
+  m_last_run_returned_early = false;
 
   if (!m_active) {
     return m_state;
@@ -911,7 +911,7 @@ AreaScriptState AreaScriptRuntime::run(const float /*real_delta_seconds*/) {
     }
   }
 
-  m_yield_requested = false;
+  m_dispatch_return_requested = false;
   std::size_t budget{k_instruction_budget};
   while (m_state == AreaScriptState::k_running && budget > 0U) {
     if (m_ip >= m_script.size()) {
@@ -921,8 +921,8 @@ AreaScriptState AreaScriptRuntime::run(const float /*real_delta_seconds*/) {
     }
     --budget;
     execute_instruction();
-    if (m_yield_requested) {
-      m_last_run_yielded = true;
+    if (m_dispatch_return_requested) {
+      m_last_run_returned_early = true;
       break;
     }
   }
@@ -1709,11 +1709,11 @@ void AreaScriptRuntime::execute_instruction() {
         return;
       }
 
-      entry.effect = fmt::format("start dialog {} and yield", request.dialog_id);
+      entry.effect = fmt::format("start dialog {} and return from dispatch", request.dialog_id);
       // Runtime returns from the outer AREA dispatcher immediately after
       // 0x3D. The context remains running at the already-advanced IP; global
       // dialog takeover suppresses later AREA ticks until completion.
-      m_yield_requested = true;
+      m_dispatch_return_requested = true;
       break;
     }
     case K_OP_START_CURRENT_CHARACTER_MOVE: {
@@ -1795,7 +1795,8 @@ void AreaScriptRuntime::execute_instruction() {
     case K_OP_ACTIVATE_CHARACTER: {
       // A normal character is reactivated through the compact context's
       // authored AREA/SCENE data. The -1 form acts on the durable selected
-      // body and changes presentation only. Neither form waits or yields.
+      // body and changes presentation only. Neither form waits or returns
+      // early from compact dispatch.
       const AreaCharacterActivationRequest request{
           .character_id = static_cast<std::int16_t>(operands.at(0)),
           .apply_area_transform = operands.at(1) != 0};
@@ -1875,10 +1876,6 @@ void AreaScriptRuntime::execute_instruction() {
             "OBJECTS ID {} activation failed: {}", request.object_id, activated.error()));
         return;
       }
-      // The recovered handler marks the ordinary compact dispatcher yield
-      // flag but does not install a typed wait.  The next scenario tick
-      // resumes at the instruction following ObjectActivate.
-      m_yield_requested = true;
       entry.effect = request.object_id == -1
                          ? "OBJECTS activation skipped for -1"
                          : fmt::format("activate OBJECTS ID {}", request.object_id);
@@ -2124,7 +2121,6 @@ void AreaScriptRuntime::execute_instruction() {
             .camera_operation = operation};
         wait_after_instruction = true;
       }
-      m_yield_requested = true;
       break;
     }
     case K_OP_PRESENTATION_EFFECT:
@@ -2143,13 +2139,6 @@ void AreaScriptRuntime::execute_instruction() {
           m_last_presentation_request->color,
           m_last_presentation_request->duration_units,
           m_last_presentation_request->delay_units);
-      // Runtime's all-zero mode-1 bootstrap command is a no-op and continues
-      // immediately. Mode 2 and non-empty mode-1 effects set the central
-      // dispatcher-yield flag.
-      m_yield_requested = opcode == K_OP_PRESENTATION_EFFECT_ALT ||
-                          m_last_presentation_request->color != 0U ||
-                          m_last_presentation_request->duration_units != 0 ||
-                          m_last_presentation_request->delay_units != 0;
       break;
     }
     case K_OP_BEGIN_CINEMATIC_LETTERBOX:

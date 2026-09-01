@@ -124,6 +124,7 @@ std::vector<std::byte> make_structured_zone_area_archive() {
   Buffer script;
   script.u8(0x38).u16(136);
   script.u8(0x40).u16(k_zone_id);
+  script.u8(0x77).u32(0x00FFFFFFU).u16(25).u16(0);
   script.u8(0x2E).u16(1).u16(0);
   script.u8(0x2E).u16(1).u16(0).u8(0x03);
   std::vector<std::byte> data{make_area_archive(script.data())};
@@ -436,7 +437,7 @@ std::optional<std::uint32_t> seq_of(const App::Startup::StartupTraceRecorder& re
 }  // namespace
 
 TEST_SUITE("Core::Scenario::ScenarioEngine") {
-  TEST_CASE("structured child chain delays spatial publication and contact execution") {
+  TEST_CASE("presentation and tracked child share compact phase before spatial publication") {
     const TempDirectory temp;
     write_structured_zone_fixtures(temp);
     const ScopedGameDataRoot root{temp.root()};
@@ -455,6 +456,16 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
     REQUIRE(body != nullptr);
     REQUIRE(engine.current_character_trigger_proxy().has_value());
     const App::Runtime::Vec3 initial_proxy{engine.current_character_trigger_proxy()->position};
+    REQUIRE_EQ(manager.world_presentation().pending_fade_count(), 1U);
+    const auto presentation{manager.world_presentation().take_fade()};
+    REQUIRE(presentation.has_value());
+    CHECK_EQ(presentation->mode, 2U);
+    CHECK_EQ(presentation->color, 0x00FFFFFFU);
+    REQUIRE(engine.area_script() != nullptr);
+    CHECK(engine.area_script()->state() == AreaScriptState::k_waiting);
+    CHECK_EQ(engine.area_script()->runtime_state(), 4U);
+    CHECK(engine.area_script()->wait_info().kind == App::Script::AreaWaitKind::k_character_script);
+    CHECK(engine.area_script()->wait_info().character_script_instance.has_value());
     CHECK_EQ(body->ordinary_actor_service_generation, 0U);
     CHECK_EQ(engine.zone_contact_count(), 0U);
 
@@ -495,7 +506,6 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
     REQUIRE(engine.enter_mode(App::ScenarioMode::k_new_session, 0).has_value());
     REQUIRE(install_fake_current_character_loader(manager));
     REQUIRE(engine.enter_mode(App::ScenarioMode::k_tick, 0).has_value());
-    // [OPENNOMAD] The provisional 0x5C object bridge yields one coordinator turn.
     REQUIRE(engine.update(1.0F / 30.0F).has_value());
 
     // State invariants.
@@ -558,7 +568,7 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
         "id=29 arg2=-1 arg3=19");
     ordered("Interface.OpenRequested", {}, "MainMenu.Active", {});
     ordered("MainMenu.Active", {}, "AreaContext.Waiting", "state=6");
-    ordered("ScenarioMode1.Complete", {}, "AreaContext.Waiting", "state=6");
+    ordered("AreaContext.Waiting", "state=6", "ScenarioMode1.Complete", {});
   }
 
   TEST_CASE("a missing mandatory dependency stops mode 2 before area activation") {
@@ -739,7 +749,7 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
     CHECK(engine.area_script()->state() == AreaScriptState::k_running);
     CHECK_EQ(engine.area_script()->runtime_state(), 1U);
     CHECK_EQ(engine.area_script()->instruction_pointer(), 0x3FFU);
-    CHECK(engine.area_script()->last_run_yielded());
+    CHECK(engine.area_script()->last_run_returned_early());
     CHECK(engine.area_script()->wait_info().kind == App::Script::AreaWaitKind::k_none);
 
     // Both the explicit mode-1 route and the per-frame update route use the

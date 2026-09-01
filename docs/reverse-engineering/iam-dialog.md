@@ -203,14 +203,14 @@ Runtime snaps to 2159 and then travels to camera 2165 over 160 units.
 ## AREA opcode distinction and implementation status
 
 AREA opcode `0x3D` consumes one 16-bit dialog ID, advances the AREA instruction
-pointer, starts dialog mode, and explicitly yields the dispatcher. It is not a
+pointer, starts dialog mode, and explicitly returns from the dispatcher. It is not a
 typed `AreaWaitKind` wait. Phase D4 implements the mapping as:
 
 ```text
 AREA 0x3D StartDialog
   -> ScenarioManager::start_dialog(dialog_id)
   -> session DialogRuntime becomes active
-  -> AREA dispatcher yields at the already-advanced instruction pointer
+    -> AREA dispatcher returns at the already-advanced instruction pointer
   -> ScenarioStartupController gates later normal AREA ticks
   -> DialogRuntime::take_completion() removes the gate
   -> the same running AREA context resumes from that instruction pointer

@@ -799,7 +799,8 @@ void DebugUI::show_area_vm() {
           context.source.open_nomad_execution_base_offset + context.instruction_pointer);
     }
     ImGui::Text("Executed instructions: %zu", context.executed_instruction_count);
-    ImGui::Text("Last explicit dispatcher yield: %s", context.last_run_yielded ? "yes" : "no");
+    ImGui::Text(
+        "Last explicit dispatcher return: %s", context.last_run_returned_early ? "yes" : "no");
     if (context.current_instruction.has_value()) {
       const AreaVmInstructionDebugState& instruction{context.current_instruction.value()};
       ImGui::Text("Current opcode: %#04x (%s)",

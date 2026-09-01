@@ -471,7 +471,8 @@ std::vector<std::byte> make_handoff_area_archive() {
   constexpr std::size_t k_source_definition_offset{k_source_placement_offset + 0x14U};
   constexpr std::size_t k_source_zone_offset{k_source_definition_offset + 0x114U};
   constexpr std::size_t k_source_script_offset{k_source_zone_offset + (2U * 0x44U)};
-  const std::size_t source_record_size{k_source_script_offset + handoff.data().size()};
+  const std::size_t source_camera_offset{k_source_script_offset + handoff.data().size()};
+  const std::size_t source_record_size{source_camera_offset + 0x2CU};
   constexpr std::size_t k_target_zone_offset{k_header_size};
   constexpr std::size_t k_target_address_offset{k_target_zone_offset + (2U * 0x44U)};
   constexpr std::size_t k_target_record_size{k_target_address_offset + 0x10U};
@@ -480,7 +481,7 @@ std::vector<std::byte> make_handoff_area_archive() {
   write_u32(data, (118U * 8U) + 4U, static_cast<std::uint32_t>(source_record_size));
   write_u32(data, k_source_offset + 0x04U, k_source_script_offset);
   write_area_bytecode_pool_bounds(
-      data, k_source_offset, k_source_script_offset, source_record_size);
+      data, k_source_offset, k_source_script_offset, source_camera_offset);
   write_name(data, k_source_offset + 0x61U, "GRID");
   write_u32(data, k_source_offset + 0x28U, k_source_placement_offset);
   write_u16(data, k_source_offset + 0x48U, 1);
@@ -494,6 +495,7 @@ std::vector<std::byte> make_handoff_area_archive() {
   write_u16(data, k_source_offset + 0x48U + (4U * 2U), 1);
   write_u32(data, k_source_offset + 0x28U + (2U * 4U), k_source_zone_offset);
   write_u16(data, k_source_offset + 0x48U + (2U * 2U), 2);
+  write_u16(data, k_source_offset + 0x48U + (6U * 2U), 1);
   constexpr std::string_view k_source_name{"CURRENT CHARACTER"};
   constexpr std::string_view k_source_model{"CURRENT_BODY"};
   std::memcpy(data.data() + k_source_offset + k_source_definition_offset + 0x08U,
@@ -505,6 +507,7 @@ std::vector<std::byte> make_handoff_area_archive() {
   write_u16(data, k_source_offset + k_source_definition_offset + 0x110U, 136);
   write_u16(data, k_source_offset + k_source_zone_offset + 0x40U, 5);
   write_u16(data, k_source_offset + k_source_zone_offset + 0x44U + 0x40U, 6);
+  write_camera_record(data, k_source_offset + source_camera_offset, 0, 0);
   std::memcpy(data.data() + k_source_offset + k_source_script_offset,
       handoff.data().data(),
       handoff.data().size());
@@ -2190,6 +2193,15 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
           resource->groups.push_back(App::Omikron::MaterialGroup{});
           return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
         });
+    const auto camera{manager.world_presentation().take_camera()};
+    REQUIRE(camera.has_value());
+    REQUIRE(camera->operation_generation.has_value());
+    manager.world_presentation().enqueue_camera_completion(App::WorldCameraOperationCompletion{
+        .operation_generation = camera->operation_generation.value(),
+        .scene_id = camera->scene_id,
+        .scene_generation = camera->scene_generation,
+        .source_area_id = camera->source_area_id,
+        .camera_id = camera->camera_id});
     const auto committed{controller.tick(1.0F)};  // 0x47, 0x49, 0x30, then SCENE selection.
     const std::string commit_error{committed.has_value() ? std::string{} : committed.error()};
     REQUIRE_MESSAGE(committed.has_value(), commit_error);
@@ -2336,9 +2348,6 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
 
     REQUIRE(controller.tick().has_value());
     CHECK(controller.ticked());
-    CHECK_FALSE(controller.main_menu_active());
-    REQUIRE(controller.tick().has_value());
-
     CHECK(controller.main_menu_active());
     CHECK(controller.area_script()->state() == AreaScriptState::k_waiting);
     CHECK_EQ(controller.area_script()->wait_state(), 6U);
@@ -2410,7 +2419,6 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
           return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
         });
 
-    REQUIRE(controller.tick().has_value());  // Unresolved 0x5F yields before interface 29.
     REQUIRE(controller.tick().has_value());
     REQUIRE(controller
             .complete_interface(App::InterfaceCompletion{
@@ -2423,7 +2431,10 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK_EQ(bootstrap_fade->color, 0U);
     CHECK_EQ(bootstrap_fade->duration_units, 0);
     CHECK_EQ(bootstrap_fade->delay_units, 0);
-    REQUIRE(controller.tick().has_value());  // 0x84 intent, then 0x77 yield.
+    const auto launched{controller.tick()};
+    const std::string launch_error{launched ? std::string{} : launched.error()};
+    CAPTURE(launch_error);
+    REQUIRE(launched.has_value());
     REQUIRE_EQ(manager.world_presentation().pending_letterbox_count(), 1U);
     const auto letterbox{manager.world_presentation().take_letterbox()};
     REQUIRE(letterbox.has_value());
@@ -2435,13 +2446,6 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK_EQ(fade->color, 0U);
     CHECK_EQ(fade->duration_units, 30);
     CHECK_EQ(fade->delay_units, 0);
-    REQUIRE(controller.tick().has_value());  // Camera 2172 yield.
-    REQUIRE(controller.tick().has_value());  // Camera 2148 yield.
-    const auto launched{controller.tick()};  // 0x4E then tracked 0x3C.
-    const std::string launch_error{launched ? std::string{} : launched.error()};
-    CAPTURE(launch_error);
-    REQUIRE(launched.has_value());
-
     const App::Script::AreaScriptRuntime* area_script{controller.area_script()};
     REQUIRE(area_script != nullptr);
     CHECK(area_script->state() == App::Script::AreaScriptState::k_waiting);
@@ -2484,12 +2488,12 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     context->runtime->tick(1.0F / 30.0F);
     CHECK(instance->completed);
 
-    // Startup polls the exact completed child, resumes at record offset 0x498, launches
-    // script 310/6 once, yields for presentation, then enters DIALOG 272.
+    // Startup polls the exact completed child, resumes at record offset 0x498,
+    // launches script 310/6, continues through presentation, then explicitly
+    // returns from compact dispatch after entering DIALOG 272.
     REQUIRE(controller.tick().has_value());
-    CHECK_EQ(area_script->instruction_pointer(), 0x4A8U);
+    CHECK_EQ(area_script->instruction_pointer(), 0x4ABU);
     REQUIRE_EQ(script_runtime->instances().size(), 2U);
-    REQUIRE(controller.tick().has_value());
     CHECK(controller.dialog_takeover_active());
     CHECK_EQ(controller.dialog_takeover_id(), std::optional<std::int16_t>{272});
     CHECK(manager.dialog_runtime().active());
@@ -2532,7 +2536,8 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
         world_text->provenance.modernization_policy, App::TextModernizationPolicy::k_faithful_only);
     const App::Script::AreaScriptRuntime* runtime{controller.area_script()};
     REQUIRE(runtime != nullptr);
-    CHECK(runtime->last_run_yielded());
+    CHECK_FALSE(runtime->last_run_returned_early());
+    CHECK(runtime->state() == App::Script::AreaScriptState::k_ready);
     CHECK(runtime->wait_info().kind == App::Script::AreaWaitKind::k_none);
   }
 

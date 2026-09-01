@@ -91,17 +91,21 @@ TEST_SUITE("Core::Debug::AreaVmDebugState") {
     CHECK_FALSE(runtime.active_event().has_value());
   }
 
-  TEST_CASE("Snapshot reports an explicit dispatcher yield") {
+  TEST_CASE("Snapshot reports an explicit dispatcher return") {
     Buffer bytes;
-    bytes.u8(0x77).u32(0x00FFFFFFU).u16(30).u16(20).u8(0x03);
+    bytes.u8(0x3D).u16(272).u8(0x03);
     App::Script::AreaScriptRuntime runtime{bytes.data()};
+    runtime.set_dialog_sink(
+        [](const App::Script::AreaDialogRequest&) -> std::expected<void, std::string> {
+          return {};
+        });
     runtime.queue_event(1);
     runtime.activate();
     REQUIRE(runtime.run() == App::Script::AreaScriptState::k_running);
 
     const App::Debug::AreaVmContextDebugState snapshot{
         App::Debug::build_area_vm_context_debug_state(runtime, test_source())};
-    CHECK(snapshot.last_run_yielded);
+    CHECK(snapshot.last_run_returned_early);
     REQUIRE(snapshot.active_event.has_value());
     CHECK_EQ(snapshot.active_event.value(), 1U);
   }

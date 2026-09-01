@@ -170,8 +170,7 @@ class Application final : public Debug::RuntimeTimingDebugSource {
 
   /// True after the initial post-splash scenario mode-1 tick has run and
   /// StartupCoordinator::k_open_main_menu has begun, but AREA opcode 0x46
-  /// has not necessarily executed yet. Presentation opcode 0x76 immediately
-  /// before 0x46 deliberately yields the AREA VM to the following tick.
+  /// has not necessarily executed yet.
   bool m_startup_waiting_for_main_menu{false};
 
   bool m_running{true};

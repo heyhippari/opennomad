@@ -659,10 +659,12 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     CHECK_EQ(runtime.instruction_pointer(), bytes.data().size());
   }
 
-  TEST_CASE("0x5C resolves Scalar16, skips -1 loading, and yields without a typed wait") {
+  TEST_CASE("0x5C resolves Scalar16 and continues to its successor") {
     Buffer bytes;
-    bytes.u8(0x5C).u16(0x4000).u8(0x03);
+    bytes.u8(0x5C).u16(0x4000).u8(0x0D).u16(7).u8(0x03);
     AreaScriptRuntime runtime{bytes.data()};
+    SharedGlobalStore globals;
+    globals.bind(runtime);
     const std::array<std::int16_t, 1> parameters{141};
     runtime.set_scalar16_parameters(parameters);
     std::vector<AreaObjectActivationRequest> requests;
@@ -675,13 +677,13 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     runtime.queue_event(1);
     runtime.activate();
 
-    CHECK(runtime.run() == AreaScriptState::k_running);
-    CHECK(runtime.last_run_yielded());
+    CHECK(runtime.run() == AreaScriptState::k_ready);
+    CHECK_FALSE(runtime.last_run_returned_early());
     CHECK(runtime.wait_info().kind == AreaWaitKind::k_none);
     REQUIRE_EQ(requests.size(), 1U);
     CHECK_EQ(requests.front().object_id, 141);
-    CHECK_EQ(runtime.instruction_pointer(), 3U);
-    CHECK(runtime.run() == AreaScriptState::k_ready);
+    CHECK_EQ(runtime.variable(7), std::optional<std::int32_t>{1});
+    CHECK_EQ(runtime.instruction_pointer(), bytes.data().size());
 
     Buffer minus_one;
     minus_one.u8(0x5C).u16(0xFFFF).u8(0x03);
@@ -695,13 +697,13 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
         });
     skipped.queue_event(1);
     skipped.activate();
-    CHECK(skipped.run() == AreaScriptState::k_running);
+    CHECK(skipped.run() == AreaScriptState::k_ready);
     REQUIRE(skipped_request.has_value());
     CHECK_EQ(skipped_request->object_id, -1);
     CHECK(skipped.wait_info().kind == AreaWaitKind::k_none);
   }
 
-  TEST_CASE("OBJECTS presentation is submitted before a following tracked character launch") {
+  TEST_CASE("OBJECTS presentation and a following tracked character launch share one dispatch") {
     Buffer bytes;
     bytes.u8(0x5C).u16(141);
     bytes.u8(0x3C).u16(58).u16(267).u16(0);
@@ -724,14 +726,13 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     runtime.queue_event(1);
     runtime.activate();
 
-    CHECK(runtime.run() == AreaScriptState::k_running);
-    REQUIRE_EQ(order.size(), 1U);
-    CHECK_EQ(order.front(), "object");
-    CHECK(runtime.last_run_yielded());
     CHECK(runtime.run() == AreaScriptState::k_waiting);
     REQUIRE_EQ(order.size(), 2U);
+    CHECK_EQ(order.front(), "object");
     CHECK_EQ(order.back(), "tracked");
+    CHECK_FALSE(runtime.last_run_returned_early());
     CHECK(runtime.wait_info().kind == AreaWaitKind::k_character_script);
+    CHECK_EQ(runtime.wait_info().character_script_instance, std::optional<std::size_t>{44U});
   }
 
   TEST_CASE("0x47 attaches a SCENE without waiting and continues to EndEvent") {
@@ -1094,9 +1095,10 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     CHECK_EQ(runtime.instruction_pointer(), 0U);
   }
 
-  TEST_CASE("Unresolved timed camera yields once without entering camera wait") {
+  TEST_CASE("0x5F and zero-duration 0x60 continue in the same dispatch") {
     Buffer bytes;
-    bytes.u8(0x60).u16(42).u16(10).u16(0);
+    bytes.u8(0x5F).u16(41).u16(10).u16(0);
+    bytes.u8(0x60).u16(42).u16(0).u16(0);
     bytes.u8(0x0D).u16(7).u8(0x03);
     AreaScriptRuntime runtime{bytes.data()};
     SharedGlobalStore globals;
@@ -1112,14 +1114,44 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     runtime.queue_event(1);
     runtime.activate();
 
-    CHECK(runtime.run() == AreaScriptState::k_running);
-    CHECK_EQ(camera_requests, 1U);
-    CHECK(runtime.last_run_yielded());
-    CHECK_EQ(runtime.instruction_pointer(), 7U);
+    CHECK(runtime.run() == AreaScriptState::k_ready);
+    CHECK_EQ(camera_requests, 2U);
+    CHECK_FALSE(runtime.last_run_returned_early());
     CHECK(runtime.wait_info().kind == AreaWaitKind::k_none);
     CHECK_EQ(runtime.wait_state(), 0U);
+    CHECK_EQ(runtime.variable(7), std::optional<std::int32_t>{1});
+    CHECK_EQ(runtime.instruction_pointer(), bytes.data().size());
+  }
+
+  TEST_CASE("nonzero-duration 0x60 stops only in exact camera state 7") {
+    Buffer bytes;
+    bytes.u8(0x60).u16(42).u16(10).u16(0);
+    bytes.u8(0x0D).u16(7).u8(0x03);
+    AreaScriptRuntime runtime{bytes.data()};
+    SharedGlobalStore globals;
+    globals.bind(runtime);
+    const AreaCameraOperationHandle operation{.generation = 91};
+    std::size_t camera_requests{0};
+    runtime.set_camera_sink(
+        [&camera_requests, operation](const AreaCameraRequest& request)
+            -> std::expected<std::optional<AreaCameraOperationHandle>, std::string> {
+          ++camera_requests;
+          CHECK(request.wait_for_completion);
+          return operation;
+        });
+
+    runtime.queue_event(1);
+    runtime.activate();
+
+    CHECK(runtime.run() == AreaScriptState::k_waiting);
+    CHECK_EQ(camera_requests, 1U);
+    CHECK_FALSE(runtime.last_run_returned_early());
+    CHECK(runtime.wait_info().kind == AreaWaitKind::k_camera);
+    CHECK_EQ(runtime.runtime_state(), 7U);
+    CHECK_EQ(runtime.wait_info().camera_operation, operation);
     CHECK_EQ(runtime.variable(7), std::optional<std::int32_t>{0});
 
+    REQUIRE(runtime.complete_camera_wait(operation).has_value());
     CHECK(runtime.run() == AreaScriptState::k_ready);
     CHECK_EQ(runtime.variable(7), std::optional<std::int32_t>{1});
   }
@@ -1142,11 +1174,6 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     runtime.queue_event(1);
     runtime.activate();
 
-    // [OPENNOMAD] The provisional nonblocking 0x5C object bridge yields one
-    // coordinator turn; the exact Runtime native-operation policy is unresolved.
-    CHECK(runtime.run() == AreaScriptState::k_running);
-    CHECK(runtime.last_run_yielded());
-    CHECK_EQ(runtime.instruction_pointer(), 17U);
     const AreaScriptState state{runtime.run()};
 
     CHECK(state == AreaScriptState::k_waiting);
@@ -1209,29 +1236,60 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     CHECK_EQ(music->track_id, 109);
   }
 
-  TEST_CASE("0x76 consumes eight operand bytes and decodes duration and delay") {
+  TEST_CASE("0x76 and 0x77 presentations continue to an observable successor") {
+    for (const std::uint8_t opcode : std::array<std::uint8_t, 2>{0x76, 0x77}) {
+      Buffer bytes;
+      bytes.u8(opcode).u32(0x00123456U).u16(30).u16(2);
+      bytes.u8(0x0D).u16(7).u8(0x03);
+      AreaScriptRuntime runtime{bytes.data()};
+      SharedGlobalStore globals;
+      globals.bind(runtime);
+      std::optional<AreaPresentationRequest> presentation;
+      runtime.set_presentation_sink([&presentation](const AreaPresentationRequest& request) {
+        presentation = request;
+      });
+      runtime.queue_event(1);
+      runtime.activate();
+
+      CHECK(runtime.run() == AreaScriptState::k_ready);
+      CHECK_FALSE(runtime.last_run_returned_early());
+      CHECK_EQ(runtime.variable(7), std::optional<std::int32_t>{1});
+      CHECK_EQ(runtime.instruction_pointer(), bytes.data().size());
+      REQUIRE(presentation.has_value());
+      CHECK_EQ(presentation->mode, opcode == 0x76 ? 1U : 2U);
+      CHECK_EQ(presentation->color, 0x00123456U);
+      CHECK_EQ(presentation->duration_units, 30);
+      CHECK_EQ(presentation->delay_units, 2);
+    }
+  }
+
+  TEST_CASE("IMPASSE-shaped 0x77 launches a tracked current-character child in one dispatch") {
     Buffer bytes;
-    bytes.u8(0x76).u32(0x00123456U).u16(30).u16(2).u8(0x00);  // unknown opcode next.
+    bytes.u8(0x77).u32(0x00FFFFFFU).u16(25).u16(0);
+    bytes.u8(0x2E).u16(221).u16(0);
     AreaScriptRuntime runtime{bytes.data()};
-    std::optional<AreaPresentationRequest> presentation;
-    runtime.set_presentation_sink([&presentation](const AreaPresentationRequest& request) {
-      presentation = request;
+    std::vector<std::string> order;
+    runtime.set_presentation_sink([&order](const AreaPresentationRequest&) {
+      order.emplace_back("presentation");
     });
+    runtime.set_character_script_sink(
+        [&order](
+            const AreaCharacterScriptRequest& request) -> std::expected<std::size_t, std::string> {
+          order.emplace_back("tracked");
+          CHECK(request.target == AreaCharacterScriptTarget::k_current);
+          CHECK_EQ(request.script_id, 221U);
+          return 92U;
+        });
     runtime.queue_event(1);
     runtime.activate();
-    const AreaScriptState yielded{runtime.run()};
 
-    CHECK(yielded == AreaScriptState::k_running);
-    CHECK_EQ(runtime.instruction_pointer(), 9U);
-    REQUIRE(presentation.has_value());
-    CHECK_EQ(presentation->mode, 1U);
-    CHECK_EQ(presentation->color, 0x00123456U);
-    CHECK_EQ(presentation->duration_units, 30);
-    CHECK_EQ(presentation->delay_units, 2);
-
-    CHECK(runtime.run() == AreaScriptState::k_paused_unsupported);
-    CHECK_EQ(runtime.pause_info().offset, 9U);
-    CHECK_EQ(runtime.pause_info().opcode, 0x00U);
+    CHECK(runtime.run() == AreaScriptState::k_waiting);
+    CHECK_EQ(order, std::vector<std::string>{"presentation", "tracked"});
+    CHECK_EQ(runtime.instruction_pointer(), bytes.data().size());
+    CHECK_EQ(runtime.runtime_state(), 4U);
+    CHECK(runtime.wait_info().kind == AreaWaitKind::k_character_script);
+    CHECK_EQ(runtime.wait_info().character_script_instance, std::optional<std::size_t>{92U});
+    CHECK_FALSE(runtime.last_run_returned_early());
   }
 
   TEST_CASE("A genuinely unhandled opcode produces PausedUnsupported") {
@@ -1644,7 +1702,7 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     CHECK(runtime.pause_info().reason_text.find("truncated operands") != std::string::npos);
   }
 
-  TEST_CASE("0x3D starts one dialog, yields while running, and resumes at the advanced IP") {
+  TEST_CASE("0x3D starts one dialog, returns from dispatch, and resumes at the advanced IP") {
     const App::Script::AreaOpcodeInfo* info{App::Script::area_opcode_info(0x3D)};
     REQUIRE(info != nullptr);
     CHECK(info->support == App::Script::OpcodeSupport::k_supported);
@@ -1672,17 +1730,17 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     CHECK_EQ(requests.front().dialog_id, 272);
     CHECK_EQ(runtime.instruction_pointer(), 3U);
     CHECK_EQ(runtime.runtime_state(), 1U);
-    CHECK(runtime.last_run_yielded());
+    CHECK(runtime.last_run_returned_early());
     CHECK(runtime.wait_info().kind == AreaWaitKind::k_none);
     CHECK_EQ(runtime.wait_state(), 0U);
     REQUIRE_EQ(runtime.trace().size(), 1U);
-    CHECK_EQ(runtime.trace().back().effect, "start dialog 272 and yield");
+    CHECK_EQ(runtime.trace().back().effect, "start dialog 272 and return from dispatch");
 
     // No VM wait completion is needed: the next invocation naturally starts
     // at +3, executes 0x68 exactly once, then terminates the event at +4.
     REQUIRE(runtime.run() == AreaScriptState::k_ready);
     CHECK_EQ(runtime.instruction_pointer(), 5U);
-    CHECK_FALSE(runtime.last_run_yielded());
+    CHECK_FALSE(runtime.last_run_returned_early());
     CHECK_EQ(requests.size(), 1U);
     REQUIRE_EQ(runtime.trace().size(), 3U);
     CHECK_EQ(runtime.trace().at(1).offset, 3U);
@@ -1774,39 +1832,21 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
 
     runtime.queue_event(1);
     runtime.activate();
-    REQUIRE(runtime.run() == AreaScriptState::k_running);
     REQUIRE(runtime.run() == AreaScriptState::k_waiting);
     REQUIRE(runtime.complete_interface_wait(InterfaceCompletion{.handle = menu_handle, .result = 0})
             .has_value());
 
-    // Result 0 keeps execution on the fall-through branch. Runtime's
-    // presentation helpers set the context-yield flag.
-    REQUIRE(runtime.run() == AreaScriptState::k_running);
+    // Result 0 keeps execution on the fall-through branch. Nonblocking native
+    // operations continue until camera 2154 installs Runtime state 7.
+    REQUIRE(runtime.run() == AreaScriptState::k_waiting);
     CHECK(runtime.cinematic_letterbox_requested());
     REQUIRE(runtime.last_presentation_request().has_value());
     CHECK_EQ(runtime.last_presentation_request()->mode, 2U);
-
-    // Camera 2152 similarly yields one AREA tick.
-    REQUIRE(runtime.run() == AreaScriptState::k_running);
-    REQUIRE(runtime.last_camera_request().has_value());
-    CHECK_EQ(runtime.last_camera_request()->camera_id, 2152U);
-
-    // The next tick launches Wait5sec independently, continues through camera
-    // 2153 in the same invocation, and yields only for that camera command.
-    REQUIRE(runtime.run() == AreaScriptState::k_running);
-    CHECK(runtime.wait_info().kind == AreaWaitKind::k_none);
     REQUIRE_EQ(scripts.size(), 1U);
     CHECK_EQ(scripts.at(0).script_id, 20U);
     REQUIRE(runtime.last_camera_request().has_value());
-    CHECK_EQ(runtime.last_camera_request()->camera_id, 2153U);
-
-    // [OPENNOMAD] The provisional object-753 bridge yields before submitting
-    // the tracked camera operation.
-    REQUIRE(runtime.run() == AreaScriptState::k_running);
-    REQUIRE(runtime.run() == AreaScriptState::k_waiting);
-    CHECK(runtime.wait_info().kind == AreaWaitKind::k_camera);
-    REQUIRE(runtime.last_camera_request().has_value());
     CHECK_EQ(runtime.last_camera_request()->camera_id, 2154U);
+    CHECK(runtime.wait_info().kind == AreaWaitKind::k_camera);
     CHECK_EQ(runtime.wait_state(), 7U);
     REQUIRE(runtime.wait_info().camera_operation.has_value());
     const AreaCameraOperationHandle camera_2154{runtime.wait_info().camera_operation.value()};
@@ -1820,13 +1860,10 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     CHECK(runtime.state() == AreaScriptState::k_waiting);
     REQUIRE(runtime.complete_camera_wait(camera_2154).has_value());
 
-    // The presentation-owned completion resumes into 0x76, which records
-    // presentation mode 1 and yields before camera 2158.
-    REQUIRE(runtime.run() == AreaScriptState::k_running);
+    // Completion resumes through nonblocking 0x76 into camera 2158 state 7.
+    REQUIRE(runtime.run() == AreaScriptState::k_waiting);
     REQUIRE(runtime.last_presentation_request().has_value());
     CHECK_EQ(runtime.last_presentation_request()->mode, 1U);
-
-    REQUIRE(runtime.run() == AreaScriptState::k_waiting);
     REQUIRE(runtime.last_camera_request().has_value());
     CHECK_EQ(runtime.last_camera_request()->camera_id, 2158U);
     REQUIRE(runtime.wait_info().camera_operation.has_value());
@@ -1868,30 +1905,19 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
 
     runtime.queue_event(1);
     runtime.activate();
-    REQUIRE(runtime.run() == AreaScriptState::k_running);
     REQUIRE(runtime.run() == AreaScriptState::k_waiting);
 
     REQUIRE(runtime.complete_interface_wait(InterfaceCompletion{.handle = menu_handle, .result = 3})
             .has_value());
     CHECK_EQ(runtime.variable(19), std::optional<std::int32_t>{3});
 
-    // global[19] != 0 makes opcode 0x06 branch to +0x79.
-    // 0x77 and both 0x5F operations each yield one AREA tick.
-    REQUIRE(runtime.run() == AreaScriptState::k_running);
+    // global[19] != 0 branches to +0x79. Presentation, both cameras, and
+    // character activation continue until tracked 0x3C installs state 4.
+    REQUIRE(runtime.run() == AreaScriptState::k_waiting);
     REQUIRE(runtime.last_presentation_request().has_value());
     CHECK_EQ(runtime.last_presentation_request()->mode, 2U);
-
-    REQUIRE(runtime.run() == AreaScriptState::k_running);
-    REQUIRE(runtime.last_camera_request().has_value());
-    CHECK_EQ(runtime.last_camera_request()->camera_id, 2172U);
-
-    REQUIRE(runtime.run() == AreaScriptState::k_running);
     REQUIRE(runtime.last_camera_request().has_value());
     CHECK_EQ(runtime.last_camera_request()->camera_id, 2148U);
-
-    // 0x4E does not yield, so the same AREA tick continues into 0x3C and
-    // stores the concrete child before stopping in recovered Runtime state 4.
-    REQUIRE(runtime.run() == AreaScriptState::k_waiting);
     CHECK_EQ(runtime.instruction_pointer(), 0x9CU);
     CHECK_EQ(runtime.wait_state(), 4U);
     CHECK_EQ(runtime.runtime_state(), 4U);
@@ -1910,8 +1936,8 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     CHECK_EQ(runtime.wait_info().character_script_instance, std::optional<std::size_t>{77U});
 
     // The exact child completion resumes at the post-launch compact IP, not
-    // at event start. It launches script 310/6 once, yields for 0x77, then
-    // reaches the documented DIALOG 272 0x3D.
+    // at event start. It launches script 310/6, continues through 0x77, then
+    // returns explicitly after DIALOG 272 opcode 0x3D.
     REQUIRE(runtime.complete_character_script_wait(77U).has_value());
     CHECK_EQ(runtime.instruction_pointer(), 0x9CU);
     REQUIRE(runtime.run() == AreaScriptState::k_running);
@@ -1922,9 +1948,9 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     CHECK_EQ(runtime.last_presentation_request()->mode, 2U);
     CHECK_EQ(runtime.last_presentation_request()->color, 0xFFFFFFFFU);
 
-    REQUIRE(runtime.run() == AreaScriptState::k_running);
     REQUIRE_EQ(dialogs.size(), 1U);
     CHECK_EQ(dialogs.front().dialog_id, 272);
+    CHECK(runtime.last_run_returned_early());
   }
 
   TEST_CASE("A failed character-script launch enters structured failure once") {

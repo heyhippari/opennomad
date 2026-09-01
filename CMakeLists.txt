@@ -2,6 +2,16 @@ cmake_minimum_required(VERSION 3.25...4.4.0)
 
 include(cmake/UniversalAppleBuild.cmake)
 
+if (NOT DEFINED ENV{VCPKG_ROOT} OR "$ENV{VCPKG_ROOT}" STREQUAL "")
+  message(FATAL_ERROR
+    "VCPKG_ROOT is not set. Clone vcpkg, then set VCPKG_ROOT to its root (for example, export VCPKG_ROOT=\"$HOME/.local/share/vcpkg\").")
+endif ()
+
+if (NOT EXISTS "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake")
+  message(FATAL_ERROR
+    "VCPKG_ROOT does not contain scripts/buildsystems/vcpkg.cmake: $ENV{VCPKG_ROOT}")
+endif ()
+
 project(
   OpenNomad
   DESCRIPTION "An open-source reimplementation of the Omikron: The Nomad Soul game engine."

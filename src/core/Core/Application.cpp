@@ -1023,10 +1023,8 @@ bool Application::advance_startup_past_splash() {
     return false;
   }
 
-  // Finishes the phase that may span multiple AREA ticks. Runtime's AREA
-  // dispatcher yields after presentation opcode 0x76, which appears directly
-  // before the main-menu 0x46 in the initial event. Therefore interface 29 is
-  // not required to exist during the first mode-1 call.
+  // Finishes the phase once compact execution has reached the typed interface
+  // wait installed by opcode 0x46.
   const auto finish_main_menu_phase = [this]() -> bool {
     if (auto result{m_coordinator->complete(
             Startup::StartupPhase::k_open_main_menu, Startup::StartupPhaseStatus::k_complete)};
@@ -1047,9 +1045,8 @@ bool Application::advance_startup_past_splash() {
     return true;
   };
 
-  // Re-entry after the initial mode-1 tick yielded before opcode 0x46.
-  // The normal ScenarioEngine::update() path runs between calls and advances
-  // the AREA context one recovered scenario tick at a time.
+  // Re-entry remains supported for AREA programs that reach the menu through
+  // another genuine compact wait or explicit dispatcher return.
   if (m_startup_waiting_for_main_menu) {
     if (!m_scenario_engine->main_menu_active()) {
       return false;
@@ -1117,10 +1114,9 @@ bool Application::advance_startup_past_splash() {
     return false;
   }
 
-  // Begin the main-menu phase, but do not require opcode 0x46 to have run in
-  // this same mode-1 call. The recovered AREA VM deliberately yields after
-  // opcode 0x76 immediately before it. The normal per-frame scenario update
-  // will resume the context and reach 0x46 on a subsequent tick.
+  // Begin the main-menu phase. The retail AREA program normally reaches 0x46
+  // in this same mode-1 call because preceding native side effects do not stop
+  // compact dispatch.
   if (auto result{m_coordinator->begin(Startup::StartupPhase::k_open_main_menu)}; !result) {
     App::Log::error(LogCategory::Startup, "Startup ordering error: {}", result.error());
     m_running = false;
@@ -1130,12 +1126,11 @@ bool Application::advance_startup_past_splash() {
   m_startup_waiting_for_main_menu = true;
 
   if (!m_scenario_engine->main_menu_active()) {
-    // Not an error: AREA yielded at a recovered side-effect boundary.
+    // Not an error: another AREA program may have stopped at a genuine wait or
+    // explicit dispatcher return before opening the menu.
     return false;
   }
 
-  // Usually false on retail data because 0x76 yielded immediately before
-  // 0x46, but retain the synchronous case for other AREA programs.
   return finish_main_menu_phase();
 }
 

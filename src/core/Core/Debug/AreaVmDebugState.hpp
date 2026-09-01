@@ -102,7 +102,7 @@ struct AreaVmContextDebugState {
   std::size_t bytecode_size{0};
   std::size_t executed_instruction_count{0};
   std::optional<AreaVmInstructionDebugState> current_instruction;
-  bool last_run_yielded{false};
+  bool last_run_returned_early{false};
   std::vector<std::uint16_t> queued_events;
   std::vector<std::int32_t> evaluation_stack;
   Script::AreaWaitState wait;

@@ -18,6 +18,7 @@ See [Dependencies](Dependencies.md) for why libdecor is required and for the vcp
 Set `VCPKG_ROOT` to a vcpkg checkout. For example:
 
 ```shell
+git clone https://github.com/microsoft/vcpkg.git "$HOME/.local/share/vcpkg"
 export VCPKG_ROOT="$HOME/.local/share/vcpkg"
 ```
 
@@ -26,12 +27,12 @@ The path must contain `scripts/buildsystems/vcpkg.cmake`.
 ## 2. Configure and build
 
 ```shell
-cmake --preset debug
-cmake --build build/debug
+cmake --preset linux-debug
+cmake --build --preset linux-debug
 ```
 
 The first configure builds the manifest dependencies and can take a while. They are cached under
-`build/debug/vcpkg_installed` for later builds.
+`build/linux-debug/vcpkg_installed` for later builds.
 
 Debug builds enable profiling and the in-app debug UI. Sanitizers and clang tooling are explicit configurations, so
 the normal edit-build-test loop stays predictable:
@@ -48,8 +49,8 @@ cmake --build --preset quality --target check-format
 The `quality` preset requires the canonical LLVM `22.1.8` clang-format and clang-tidy tools. For a Release build:
 
 ```shell
-cmake --preset release
-cmake --build build/release
+cmake --preset linux-release
+cmake --build --preset linux-release
 ```
 
 ## 3. Point OpenNomad at the game data
@@ -67,13 +68,13 @@ convenient for development and does not modify the original installation.
 ## 4. Run
 
 ```shell
-./build/debug/src/app/App
+./build/linux-debug/src/app/App
 ```
 
 To set the game-data root for one invocation only:
 
 ```shell
-OPENNOMAD_GAME_DATA_ROOT="/path/to/Omikron" ./build/debug/src/app/App
+OPENNOMAD_GAME_DATA_ROOT="/path/to/Omikron" ./build/linux-debug/src/app/App
 ```
 
 The application currently starts in borderless fullscreen. Useful controls are:
@@ -89,7 +90,7 @@ The application currently starts in borderless fullscreen. Useful controls are:
 ## 5. Run the tests
 
 ```shell
-ctest --test-dir build/debug --output-on-failure
+ctest --preset linux-debug --output-on-failure
 ```
 
 The default suite uses generated fixtures and does not require original game files. See [Testing](Testing.md) for
@@ -99,4 +100,4 @@ focused targets, integration tests, and the AddressSanitizer/LeakSanitizer cavea
 
 If CMake reports a toolchain path such as `/scripts/buildsystems/vcpkg.cmake`, `VCPKG_ROOT` was empty when that build
 tree was configured. Set the variable, then configure a fresh build tree or explicitly correct
-`CMAKE_TOOLCHAIN_FILE`. The checked-in VS Code tasks already supply the expected vcpkg location.
+`CMAKE_TOOLCHAIN_FILE`. The checked-in VS Code tasks pass through `VCPKG_ROOT` from the editor environment.

@@ -8,6 +8,14 @@
             "args": [
                 "--preset", "linux-debug"
             ],
+            "linux": {
+                "options": {
+                    "cwd": "${workspaceFolder}",
+                    "env": {
+                        "VCPKG_ROOT": "${env:HOME}/.local/share/vcpkg"
+                    }
+                }
+            },
             "osx": {
                 "args": [
                     "--preset", "macos-debug"
@@ -66,7 +74,7 @@
             "options": {
                 "cwd": "${workspaceFolder}",
                 "env": {
-                    "VCPKG_ROOT": "${env:VCPKG_ROOT}"
+                    "VCPKG_ROOT": "/home/hippari/.local/share/vcpkg"
                 }
             },
             "problemMatcher": [],
@@ -83,7 +91,7 @@
             "options": {
                 "cwd": "${workspaceFolder}",
                 "env": {
-                    "VCPKG_ROOT": "${env:VCPKG_ROOT}"
+                    "VCPKG_ROOT": "/home/hippari/.local/share/vcpkg"
                 }
             },
             "problemMatcher": [],

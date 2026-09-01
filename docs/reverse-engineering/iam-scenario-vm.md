@@ -1110,7 +1110,7 @@ Do not implement their lifecycle based only on generic instruction flow.
 The recovered dialog record/archive format and subsystem API are documented in
 [`iam-dialog.md`](iam-dialog.md). Phase D4 implements `0x3D` as one signed
 Scalar16 operand, a typed bridge to `ScenarioManager::start_dialog()`, and an
-immediate dispatcher yield. The AREA context remains running in Runtime state 1
+immediate dispatcher return. The AREA context remains running in Runtime state 1
 with its IP already past the operand. `ScenarioStartupController` then gates
 normal AREA servicing while the session `DialogRuntime` is active; gameplay and
 world `ScenarioRuntime` ticks continue. At completion it consumes
@@ -1270,7 +1270,7 @@ Handler `0x00401EB0` consumes one `Scalar16` (three bytes including the
 opcode). It resolves a direct literal or `0x4000` parameter-block reference,
 then writes zero to the selected session global. Literal `-1` remains `-1`
 through scalar decoding and is rejected by the checked global store. The
-operation neither waits nor yields.
+operation neither waits nor returns early from compact dispatch.
 
 ## `0x56` / `0x5D` — numeric character-profile values
 
@@ -2098,6 +2098,27 @@ or a related execution-class marker.
 
 The exact source-level name is unknown.
 
+This flag is classification state, not a scheduling barrier. The central
+compact interpreter around `0x00406460` conceptually dispatches instructions
+while `context.state == 1`; it does not return merely because flag `0x0010` is
+set. Execution stops when the state changes, the event terminates or fails, a
+modern instruction safety budget is exhausted, or an explicitly recovered
+dispatcher-return case occurs. Opcode `0x3D` is the known exception: the
+central interpreter returns after its handler even though the context remains
+in state 1 at the advanced instruction pointer.
+
+Recovered native-side-effect scheduling examples:
+
+| Opcode | Handler | Compact scheduling |
+| --- | --- | --- |
+| `0x46` | `0x00403860` | Enters state 6; execution stops because state is no longer 1. |
+| `0x5C` | `0x00404590` | Activates the object and continues in state 1. |
+| `0x5F` | `0x00404940` | Submits the nonblocking camera operation and continues in state 1. |
+| `0x60` | `0x00404AF0` | The tracked/timed form can enter state 7; a form that does not install that wait continues in state 1. |
+| `0x76` | `0x00405180` | Submits presentation mode 1 and continues in state 1. |
+| `0x77` | `0x00405240` | Submits presentation mode 2 and continues in state 1. |
+| `0x3D` | central special case | Starts dialog and explicitly returns from compact dispatch while remaining in state 1. |
+
 Keep:
 
 ```text
@@ -2364,7 +2385,7 @@ Handler:
 ```
 
 The compact instruction is exactly one Scalar16 operand (three bytes total)
-and does not wait or request a dispatcher yield. OpenNomad resolves that scalar
+and does not wait or request a dispatcher return. OpenNomad resolves that scalar
 before emitting a typed `AreaCharacterSelectionRequest`; an unresolved
 `0x4000` parameter reference remains a structured failure until compact
 parameter blocks are modeled.
@@ -2654,7 +2675,8 @@ Rather:
 ```text
 scenario scheduler ticks at game-update cadence
 native duration fields use 30 Hz logical units
-interpreter runs until state changes / native boundary
+interpreter runs until state changes, event termination/failure, or an explicit
+dispatcher-return case
 ```
 
 ---
@@ -2777,9 +2799,10 @@ A completed mode-1 fade remains active and opaque until a valid mode-2 command
 replaces it. Rejected overlapping commands leave colour, timing, delay,
 progress, and alpha unchanged.
 
-Both operations are asynchronous relative to AREA; their existing dispatcher
-yield does not create a typed wait. A zero-duration mode 1 ends opaque and a
-zero-duration mode 2 ends transparent.
+Both operations are asynchronous relative to presentation, but neither is a
+compact-VM wait or dispatcher return. The following compact instruction runs
+in the same dispatch while state remains 1. A zero-duration mode 1 ends opaque
+and a zero-duration mode 2 ends transparent.
 
 OpenNomad preserves the authored low 24-bit RGB value (`0x00RRGGBB`) and does
 not infer alpha from the high byte. Presentation interpolation remains sampled

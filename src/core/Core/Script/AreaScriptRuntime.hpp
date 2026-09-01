@@ -586,10 +586,11 @@ class AreaScriptRuntime {
   [[nodiscard]] const std::vector<std::int32_t>& evaluation_stack() const {
     return m_evaluation_stack;
   }
-  /// True when the most recent run stopped on the explicit dispatcher-yield
-  /// flag. Typed waits remain separately observable through wait_info().
-  [[nodiscard]] bool last_run_yielded() const {
-    return m_last_run_yielded;
+  /// True when the most recent run stopped because an instruction explicitly
+  /// returned from compact dispatch. Typed waits remain separately observable
+  /// through wait_info().
+  [[nodiscard]] bool last_run_returned_early() const {
+    return m_last_run_returned_early;
   }
   [[nodiscard]] const std::optional<AreaCharacterActivationRequest>&
   last_character_activation_request() const {
@@ -764,10 +765,10 @@ class AreaScriptRuntime {
   std::optional<AreaCameraRequest> m_last_camera_request;
   std::optional<AreaPresentationRequest> m_last_presentation_request;
   bool m_cinematic_letterbox_requested{false};
-  /// Runtime side-effect handlers set context flag 0x10; the central AREA
-  /// dispatcher observes it and yields until the next scenario tick.
-  bool m_yield_requested{false};
-  bool m_last_run_yielded{false};
+  /// Set only by an opcode whose native central-dispatch control flow
+  /// explicitly returns while the compact context remains runnable.
+  bool m_dispatch_return_requested{false};
+  bool m_last_run_returned_early{false};
   AreaPauseInfo m_pause_info;
   std::deque<AreaInstructionTrace> m_trace;
   std::size_t m_executed_instruction_count{0};

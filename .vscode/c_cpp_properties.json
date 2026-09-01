@@ -4,8 +4,7 @@
             "name": "Linux",
             "compileCommands": "${workspaceFolder}/build/linux-debug/compile_commands.json",
             "includePath": [
-                "${workspaceFolder}/src/**",
-                "${workspaceFolder}/vendor/**"
+                "${workspaceFolder}/src/**"
             ],
             "defines": [],
             "cStandard": "c17",
