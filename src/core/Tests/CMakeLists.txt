@@ -56,6 +56,11 @@ add_executable(CharacterRuntimeTest CharacterRuntime.spec.cpp $<TARGET_OBJECTS:T
 add_test(NAME CharacterRuntimeTest COMMAND CharacterRuntimeTest)
 target_link_libraries(CharacterRuntimeTest PRIVATE doctest::doctest Core)
 
+add_executable(CharacterReferenceRuntimeTest
+  CharacterReferenceRuntime.spec.cpp $<TARGET_OBJECTS:TestRunner>)
+add_test(NAME CharacterReferenceRuntimeTest COMMAND CharacterReferenceRuntimeTest)
+target_link_libraries(CharacterReferenceRuntimeTest PRIVATE doctest::doctest Core)
+
 add_executable(CtlControlSetTest CtlControlSet.spec.cpp $<TARGET_OBJECTS:TestRunner>)
 add_test(NAME CtlControlSetTest COMMAND CtlControlSetTest)
 target_link_libraries(CtlControlSetTest PRIVATE doctest::doctest Core)

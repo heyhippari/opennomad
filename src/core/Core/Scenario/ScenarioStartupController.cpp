@@ -2209,20 +2209,16 @@ void ScenarioStartupController::service_current_character_actor(const float delt
             current->world_scene_id,
             owner.script_instance_id);
         m_current_character_structured_owner.reset();
+      } else {
+        App::Log::debug(LogCategory::Scenario,
+            "CurrentActorServiceSuppressed — character={} world={} scriptInstance={} "
+            "reason=structured-owner-active",
+            current->character_id,
+            current->world_scene_id,
+            owner.script_instance_id);
         return;
       }
-      App::Log::debug(LogCategory::Scenario,
-          "CurrentActorServiceSuppressed — character={} world={} scriptInstance={} "
-          "reason={}",
-          current->character_id,
-          current->world_scene_id,
-          owner.script_instance_id,
-          instance->completed ? "structured-owner-completed" : "structured-owner-active");
-      return;
-    }
-
-    if (instance == nullptr || !instance->launch_context.character_body_identity.has_value() ||
-        instance->launch_context.character_body_identity.value() != owner.body_identity) {
+    } else {
       App::Log::debug(LogCategory::Scenario,
           "CurrentActorStructuredHandoff — character={} world={} scriptInstance={} "
           "reason=structured-owner-stale",
@@ -2306,6 +2302,12 @@ void ScenarioStartupController::service_current_character_trigger_proxy() {
     proxy.registered = false;
     proxy.synchronization_suspended = true;
     proxy.suspension_reason = "current character body identity changed";
+    return;
+  }
+  if (m_current_character_structured_owner.has_value() &&
+      m_current_character_structured_owner->body_identity == proxy.owner.body_identity) {
+    proxy.synchronization_suspended = true;
+    proxy.suspension_reason = "current-character structured script active";
     return;
   }
   if (proxy.last_consumed_actor_spatial_generation >=

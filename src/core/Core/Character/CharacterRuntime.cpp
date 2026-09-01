@@ -216,7 +216,7 @@ std::expected<void, std::string> Runtime::ensure_adventure_controller(
 
 std::expected<void, std::string> Runtime::ensure_adventure_controller(
     const BodyIdentity body_identity, const std::string_view adventure_control_set) {
-  RuntimeCharacter* const character{find_body(body_identity)};
+  const RuntimeCharacter* const character{find_body(body_identity)};
   if (character == nullptr) {
     return std::expected<void, std::string>{
         std::unexpect, fmt::format("body {} is not materialized", body_identity)};

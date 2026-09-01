@@ -1417,7 +1417,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK(controller.current_character_trigger_proxy()->synchronization_suspended);
   }
 
-  TEST_CASE("exact structured-child completion suppresses ordinary service and proxy sync") {
+  TEST_CASE("exact structured-child completion resumes ordinary service and proxy sync") {
     const TempDirectory temp;
     write_structured_child_completion_fixtures(temp);
     const ScopedGameDataRoot root{temp.root()};
@@ -1453,11 +1453,12 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     const auto tick_result{controller.tick(1.0F / 30.0F)};
     INFO(controller.last_error());
     REQUIRE(tick_result.has_value());
-    CHECK_EQ(character->ordinary_actor_service_generation, 0U);
+    CHECK_EQ(character->ordinary_actor_service_generation, 1U);
     CHECK_EQ(
-        controller.current_character_trigger_proxy()->last_consumed_actor_spatial_generation, 0U);
+        controller.current_character_trigger_proxy()->last_consumed_actor_spatial_generation, 1U);
     const auto& proxy{*controller.current_character_trigger_proxy()};
-    CHECK((proxy.synchronization_suspended || !proxy.contact_ready));
+    CHECK_FALSE(proxy.synchronization_suspended);
+    CHECK(proxy.contact_ready);
   }
 
   TEST_CASE("ordinary actor service advances generation before proxy synchronization") {
@@ -1526,6 +1527,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
 
     REQUIRE(controller.tick(1.0F / 30.0F).has_value());
     CHECK_EQ(controller.zone_contact_count(), 1U);
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
     CHECK_EQ(character->current_move_id(), std::optional<std::int16_t>{100});
     CHECK(character->controller_enabled);
   }
@@ -1747,7 +1749,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK(runtime->character_runtime().find(310) == nullptr);
   }
 
-  TEST_CASE("current-character script bridge rejects missing or foreign session targets") {
+  TEST_CASE("current-character script bridge rejects missing and nonresident session targets") {
     SUBCASE("no current controlled character") {
       const TempDirectory temp;
       write_current_character_script_fixtures(temp);
@@ -1765,7 +1767,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
       CHECK(controller.area_script()->state() == AreaScriptState::k_failed);
     }
 
-    SUBCASE("current controlled character belongs to another world") {
+    SUBCASE("current controlled character references a nonresident body") {
       const TempDirectory temp;
       write_current_character_script_fixtures(temp);
       const ScopedGameDataRoot root{temp.root()};
@@ -1778,8 +1780,8 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
 
       const auto result{controller.tick()};
       REQUIRE_FALSE(result.has_value());
-      CHECK(result.error().find("belongs to world 1") != std::string::npos);
-      CHECK(result.error().find("owner is world 0") != std::string::npos);
+      CHECK(
+          result.error().find("runtime body 0 (reference 49) does not exist") != std::string::npos);
       REQUIRE(controller.area_script() != nullptr);
       CHECK(controller.area_script()->state() == AreaScriptState::k_failed);
     }
