@@ -394,7 +394,7 @@ std::optional<IamAreaCharacterRecord> IamAreaRecord::character_by_id(
         table->subspan(index * k_character_stride, k_character_stride)};
 
     IamAreaCharacterRecord character;
-    character.field_00 = read_i16_at(record, 0x00U);
+    character.runtime_slot_seed = read_i16_at(record, 0x00U);
     character.character_id = read_i16_at(record, 0x02U);
     character.serialized_position.at(0) = read_i32_at(record, 0x04U);
     character.serialized_position.at(1) = read_i32_at(record, 0x08U);
@@ -408,6 +408,29 @@ std::optional<IamAreaCharacterRecord> IamAreaRecord::character_by_id(
   }
 
   return std::nullopt;
+}
+
+std::vector<IamAreaCharacterRecord> IamAreaRecord::character_placements() const {
+  std::vector<IamAreaCharacterRecord> characters;
+  constexpr std::size_t k_character_table_index{0};
+  constexpr std::size_t k_character_stride{0x14};
+  auto table{table_view(k_character_table_index)};
+  if (!table) {
+    return characters;
+  }
+  characters.reserve(table_count(k_character_table_index));
+  for (std::size_t index{0}; index < table_count(k_character_table_index); ++index) {
+    const std::span<const std::byte> record{
+        table->subspan(index * k_character_stride, k_character_stride)};
+    characters.push_back(IamAreaCharacterRecord{.runtime_slot_seed = read_i16_at(record, 0x00U),
+        .character_id = read_i16_at(record, 0x02U),
+        .serialized_position = {read_i32_at(record, 0x04U),
+            read_i32_at(record, 0x08U),
+            read_i32_at(record, 0x0CU)},
+        .orientation_units = read_i16_at(record, 0x10U),
+        .state_bit_index = read_u16_at(record, 0x12U)});
+  }
+  return characters;
 }
 
 std::optional<IamAreaCharacterDefinitionRecord> IamAreaRecord::character_definition_by_character_id(

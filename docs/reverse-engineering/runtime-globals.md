@@ -9,6 +9,14 @@
 > 1. provide stable reverse-engineering names and cross-references while working in Ghidra; and
 > 2. prevent OpenNomad from copying the original executable's global-memory architecture when the same state can be owned cleanly by modern subsystem objects.
 
+## Live character identity
+
+Runtime's global actor-slot namespace maps each live slot to its canonical
+character ID. OpenNomad represents that slot as `Character::BodyIdentity`, not
+as `RuntimeCharacter::instance_id`; the latter is vector-local and can be
+renumbered. Canonical IDs remain persistent profile/save data and do not change
+when an AREA or SCENE placement is rebound during possession.
+
 ## Reference executable
 
 The addresses in this document apply to the currently studied Windows executable:

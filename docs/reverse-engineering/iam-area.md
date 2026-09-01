@@ -1,5 +1,14 @@
 # Omikron IAM `AREA` archive and area-record format
 
+## Runtime character-reference overlay
+
+Table 0 is a 0x14-byte character placement. `+0x00` is the serialized seed for
+Runtime's mutable actor-slot field and `+0x02` is the serialized character
+reference. OpenNomad keeps IAM bytes immutable and represents the mutable values
+in `CharacterReferenceRuntime`: `+0x00` maps to runtime-only `BodyIdentity` and
+`+0x02` maps to mutable `reference_character_id`. `+0x12` remains a separate
+state-bit field.
+
 > **Status:** work-in-progress reverse-engineering documentation for OpenNomad  
 > **Last updated:** 2026-08-25
 >

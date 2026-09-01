@@ -19,6 +19,7 @@
 #include "Core/Omikron/IamStart.hpp"
 #include "Core/Omikron/IamZone.hpp"
 #include "Core/RuntimeMath.hpp"
+#include "Core/Scenario/CharacterReferenceRuntime.hpp"
 #include "Core/Scenario/ScenarioManager.hpp"
 #include "Core/Script/AreaScriptRuntime.hpp"
 
@@ -112,13 +113,13 @@ struct ZoneQualificationDiagnostic {
 /// Runtime updates this independently from scripted presentation transforms.
 struct CurrentCharacterStructuredOwner {
   Character::BodyIdentity body_identity{0};
-  std::uint32_t world_scene_id{0};
+  std::uint32_t script_world_scene_id{0};
+  std::uint32_t script_world_generation{0};
   std::size_t script_instance_id{0};
 };
 
 struct CurrentCharacterTriggerProxy {
   ControlledCharacterRef owner;
-  Character::BodyIdentity body_identity{0};
   bool registered{false};
   bool contact_ready{false};
   Runtime::Vec3 position{};
@@ -489,6 +490,7 @@ class ScenarioStartupController {
   std::vector<ZoneQualificationDiagnostic> m_zone_qualification_diagnostics;
   std::optional<CurrentCharacterStructuredOwner> m_current_character_structured_owner;
   std::optional<CurrentCharacterTriggerProxy> m_current_character_trigger_proxy;
+  CharacterReferenceRuntime m_character_references;
   std::uint64_t m_next_trigger_proxy_generation{1};
 
   std::int16_t m_initial_area_id{0};

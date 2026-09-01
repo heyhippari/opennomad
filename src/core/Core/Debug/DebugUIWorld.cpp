@@ -83,8 +83,9 @@ void DebugUI::show_world_inspector() {
         scenarios == nullptr ? nullptr : scenarios->active_world_context()};
     ImGui::SeparatorText("Session character ownership");
     if (controlled.has_value()) {
-      ImGui::Text("ControlledCharacterRef: character %d, world scene %u",
+      ImGui::Text("ControlledCharacterRef: character %d, body %llu, world scene %u",
           controlled->character_id,
+          static_cast<unsigned long long>(controlled->body_identity),
           controlled->world_scene_id);
     } else {
       ImGui::TextUnformatted("ControlledCharacterRef: none");
@@ -359,7 +360,10 @@ void DebugUI::show_world_inspector() {
       if (is_controlled) {
         ImGui::TextUnformatted("CURRENT CONTROLLED CHARACTER");
       }
-      ImGui::Text("Instance: %zu", character.instance_id);
+      ImGui::Text("Body: %llu | Instance: %zu | Ordinary generation: %llu",
+          static_cast<unsigned long long>(character.body_identity),
+          character.instance_id,
+          static_cast<unsigned long long>(character.ordinary_actor_service_generation));
       ImGui::Text("AREA: %d", character.area_id);
       ImGui::Text("Active: %s", character.active ? "yes" : "no");
       ImGui::Text("AREA present: %s", character.area_present ? "yes" : "no");

@@ -23,7 +23,9 @@ namespace App::Omikron {
 /// definition relationship, but its exact semantics are intentionally left
 /// unnamed until that relationship is implemented.
 struct IamAreaCharacterRecord {
-  std::int16_t field_00{0};                           ///< +0x00, observed -1 for area 118.
+  /// +0x00 serialized seed for Runtime's mutable actor-slot field. OpenNomad
+  /// preserves parser bytes; CharacterReferenceRuntime owns its BodyIdentity equivalent.
+  std::int16_t runtime_slot_seed{0};
   std::int16_t character_id{0};                       ///< +0x02, CHARACTERS ID.
   std::array<std::int32_t, 3> serialized_position{};  ///< +0x04..+0x0C raw integers.
   std::int16_t orientation_units{0};                  ///< +0x10, Runtime angle units.
@@ -133,6 +135,7 @@ class IamAreaRecord {
   /// Finds a table-0 character-placement record by its signed character ID.
   [[nodiscard]] std::optional<IamAreaCharacterRecord> character_by_id(
       std::int16_t character_id) const;
+  [[nodiscard]] std::vector<IamAreaCharacterRecord> character_placements() const;
 
   /// Finds the authored table-4 record belonging to a character ID.
   [[nodiscard]] std::optional<IamAreaCharacterDefinitionRecord>

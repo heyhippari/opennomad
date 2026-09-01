@@ -95,6 +95,7 @@ add_library(${NAME} STATIC
   Core/Sprite/SpriteRenderer.hpp Core/Sprite/SpriteRenderer.cpp
   Core/Sfx/SfxRuntime.hpp Core/Sfx/SfxRuntime.cpp
   Core/Scenario/ScenarioManager.hpp Core/Scenario/ScenarioManager.cpp
+  Core/Scenario/CharacterReferenceRuntime.hpp Core/Scenario/CharacterReferenceRuntime.cpp
   Core/Scenario/ScenarioRuntime.hpp Core/Scenario/ScenarioRuntime.cpp
   Core/Scenario/ScenarioStartupController.hpp Core/Scenario/ScenarioStartupController.cpp
   Core/Scenario/ScenarioEngine.hpp Core/Scenario/ScenarioEngine.cpp

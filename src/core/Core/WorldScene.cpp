@@ -512,13 +512,15 @@ std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state
           actor_object_rectangle_count = actor_object.rectangle_count;
         }
       }
-      Debug::RuntimeCharacterDebugState debug_character{.instance_id = character.instance_id,
+      Debug::RuntimeCharacterDebugState debug_character{.body_identity = character.body_identity,
+          .instance_id = character.instance_id,
           .character_id = character.character_id,
           .area_id = character.area_id,
           .active = character.active,
           .area_present = character.area_present,
           .loaded = character.loaded(),
           .renderable = character.renderable(),
+          .ordinary_actor_service_generation = character.ordinary_actor_service_generation,
           .serialized_position = character.serialized_area_position,
           .runtime_position = {character.transform.translation.x,
               character.transform.translation.y,
@@ -605,7 +607,7 @@ std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state
           .ctl_markers_fired = 0U};
       const CinSfxPlayback* cin_sfx{nullptr};
       for (const CinSfxPlayback& playback : world_context->runtime->cin_sfx_playbacks()) {
-        if (playback.character_instance_id == character.instance_id &&
+        if (playback.character_body_identity == character.body_identity &&
             playback.animation_index == animation.animation_descriptor_index &&
             (cin_sfx == nullptr ||
                 playback.last_service_sequence > cin_sfx->last_service_sequence)) {

@@ -538,7 +538,9 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
                     .character_id = 310, .apply_area_transform = true})
             .has_value());
 
-    App::Script::BodyAnimationRequest request{.character_id = 310,
+    App::Script::BodyAnimationRequest request{
+        .character_body_identity = runtime.character_runtime().find(310)->body_identity,
+        .character_id = 310,
         .script_instance_id = 11U,
         .object_binding = "SelectedRoot",
         .animation_index = 0,
@@ -617,7 +619,9 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
                     .character_id = 310, .apply_area_transform = true})
             .has_value());
 
-    const App::Script::BodyAnimationRequest request{.character_id = 310,
+    const App::Script::BodyAnimationRequest request{
+        .character_body_identity = runtime.character_runtime().find(310)->body_identity,
+        .character_id = 310,
         .object_binding = "SelectedRoot",
         .animation_index = 0,
         .previous_progress = 0.0F,
@@ -804,7 +808,7 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
             .initialize(
                 scx, std::span<const std::byte>{}, "character-trigger", nullptr, false, &sfx)
             .has_value());
-    CHECK_FALSE(runtime.spawn_character_script_instance(0, 310, 0).has_value());
+    CHECK_FALSE(runtime.spawn_character_script_instance(0, 310, 999U, 0).has_value());
     CHECK(runtime.sfx_diagnostics().active_node_count == 0U);
 
     runtime.character_runtime().set_model_loader(
@@ -826,7 +830,8 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
     REQUIRE(character != nullptr);
     character->transform.translation.x = 20.0F;
 
-    REQUIRE(runtime.spawn_character_script_instance(0, 310, 0).has_value());
+    REQUIRE(
+        runtime.spawn_character_script_instance(0, 310, character->body_identity, 0).has_value());
     CHECK(runtime.sfx_diagnostics().active_node_count == 1U);
     CHECK(runtime.sfx_runtime()->nodes().front().current_position.x == doctest::Approx(25.0F));
   }
@@ -841,7 +846,7 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
     REQUIRE(runtime.initialize(scx, std::span<const std::byte>{}, "character", nullptr, false)
             .has_value());
 
-    auto missing{runtime.spawn_character_script_instance(1, 310, 0)};
+    auto missing{runtime.spawn_character_script_instance(1, 310, 999U, 0)};
     REQUIRE_FALSE(missing.has_value());
     CHECK(missing.error().find("does not exist") != std::string::npos);
 
@@ -862,7 +867,10 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
     CAPTURE(activation_error);
     REQUIRE(activated.has_value());
 
-    const auto created{runtime.spawn_character_script_instance(1, 310, -5)};
+    const App::Character::RuntimeCharacter* const character{runtime.character_runtime().find(310)};
+    REQUIRE(character != nullptr);
+    const auto created{
+        runtime.spawn_character_script_instance(1, 310, character->body_identity, -5)};
     REQUIRE(created.has_value());
     const App::Script::ScriptInstance* instance{
         runtime.script_runtime()->instance(created.value())};
@@ -944,7 +952,9 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
                     .character_id = 310, .apply_area_transform = true})
             .has_value());
 
-    const App::Script::RelativeBodyAnimationRequest request{.character_id = 310,
+    const App::Script::RelativeBodyAnimationRequest request{
+        .character_body_identity = animated_character->body_identity,
+        .character_id = 310,
         .object_binding = "RootBody",
         .animation_index = 0,
         .previous_progress = 0.0F,
@@ -1023,7 +1033,8 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
     character->transform.translation = {.x = 7000.0F, .y = -120.0F, .z = 3040.0F};
     character->set_principal_orientation({.x = 0.0F, .y = 45.0F, .z = 0.0F});
 
-    App::Script::BodyAnimationRequest request{.character_id = 310,
+    App::Script::BodyAnimationRequest request{.character_body_identity = character->body_identity,
+        .character_id = 310,
         .object_binding = "RootBody",
         .animation_index = 0,
         .previous_progress = 0.0F,
@@ -1136,7 +1147,9 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
     REQUIRE(visual != nullptr);
     visual->transform.translation = {.x = 7000.0F, .y = -120.0F, .z = 3040.0F};
     visual->set_principal_orientation({});
-    const App::Script::BodyAnimationRequest root_request{.character_id = 310,
+    const App::Script::BodyAnimationRequest root_request{
+        .character_body_identity = visual->body_identity,
+        .character_id = 310,
         .object_binding = "RootBody",
         .animation_index = 0,
         .previous_progress = 0.0F,
@@ -1174,6 +1187,7 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
     actor->transform.translation = {.x = 7000.0F, .y = -120.0F, .z = 3040.0F};
     actor->set_principal_orientation({});
     App::Script::BodyAnimationRequest actor_request{root_request};
+    actor_request.character_body_identity = actor->body_identity;
     actor_request.object_binding = "Child";
     REQUIRE(actor_runtime->select_body_animation(actor_request).has_value());
     CHECK_EQ(actor->transform.translation.x, doctest::Approx(110.0F));
@@ -1216,7 +1230,9 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
     REQUIRE(character != nullptr);
     character->set_principal_orientation({});
 
-    const App::Script::BodyAnimationRequest request{.character_id = 310,
+    const App::Script::BodyAnimationRequest request{
+        .character_body_identity = character->body_identity,
+        .character_id = 310,
         .object_binding = "RootBody",
         .animation_index = 0,
         .previous_progress = 0.0F,
@@ -1265,7 +1281,9 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
     before->transform.translation = {};
     before->set_principal_orientation({});
 
-    const App::Script::BodyAnimationRequest root_request{.character_id = 310,
+    const App::Script::BodyAnimationRequest root_request{
+        .character_body_identity = before->body_identity,
+        .character_id = 310,
         .object_binding = "RootBody",
         .animation_index = 0,
         .previous_progress = 0.0F,

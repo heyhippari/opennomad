@@ -437,6 +437,40 @@ void ScenarioManager::clear_controlled_character() {
   m_controlled_character.reset();
 }
 
+std::optional<LocatedCharacterBody> ScenarioManager::find_character_body(
+    const Character::BodyIdentity body_identity) {
+  for (WorldSceneContext& context : m_world_contexts) {
+    if (context.residency == WorldSceneResidencyState::Free || context.runtime == nullptr) {
+      continue;
+    }
+    Character::Runtime& characters{context.runtime->character_runtime()};
+    if (Character::RuntimeCharacter* const character{characters.find_body(body_identity)};
+        character != nullptr) {
+      return LocatedCharacterBody{.world_scene_id = context.scene_id,
+          .runtime = context.runtime.get(),
+          .character = character};
+    }
+  }
+  return std::nullopt;
+}
+
+std::optional<LocatedConstCharacterBody> ScenarioManager::find_character_body(
+    const Character::BodyIdentity body_identity) const {
+  for (const WorldSceneContext& context : m_world_contexts) {
+    if (context.residency == WorldSceneResidencyState::Free || context.runtime == nullptr) {
+      continue;
+    }
+    const Character::Runtime& characters{context.runtime->character_runtime()};
+    if (const Character::RuntimeCharacter* const character{characters.find_body(body_identity)};
+        character != nullptr) {
+      return LocatedConstCharacterBody{.world_scene_id = context.scene_id,
+          .runtime = context.runtime.get(),
+          .character = character};
+    }
+  }
+  return std::nullopt;
+}
+
 std::expected<void, std::string> ScenarioManager::transfer_controlled_character(
     const std::uint32_t source_scene_id, const std::uint32_t target_scene_id) {
   if (!m_controlled_character.has_value() ||
@@ -456,8 +490,8 @@ std::expected<void, std::string> ScenarioManager::transfer_controlled_character(
             source_scene_id,
             target_scene_id)};
   }
-  if (auto transferred{source->character_runtime().transfer_character_to(
-          target->character_runtime(), m_controlled_character->character_id)};
+  if (auto transferred{source->character_runtime().transfer_body_to(
+          target->character_runtime(), m_controlled_character->body_identity)};
       !transferred) {
     return std::expected<void, std::string>{std::unexpect,
         fmt::format("Cannot transfer current controlled character {} from world {} to {}: {}",
@@ -917,6 +951,10 @@ std::expected<ScenarioManager::LoadedScenario, std::string> ScenarioManager::loa
 std::expected<std::unique_ptr<ScenarioRuntime>, std::string> ScenarioManager::prepare_runtime(
     const std::string& scenario_name, const LoadedScenario& loaded) {
   auto runtime{std::make_unique<ScenarioRuntime>()};
+  runtime->set_body_locator([this](const Character::BodyIdentity body_identity) {
+    const auto located{find_character_body(body_identity)};
+    return located.has_value() ? located->character : nullptr;
+  });
   if (auto result{runtime->initialize(loaded.scx_data,
           std::span<const std::byte>{loaded.file_buffer},
           scenario_name,

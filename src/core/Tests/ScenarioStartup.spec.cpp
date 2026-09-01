@@ -979,7 +979,7 @@ void write_current_character_script_fixtures(const TempDirectory& temp) {
 /// launches a tracked character script.
 void write_structured_child_completion_fixtures(const TempDirectory& temp) {
   Buffer script;
-  script.u8(0x38).u16(136);  // SetCurrentCharacter 136
+  script.u8(0x38).u16(136);                  // SetCurrentCharacter 136
   script.u8(0x2E).u16(221).u16(0).u8(0x03);  // StartCurrentCharacterScriptTracked, wait, EndEvent
   std::vector<std::byte> area{make_area_archive()};
   std::memcpy(area.data() + 0x800U + 0x3FCU, script.data().data(), script.data().size());
@@ -1454,7 +1454,8 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     INFO(controller.last_error());
     REQUIRE(tick_result.has_value());
     CHECK_EQ(character->ordinary_actor_service_generation, 0U);
-    CHECK_EQ(controller.current_character_trigger_proxy()->last_consumed_actor_spatial_generation, 0U);
+    CHECK_EQ(
+        controller.current_character_trigger_proxy()->last_consumed_actor_spatial_generation, 0U);
     const auto& proxy{*controller.current_character_trigger_proxy()};
     CHECK((proxy.synchronization_suspended || !proxy.contact_ready));
   }

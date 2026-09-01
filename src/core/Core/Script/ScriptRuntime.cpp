@@ -949,7 +949,8 @@ HandlerResult ScriptRuntime::handle_interpolate_cameras(
 
 HandlerResult ScriptRuntime::handle_select_body_animation(
     ScriptInstance& instance, RuntimeScriptCommand& command, const float script_delta_frames) {
-  if (!instance.launch_context.character_id.has_value()) {
+  if (!instance.launch_context.character_id.has_value() ||
+      !instance.launch_context.character_body_identity.has_value()) {
     return HandlerResult{.status = ScriptCommandStatus::k_error,
         .pause_reason = ScriptPauseReason::k_missing_resource,
         .reason_text = "Script_SelectBodyAnimation requires a character-bound instance"};
@@ -967,7 +968,9 @@ HandlerResult ScriptRuntime::handle_select_body_animation(
 
   const float previous{instance.value_pool.at(base + 2U).as_float()};
   const float current{instance.value_pool.at(base + 3U).as_float()};
-  const BodyAnimationRequest request{.character_id = instance.launch_context.character_id.value(),
+  const BodyAnimationRequest request{
+      .character_body_identity = instance.launch_context.character_body_identity.value(),
+      .character_id = instance.launch_context.character_id.value(),
       .script_instance_id = instance.instance_id,
       .object_binding = source.binding_table_a.entries.at(binding_index).name,
       .animation_index = instance.value_pool.at(base + 1U).as_unsigned(),
@@ -1002,7 +1005,8 @@ HandlerResult ScriptRuntime::handle_select_body_animation(
 
 HandlerResult ScriptRuntime::handle_select_relative_body_animation(
     ScriptInstance& instance, RuntimeScriptCommand& command, const float script_delta_frames) {
-  if (!instance.launch_context.character_id.has_value()) {
+  if (!instance.launch_context.character_id.has_value() ||
+      !instance.launch_context.character_body_identity.has_value()) {
     return HandlerResult{.status = ScriptCommandStatus::k_error,
         .pause_reason = ScriptPauseReason::k_missing_resource,
         .reason_text = "Script_SelectRelativeBodyAnimation requires a character-bound instance"};
@@ -1021,6 +1025,7 @@ HandlerResult ScriptRuntime::handle_select_relative_body_animation(
   const float previous{instance.value_pool.at(base + 2U).as_float()};
   const float current{instance.value_pool.at(base + 3U).as_float()};
   const RelativeBodyAnimationRequest request{
+      .character_body_identity = instance.launch_context.character_body_identity.value(),
       .character_id = instance.launch_context.character_id.value(),
       .script_instance_id = instance.instance_id,
       .object_binding = source.binding_table_a.entries.at(binding_index).name,
@@ -1364,7 +1369,9 @@ void ScriptRuntime::reset_instance_to_initial_state(ScriptInstance& instance) {
                             command.opcode == K_SELECT_RELATIVE_BODY_ANIMATION;
     }
     if (owns_body_animation) {
-      m_world->reset_body_animation(instance.launch_context.character_id.value_or(0));
+      if (instance.launch_context.character_body_identity.has_value()) {
+        m_world->reset_body_animation(instance.launch_context.character_body_identity.value());
+      }
     }
   }
   instance.current_group_index = 0;

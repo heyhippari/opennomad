@@ -253,6 +253,8 @@ class Runtime {
   /// keeps its live mutable state; an empty control set is a no-op.
   [[nodiscard]] std::expected<void, std::string> ensure_adventure_controller(
       std::int16_t character_id, std::string_view adventure_control_set);
+  [[nodiscard]] std::expected<void, std::string> ensure_adventure_controller(
+      BodyIdentity body_identity, std::string_view adventure_control_set);
 
   /// Resolves and activates one AREA request. Successful activation is
   /// immediate and reuses both an existing logical instance and cached model
@@ -289,6 +291,8 @@ class Runtime {
   /// Changes only the presentation bit of an already materialized body.
   [[nodiscard]] std::expected<void, std::string> set_presentation_enabled(
       std::int16_t character_id, bool enabled);
+  [[nodiscard]] std::expected<void, std::string> set_body_presentation_enabled(
+      BodyIdentity body_identity, bool enabled);
 
   /// Removes a non-current body from live AREA presentation while retaining
   /// its durable runtime record for a later authored activation.
@@ -299,6 +303,8 @@ class Runtime {
   /// its stable `body_identity`. Local `instance_id` values may be renumbered.
   [[nodiscard]] std::expected<RuntimeCharacter, std::string> extract_character(
       std::int16_t character_id);
+  [[nodiscard]] std::expected<RuntimeCharacter, std::string> extract_body(
+      BodyIdentity body_identity);
 
   /// Adopts a body moved from another world without invoking the model loader.
   /// The target-local instance ID is assigned on adoption; stable body identity
@@ -308,18 +314,25 @@ class Runtime {
   /// Transfers one body to a target world without reloading or duplicating it.
   [[nodiscard]] std::expected<void, std::string> transfer_character_to(
       Runtime& target, std::int16_t character_id);
+  [[nodiscard]] std::expected<void, std::string> transfer_body_to(
+      Runtime& target, BodyIdentity body_identity);
 
   /// Applies a named AREA address transform to one established runtime character.
   [[nodiscard]] std::expected<void, std::string> place_character_at_address(
       std::int16_t character_id, const Omikron::IamAreaAddressRecord& address);
+  [[nodiscard]] std::expected<void, std::string> place_body_at_address(
+      BodyIdentity body_identity, const Omikron::IamAreaAddressRecord& address);
 
   [[nodiscard]] RuntimeCharacter* find(std::int16_t character_id);
   [[nodiscard]] const RuntimeCharacter* find(std::int16_t character_id) const;
+  [[nodiscard]] RuntimeCharacter* find_body(BodyIdentity body_identity);
+  [[nodiscard]] const RuntimeCharacter* find_body(BodyIdentity body_identity) const;
   [[nodiscard]] std::span<const RuntimeCharacter> characters() const;
   [[nodiscard]] std::size_t model_resource_count() const;
 
   /// Restores one character's mutable pose from its immutable shared model.
   void reset_pose(std::int16_t character_id);
+  void reset_pose(BodyIdentity body_identity);
 
   /// Composes a temporary dialogue sample over the current base animation.
   [[nodiscard]] std::expected<void, std::string> apply_dialog_performance(

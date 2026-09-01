@@ -283,6 +283,7 @@ void ScenarioStartupController::reset_session() {
   m_zone_contacts.clear();
   m_zone_qualification_diagnostics.clear();
   m_current_character_trigger_proxy.reset();
+  m_character_references.reset();
   m_next_trigger_proxy_generation = 1;
   m_start_bytes.clear();
   m_global_bytes.clear();
@@ -308,6 +309,43 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
     ScenarioManager& manager) {
   APP_PROFILE_FUNCTION();
   m_manager = &manager;
+  m_character_references.set_body_locator([this](const Character::BodyIdentity body_identity)
+                                              -> std::optional<ResolvedCharacterReference> {
+    if (m_manager == nullptr) {
+      return std::nullopt;
+    }
+    const auto located{m_manager->find_character_body(body_identity)};
+    if (!located.has_value()) {
+      return std::nullopt;
+    }
+    return ResolvedCharacterReference{.body_identity = body_identity,
+        .body_world_scene_id = located->world_scene_id,
+        .resident_slot = std::nullopt,
+        .placement_index = std::nullopt,
+        .binding_state = std::nullopt};
+  });
+  m_character_references.set_canonical_locator(
+      [this](const std::int16_t character_id) -> std::optional<ResolvedCharacterReference> {
+        if (m_manager == nullptr) {
+          return std::nullopt;
+        }
+        for (const WorldSceneContext& context : m_manager->world_contexts()) {
+          if (context.runtime == nullptr || context.residency == WorldSceneResidencyState::Free) {
+            continue;
+          }
+          for (const Character::RuntimeCharacter& character :
+              context.runtime->character_runtime().characters()) {
+            if (character.character_id == character_id) {
+              return ResolvedCharacterReference{.body_identity = character.body_identity,
+                  .body_world_scene_id = context.scene_id,
+                  .resident_slot = std::nullopt,
+                  .placement_index = std::nullopt,
+                  .binding_state = std::nullopt};
+            }
+          }
+        }
+        return std::nullopt;
+      });
 
   // 1. IAM/START.
   auto start_file{read_file(std::string{K_IAM_START_PATH})};
@@ -402,6 +440,8 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
   area_slot.primary.emplace(std::move(parsed_record).value());
   area_slot.primary_area_id = m_initial_area_id;
   area_slot.secondary_area_id = m_linked_area_id;
+  m_character_references.install_area(
+      m_active_area_slot, area_slot.primary_area_id, *area_slot.primary);
   if (auto refreshed{refresh_active_zones()}; !refreshed) {
     m_last_error = fmt::format("initial resident zone refresh: {}", refreshed.error());
     return std::expected<void, std::string>{std::unexpect, m_last_error};
@@ -815,6 +855,45 @@ std::expected<void, std::string> ScenarioStartupController::activate_primary_cha
     return activated;
   }
 
+  if (const Character::RuntimeCharacter* const body{
+          scenario_runtime->character_runtime().find(request.character_id)};
+      body != nullptr) {
+    const bool scene_owned{
+        slot.scene.has_value() && slot.scene->character_by_id(request.character_id).has_value()};
+    const CharacterReferenceSource source{
+        scene_owned ? CharacterReferenceSource::k_scene : CharacterReferenceSource::k_area};
+    const std::int32_t scene_id{scene_owned ? slot.scene_id : -1};
+    std::optional<std::size_t> placement_index;
+    if (scene_owned) {
+      const std::vector<Omikron::IamSceneCharacterRecord> placements{
+          slot.scene->character_placements()};
+      const auto found{std::ranges::find(
+          placements, request.character_id, &Omikron::IamSceneCharacterRecord::character_id)};
+      if (found != placements.end()) {
+        placement_index = static_cast<std::size_t>(found - placements.begin());
+      }
+    } else {
+      const std::vector<Omikron::IamAreaCharacterRecord> placements{
+          slot.primary->character_placements()};
+      const auto found{std::ranges::find(
+          placements, request.character_id, &Omikron::IamAreaCharacterRecord::character_id)};
+      if (found != placements.end()) {
+        placement_index = static_cast<std::size_t>(found - placements.begin());
+      }
+    }
+    if (placement_index.has_value()) {
+      if (auto bound{m_character_references.bind_placement_body(source,
+              owner_slot,
+              slot.primary_area_id,
+              scene_id,
+              placement_index.value(),
+              body->body_identity)};
+          !bound) {
+        return bound;
+      }
+    }
+  }
+
   if (const Character::RuntimeCharacter* const character{
           scenario_runtime->character_runtime().find(request.character_id)};
       character != nullptr) {
@@ -998,6 +1077,8 @@ std::expected<void, std::string> ScenarioStartupController::service_area_transit
   destination_slot.scene.reset();
   destination_slot.scene_id = -1;
   destination_slot.scene_script.reset();
+  m_character_references.install_area(
+      transition.destination_slot, destination_slot.primary_area_id, *destination_slot.primary);
 
   // Runtime creates the destination AREA's compact context as part of loading
   // the resident AREA and queues event 1 immediately. It does not replace the
@@ -1552,12 +1633,15 @@ std::expected<void, std::string> ScenarioStartupController::attach_area_scene(
         slot.primary_area_id, slot.scene_id, preserved_character_id);
     scenario_runtime->object_placement_runtime().dematerialize_scene_objects(
         slot.primary_area_id, slot.scene_id);
+    m_character_references.remove_scene(slot_index.value(), slot.scene_id);
     slot.scene.reset();
     slot.scene_id = -1;
   }
 
   slot.scene.emplace(std::move(parsed_scene).value());
   slot.scene_id = request.scene_id;
+  m_character_references.install_scene(
+      slot_index.value(), slot.primary_area_id, slot.scene_id, *slot.scene);
   const std::size_t source_slot{m_active_area_slot};
   const std::uint32_t source_world_scene_id{m_area_slots.at(source_slot).world_scene_id};
   const std::optional<ControlledCharacterRef> current{m_manager->controlled_character()};
@@ -1570,6 +1654,10 @@ std::expected<void, std::string> ScenarioStartupController::attach_area_scene(
       slot.scene.reset();
       slot.scene_id = -1;
       return transferred;
+    }
+    if (m_current_character_trigger_proxy.has_value() && current.has_value() &&
+        m_current_character_trigger_proxy->owner.body_identity == current->body_identity) {
+      m_current_character_trigger_proxy->owner.world_scene_id = slot.world_scene_id;
     }
   }
   if (auto materialized{scenario_runtime->character_runtime().preload_scene_characters(
@@ -1592,6 +1680,24 @@ std::expected<void, std::string> ScenarioStartupController::attach_area_scene(
     slot.scene.reset();
     slot.scene_id = -1;
     return std::expected<void, std::string>{std::unexpect, preload_error};
+  }
+  for (std::size_t index{0}; index < slot.scene->character_placements().size(); ++index) {
+    const Omikron::IamSceneCharacterRecord placement{slot.scene->character_placements().at(index)};
+    const Character::RuntimeCharacter* const body{
+        scenario_runtime->character_runtime().find(placement.character_id)};
+    if (body == nullptr) {
+      return std::expected<void, std::string>{
+          std::unexpect, fmt::format("SCENE placement {} has no materialized body", index)};
+    }
+    if (auto bound{m_character_references.bind_placement_body(CharacterReferenceSource::k_scene,
+            slot_index.value(),
+            slot.primary_area_id,
+            slot.scene_id,
+            index,
+            body->body_identity)};
+        !bound) {
+      return bound;
+    }
   }
   if (auto materialized_objects{
           scenario_runtime->object_placement_runtime().materialize_scene_objects(
@@ -1711,6 +1817,7 @@ std::expected<void, std::string> ScenarioStartupController::release_area(
   slot.scene_script.reset();
   slot.scene.reset();
   slot.scene_id = -1;
+  m_character_references.remove_area(slot_index.value(), request.area_id);
   if (auto unloaded{m_manager->unload_world_context(slot.world_scene_id)}; !unloaded) {
     return unloaded;
   }
@@ -1740,10 +1847,12 @@ std::expected<void, std::string> ScenarioStartupController::select_current_chara
     return std::expected<void, std::string>{std::unexpect, "scenario manager is not available"};
   }
   const std::optional<ControlledCharacterRef> current{m_manager->controlled_character()};
-  const GameState* const existing_game_state{m_manager->game_state()};
-  if (current.has_value() && current->character_id == request.character_id &&
-      existing_game_state != nullptr && existing_game_state->current_character().has_value() &&
-      existing_game_state->current_character()->character_id == request.character_id) {
+  const auto located_current{current.has_value()
+                                 ? m_manager->find_character_body(current->body_identity)
+                                 : std::optional<LocatedCharacterBody>{}};
+  const Character::RuntimeCharacter* const current_body{
+      located_current.has_value() ? located_current->character : nullptr};
+  if (current_body != nullptr && current_body->character_id == request.character_id) {
     return {};
   }
   if (owner_slot >= m_area_slots.size()) {
@@ -1761,39 +1870,85 @@ std::expected<void, std::string> ScenarioStartupController::select_current_chara
         std::unexpect, "current-character selection owner has no world runtime"};
   }
 
-  std::optional<Omikron::IamCharacterDefinition> definition;
-  if (slot.primary->character_by_id(request.character_id).has_value()) {
-    if (auto materialized{runtime->character_runtime().ensure_area_character(
-            slot.primary_area_id, *slot.primary, request.character_id)};
-        !materialized) {
-      return materialized;
-    }
-    definition = slot.primary->character_definition_by_character_id(request.character_id);
-    if (!definition.has_value() && slot.scene.has_value()) {
-      definition = slot.scene->character_definition_by_character_id(request.character_id);
-    }
-  } else if (slot.scene.has_value() &&
-             slot.scene->character_by_id(request.character_id).has_value()) {
-    if (auto materialized{runtime->character_runtime().ensure_scene_character(
-            slot.primary_area_id, slot.scene_id, *slot.scene, request.character_id)};
-        !materialized) {
-      return materialized;
-    }
-    definition = slot.scene->character_definition_by_character_id(request.character_id);
-    if (!definition.has_value()) {
-      definition = slot.primary->character_definition_by_character_id(request.character_id);
-    }
-  } else {
-    return std::expected<void, std::string>{std::unexpect,
-        fmt::format("character ID {} is not present in owner AREA or attached SCENE table 0",
-            request.character_id)};
+  m_character_references.install_area(owner_slot, slot.primary_area_id, *slot.primary);
+  if (slot.scene.has_value()) {
+    m_character_references.install_scene(
+        owner_slot, slot.primary_area_id, slot.scene_id, *slot.scene);
   }
 
-  const Character::RuntimeCharacter* const character{
-      runtime->character_runtime().find(request.character_id)};
-  if (character == nullptr) {
+  const auto area_placement{m_character_references.find_mutable_placement(
+      owner_slot, slot.primary_area_id, request.character_id)};
+  const auto scene_placement{
+      area_placement.has_value()
+          ? area_placement
+          : m_character_references.find_mutable_scene_placement(
+                owner_slot, slot.primary_area_id, slot.scene_id, request.character_id)};
+  if (!scene_placement.has_value()) {
     return std::expected<void, std::string>{std::unexpect,
-        fmt::format("selected character {} was not materialized", request.character_id)};
+        fmt::format("character reference {} is not present in owner AREA or attached SCENE table 0",
+            request.character_id)};
+  }
+  const RuntimeCharacterReferenceEntry* target_placement{
+      m_character_references.placement(scene_placement.value())};
+  if (target_placement == nullptr) {
+    return std::expected<void, std::string>{std::unexpect, "selected character placement vanished"};
+  }
+  if (target_placement->binding_state == CharacterPlacementBindingState::k_explicitly_unbound) {
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format(
+            "selected placement {} is explicitly unbound", target_placement->placement_index)};
+  }
+  if (target_placement->binding_state == CharacterPlacementBindingState::k_unmaterialized) {
+    std::expected<void, std::string> materialized;
+    if (target_placement->source == CharacterReferenceSource::k_area) {
+      materialized = runtime->character_runtime().ensure_area_character(
+          slot.primary_area_id, *slot.primary, target_placement->serialized_character_id);
+    } else if (slot.scene.has_value()) {
+      materialized = runtime->character_runtime().ensure_scene_character(slot.primary_area_id,
+          slot.scene_id,
+          *slot.scene,
+          target_placement->serialized_character_id);
+    } else {
+      return std::expected<void, std::string>{
+          std::unexpect, "selected SCENE character placement has no attached SCENE"};
+    }
+    if (!materialized) {
+      return materialized;
+    }
+    const Character::RuntimeCharacter* const materialized_body{
+        runtime->character_runtime().find(target_placement->serialized_character_id)};
+    if (materialized_body == nullptr) {
+      return std::expected<void, std::string>{std::unexpect,
+          fmt::format("selected placement {} did not materialize a live body",
+              target_placement->placement_index)};
+    }
+    if (auto bound{m_character_references.bind_placement_body(target_placement->source,
+            target_placement->resident_slot,
+            target_placement->area_id,
+            target_placement->scene_id,
+            target_placement->placement_index,
+            materialized_body->body_identity)};
+        !bound) {
+      return bound;
+    }
+    target_placement = m_character_references.placement(scene_placement.value());
+  }
+  if (target_placement == nullptr || !target_placement->body_identity.has_value()) {
+    return std::expected<void, std::string>{
+        std::unexpect, "selected character placement has no live body"};
+  }
+  const auto located_target{
+      m_manager->find_character_body(target_placement->body_identity.value())};
+  if (!located_target.has_value()) {
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format("selected placement {} references a nonresident body",
+            target_placement->placement_index)};
+  }
+  Character::RuntimeCharacter* const character{located_target->character};
+  std::optional<Omikron::IamCharacterDefinition> definition{
+      slot.primary->character_definition_by_character_id(request.character_id)};
+  if (!definition.has_value() && slot.scene.has_value()) {
+    definition = slot.scene->character_definition_by_character_id(request.character_id);
   }
   if (!definition.has_value()) {
     return std::expected<void, std::string>{std::unexpect,
@@ -1806,16 +1961,34 @@ std::expected<void, std::string> ScenarioStartupController::select_current_chara
   }
   game_state->ensure_character_profile(request.character_id, definition->values);
   game_state->establish_current_character(definition.value());
-  const ControlledCharacterRef selected{
-      .character_id = request.character_id, .world_scene_id = slot.world_scene_id};
+  if (current_body != nullptr && current_body->body_identity != character->body_identity) {
+    if (auto rebound{m_character_references.rebind_placement(
+            scene_placement.value(), current_body->character_id, current_body->body_identity)};
+        !rebound) {
+      return rebound;
+    }
+  } else if (current_body == nullptr) {
+    if (auto unbound{
+            m_character_references.mark_placement_explicitly_unbound(target_placement->source,
+                target_placement->resident_slot,
+                target_placement->area_id,
+                target_placement->scene_id,
+                target_placement->placement_index)};
+        !unbound) {
+      return unbound;
+    }
+  }
+  const ControlledCharacterRef selected{.character_id = character->character_id,
+      .body_identity = character->body_identity,
+      .world_scene_id = located_target->world_scene_id};
   m_manager->set_controlled_character(selected);
 
   // Becoming the persistent current character installs the adventure CTL
   // controller from the definition's authored control set. The controller is
   // created disabled: scripted cinematic animation keeps owning the pose
   // until compact 0x68 enables controller participation.
-  if (auto controller{runtime->character_runtime().ensure_adventure_controller(
-          request.character_id, definition->adventure_control_set)};
+  if (auto controller{located_target->runtime->character_runtime().ensure_adventure_controller(
+          character->body_identity, definition->adventure_control_set)};
       !controller) {
     return controller;
   }
@@ -1860,8 +2033,8 @@ std::expected<void, std::string> ScenarioStartupController::set_current_characte
             current->character_id,
             current->world_scene_id)};
   }
-  if (auto changed{
-          runtime->character_runtime().set_presentation_enabled(current->character_id, enabled)};
+  if (auto changed{runtime->character_runtime().set_body_presentation_enabled(
+          current->body_identity, enabled)};
       !changed) {
     return changed;
   }
@@ -1887,7 +2060,8 @@ std::expected<void, std::string> ScenarioStartupController::select_current_chara
   }
   ScenarioRuntime* const runtime{m_manager->world_runtime(current->world_scene_id)};
   Character::RuntimeCharacter* const character{
-      runtime == nullptr ? nullptr : runtime->character_runtime().find(current->character_id)};
+      runtime == nullptr ? nullptr
+                         : runtime->character_runtime().find_body(current->body_identity)};
   if (character == nullptr) {
     App::Log::debug(LogCategory::Scenario,
         "current character move/control selection {} ignored — character {} world {} is not "
@@ -1940,7 +2114,8 @@ std::expected<void, std::string> ScenarioStartupController::set_current_characte
   }
   ScenarioRuntime* const runtime{m_manager->world_runtime(current->world_scene_id)};
   Character::RuntimeCharacter* const character{
-      runtime == nullptr ? nullptr : runtime->character_runtime().find(current->character_id)};
+      runtime == nullptr ? nullptr
+                         : runtime->character_runtime().find_body(current->body_identity)};
   if (character == nullptr) {
     App::Log::debug(LogCategory::Scenario,
         "current character controller {} ignored — character {} world {} is not resident",
@@ -1978,7 +2153,8 @@ void ScenarioStartupController::service_ctl_controller(const float delta_seconds
   }
   ScenarioRuntime* const runtime{m_manager->world_runtime(current->world_scene_id)};
   Character::RuntimeCharacter* const character{
-      runtime == nullptr ? nullptr : runtime->character_runtime().find(current->character_id)};
+      runtime == nullptr ? nullptr
+                         : runtime->character_runtime().find_body(current->body_identity)};
   if (character == nullptr || !character->ctl_controller.has_value() ||
       !character->controller_enabled || !character->active || !character->area_present) {
     return;
@@ -2006,18 +2182,35 @@ void ScenarioStartupController::service_current_character_actor(const float delt
   }
   ScenarioRuntime* const runtime{m_manager->world_runtime(current->world_scene_id)};
   Character::RuntimeCharacter* const character{
-      runtime == nullptr ? nullptr : runtime->character_runtime().find(current->character_id)};
+      runtime == nullptr ? nullptr
+                         : runtime->character_runtime().find_body(current->body_identity)};
   if (character == nullptr || !character->active || !character->area_present) {
     return;
   }
 
   if (m_current_character_structured_owner.has_value()) {
     const CurrentCharacterStructuredOwner& owner{m_current_character_structured_owner.value()};
-    const Script::ScriptRuntime* const scripts{runtime->script_runtime()};
+    const WorldSceneContext* const script_context{
+        m_manager->find_world_context(owner.script_world_scene_id)};
+    const Script::ScriptRuntime* const scripts{
+        script_context == nullptr || script_context->generation != owner.script_world_generation ||
+                script_context->runtime == nullptr
+            ? nullptr
+            : script_context->runtime->script_runtime()};
     const Script::ScriptInstance* const instance{
         scripts == nullptr ? nullptr : scripts->instance(owner.script_instance_id)};
     if (instance != nullptr && instance->launch_context.character_body_identity.has_value() &&
         instance->launch_context.character_body_identity.value() == owner.body_identity) {
+      if (instance->completed) {
+        App::Log::debug(LogCategory::Scenario,
+            "CurrentActorStructuredHandoff — character={} world={} scriptInstance={} "
+            "reason=structured-owner-completed",
+            current->character_id,
+            current->world_scene_id,
+            owner.script_instance_id);
+        m_current_character_structured_owner.reset();
+        return;
+      }
       App::Log::debug(LogCategory::Scenario,
           "CurrentActorServiceSuppressed — character={} world={} scriptInstance={} "
           "reason={}",
@@ -2064,7 +2257,6 @@ void ScenarioStartupController::service_current_character_actor(const float delt
 void ScenarioStartupController::register_current_character_trigger_proxy(
     const ControlledCharacterRef& owner, const Character::RuntimeCharacter& character) {
   m_current_character_trigger_proxy = CurrentCharacterTriggerProxy{.owner = owner,
-      .body_identity = character.body_identity,
       .registered = true,
       .contact_ready = false,
       .position = character.transform.translation,
@@ -2103,34 +2295,18 @@ void ScenarioStartupController::service_current_character_trigger_proxy() {
   }
   const ScenarioRuntime* const scenario{m_manager->world_runtime(proxy.owner.world_scene_id)};
   const Character::RuntimeCharacter* const character{
-      scenario == nullptr ? nullptr : scenario->character_runtime().find(proxy.owner.character_id)};
+      scenario == nullptr ? nullptr
+                          : scenario->character_runtime().find_body(proxy.owner.body_identity)};
   if (character == nullptr || !character->active || !character->area_present) {
     proxy.synchronization_suspended = true;
     proxy.suspension_reason = "current character is not active and AREA-present";
     return;
   }
-  if (character->body_identity != proxy.body_identity) {
+  if (character->body_identity != proxy.owner.body_identity) {
     proxy.registered = false;
     proxy.synchronization_suspended = true;
     proxy.suspension_reason = "current character body identity changed";
     return;
-  }
-  if (m_current_character_structured_owner.has_value()) {
-    const CurrentCharacterStructuredOwner& owner{m_current_character_structured_owner.value()};
-    const Script::ScriptRuntime* const scripts{scenario->script_runtime()};
-    const Script::ScriptInstance* const instance{
-        scripts == nullptr ? nullptr : scripts->instance(owner.script_instance_id)};
-    if (instance != nullptr && instance->launch_context.character_body_identity.has_value() &&
-        instance->launch_context.character_body_identity.value() == owner.body_identity) {
-      proxy.synchronization_suspended = true;
-      proxy.suspension_reason = instance->completed ? "current-character structured script completed"
-                                                    : "current-character structured script active";
-      return;
-    }
-    if (instance == nullptr || !instance->launch_context.character_body_identity.has_value() ||
-        instance->launch_context.character_body_identity.value() != owner.body_identity) {
-      m_current_character_structured_owner.reset();
-    }
   }
   if (proxy.last_consumed_actor_spatial_generation >=
       character->ordinary_actor_service_generation) {
@@ -2462,6 +2638,10 @@ std::expected<std::size_t, std::string> ScenarioStartupController::launch_charac
   }
 
   const RuntimeAreaSlot& slot{m_area_slots.at(owner_slot)};
+  if (!slot.primary.has_value()) {
+    return std::expected<std::size_t, std::string>{
+        std::unexpect, "character-script owner has no parsed AREA record"};
+  }
   const Omikron::ScxData* scx{m_manager->world_context_scx(slot.world_scene_id)};
   ScenarioRuntime* const scenario_runtime{m_manager->world_runtime(slot.world_scene_id)};
   if (scx == nullptr || scenario_runtime == nullptr) {
@@ -2486,14 +2666,6 @@ std::expected<std::size_t, std::string> ScenarioStartupController::launch_charac
         return std::expected<std::size_t, std::string>{
             std::unexpect, "current controlled character is not established"};
       }
-      if (current->world_scene_id != slot.world_scene_id) {
-        return std::expected<std::size_t, std::string>{std::unexpect,
-            fmt::format("current controlled character {} belongs to world {}, but character-script "
-                        "owner is world {}",
-                current->character_id,
-                current->world_scene_id,
-                slot.world_scene_id)};
-      }
       character_id = current->character_id;
       target_name = "current";
       break;
@@ -2514,8 +2686,35 @@ std::expected<std::size_t, std::string> ScenarioStartupController::launch_charac
             slot.world_scene_id)};
   }
 
+  m_character_references.install_area(owner_slot, slot.primary_area_id, *slot.primary);
+  if (slot.scene.has_value()) {
+    m_character_references.install_scene(
+        owner_slot, slot.primary_area_id, slot.scene_id, *slot.scene);
+  }
+  Character::BodyIdentity body_identity{0};
+  if (request.target == Script::AreaCharacterScriptTarget::k_current) {
+    const std::optional<ControlledCharacterRef> current{m_manager->controlled_character()};
+    if (!current.has_value()) {
+      return std::expected<std::size_t, std::string>{
+          std::unexpect, "current controlled character is not established"};
+    }
+    body_identity = current->body_identity;
+  } else {
+    const auto resolved{
+        m_character_references.resolve(owner_slot, slot.primary_area_id, character_id)};
+    if (resolved.status != CharacterReferenceResolutionStatus::k_resolved ||
+        !resolved.resolved.has_value()) {
+      return std::expected<std::size_t, std::string>{std::unexpect,
+          fmt::format("character reference {} {}",
+              character_id,
+              resolved.status == CharacterReferenceResolutionStatus::k_placement_without_body
+                  ? "matched a placement without a live body"
+                  : "has no live body")};
+    }
+    body_identity = resolved.resolved->body_identity;
+  }
   auto created{scenario_runtime->spawn_character_script_instance(
-      source_script_index.value(), character_id, 0)};
+      source_script_index.value(), character_id, body_identity, 0)};
   if (!created) {
     return created;
   }
@@ -2541,14 +2740,12 @@ std::expected<std::size_t, std::string> ScenarioStartupController::launch_charac
   const bool tracked{request.mode == Script::AreaCharacterScriptLaunchMode::k_tracked};
   const Omikron::ScxScript& script{scx->scripts.at(source_script_index.value())};
   const std::optional<ControlledCharacterRef> current{m_manager->controlled_character()};
-  if (current.has_value() && current->world_scene_id == slot.world_scene_id &&
-      current->character_id == character_id) {
-    m_current_character_structured_owner = CurrentCharacterStructuredOwner{.body_identity =
-            scenario_runtime->character_runtime().find(character_id) != nullptr
-                ? scenario_runtime->character_runtime().find(character_id)->body_identity
-                : Character::BodyIdentity{0},
-        .world_scene_id = slot.world_scene_id,
-        .script_instance_id = created.value()};
+  if (current.has_value() && current->body_identity == body_identity) {
+    m_current_character_structured_owner =
+        CurrentCharacterStructuredOwner{.body_identity = body_identity,
+            .script_world_scene_id = owner_context->scene_id,
+            .script_world_generation = owner_context->generation,
+            .script_instance_id = created.value()};
   }
   record("AreaScript.CharacterScriptStarted",
       fmt::format(
@@ -2612,8 +2809,8 @@ std::expected<void, std::string> ScenarioStartupController::place_current_charac
             current->character_id,
             current->world_scene_id)};
   }
-  auto placed{runtime->character_runtime().place_character_at_address(
-      current->character_id, resolved_address.value())};
+  auto placed{runtime->character_runtime().place_body_at_address(
+      current->body_identity, resolved_address.value())};
   if (placed) {
     App::Log::info(
         LogCategory::Scenario, "current character placed at address {}", request.address_id);
@@ -3177,7 +3374,8 @@ bool ScenarioStartupController::zone_contact_reporting_enabled(
   }
   ScenarioRuntime* const runtime{m_manager->world_runtime(slot.world_scene_id)};
   const Character::RuntimeCharacter* const character{
-      runtime == nullptr ? nullptr : runtime->character_runtime().find(current->character_id)};
+      runtime == nullptr ? nullptr
+                         : runtime->character_runtime().find_body(current->body_identity)};
   if (character == nullptr || !character->active || !character->area_present) {
     return false;
   }
@@ -3379,7 +3577,9 @@ std::expected<void, std::string> ScenarioStartupController::reconcile_zone_conta
               ? m_manager->world_runtime(slot.world_scene_id)
               : nullptr};
       const Character::RuntimeCharacter* const character{
-          runtime == nullptr ? nullptr : runtime->character_runtime().find(character_id)};
+          runtime == nullptr || !current.has_value()
+              ? nullptr
+              : runtime->character_runtime().find_body(current->body_identity)};
       const CurrentCharacterTriggerProxy* const proxy{
           m_current_character_trigger_proxy.has_value() ? &m_current_character_trigger_proxy.value()
                                                         : nullptr};
@@ -3500,20 +3700,20 @@ std::expected<void, std::string> ScenarioStartupController::begin_tick(const flo
   if (m_current_character_structured_owner.has_value()) {
     const CurrentCharacterStructuredOwner owner{m_current_character_structured_owner.value()};
     const std::optional<ControlledCharacterRef> current{m_manager->controlled_character()};
-    if (!current.has_value() || current->world_scene_id != owner.world_scene_id) {
+    if (!current.has_value() || current->body_identity != owner.body_identity) {
       m_current_character_structured_owner.reset();
     } else {
-      ScenarioRuntime* const runtime{m_manager->world_runtime(owner.world_scene_id)};
-      const Character::RuntimeCharacter* const character{
-          runtime == nullptr ? nullptr : runtime->character_runtime().find(current->character_id)};
-      if (character == nullptr || character->body_identity != owner.body_identity) {
+      const WorldSceneContext* const script_context{
+          m_manager->find_world_context(owner.script_world_scene_id)};
+      if (script_context == nullptr ||
+          script_context->generation != owner.script_world_generation ||
+          script_context->runtime == nullptr) {
         m_current_character_structured_owner.reset();
       } else {
-        const Script::ScriptRuntime* const scripts{runtime->script_runtime()};
+        const Script::ScriptRuntime* const scripts{script_context->runtime->script_runtime()};
         const Script::ScriptInstance* const instance{
             scripts == nullptr ? nullptr : scripts->instance(owner.script_instance_id)};
-        if (instance == nullptr ||
-            !instance->launch_context.character_body_identity.has_value() ||
+        if (instance == nullptr || !instance->launch_context.character_body_identity.has_value() ||
             instance->launch_context.character_body_identity.value() != owner.body_identity) {
           m_current_character_structured_owner.reset();
         }

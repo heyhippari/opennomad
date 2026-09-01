@@ -8,6 +8,7 @@
 #include <string_view>
 #include <vector>
 
+#include "Core/Character/CharacterRuntime.hpp"
 #include "Core/Sprite/SpriteInstance.hpp"
 
 namespace App {
@@ -127,6 +128,7 @@ struct CinSfxPlaybackDebugState {
 };
 
 struct RuntimeCharacterDebugState {
+  Character::BodyIdentity body_identity{0};
   std::size_t instance_id{0};
   std::int16_t character_id{0};
   std::int32_t area_id{0};
@@ -134,6 +136,7 @@ struct RuntimeCharacterDebugState {
   bool area_present{false};
   bool loaded{false};
   bool renderable{false};
+  std::uint64_t ordinary_actor_service_generation{0};
   std::array<std::int32_t, 3> serialized_position{};
   std::array<float, 3> runtime_position{};
   std::array<float, 3> render_position{};

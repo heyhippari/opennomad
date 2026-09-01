@@ -38,6 +38,7 @@ constexpr std::uint32_t K_PLAY_SOUND{0x05000014U};
 constexpr std::uint32_t K_PLAY_SYNC_SOUND{0x05000015U};
 constexpr std::uint32_t K_STOP_SOUND{0x05000016U};
 constexpr std::uint32_t K_WAIT{0x06000017U};
+constexpr App::Character::BodyIdentity K_BODY_ID{17};
 
 /// Synthetic sprite handle for the fake world.
 constexpr App::Sprite::SpriteHandle K_HANDLE{100, 1};
@@ -69,7 +70,7 @@ class FakeWorld final : public App::Script::ScriptWorld {
   std::vector<std::pair<App::Audio::SoundResourceId, App::Audio::AudioOwnerToken>> stop_requests;
   std::vector<App::Script::BodyAnimationRequest> select_body_animation_requests;
   std::vector<App::Script::RelativeBodyAnimationRequest> body_animation_requests;
-  std::vector<std::int16_t> body_animation_resets;
+  std::vector<App::Character::BodyIdentity> body_animation_resets;
   std::uint32_t body_animation_max_frame{3};
   bool fail_body_animation{false};
   App::Script::BodyAnimationApplyError body_animation_failure{
@@ -197,8 +198,8 @@ class FakeWorld final : public App::Script::ScriptWorld {
     }
     return App::Script::RelativeBodyAnimationResult{.max_frame_index = body_animation_max_frame};
   }
-  void reset_body_animation(const std::int16_t character_id) override {
-    body_animation_resets.push_back(character_id);
+  void reset_body_animation(const App::Character::BodyIdentity body_identity) override {
+    body_animation_resets.push_back(body_identity);
   }
   std::expected<App::Script::MoveObjectOnPathResult, App::Script::MoveObjectOnPathFailure>
   move_object_on_path_max_parameter(const std::uint32_t /*path_descriptor_index*/,
@@ -458,8 +459,9 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
   TEST_CASE("SelectBodyAnimation preserves its ten-slot ABI and progresses in script frames") {
     RuntimeFixture fixture{{body_animation_script()}, body_animation_values()};
     const std::size_t id{fixture.runtime
-            ->create_instance(
-                0, App::Script::ScriptLaunchContext{.character_id = 310, .parameter = 0})
+            ->create_instance(0,
+                App::Script::ScriptLaunchContext{
+                    .character_id = 310, .character_body_identity = K_BODY_ID, .parameter = 0})
             .value()};
     const App::Script::ScriptInstance* initial{fixture.runtime->instance(id)};
     REQUIRE(initial != nullptr);
@@ -472,6 +474,7 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
     const App::Script::BodyAnimationRequest& first{
         fixture.world.select_body_animation_requests.at(0)};
     CHECK_EQ(first.character_id, 310);
+    CHECK_EQ(first.character_body_identity, K_BODY_ID);
     CHECK_EQ(first.object_binding, "RootBody");
     CHECK_EQ(first.animation_index, 2U);
     CHECK_EQ(first.previous_progress, doctest::Approx(0.0F));
@@ -496,14 +499,15 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
     CHECK_EQ(fixture.runtime->instance(id)->value_pool.at(2).as_float(), doctest::Approx(0.0F));
     CHECK_EQ(fixture.runtime->instance(id)->value_pool.at(3).as_float(), doctest::Approx(1.0F));
     REQUIRE_EQ(fixture.world.body_animation_resets.size(), std::size_t{1});
-    CHECK_EQ(fixture.world.body_animation_resets.at(0), 310);
+    CHECK_EQ(fixture.world.body_animation_resets.at(0), K_BODY_ID);
   }
 
   TEST_CASE("SelectBodyAnimation wraps executions and keeps absent bodies unresolved") {
     RuntimeFixture fixture{{body_animation_script(2)}, body_animation_values()};
     REQUIRE(fixture.runtime
-            ->create_instance(
-                0, App::Script::ScriptLaunchContext{.character_id = 310, .parameter = 0})
+            ->create_instance(0,
+                App::Script::ScriptLaunchContext{
+                    .character_id = 310, .character_body_identity = K_BODY_ID, .parameter = 0})
             .has_value());
     fixture.world.body_animation_max_frame = 1;
 
@@ -543,8 +547,9 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
     malformed.root_commands.at(0).value_count = 9;
     RuntimeFixture short_abi{{std::move(malformed)}, make_values(10)};
     REQUIRE(short_abi.runtime
-            ->create_instance(
-                0, App::Script::ScriptLaunchContext{.character_id = 310, .parameter = 0})
+            ->create_instance(0,
+                App::Script::ScriptLaunchContext{
+                    .character_id = 310, .character_body_identity = K_BODY_ID, .parameter = 0})
             .has_value());
     short_abi.runtime->step_tick(1.0F);
     CHECK_EQ(short_abi.runtime->run_state(), App::Script::ScriptRunState::k_paused_on_error);
@@ -555,8 +560,9 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
   TEST_CASE("SelectRelativeBodyAnimation reinitializes only mutable progress arguments") {
     RuntimeFixture fixture{{relative_body_animation_script()}, relative_body_animation_values()};
     const std::size_t id{fixture.runtime
-            ->create_instance(
-                0, App::Script::ScriptLaunchContext{.character_id = 310, .parameter = 0})
+            ->create_instance(0,
+                App::Script::ScriptLaunchContext{
+                    .character_id = 310, .character_body_identity = K_BODY_ID, .parameter = 0})
             .value()};
     const App::Script::ScriptInstance* instance{fixture.runtime->instance(id)};
     REQUIRE(instance != nullptr);
@@ -570,15 +576,16 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
     CHECK_EQ(fixture.runtime->instance(id)->value_pool.at(3).as_float(), doctest::Approx(1.0F));
     CHECK_EQ(fixture.runtime->instance(id)->value_pool.at(9).as_float(), doctest::Approx(9.0F));
     REQUIRE_EQ(fixture.world.body_animation_resets.size(), std::size_t{1});
-    CHECK_EQ(fixture.world.body_animation_resets.at(0), 310);
+    CHECK_EQ(fixture.world.body_animation_resets.at(0), K_BODY_ID);
   }
 
   TEST_CASE(
       "SelectRelativeBodyAnimation advances exact progress windows and completes at endpoint") {
     RuntimeFixture fixture{{relative_body_animation_script()}, relative_body_animation_values()};
     REQUIRE(fixture.runtime
-            ->create_instance(
-                0, App::Script::ScriptLaunchContext{.character_id = 310, .parameter = 0})
+            ->create_instance(0,
+                App::Script::ScriptLaunchContext{
+                    .character_id = 310, .character_body_identity = K_BODY_ID, .parameter = 0})
             .has_value());
 
     fixture.runtime->step_tick(1.0F);
@@ -589,6 +596,7 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
     REQUIRE_EQ(fixture.world.body_animation_requests.size(), std::size_t{4});
     const auto& first{fixture.world.body_animation_requests.at(0)};
     CHECK_EQ(first.character_id, 310);
+    CHECK_EQ(first.character_body_identity, K_BODY_ID);
     CHECK_EQ(first.object_binding, "RootBody");
     CHECK_EQ(first.animation_index, 2U);
     CHECK_EQ(first.previous_progress, doctest::Approx(0.0F));
@@ -613,8 +621,9 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
     RuntimeFixture fixture{
         {relative_body_animation_script(0xFFFFFFFFU)}, relative_body_animation_values()};
     REQUIRE(fixture.runtime
-            ->create_instance(
-                0, App::Script::ScriptLaunchContext{.character_id = 310, .parameter = 0})
+            ->create_instance(0,
+                App::Script::ScriptLaunchContext{
+                    .character_id = 310, .character_body_identity = K_BODY_ID, .parameter = 0})
             .has_value());
 
     fixture.runtime->step_tick(1.0F);
@@ -637,8 +646,9 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
     RuntimeFixture fixture{{relative_body_animation_script()}, relative_body_animation_values()};
     fixture.world.fail_body_animation = true;
     REQUIRE(fixture.runtime
-            ->create_instance(
-                0, App::Script::ScriptLaunchContext{.character_id = 310, .parameter = 0})
+            ->create_instance(0,
+                App::Script::ScriptLaunchContext{
+                    .character_id = 310, .character_body_identity = K_BODY_ID, .parameter = 0})
             .has_value());
 
     fixture.runtime->step_tick(1.0F);
@@ -903,8 +913,9 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
     script.repeat_limit = -1;
     RuntimeFixture fixture{{script}, relative_body_animation_values()};
     const std::size_t id{fixture.runtime
-            ->create_instance(
-                0, App::Script::ScriptLaunchContext{.character_id = 310, .parameter = 0})
+            ->create_instance(0,
+                App::Script::ScriptLaunchContext{
+                    .character_id = 310, .character_body_identity = K_BODY_ID, .parameter = 0})
             .value()};
 
     for (std::size_t tick{0}; tick < 8U; ++tick) {
@@ -931,8 +942,9 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
     App::Omikron::ScxScript script{body_animation_script(2)};
     RuntimeFixture fixture{{script}, body_animation_values()};
     REQUIRE(fixture.runtime
-            ->create_instance(
-                0, App::Script::ScriptLaunchContext{.character_id = 310, .parameter = 0})
+            ->create_instance(0,
+                App::Script::ScriptLaunchContext{
+                    .character_id = 310, .character_body_identity = K_BODY_ID, .parameter = 0})
             .has_value());
 
     for (std::size_t tick{0}; tick < 4U; ++tick) {

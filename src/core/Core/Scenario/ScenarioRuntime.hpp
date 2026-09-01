@@ -53,7 +53,7 @@ struct CinSfxChannelPlayback {
 };
 
 struct CinSfxPlayback {
-  std::size_t character_instance_id{0};
+  Character::BodyIdentity character_body_identity{0};
   std::int16_t character_id{0};
   std::size_t script_instance_id{0};
   std::size_t animation_index{0};
@@ -78,6 +78,8 @@ struct CinSfxPlayback {
 /// because billboards need a 3D camera basis.
 class ScenarioRuntime final : public Script::ScriptWorld, private Sfx::Host {
  public:
+  using Script::ScriptWorld::reset_body_animation;
+  using BodyLocator = std::function<Character::RuntimeCharacter*(Character::BodyIdentity)>;
   ScenarioRuntime() = default;
   ~ScenarioRuntime() override;
 
@@ -102,6 +104,9 @@ class ScenarioRuntime final : public Script::ScriptWorld, private Sfx::Host {
   [[nodiscard]] bool initialized() const {
     return m_initialized;
   }
+  /// Supplies session-global physical-body lookup. Structured resources remain
+  /// owned by this SCX runtime while body operations use the current owner.
+  void set_body_locator(BodyLocator locator);
 
   // --- Script runtime ------------------------------------------------------
 
@@ -114,7 +119,10 @@ class ScenarioRuntime final : public Script::ScriptWorld, private Sfx::Host {
       std::size_t source_script_index);
   /// Creates an SCX instance explicitly bound to an existing active character.
   [[nodiscard]] std::expected<std::size_t, std::string> spawn_character_script_instance(
-      std::size_t source_script_index, std::int16_t character_id, std::int16_t parameter);
+      std::size_t source_script_index,
+      std::int16_t character_id,
+      Character::BodyIdentity body_identity,
+      std::int16_t parameter);
   /// Advances the script runtime with the real application delta in seconds.
   void tick(float real_delta_seconds);
 
@@ -216,7 +224,7 @@ class ScenarioRuntime final : public Script::ScriptWorld, private Sfx::Host {
   [[nodiscard]] std::expected<Script::RelativeBodyAnimationResult,
       Script::RelativeBodyAnimationFailure>
   select_relative_body_animation(const Script::RelativeBodyAnimationRequest& request) override;
-  void reset_body_animation(std::int16_t character_id) override;
+  void reset_body_animation(Character::BodyIdentity body_identity) override;
   [[nodiscard]] std::expected<Script::MoveObjectOnPathResult, Script::MoveObjectOnPathFailure>
   move_object_on_path_max_parameter(
       std::uint32_t path_descriptor_index, std::uint32_t subpath_index) override;
@@ -272,8 +280,9 @@ class ScenarioRuntime final : public Script::ScriptWorld, private Sfx::Host {
       std::size_t resource_index);
   [[nodiscard]] std::expected<const Omikron::Animation3DA*, std::string> animation_resource(
       std::size_t resource_index);
-  [[nodiscard]] bool should_log_body_animation_identity(
-      std::int16_t character_id, std::uint32_t animation_index, std::size_t selected_object_index);
+  [[nodiscard]] bool should_log_body_animation_identity(Character::BodyIdentity body_identity,
+      std::uint32_t animation_index,
+      std::size_t selected_object_index);
   [[nodiscard]] CinSfxPlayback& ensure_cin_sfx_playback(
       const Character::RuntimeCharacter& character,
       std::size_t script_instance_id,
@@ -296,6 +305,7 @@ class ScenarioRuntime final : public Script::ScriptWorld, private Sfx::Host {
   std::array<float, 3> m_world_anchor{0.0F, 0.0F, 0.0F};  ///< Runtime XYZ inches.
 
   Character::Runtime m_character_runtime;
+  BodyLocator m_body_locator;
   ObjectPlacement::Runtime m_object_placement_runtime;
   std::vector<std::unique_ptr<const Omikron::Animation3DA>> m_animation_resources;
   std::vector<std::unique_ptr<const Omikron::Path3DP>> m_path_resources;

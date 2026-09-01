@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "Core/Audio/AudioTypes.hpp"
+#include "Core/Character/CharacterRuntime.hpp"
 #include "Core/Omikron/SCX.hpp"
 #include "Core/RuntimeMath.hpp"
 #include "Core/Script/ScriptOpcode.hpp"
@@ -223,6 +224,7 @@ struct CameraEditingPose {
 /// Typed request for Runtime's Script_SelectBodyAnimation operation. All
 /// coordinates and progress values remain in Runtime-native units.
 struct BodyAnimationRequest {
+  Character::BodyIdentity character_body_identity{0};
   std::int16_t character_id{0};
   std::size_t script_instance_id{0};
   std::string_view object_binding;
@@ -240,6 +242,7 @@ struct BodyAnimationRequest {
 /// Typed request for Runtime's Script_SelectRelativeBodyAnimation operation.
 /// All coordinates and progress values remain in Runtime-native units.
 struct RelativeBodyAnimationRequest {
+  Character::BodyIdentity character_body_identity{0};
   std::int16_t character_id{0};
   std::size_t script_instance_id{0};
   std::string_view object_binding;
@@ -418,6 +421,9 @@ class ScriptWorld {
   /// Clears instance-local body-animation playback state during script reset.
   virtual void reset_body_animation(std::int16_t character_id) {
     (void)character_id;
+  }
+  virtual void reset_body_animation(Character::BodyIdentity body_identity) {
+    (void)body_identity;
   }
 
   /// Resolves an immutable 3DP and updates the named object in the mutable

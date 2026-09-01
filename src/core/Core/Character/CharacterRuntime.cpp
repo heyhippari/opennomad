@@ -214,6 +214,16 @@ std::expected<void, std::string> Runtime::ensure_adventure_controller(
   return {};
 }
 
+std::expected<void, std::string> Runtime::ensure_adventure_controller(
+    const BodyIdentity body_identity, const std::string_view adventure_control_set) {
+  RuntimeCharacter* const character{find_body(body_identity)};
+  if (character == nullptr) {
+    return std::expected<void, std::string>{
+        std::unexpect, fmt::format("body {} is not materialized", body_identity)};
+  }
+  return ensure_adventure_controller(character->character_id, adventure_control_set);
+}
+
 std::expected<std::shared_ptr<const ModelResource>, std::string> Runtime::load_model_resource(
     const std::string_view model_resource) {
   APP_PROFILE_FUNCTION();
@@ -437,6 +447,17 @@ std::expected<void, std::string> Runtime::set_presentation_enabled(
   return {};
 }
 
+std::expected<void, std::string> Runtime::set_body_presentation_enabled(
+    const BodyIdentity body_identity, const bool enabled) {
+  RuntimeCharacter* const character{find_body(body_identity)};
+  if (character == nullptr) {
+    return std::expected<void, std::string>{
+        std::unexpect, fmt::format("body {} is not materialized", body_identity)};
+  }
+  character->presentation_enabled = enabled;
+  return {};
+}
+
 std::expected<void, std::string> Runtime::deactivate_character(const std::int16_t character_id) {
   RuntimeCharacter* const character{find(character_id)};
   if (character == nullptr) {
@@ -459,6 +480,22 @@ std::expected<RuntimeCharacter, std::string> Runtime::extract_character(
   RuntimeCharacter extracted{std::move(*found)};
   m_characters.erase(found);
   // instance_id is deliberately Runtime-local and dense; body_identity is not.
+  for (std::size_t index{0}; index < m_characters.size(); ++index) {
+    m_characters.at(index).instance_id = index;
+  }
+  return extracted;
+}
+
+std::expected<RuntimeCharacter, std::string> Runtime::extract_body(
+    const BodyIdentity body_identity) {
+  const auto found{
+      std::ranges::find(m_characters, body_identity, &RuntimeCharacter::body_identity)};
+  if (found == m_characters.end()) {
+    return std::expected<RuntimeCharacter, std::string>{
+        std::unexpect, fmt::format("body {} is not materialized", body_identity)};
+  }
+  RuntimeCharacter extracted{std::move(*found)};
+  m_characters.erase(found);
   for (std::size_t index{0}; index < m_characters.size(); ++index) {
     m_characters.at(index).instance_id = index;
   }
@@ -492,12 +529,45 @@ std::expected<void, std::string> Runtime::transfer_character_to(
   return target.adopt_character(std::move(extracted).value());
 }
 
+std::expected<void, std::string> Runtime::transfer_body_to(
+    Runtime& target, const BodyIdentity body_identity) {
+  if (target.find_body(body_identity) != nullptr) {
+    return std::expected<void, std::string>{
+        std::unexpect, fmt::format("body {} already belongs to target world", body_identity)};
+  }
+  auto extracted{extract_body(body_identity)};
+  if (!extracted) {
+    return std::expected<void, std::string>{std::unexpect, extracted.error()};
+  }
+  return target.adopt_character(std::move(extracted).value());
+}
+
 std::expected<void, std::string> Runtime::place_character_at_address(
     const std::int16_t character_id, const Omikron::IamAreaAddressRecord& address) {
   RuntimeCharacter* character{find(character_id)};
   if (character == nullptr) {
     return std::expected<void, std::string>{std::unexpect,
         fmt::format("current controlled character {} is not materialized", character_id)};
+  }
+  character->serialized_area_position = address.serialized_position;
+  character->serialized_orientation_units = address.orientation_units;
+  character->runtime_orientation_degrees =
+      App::Runtime::area_angle_to_degrees(address.orientation_units);
+  character->transform.translation =
+      App::Runtime::area_position_to_inches(address.serialized_position);
+  character->set_principal_orientation(App::Runtime::Vec3{
+      .x = 0.0F, .y = static_cast<float>(character->runtime_orientation_degrees), .z = 0.0F});
+  character->transform.scale = App::Runtime::Vec3{.x = 1.0F, .y = 1.0F, .z = 1.0F};
+  character->pose_revision += 1U;
+  return {};
+}
+
+std::expected<void, std::string> Runtime::place_body_at_address(
+    const BodyIdentity body_identity, const Omikron::IamAreaAddressRecord& address) {
+  RuntimeCharacter* character{find_body(body_identity)};
+  if (character == nullptr) {
+    return std::expected<void, std::string>{
+        std::unexpect, fmt::format("body {} is not materialized", body_identity)};
   }
   character->serialized_area_position = address.serialized_position;
   character->serialized_orientation_units = address.orientation_units;
@@ -606,6 +676,18 @@ const RuntimeCharacter* Runtime::find(const std::int16_t character_id) const {
   return found == m_characters.end() ? nullptr : &(*found);
 }
 
+RuntimeCharacter* Runtime::find_body(const BodyIdentity body_identity) {
+  const auto found{
+      std::ranges::find(m_characters, body_identity, &RuntimeCharacter::body_identity)};
+  return found == m_characters.end() ? nullptr : &(*found);
+}
+
+const RuntimeCharacter* Runtime::find_body(const BodyIdentity body_identity) const {
+  const auto found{
+      std::ranges::find(m_characters, body_identity, &RuntimeCharacter::body_identity)};
+  return found == m_characters.end() ? nullptr : &(*found);
+}
+
 std::span<const RuntimeCharacter> Runtime::characters() const {
   return m_characters;
 }
@@ -616,6 +698,20 @@ std::size_t Runtime::model_resource_count() const {
 
 void Runtime::reset_pose(const std::int16_t character_id) {
   RuntimeCharacter* character{find(character_id)};
+  if (character == nullptr || character->model_resource == nullptr) {
+    return;
+  }
+  character->runtime_objects = character->model_resource->model.runtime_objects;
+  character->object_poses.assign(character->runtime_objects.size(), BodyAnimationObjectPose{});
+  character->posed_groups = character->model_resource->groups;
+  character->body_animation = BodyAnimationPlayback{};
+  character->dialog_performance.reset();
+  character->pose_owner = PoseOwner::k_model_defaults;
+  character->pose_revision += 1U;
+}
+
+void Runtime::reset_pose(const BodyIdentity body_identity) {
+  RuntimeCharacter* character{find_body(body_identity)};
   if (character == nullptr || character->model_resource == nullptr) {
     return;
   }

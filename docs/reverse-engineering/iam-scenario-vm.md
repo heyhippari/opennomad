@@ -2372,7 +2372,7 @@ parameter blocks are modeled.
 The session model keeps a durable selected-body reference:
 
 ```text
-ControlledCharacterRef { authored character ID, owning world-scene ID }
+ControlledCharacterRef { canonical character ID, BodyIdentity, owning world-scene ID }
 ```
 
 It is not an AREA-slot index and is not owned by the currently presented
@@ -2380,7 +2380,13 @@ It is not an AREA-slot index and is not owned by the currently presented
 its AREA table 0 first, then its attached SCENE table 0. First selection
 materializes that authored placement and definition; reselection reuses the
 live body without restoring its authored transform or resetting mutable pose.
-The previous selected body remains materialized.
+The previous selected body remains materialized. Runtime finds a mutable
+placement through `0x0040D6A0` (AREA first, then mapped SCENE), captures its
+body, and rebinds that target placement to the old current body's canonical ID
+and actor slot. The target body becomes current without teleporting either body.
+Normal reference resolution (`0x0040D760`) is AREA, mapped SCENE, then the
+global live-body canonical-ID table; a matched placement with slot `-1` does not
+fall through to the global table.
 
 ---
 

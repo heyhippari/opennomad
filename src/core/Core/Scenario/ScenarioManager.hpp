@@ -11,6 +11,7 @@
 #include <string_view>
 #include <vector>
 
+#include "Core/Character/CharacterRuntime.hpp"
 #include "Core/Dialog/DialogPerformanceRuntime.hpp"
 #include "Core/Dialog/DialogRuntime.hpp"
 #include "Core/GameState.hpp"
@@ -72,10 +73,25 @@ enum class WorldSceneResidencyState : std::uint8_t {
 /// IAM. The character ID is authored data; the world scene ID identifies the
 /// owning runtime instance rather than an AREA-slot array position.
 struct ControlledCharacterRef {
+  /// Canonical/current profile character identity.
   std::int16_t character_id{-1};
+  /// Stable physical/live actor identity.
+  Character::BodyIdentity body_identity{0};
   std::uint32_t world_scene_id{0};
 
   bool operator==(const ControlledCharacterRef&) const = default;
+};
+
+struct LocatedCharacterBody {
+  std::uint32_t world_scene_id{0};
+  ScenarioRuntime* runtime{nullptr};
+  Character::RuntimeCharacter* character{nullptr};
+};
+
+struct LocatedConstCharacterBody {
+  std::uint32_t world_scene_id{0};
+  const ScenarioRuntime* runtime{nullptr};
+  const Character::RuntimeCharacter* character{nullptr};
 };
 
 /// Declarative definition of a gameplay mode: the logical mode and its
@@ -273,6 +289,10 @@ class ScenarioManager {
   [[nodiscard]] std::optional<ControlledCharacterRef> controlled_character() const;
   void set_controlled_character(ControlledCharacterRef character);
   void clear_controlled_character();
+  [[nodiscard]] std::optional<LocatedCharacterBody> find_character_body(
+      Character::BodyIdentity body_identity);
+  [[nodiscard]] std::optional<LocatedConstCharacterBody> find_character_body(
+      Character::BodyIdentity body_identity) const;
 
   /// The frame's raw CTL profile-0 slot bits supplied by the application from
   /// InputManager. The CTL controller applies the 14-slot semantics and the

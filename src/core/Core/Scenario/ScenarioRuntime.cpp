@@ -564,19 +564,24 @@ std::expected<std::size_t, std::string> ScenarioRuntime::spawn_script_instance(
 std::expected<std::size_t, std::string> ScenarioRuntime::spawn_character_script_instance(
     const std::size_t source_script_index,
     const std::int16_t character_id,
+    const Character::BodyIdentity body_identity,
     const std::int16_t parameter) {
   if (m_script_runtime == nullptr) {
     return std::expected<std::size_t, std::string>{
         std::unexpect, "script runtime is not initialised"};
   }
-  const Character::RuntimeCharacter* character{m_character_runtime.find(character_id)};
+  const Character::RuntimeCharacter* const character{
+      m_body_locator ? m_body_locator(body_identity)
+                     : m_character_runtime.find_body(body_identity)};
   if (character == nullptr) {
-    return std::expected<std::size_t, std::string>{
-        std::unexpect, fmt::format("runtime character {} does not exist", character_id)};
+    return std::expected<std::size_t, std::string>{std::unexpect,
+        fmt::format("runtime body {} (reference {}) does not exist", body_identity, character_id)};
   }
   if (!character->active || !character->area_present) {
     return std::expected<std::size_t, std::string>{std::unexpect,
-        fmt::format("runtime character {} is not active in the current AREA", character_id)};
+        fmt::format("runtime body {} (reference {}) is not active in the current AREA",
+            body_identity,
+            character_id)};
   }
   auto created{m_script_runtime->create_instance(source_script_index,
       Script::ScriptLaunchContext{.character_id = character_id,
@@ -594,6 +599,10 @@ std::expected<std::size_t, std::string> ScenarioRuntime::spawn_character_script_
     }
   }
   return created;
+}
+
+void ScenarioRuntime::set_body_locator(BodyLocator locator) {
+  m_body_locator = std::move(locator);
 }
 
 void ScenarioRuntime::tick(const float real_delta_seconds) {
@@ -1052,7 +1061,7 @@ CinSfxPlayback& ScenarioRuntime::ensure_cin_sfx_playback(
     const Omikron::SfxData& sfx_data) {
   const auto existing{std::ranges::find_if(m_cin_sfx_playbacks,
       [&character, script_instance_id, animation_index](const CinSfxPlayback& playback) {
-        return playback.character_instance_id == character.instance_id &&
+        return playback.character_body_identity == character.body_identity &&
                playback.script_instance_id == script_instance_id &&
                playback.animation_index == animation_index;
       })};
@@ -1080,7 +1089,7 @@ CinSfxPlayback& ScenarioRuntime::ensure_cin_sfx_playback(
     channel.end = end;
     return channel;
   };
-  m_cin_sfx_playbacks.push_back(CinSfxPlayback{.character_instance_id = character.instance_id,
+  m_cin_sfx_playbacks.push_back(CinSfxPlayback{.character_body_identity = character.body_identity,
       .character_id = character.character_id,
       .script_instance_id = script_instance_id,
       .animation_index = animation_index,
@@ -1288,24 +1297,27 @@ std::string_view ScenarioRuntime::sfx_sound_name(const std::int32_t authored_h_i
   return sound == m_scx.sounds.end() ? std::string_view{} : std::string_view{sound->name};
 }
 
-bool ScenarioRuntime::should_log_body_animation_identity(const std::int16_t character_id,
+bool ScenarioRuntime::should_log_body_animation_identity(
+    const Character::BodyIdentity body_identity,
     const std::uint32_t animation_index,
     const std::size_t selected_object_index) {
-  const std::uint64_t key{
-      (static_cast<std::uint64_t>(static_cast<std::uint16_t>(character_id)) << 48U) |
-      (static_cast<std::uint64_t>(animation_index) << 16U) |
-      static_cast<std::uint64_t>(selected_object_index)};
+  const std::uint64_t key{body_identity ^ (static_cast<std::uint64_t>(animation_index) << 32U) ^
+                          static_cast<std::uint64_t>(selected_object_index)};
   return m_logged_body_animation_identities.emplace(key).second;
 }
 
 std::expected<Script::BodyAnimationResult, Script::BodyAnimationFailure>
 ScenarioRuntime::select_body_animation(const Script::BodyAnimationRequest& request) {
-  Character::RuntimeCharacter* character{m_character_runtime.find(request.character_id)};
+  Character::RuntimeCharacter* character{
+      m_body_locator ? m_body_locator(request.character_body_identity)
+                     : m_character_runtime.find_body(request.character_body_identity)};
   if (character == nullptr || !character->active || !character->area_present ||
       character->model_resource == nullptr) {
     return std::expected<Script::BodyAnimationResult, Script::BodyAnimationFailure>{std::unexpect,
         body_animation_failure(Script::BodyAnimationApplyError::k_character_unavailable,
-            fmt::format("runtime character {} is not active and loaded", request.character_id))};
+            fmt::format("runtime body {} (reference {}) is not active and loaded",
+                request.character_body_identity,
+                request.character_id))};
   }
   auto animation_result{animation_resource(request.animation_index)};
   if (!animation_result) {
@@ -1350,7 +1362,7 @@ ScenarioRuntime::select_body_animation(const Script::BodyAnimationRequest& reque
         authored,
         anchor,
         should_log_body_animation_identity(
-            request.character_id, request.animation_index, binding->selected_index));
+            request.character_body_identity, request.animation_index, binding->selected_index));
   }
   if (auto applied{apply_body_animation(*character,
           animation,
@@ -1370,7 +1382,9 @@ ScenarioRuntime::select_body_animation(const Script::BodyAnimationRequest& reque
 std::expected<Script::RelativeBodyAnimationResult, Script::RelativeBodyAnimationFailure>
 ScenarioRuntime::select_relative_body_animation(
     const Script::RelativeBodyAnimationRequest& request) {
-  Character::RuntimeCharacter* character{m_character_runtime.find(request.character_id)};
+  Character::RuntimeCharacter* character{
+      m_body_locator ? m_body_locator(request.character_body_identity)
+                     : m_character_runtime.find_body(request.character_body_identity)};
   if (character == nullptr || !character->active || !character->area_present ||
       character->model_resource == nullptr) {
     return std::expected<Script::RelativeBodyAnimationResult, Script::RelativeBodyAnimationFailure>{
@@ -1439,7 +1453,7 @@ ScenarioRuntime::select_relative_body_animation(
         authored,
         anchor,
         should_log_body_animation_identity(
-            request.character_id, request.animation_index, binding->selected_index));
+            request.character_body_identity, request.animation_index, binding->selected_index));
     Character::BodyAnimationPlayback& playback{character->body_animation};
     playback.path_index = request.path_index;
     playback.path_name = m_scx.section0_records.at(request.path_index).name;
@@ -1462,8 +1476,20 @@ ScenarioRuntime::select_relative_body_animation(
   return Script::RelativeBodyAnimationResult{.max_frame_index = animation.max_frame_index};
 }
 
-void ScenarioRuntime::reset_body_animation(const std::int16_t character_id) {
-  m_character_runtime.reset_pose(character_id);
+void ScenarioRuntime::reset_body_animation(const Character::BodyIdentity body_identity) {
+  Character::RuntimeCharacter* const character{m_body_locator
+                                                   ? m_body_locator(body_identity)
+                                                   : m_character_runtime.find_body(body_identity)};
+  if (character != nullptr && character->model_resource != nullptr) {
+    character->runtime_objects = character->model_resource->model.runtime_objects;
+    character->object_poses.assign(
+        character->runtime_objects.size(), Character::BodyAnimationObjectPose{});
+    character->posed_groups = character->model_resource->groups;
+    character->body_animation = Character::BodyAnimationPlayback{};
+    character->dialog_performance.reset();
+    character->pose_owner = Character::PoseOwner::k_model_defaults;
+    character->pose_revision += 1U;
+  }
 }
 
 void ScenarioRuntime::play_ctl_sound_marker(

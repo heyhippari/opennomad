@@ -184,7 +184,7 @@ TEST_SUITE("Core::Omikron::IamAreaRecord") {
 
     const auto character{record->character_by_id(310)};
     REQUIRE(character.has_value());
-    CHECK_EQ(character->field_00, -1);
+    CHECK_EQ(character->runtime_slot_seed, -1);
     CHECK_EQ(character->character_id, 310);
     CHECK_EQ(character->serialized_position.at(0), -2588);
     CHECK_EQ(character->serialized_position.at(1), -271);

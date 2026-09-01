@@ -407,8 +407,10 @@ void DebugUI::show_scx_script_inspector() {
         selected->paused ? ", paused" : "",
         selected->sprite_remap.size());
     if (selected->launch_context.character_id.has_value()) {
-      ImGui::Text("Launch: Character  Character: %d  Parameter: %d",
+      ImGui::Text("Launch: Character reference: %d  Body: %llu  Parameter: %d",
           selected->launch_context.character_id.value(),
+          static_cast<unsigned long long>(
+              selected->launch_context.character_body_identity.value_or(0)),
           selected->launch_context.parameter);
     } else {
       ImGui::TextUnformatted("Launch: World");

@@ -2822,12 +2822,13 @@ know **which character instance** receives the body animation.
 OpenNomad's explicit:
 
 ```text
-character_id
+character_id + character_body_identity
 ```
 
-launch metadata is therefore semantically useful even though Runtime stores the
-relationship differently. The handler never infers the controlled character:
-an unbound instance is a structured error. Both functions use the same mutable
+launch metadata preserves both the authored reference and resolved live body.
+The handler never infers the controlled character: a character-bound instance
+without `character_body_identity` is a structured error, and physical body
+operations use only that identity. Both functions use the same mutable
 previous/current progress slots and reinitialize those slots to `0`/`1`; only
 `SelectRelativeBodyAnimation` resolves a 3DP anchor.
 

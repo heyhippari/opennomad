@@ -1,5 +1,10 @@
 # Omikron IAM `SCENE` archive and attached-scene lifecycle
 
+SCENE table 0 has the same mutable runtime placement semantics as AREA table 0:
+`+0x00` is an actor-slot seed on disk and becomes an OpenNomad `BodyIdentity`
+binding in `CharacterReferenceRuntime`; `+0x02` becomes a mutable character
+reference. Detaching a SCENE removes only its overlay entries.
+
 > **Status:** recovered serialized format and implemented OpenNomad support.  
 > **Last updated:** 2026-08-29
 
