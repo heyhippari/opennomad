@@ -19,6 +19,7 @@
 #include "Core/Omikron/Model3DO.hpp"
 #include "Core/RuntimeMath.hpp"
 #include "Core/Script/AreaScriptRuntime.hpp"
+#include "OmikronTestBuffer.hpp"
 
 namespace {
 
@@ -145,6 +146,16 @@ std::shared_ptr<const App::Character::ModelResource> fake_morph_resource(
   REQUIRE(groups.has_value());
   resource->groups = std::move(groups).value();
   return resource;
+}
+
+std::shared_ptr<const App::Omikron::CtlControlSet> fake_ctl_resource() {
+  Buffer bytes;
+  bytes.u32(0x30374543U).u32(0x101U).u32(0).u32(1).zeros(0x48U);
+  bytes.u32(7).u32(1).u32(1).u32(0).u32(0).chars("Default", 12);
+  bytes.u32(71).u32(0).u32(0x8022U).zeros(0x58U - 12U);
+  auto parsed{App::Omikron::CtlControlSet::load(bytes.data())};
+  REQUIRE(parsed.has_value());
+  return std::make_shared<const App::Omikron::CtlControlSet>(std::move(parsed).value());
 }
 
 }  // namespace
@@ -292,11 +303,12 @@ TEST_SUITE("Core::Character::Runtime") {
     REQUIRE(source.ensure_area_character(118, area, 310).has_value());
     App::Character::RuntimeCharacter* character{source.find(310)};
     REQUIRE(character != nullptr);
+    const App::Character::BodyIdentity body_identity{character->body_identity};
     const std::shared_ptr<const App::Character::ModelResource> source_resource{
         character->model_resource};
     character->transform.translation = App::Runtime::Vec3{11.0F, 22.0F, 33.0F};
     character->pose_revision = 17U;
-    REQUIRE(source.set_presentation_enabled(310, false).has_value());
+    REQUIRE(source.set_body_presentation_enabled(body_identity, false).has_value());
     CHECK_FALSE(character->renderable());
 
     // Current-character reselection only reactivates the existing body; it
@@ -308,7 +320,7 @@ TEST_SUITE("Core::Character::Runtime") {
     CHECK_EQ(character->pose_revision, 17U);
     CHECK_FALSE(character->presentation_enabled);
 
-    REQUIRE(source.transfer_character_to(target, 310).has_value());
+    REQUIRE(source.transfer_body_to(target, body_identity).has_value());
     CHECK(source.find(310) == nullptr);
     character = target.find(310);
     REQUIRE(character != nullptr);
@@ -324,7 +336,7 @@ TEST_SUITE("Core::Character::Runtime") {
     CHECK_EQ(target_loads, 0U);
     CHECK_EQ(target.model_resource_count(), 1U);
 
-    REQUIRE(target.set_presentation_enabled(310, true).has_value());
+    REQUIRE(target.set_body_presentation_enabled(body_identity, true).has_value());
     character = target.find(310);
     REQUIRE(character != nullptr);
     CHECK(character->renderable());
@@ -367,7 +379,7 @@ TEST_SUITE("Core::Character::Runtime") {
 
     const App::Omikron::IamAreaAddressRecord address{
         .serialized_position = {43922, 2592, 19656}, .orientation_units = 0, .address_id = 654};
-    REQUIRE(runtime.place_character_at_address(57, address).has_value());
+    REQUIRE(runtime.place_body_at_address(character->body_identity, address).has_value());
     character = runtime.find(57);
     REQUIRE(character != nullptr);
     CHECK_EQ(character->serialized_area_position.at(0), 43922);
@@ -381,6 +393,65 @@ TEST_SUITE("Core::Character::Runtime") {
     CHECK_FALSE(character->active);
     CHECK_FALSE(character->area_present);
     CHECK_FALSE(character->scene_id.has_value());
+  }
+
+  TEST_CASE("BodyIdentity operations never rediscover a body through canonical ID") {
+    const App::Omikron::IamAreaRecord area{make_area()};
+    App::Character::Runtime runtime{
+        [](const std::string_view name)
+            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
+          return fake_resource(name);
+        }};
+    runtime.set_ctl_bank_loader([](const std::string_view) {
+      return std::expected<std::shared_ptr<const App::Omikron::CtlControlSet>, std::string>{
+          fake_ctl_resource()};
+    });
+    const auto materialized{runtime.ensure_area_character(118, area, 310)};
+    REQUIRE(materialized.has_value());
+    App::Character::RuntimeCharacter* body{runtime.find_body(materialized->body_identity)};
+    REQUIRE(body != nullptr);
+    body->character_id = 999;
+
+    const auto controller{
+        runtime.ensure_adventure_controller(materialized->body_identity, "TESTCTL")};
+    INFO(controller.error_or(""));
+    REQUIRE(controller.has_value());
+    CHECK(body->ctl_controller.has_value());
+    REQUIRE(runtime.deactivate_body(materialized->body_identity).has_value());
+    CHECK_FALSE(body->active);
+    CHECK_FALSE(body->area_present);
+  }
+
+  TEST_CASE("SCENE preload returns and preserves the exact transferred BodyIdentity") {
+    const App::Omikron::IamSceneRecord scene{make_scene()};
+    App::Character::Runtime runtime{
+        [](const std::string_view name)
+            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
+          return fake_resource(name);
+        }};
+    const auto initial{runtime.ensure_scene_character(118, 1, scene, 57)};
+    REQUIRE(initial.has_value());
+    App::Character::RuntimeCharacter* body{runtime.find_body(initial->body_identity)};
+    REQUIRE(body != nullptr);
+    body->transform.translation.x = 777.0F;
+    body->pose_revision = 41U;
+    const auto resource{body->model_resource};
+
+    const auto preloaded{runtime.preload_scene_characters(222, 55, scene, initial->body_identity)};
+    REQUIRE(preloaded.has_value());
+    REQUIRE_EQ(preloaded->size(), 1U);
+    CHECK_EQ(preloaded->front().body_identity, initial->body_identity);
+    CHECK_FALSE(preloaded->front().newly_created);
+    body = runtime.find_body(initial->body_identity);
+    REQUIRE(body != nullptr);
+    CHECK_EQ(body->transform.translation.x, 777.0F);
+    CHECK_EQ(body->pose_revision, 41U);
+    CHECK(body->model_resource == resource);
+
+    runtime.dematerialize_scene_characters(222, 55, initial->body_identity);
+    CHECK(body->active);
+    CHECK(body->area_present);
+    CHECK_FALSE(body->scene_id.has_value());
   }
 
   TEST_CASE("Special current-character ID remains distinct from table-0 lookup") {

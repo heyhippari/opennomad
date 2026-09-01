@@ -17,8 +17,11 @@
 #include <string_view>
 #include <vector>
 
+#include "Core/Character/CharacterRuntime.hpp"
 #include "Core/Debug/DebugRuntimeContext.hpp"
 #include "Core/Scenario/ScenarioManager.hpp"
+#include "Core/Scenario/ScenarioRuntime.hpp"
+#include "Core/Script/ScriptRuntime.hpp"
 #include "OmikronTestBuffer.hpp"
 
 namespace {
@@ -285,6 +288,56 @@ void initialize_grid_fixture(App::ScenarioManager& manager) {
 }  // namespace
 
 TEST_SUITE("Core::Scenario::ScenarioManager") {
+  TEST_CASE("cross-world character script retains its owner while the exact body transfers") {
+    const TempDirectory temp;
+    write_boot_fixtures(temp);
+    write_bytes(temp.root() / "SCPTDATA" / "B.SCX", make_script_scx(1));
+    const ScopedGameDataRoot root{temp.root()};
+
+    App::ScenarioManager manager;
+    initialize_grid_fixture(manager);
+    REQUIRE(manager.load_world_context(2, std::nullopt, "SCPTDATA/B.SCX").has_value());
+    App::ScenarioRuntime* const script_world{manager.world_runtime(0)};
+    App::ScenarioRuntime* const body_world{manager.world_runtime(2)};
+    REQUIRE(script_world != nullptr);
+    REQUIRE(body_world != nullptr);
+    constexpr App::Character::BodyIdentity k_body_identity{4242U};
+    REQUIRE(body_world->character_runtime()
+            .adopt_character(App::Character::RuntimeCharacter{.body_identity = k_body_identity,
+                .character_id = 310,
+                .area_id = 222,
+                .active = true,
+                .area_present = true})
+            .has_value());
+    manager.set_controlled_character(App::ControlledCharacterRef{
+        .character_id = 310, .body_identity = k_body_identity, .world_scene_id = 2});
+
+    const auto launched{script_world->spawn_character_script_instance(0U, 310, k_body_identity, 0)};
+    REQUIRE(launched.has_value());
+    REQUIRE(script_world->script_runtime() != nullptr);
+    REQUIRE(body_world->script_runtime() != nullptr);
+    CHECK(script_world->script_runtime()->instance(launched.value_or(0U)) != nullptr);
+    CHECK(body_world->script_runtime()->instances().empty());
+    const auto initially_located{manager.find_character_body(k_body_identity)};
+    REQUIRE(initially_located.has_value());
+    CHECK_EQ(initially_located->world_scene_id, 2U);
+
+    REQUIRE(manager.transfer_controlled_character(2U, 0U).has_value());
+    const auto transferred_body{manager.find_character_body(k_body_identity)};
+    REQUIRE(transferred_body.has_value());
+    CHECK_EQ(transferred_body->world_scene_id, 0U);
+    CHECK(body_world->character_runtime().find_body(k_body_identity) == nullptr);
+    CHECK(script_world->character_runtime().find_body(k_body_identity) != nullptr);
+    CHECK(script_world->script_runtime()->instance(launched.value_or(0U)) != nullptr);
+    script_world->tick(1.0F / 30.0F);
+    const App::Script::ScriptInstance* const instance{
+        script_world->script_runtime()->instance(launched.value_or(0U))};
+    REQUIRE(instance != nullptr);
+    CHECK_EQ(instance->launch_context.character_body_identity,
+        std::optional<std::uint64_t>{k_body_identity});
+    CHECK_EQ(script_world->character_runtime().characters().size(), 1U);
+  }
+
   TEST_CASE("Dialog API loads case-insensitively, caches the archive and resets active state") {
     const TempDirectory temp;
     const std::filesystem::path dialog_path{temp.root() / "iam" / "dialog"};

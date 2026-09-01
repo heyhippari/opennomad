@@ -137,7 +137,8 @@ class ScenarioRuntime final : public Script::ScriptWorld, private Sfx::Host {
   // --- Runtime characters --------------------------------------------------
 
   /// Resolves and materializes an AREA character activation in this world.
-  [[nodiscard]] std::expected<void, std::string> activate_character(std::int32_t area_id,
+  [[nodiscard]] std::expected<Character::MaterializedCharacterResult, std::string>
+  activate_character(std::int32_t area_id,
       const Omikron::IamAreaRecord& area,
       const Script::AreaCharacterActivationRequest& request);
   [[nodiscard]] Character::Runtime& character_runtime();

@@ -225,6 +225,11 @@ struct RuntimeCharacter {
   }
 };
 
+struct MaterializedCharacterResult {
+  BodyIdentity body_identity{0};
+  bool newly_created{false};
+};
+
 /// World-owned character lifecycle and CPU resource cache.
 class Runtime {
  public:
@@ -259,20 +264,22 @@ class Runtime {
   /// Resolves and activates one AREA request. Successful activation is
   /// immediate and reuses both an existing logical instance and cached model
   /// resources.
-  [[nodiscard]] std::expected<void, std::string> activate(std::int32_t area_id,
+  [[nodiscard]] std::expected<MaterializedCharacterResult, std::string> activate(
+      std::int32_t area_id,
       const Omikron::IamAreaRecord& area,
       const Script::AreaCharacterActivationRequest& request);
 
   /// Ensures one AREA table-0 character exists for current-character
   /// selection. An existing body is reactivated in place without resetting
   /// its live transform, animation, overlays, or immutable resource.
-  [[nodiscard]] std::expected<void, std::string> ensure_area_character(
+  [[nodiscard]] std::expected<MaterializedCharacterResult, std::string> ensure_area_character(
       std::int32_t area_id, const Omikron::IamAreaRecord& area, std::int16_t character_id);
 
   /// Ensures one SCENE table-0 character exists for current-character
   /// selection, using the SCENE's matching table-4 definition on first
   /// materialization only.
-  [[nodiscard]] std::expected<void, std::string> ensure_scene_character(std::int32_t area_id,
+  [[nodiscard]] std::expected<MaterializedCharacterResult, std::string> ensure_scene_character(
+      std::int32_t area_id,
       std::int32_t scene_id,
       const Omikron::IamSceneRecord& scene,
       std::int16_t character_id);
@@ -280,29 +287,29 @@ class Runtime {
   /// Preloads every SCENE table-0 character against its SCENE-first table-4
   /// definition as a resident logical body while keeping presentation disabled.
   /// Already-live bodies keep their live transform/presentation state.
-  [[nodiscard]] std::expected<void, std::string> preload_scene_characters(
-      std::int32_t area_id, std::int32_t scene_id, const Omikron::IamSceneRecord& scene);
+  [[nodiscard]] std::expected<std::vector<MaterializedCharacterResult>, std::string>
+  preload_scene_characters(std::int32_t area_id,
+      std::int32_t scene_id,
+      const Omikron::IamSceneRecord& scene,
+      std::optional<BodyIdentity> preserved_body_identity = std::nullopt);
 
   /// Deactivates only characters currently owned by one attached SCENE.
   void dematerialize_scene_characters(std::int32_t area_id,
       std::int32_t scene_id,
-      std::optional<std::int16_t> preserved_character_id = std::nullopt);
+      std::optional<BodyIdentity> preserved_body_identity = std::nullopt);
 
   /// Changes only the presentation bit of an already materialized body.
-  [[nodiscard]] std::expected<void, std::string> set_presentation_enabled(
-      std::int16_t character_id, bool enabled);
   [[nodiscard]] std::expected<void, std::string> set_body_presentation_enabled(
       BodyIdentity body_identity, bool enabled);
 
+  [[nodiscard]] std::expected<void, std::string> activate_body(BodyIdentity body_identity);
   /// Removes a non-current body from live AREA presentation while retaining
   /// its durable runtime record for a later authored activation.
-  [[nodiscard]] std::expected<void, std::string> deactivate_character(std::int16_t character_id);
+  [[nodiscard]] std::expected<void, std::string> deactivate_body(BodyIdentity body_identity);
 
   /// Moves one complete logical body out of this world. The extracted value
   /// retains every mutable runtime field, its immutable shared resource, and
   /// its stable `body_identity`. Local `instance_id` values may be renumbered.
-  [[nodiscard]] std::expected<RuntimeCharacter, std::string> extract_character(
-      std::int16_t character_id);
   [[nodiscard]] std::expected<RuntimeCharacter, std::string> extract_body(
       BodyIdentity body_identity);
 
@@ -312,14 +319,10 @@ class Runtime {
   [[nodiscard]] std::expected<void, std::string> adopt_character(RuntimeCharacter character);
 
   /// Transfers one body to a target world without reloading or duplicating it.
-  [[nodiscard]] std::expected<void, std::string> transfer_character_to(
-      Runtime& target, std::int16_t character_id);
   [[nodiscard]] std::expected<void, std::string> transfer_body_to(
       Runtime& target, BodyIdentity body_identity);
 
   /// Applies a named AREA address transform to one established runtime character.
-  [[nodiscard]] std::expected<void, std::string> place_character_at_address(
-      std::int16_t character_id, const Omikron::IamAreaAddressRecord& address);
   [[nodiscard]] std::expected<void, std::string> place_body_at_address(
       BodyIdentity body_identity, const Omikron::IamAreaAddressRecord& address);
 
@@ -331,7 +334,6 @@ class Runtime {
   [[nodiscard]] std::size_t model_resource_count() const;
 
   /// Restores one character's mutable pose from its immutable shared model.
-  void reset_pose(std::int16_t character_id);
   void reset_pose(BodyIdentity body_identity);
 
   /// Composes a temporary dialogue sample over the current base animation.
@@ -347,7 +349,10 @@ class Runtime {
   [[nodiscard]] static std::expected<std::shared_ptr<const Omikron::CtlControlSet>, std::string>
   load_ctl_bank(std::string_view control_set_name);
 
-  [[nodiscard]] std::expected<void, std::string> materialize_character(std::int32_t area_id,
+  [[nodiscard]] std::expected<void, std::string> ensure_adventure_controller_impl(
+      RuntimeCharacter& character, std::string_view adventure_control_set);
+  [[nodiscard]] std::expected<MaterializedCharacterResult, std::string> materialize_character(
+      std::int32_t area_id,
       std::optional<std::int32_t> scene_id,
       std::int16_t character_id,
       const std::array<std::int32_t, 3>& serialized_position,

@@ -37,6 +37,7 @@
 namespace {
 
 constexpr std::uint32_t K_SCX_MAGIC{0x00DEAD00U};
+constexpr std::uint32_t K_SCRIPTS_TAG{0xDEAD0002U};
 constexpr std::uint32_t K_END_TAG{0xDEADFFFFU};
 
 using App::WorldSceneResidencyState;
@@ -118,6 +119,40 @@ std::vector<std::byte> make_area_archive(const std::vector<std::byte>& prefix) {
   return data;
 }
 
+std::vector<std::byte> make_structured_zone_area_archive() {
+  constexpr std::uint16_t k_zone_id{77};
+  Buffer script;
+  script.u8(0x38).u16(136);
+  script.u8(0x40).u16(k_zone_id);
+  script.u8(0x2E).u16(1).u16(0);
+  script.u8(0x2E).u16(1).u16(0).u8(0x03);
+  std::vector<std::byte> data{make_area_archive(script.data())};
+
+  constexpr std::size_t k_record_offset{0x800U};
+  constexpr std::size_t k_zone_offset{0x300U};
+  constexpr std::size_t k_zone_event_offset{0x500U};
+  write_u32(data, k_record_offset + 0x28U + (2U * 4U), k_zone_offset);
+  write_u16(data, k_record_offset + 0x48U + (2U * 2U), 1U);
+  write_u32(data, k_record_offset + k_zone_offset, k_zone_event_offset);
+  const std::array<std::array<std::uint32_t, 3>, 4> vertices = {
+      {{900U, 100U, 900U}, {1100U, 300U, 900U}, {1100U, 300U, 1100U}, {900U, 100U, 1100U}}};
+  for (std::size_t index{0}; index < vertices.size(); ++index) {
+    for (std::size_t coordinate{0}; coordinate < vertices.at(index).size(); ++coordinate) {
+      write_u32(data,
+          k_record_offset + k_zone_offset + 0x0CU + ((index * 3U + coordinate) * 4U),
+          vertices.at(index).at(coordinate));
+    }
+  }
+  write_u16(data, k_record_offset + k_zone_offset + 0x3CU, 0U);
+  write_u16(data, k_record_offset + k_zone_offset + 0x3EU, 0U);
+  write_u16(data, k_record_offset + k_zone_offset + 0x40U, k_zone_id);
+  write_u16(data, k_record_offset + k_zone_offset + 0x42U, 0xFFFFU);
+  data.at(k_record_offset + k_zone_event_offset) = std::byte{0x41};
+  write_u16(data, k_record_offset + k_zone_event_offset + 1U, k_zone_id);
+  data.at(k_record_offset + k_zone_event_offset + 3U) = std::byte{0x03};
+  return data;
+}
+
 std::vector<std::byte> make_transition_area_archive(
     const std::vector<std::byte>& source_prefix, const bool target_has_primary = true) {
   constexpr std::size_t k_source_offset{0x800};
@@ -155,6 +190,29 @@ std::vector<std::byte> make_minimal_scx() {
   return bytes.data();
 }
 
+std::vector<std::byte> make_immediate_character_scx() {
+  Buffer descriptor;
+  descriptor.u32(K_SCRIPTS_TAG).u32(1);
+  descriptor.u32(0).chars("Child", 22).u16(1).u16(0).u16(0);
+  descriptor.u32(1).u32(0).u32(0);
+  descriptor.u32(0).u32(0);
+  descriptor.u32(0).u32(0);
+  descriptor.zeros(3U * 4U).zeros(3U * 4U);
+  descriptor.u32(0).u32(0).zeros(8);
+  descriptor.u32(2).f32(0.0F).f32(0.0F);
+  descriptor.u8(0);
+  descriptor.u32(0x06000017U).u32(2).u32(0).u32(0xFFFFFFFFU).u32(1).u32(0);
+  descriptor.u32(0).u32(0);
+  descriptor.u32(K_END_TAG);
+
+  Buffer bytes;
+  bytes.u32(K_SCX_MAGIC).u32(5).u32(8).u32(static_cast<std::uint32_t>(descriptor.data().size()));
+  for (const std::byte value : descriptor.data()) {
+    bytes.u8(std::to_integer<std::uint8_t>(value));
+  }
+  return bytes.data();
+}
+
 std::vector<std::byte> make_transition_scene_archive() {
   constexpr std::size_t k_scene_id{55};
   constexpr std::size_t k_record_offset{0x800};
@@ -167,6 +225,26 @@ std::vector<std::byte> make_transition_scene_archive() {
   // Deliberately unsupported sentinel: the attachment test only needs to
   // prove the independent SCENE compact context was activated.
   data.at(k_record_offset + 0x44U) = std::byte{0x99};
+  return data;
+}
+
+std::vector<std::byte> make_failing_transition_scene_archive() {
+  constexpr std::size_t k_scene_id{55};
+  constexpr std::size_t k_record_offset{0x800};
+  constexpr std::size_t k_placement_offset{0x44U};
+  constexpr std::size_t k_record_size{k_placement_offset + 0x14U};
+  std::vector<std::byte> data(k_record_offset + k_record_size, std::byte{});
+  write_u32(data, k_scene_id * 8U, static_cast<std::uint32_t>(k_record_offset));
+  write_u32(data, (k_scene_id * 8U) + 4U, static_cast<std::uint32_t>(k_record_size));
+  write_u32(data, k_record_offset + 0x08U, k_placement_offset);
+  write_u16(data, k_record_offset + 0x28U, 1U);
+  for (const std::size_t table_index : {1U, 2U, 3U, 4U, 6U, 7U}) {
+    write_u32(data,
+        k_record_offset + 0x08U + (table_index * 4U),
+        static_cast<std::uint32_t>(k_record_size));
+  }
+  write_u16(data, k_record_offset + k_placement_offset, 0xFFFFU);
+  write_u16(data, k_record_offset + k_placement_offset + 2U, 57U);
   return data;
 }
 
@@ -291,6 +369,14 @@ void write_boot_fixtures(const TempDirectory& temp) {
   write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_minimal_scx());
 }
 
+void write_structured_zone_fixtures(const TempDirectory& temp) {
+  write_bytes(temp.root() / "IAM" / "START", make_start());
+  write_bytes(temp.root() / "IAM" / "GLOBAL", App::Tests::make_empty_iam_global());
+  write_bytes(temp.root() / "IAM" / "AREA", make_structured_zone_area_archive());
+  write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
+  write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_immediate_character_scx());
+}
+
 void write_dialog_boot_fixtures(const TempDirectory& temp, const bool action_choice = false) {
   Buffer script;
   script.u8(0x3D).u16(0).u8(0x68).u8(0x03);
@@ -350,6 +436,46 @@ std::optional<std::uint32_t> seq_of(const App::Startup::StartupTraceRecorder& re
 }  // namespace
 
 TEST_SUITE("Core::Scenario::ScenarioEngine") {
+  TEST_CASE("structured child chain delays spatial publication and contact execution") {
+    const TempDirectory temp;
+    write_structured_zone_fixtures(temp);
+    const ScopedGameDataRoot root{temp.root()};
+
+    App::Startup::StartupTraceRecorder recorder;
+    App::ScenarioManager manager;
+    App::ScenarioEngine engine{manager, recorder};
+    REQUIRE(engine.select_permanent_mode_script().has_value());
+    REQUIRE(engine.enter_mode(App::ScenarioMode::k_new_session, 0).has_value());
+    REQUIRE(install_fake_current_character_loader(manager));
+
+    REQUIRE(engine.update(1.0F / 30.0F).has_value());
+    App::ScenarioRuntime* runtime{manager.world_runtime(0)};
+    REQUIRE(runtime != nullptr);
+    App::Character::RuntimeCharacter* body{runtime->character_runtime().find(136)};
+    REQUIRE(body != nullptr);
+    REQUIRE(engine.current_character_trigger_proxy().has_value());
+    const App::Runtime::Vec3 initial_proxy{engine.current_character_trigger_proxy()->position};
+    CHECK_EQ(body->ordinary_actor_service_generation, 0U);
+    CHECK_EQ(engine.zone_contact_count(), 0U);
+
+    body->transform.translation =
+        App::Runtime::area_position_to_inches(std::array<std::int32_t, 3>{1000, 200, 1000});
+    REQUIRE(engine.update(1.0F / 30.0F).has_value());
+    CHECK_EQ(body->ordinary_actor_service_generation, 0U);
+    CHECK_EQ(engine.current_character_trigger_proxy()->position.x, initial_proxy.x);
+    CHECK_EQ(engine.zone_contact_count(), 0U);
+
+    REQUIRE(engine.update(1.0F / 30.0F).has_value());
+    CHECK_EQ(body->ordinary_actor_service_generation, 1U);
+    CHECK_EQ(engine.current_character_trigger_proxy()->position.x, body->transform.translation.x);
+    CHECK_EQ(engine.zone_contact_count(), 1U);
+    REQUIRE(manager.game_state() != nullptr);
+    CHECK(manager.game_state()->zone_flag(77).value_or(false));
+
+    REQUIRE(engine.update(1.0F / 30.0F).has_value());
+    CHECK_FALSE(manager.game_state()->zone_flag(77).value_or(true));
+  }
+
   TEST_CASE("[RUNTIME] mode order reaches the startup menu through AREA 118") {
     const TempDirectory temp;
     write_boot_fixtures(temp);
@@ -732,6 +858,33 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
     const std::size_t trace_size{engine.area_script()->trace().size()};
     REQUIRE(engine.update(1.0F / 30.0F).has_value());
     CHECK_EQ(engine.area_script()->trace().size(), trace_size);
+  }
+
+  TEST_CASE("failed SCENE preload removes provisional references and permits a clean retry") {
+    const TempDirectory temp;
+    write_transition_boot_fixtures(temp, true);
+    write_bytes(temp.root() / "IAM" / "SCENE", make_failing_transition_scene_archive());
+    const ScopedGameDataRoot root{temp.root()};
+
+    App::Startup::StartupTraceRecorder recorder;
+    App::ScenarioManager manager;
+    App::ScenarioEngine engine{manager, recorder};
+    REQUIRE(engine.select_permanent_mode_script().has_value());
+    REQUIRE(engine.enter_mode(App::ScenarioMode::k_new_session, 0).has_value());
+    REQUIRE(engine.enter_mode(App::ScenarioMode::k_tick, 0).has_value());
+    const auto failed_attach{engine.update(1.0F / 30.0F)};
+    REQUIRE_FALSE(failed_attach.has_value());
+    REQUIRE(engine.runtime_area_slot(1) != nullptr);
+    CHECK_FALSE(engine.runtime_area_slot(1)->scene.has_value());
+    CHECK_EQ(engine.runtime_area_slot(1)->scene_id, -1);
+    CHECK_EQ(engine.character_reference_entry_count(), 0U);
+
+    write_bytes(temp.root() / "IAM" / "SCENE", make_transition_scene_archive());
+    REQUIRE(engine.enter_mode(App::ScenarioMode::k_new_session, 0).has_value());
+    REQUIRE(engine.enter_mode(App::ScenarioMode::k_tick, 0).has_value());
+    REQUIRE(engine.update(1.0F / 30.0F).has_value());
+    REQUIRE(engine.runtime_area_slot(1)->scene.has_value());
+    CHECK_EQ(engine.runtime_area_slot(1)->scene_id, 55);
   }
 
   TEST_CASE("[OPENNOMAD] zero-primary AREA does not hide its attached SCENE VM") {

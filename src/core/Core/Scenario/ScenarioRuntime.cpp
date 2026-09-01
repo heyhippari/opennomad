@@ -634,7 +634,8 @@ Sfx::Diagnostics ScenarioRuntime::sfx_diagnostics() const {
   return m_sfx_runtime == nullptr ? Sfx::Diagnostics{} : m_sfx_runtime->diagnostics();
 }
 
-std::expected<void, std::string> ScenarioRuntime::activate_character(const std::int32_t area_id,
+std::expected<Character::MaterializedCharacterResult, std::string>
+ScenarioRuntime::activate_character(const std::int32_t area_id,
     const Omikron::IamAreaRecord& area,
     const Script::AreaCharacterActivationRequest& request) {
   return m_character_runtime.activate(area_id, area, request);

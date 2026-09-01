@@ -158,14 +158,20 @@ std::optional<std::size_t> CharacterReferenceRuntime::find_mutable_placement(
     const std::size_t resident_slot,
     const std::int32_t area_id,
     const std::int16_t reference_id) const {
+  std::optional<std::size_t> no_body_match;
   for (std::size_t index{0}; index < m_entries.size(); ++index) {
     const RuntimeCharacterReferenceEntry& entry{m_entries.at(index)};
     if (entry.source == CharacterReferenceSource::k_area && entry.resident_slot == resident_slot &&
         entry.area_id == area_id && entry.reference_character_id == reference_id) {
-      return index;
+      if (entry.binding_state == CharacterPlacementBindingState::k_bound) {
+        return index;
+      }
+      if (!no_body_match.has_value()) {
+        no_body_match = index;
+      }
     }
   }
-  return std::nullopt;
+  return no_body_match;
 }
 
 std::optional<std::size_t> CharacterReferenceRuntime::find_mutable_scene_placement(
@@ -173,15 +179,21 @@ std::optional<std::size_t> CharacterReferenceRuntime::find_mutable_scene_placeme
     const std::int32_t area_id,
     const std::int32_t scene_id,
     const std::int16_t reference_id) const {
+  std::optional<std::size_t> no_body_match;
   for (std::size_t index{0}; index < m_entries.size(); ++index) {
     const RuntimeCharacterReferenceEntry& entry{m_entries.at(index)};
     if (entry.source == CharacterReferenceSource::k_scene && entry.resident_slot == resident_slot &&
         entry.area_id == area_id && entry.scene_id == scene_id &&
         entry.reference_character_id == reference_id) {
-      return index;
+      if (entry.binding_state == CharacterPlacementBindingState::k_bound) {
+        return index;
+      }
+      if (!no_body_match.has_value()) {
+        no_body_match = index;
+      }
     }
   }
-  return std::nullopt;
+  return no_body_match;
 }
 
 CharacterReferenceResolution CharacterReferenceRuntime::resolve(const std::size_t resident_slot,

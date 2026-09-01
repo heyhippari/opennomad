@@ -196,6 +196,15 @@ class ScenarioStartupController {
   [[nodiscard]] bool initialized() const {
     return m_initialized;
   }
+  [[nodiscard]] bool structured_character_owner_active() const {
+    return m_current_character_structured_owner.has_value();
+  }
+  [[nodiscard]] bool actor_phase_pending() const {
+    return m_actor_phase_enabled_for_tick;
+  }
+  [[nodiscard]] std::size_t character_reference_entry_count() const {
+    return m_character_references.entries().size();
+  }
 
   /// Delivers an interface completion to the waiting area script. Resumes the
   /// script when the completion matches the stored interface handle; logs and

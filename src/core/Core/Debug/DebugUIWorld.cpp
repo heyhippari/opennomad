@@ -325,7 +325,7 @@ void DebugUI::show_world_inspector() {
       for (const Debug::RuntimeCharacterDebugState& character : world->runtime_characters) {
         const bool is_controlled{controlled.has_value() && active_world != nullptr &&
                                  controlled->world_scene_id == active_world->scene_id &&
-                                 controlled->character_id == character.character_id};
+                                 controlled->body_identity == character.body_identity};
         ImGui::TableNextRow();
         ImGui::TableNextColumn();
         ImGui::Text("%zu", character.instance_id);
@@ -350,7 +350,7 @@ void DebugUI::show_world_inspector() {
     for (const Debug::RuntimeCharacterDebugState& character : world->runtime_characters) {
       const bool is_controlled{controlled.has_value() && active_world != nullptr &&
                                controlled->world_scene_id == active_world->scene_id &&
-                               controlled->character_id == character.character_id};
+                               controlled->body_identity == character.body_identity};
       const std::string label{fmt::format(
           "Character {}##RuntimeCharacter{}", character.character_id, character.instance_id)};
       if (!ImGui::CollapsingHeader(label.c_str())) {

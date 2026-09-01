@@ -178,18 +178,23 @@ std::expected<std::shared_ptr<const Omikron::CtlControlSet>, std::string> Runtim
 
 std::expected<void, std::string> Runtime::ensure_adventure_controller(
     const std::int16_t character_id, const std::string_view adventure_control_set) {
-  if (adventure_control_set.empty()) {
-    return {};
-  }
   RuntimeCharacter* character{find(character_id)};
   if (character == nullptr) {
     return std::expected<void, std::string>{std::unexpect,
         fmt::format("character {} is not materialized for CTL controller setup", character_id)};
   }
 
+  return ensure_adventure_controller_impl(*character, adventure_control_set);
+}
+
+std::expected<void, std::string> Runtime::ensure_adventure_controller_impl(
+    RuntimeCharacter& character, const std::string_view adventure_control_set) {
+  if (adventure_control_set.empty()) {
+    return {};
+  }
   const std::string normalized_name{normalized_control_set_name(adventure_control_set)};
-  if (character->ctl_controller.has_value() &&
-      character->ctl_controller->resource_name() == normalized_name) {
+  if (character.ctl_controller.has_value() &&
+      character.ctl_controller->resource_name() == normalized_name) {
     // Same immutable bank: the live controller state is preserved.
     return {};
   }
@@ -210,18 +215,18 @@ std::expected<void, std::string> Runtime::ensure_adventure_controller(
   if (!controller) {
     return std::expected<void, std::string>{std::unexpect, std::move(controller).error()};
   }
-  character->ctl_controller = std::move(controller).value();
+  character.ctl_controller = std::move(controller).value();
   return {};
 }
 
 std::expected<void, std::string> Runtime::ensure_adventure_controller(
     const BodyIdentity body_identity, const std::string_view adventure_control_set) {
-  const RuntimeCharacter* const character{find_body(body_identity)};
+  RuntimeCharacter* const character{find_body(body_identity)};
   if (character == nullptr) {
     return std::expected<void, std::string>{
         std::unexpect, fmt::format("body {} is not materialized", body_identity)};
   }
-  return ensure_adventure_controller(character->character_id, adventure_control_set);
+  return ensure_adventure_controller_impl(*character, adventure_control_set);
 }
 
 std::expected<std::shared_ptr<const ModelResource>, std::string> Runtime::load_model_resource(
@@ -275,28 +280,29 @@ std::expected<std::shared_ptr<const ModelResource>, std::string> Runtime::load_m
   return std::shared_ptr<const ModelResource>{std::move(resource)};
 }
 
-std::expected<void, std::string> Runtime::activate(const std::int32_t area_id,
+std::expected<MaterializedCharacterResult, std::string> Runtime::activate(
+    const std::int32_t area_id,
     const Omikron::IamAreaRecord& area,
     const Script::AreaCharacterActivationRequest& request) {
   APP_PROFILE_FUNCTION();
 
   if (request.character_id == -1) {
-    return std::expected<void, std::string>{
+    return std::expected<MaterializedCharacterResult, std::string>{
         std::unexpect, "character -1 current-character model-flag path is not materialized yet"};
   }
   if (request.character_id < 0) {
-    return std::expected<void, std::string>{
+    return std::expected<MaterializedCharacterResult, std::string>{
         std::unexpect, fmt::format("invalid negative character ID {}", request.character_id)};
   }
 
   const auto placement{area.character_by_id(request.character_id)};
   if (!placement.has_value()) {
-    return std::expected<void, std::string>{std::unexpect,
+    return std::expected<MaterializedCharacterResult, std::string>{std::unexpect,
         fmt::format("character ID {} not found in active AREA table 0", request.character_id)};
   }
   const auto definition{area.character_definition_by_character_id(request.character_id)};
   if (!definition.has_value()) {
-    return std::expected<void, std::string>{std::unexpect,
+    return std::expected<MaterializedCharacterResult, std::string>{std::unexpect,
         fmt::format(
             "character ID {} has no matching authored AREA table-4 record", request.character_id)};
   }
@@ -311,21 +317,22 @@ std::expected<void, std::string> Runtime::activate(const std::int32_t area_id,
       true);
 }
 
-std::expected<void, std::string> Runtime::ensure_area_character(const std::int32_t area_id,
+std::expected<MaterializedCharacterResult, std::string> Runtime::ensure_area_character(
+    const std::int32_t area_id,
     const Omikron::IamAreaRecord& area,
     const std::int16_t character_id) {
   if (character_id < 0) {
-    return std::expected<void, std::string>{
+    return std::expected<MaterializedCharacterResult, std::string>{
         std::unexpect, fmt::format("invalid negative character ID {}", character_id)};
   }
   const auto placement{area.character_by_id(character_id)};
   if (!placement.has_value()) {
-    return std::expected<void, std::string>{std::unexpect,
+    return std::expected<MaterializedCharacterResult, std::string>{std::unexpect,
         fmt::format("character ID {} not found in owner AREA table 0", character_id)};
   }
   const auto definition{area.character_definition_by_character_id(character_id)};
   if (!definition.has_value()) {
-    return std::expected<void, std::string>{std::unexpect,
+    return std::expected<MaterializedCharacterResult, std::string>{std::unexpect,
         fmt::format("character ID {} has no matching authored AREA table-4 record", character_id)};
   }
 
@@ -334,7 +341,7 @@ std::expected<void, std::string> Runtime::ensure_area_character(const std::int32
     existing->area_present = true;
     existing->area_id = area_id;
     existing->scene_id.reset();
-    return {};
+    return MaterializedCharacterResult{.body_identity = existing->body_identity};
   }
   return materialize_character(area_id,
       std::nullopt,
@@ -347,22 +354,23 @@ std::expected<void, std::string> Runtime::ensure_area_character(const std::int32
       true);
 }
 
-std::expected<void, std::string> Runtime::ensure_scene_character(const std::int32_t area_id,
+std::expected<MaterializedCharacterResult, std::string> Runtime::ensure_scene_character(
+    const std::int32_t area_id,
     const std::int32_t scene_id,
     const Omikron::IamSceneRecord& scene,
     const std::int16_t character_id) {
   if (character_id < 0) {
-    return std::expected<void, std::string>{
+    return std::expected<MaterializedCharacterResult, std::string>{
         std::unexpect, fmt::format("invalid negative character ID {}", character_id)};
   }
   const auto placement{scene.character_by_id(character_id)};
   if (!placement.has_value()) {
-    return std::expected<void, std::string>{std::unexpect,
+    return std::expected<MaterializedCharacterResult, std::string>{std::unexpect,
         fmt::format("character ID {} not found in owner SCENE table 0", character_id)};
   }
   const auto definition{scene.character_definition_by_character_id(character_id)};
   if (!definition.has_value()) {
-    return std::expected<void, std::string>{
+    return std::expected<MaterializedCharacterResult, std::string>{
         std::unexpect, fmt::format("SCENE character {} has no matching definition", character_id)};
   }
 
@@ -371,7 +379,7 @@ std::expected<void, std::string> Runtime::ensure_scene_character(const std::int3
     existing->area_present = true;
     existing->area_id = area_id;
     existing->scene_id = scene_id;
-    return {};
+    return MaterializedCharacterResult{.body_identity = existing->body_identity};
   }
   return materialize_character(area_id,
       scene_id,
@@ -384,47 +392,61 @@ std::expected<void, std::string> Runtime::ensure_scene_character(const std::int3
       true);
 }
 
-std::expected<void, std::string> Runtime::preload_scene_characters(
-    const std::int32_t area_id, const std::int32_t scene_id, const Omikron::IamSceneRecord& scene) {
+std::expected<std::vector<MaterializedCharacterResult>, std::string>
+Runtime::preload_scene_characters(const std::int32_t area_id,
+    const std::int32_t scene_id,
+    const Omikron::IamSceneRecord& scene,
+    const std::optional<BodyIdentity> preserved_body_identity) {
+  std::vector<MaterializedCharacterResult> materialized;
   const std::vector<Omikron::IamSceneCharacterRecord> placements{scene.character_placements()};
   for (const Omikron::IamSceneCharacterRecord& placement : placements) {
-    RuntimeCharacter* const existing{find(placement.character_id)};
+    RuntimeCharacter* existing{
+        preserved_body_identity.has_value() ? find_body(preserved_body_identity.value()) : nullptr};
+    if (existing != nullptr && existing->character_id != placement.character_id) {
+      existing = nullptr;
+    }
+    if (existing == nullptr) {
+      existing = find(placement.character_id);
+    }
     if (existing != nullptr && existing->active && existing->area_present) {
       // A transferred/current body is already live. SCENE attachment may take
       // ownership of it, but must not teleport, hide or reset that live body.
       existing->area_id = area_id;
       existing->scene_id = scene_id;
+      materialized.push_back(MaterializedCharacterResult{.body_identity = existing->body_identity});
       continue;
     }
 
     const auto definition{scene.character_definition_by_character_id(placement.character_id)};
     if (!definition.has_value()) {
-      return std::expected<void, std::string>{std::unexpect,
+      return std::expected<std::vector<MaterializedCharacterResult>, std::string>{std::unexpect,
           fmt::format("SCENE character {} has no matching definition", placement.character_id)};
     }
-    if (auto result{materialize_character(area_id,
-            scene_id,
-            placement.character_id,
-            placement.serialized_position,
-            placement.orientation_units,
-            definition->name,
-            definition->model_resource,
-            true,
-            true)};
-        !result) {
-      return result;
+    auto result{materialize_character(area_id,
+        scene_id,
+        placement.character_id,
+        placement.serialized_position,
+        placement.orientation_units,
+        definition->name,
+        definition->model_resource,
+        true,
+        true)};
+    if (!result) {
+      return std::expected<std::vector<MaterializedCharacterResult>, std::string>{
+          std::unexpect, std::move(result).error()};
     }
+    materialized.push_back(result.value());
   }
-  return {};
+  return materialized;
 }
 
 void Runtime::dematerialize_scene_characters(const std::int32_t area_id,
     const std::int32_t scene_id,
-    const std::optional<std::int16_t> preserved_character_id) {
+    const std::optional<BodyIdentity> preserved_body_identity) {
   for (RuntimeCharacter& character : m_characters) {
     if (character.area_id == area_id && character.scene_id == scene_id) {
-      if (preserved_character_id.has_value() &&
-          character.character_id == preserved_character_id.value()) {
+      if (preserved_body_identity.has_value() &&
+          character.body_identity == preserved_body_identity.value()) {
         character.scene_id.reset();
         continue;
       }
@@ -434,17 +456,6 @@ void Runtime::dematerialize_scene_characters(const std::int32_t area_id,
       character.pose_revision += 1U;
     }
   }
-}
-
-std::expected<void, std::string> Runtime::set_presentation_enabled(
-    const std::int16_t character_id, const bool enabled) {
-  RuntimeCharacter* const character{find(character_id)};
-  if (character == nullptr) {
-    return std::expected<void, std::string>{std::unexpect,
-        fmt::format("current controlled character {} is not materialized", character_id)};
-  }
-  character->presentation_enabled = enabled;
-  return {};
 }
 
 std::expected<void, std::string> Runtime::set_body_presentation_enabled(
@@ -458,32 +469,27 @@ std::expected<void, std::string> Runtime::set_body_presentation_enabled(
   return {};
 }
 
-std::expected<void, std::string> Runtime::deactivate_character(const std::int16_t character_id) {
-  RuntimeCharacter* const character{find(character_id)};
+std::expected<void, std::string> Runtime::activate_body(const BodyIdentity body_identity) {
+  RuntimeCharacter* const character{find_body(body_identity)};
   if (character == nullptr) {
     return std::expected<void, std::string>{
-        std::unexpect, fmt::format("character {} is not materialized", character_id)};
+        std::unexpect, fmt::format("body {} is not materialized", body_identity)};
+  }
+  character->active = true;
+  character->area_present = true;
+  return {};
+}
+
+std::expected<void, std::string> Runtime::deactivate_body(const BodyIdentity body_identity) {
+  RuntimeCharacter* const character{find_body(body_identity)};
+  if (character == nullptr) {
+    return std::expected<void, std::string>{
+        std::unexpect, fmt::format("body {} is not materialized", body_identity)};
   }
   character->active = false;
   character->area_present = false;
   character->pose_revision += 1U;
   return {};
-}
-
-std::expected<RuntimeCharacter, std::string> Runtime::extract_character(
-    const std::int16_t character_id) {
-  const auto found{std::ranges::find(m_characters, character_id, &RuntimeCharacter::character_id)};
-  if (found == m_characters.end()) {
-    return std::expected<RuntimeCharacter, std::string>{
-        std::unexpect, fmt::format("character {} is not materialized", character_id)};
-  }
-  RuntimeCharacter extracted{std::move(*found)};
-  m_characters.erase(found);
-  // instance_id is deliberately Runtime-local and dense; body_identity is not.
-  for (std::size_t index{0}; index < m_characters.size(); ++index) {
-    m_characters.at(index).instance_id = index;
-  }
-  return extracted;
 }
 
 std::expected<RuntimeCharacter, std::string> Runtime::extract_body(
@@ -516,19 +522,6 @@ std::expected<void, std::string> Runtime::adopt_character(RuntimeCharacter chara
   return {};
 }
 
-std::expected<void, std::string> Runtime::transfer_character_to(
-    Runtime& target, const std::int16_t character_id) {
-  if (target.find(character_id) != nullptr) {
-    return std::expected<void, std::string>{
-        std::unexpect, fmt::format("character {} already belongs to target world", character_id)};
-  }
-  auto extracted{extract_character(character_id)};
-  if (!extracted) {
-    return std::expected<void, std::string>{std::unexpect, extracted.error()};
-  }
-  return target.adopt_character(std::move(extracted).value());
-}
-
 std::expected<void, std::string> Runtime::transfer_body_to(
     Runtime& target, const BodyIdentity body_identity) {
   if (target.find_body(body_identity) != nullptr) {
@@ -540,26 +533,6 @@ std::expected<void, std::string> Runtime::transfer_body_to(
     return std::expected<void, std::string>{std::unexpect, extracted.error()};
   }
   return target.adopt_character(std::move(extracted).value());
-}
-
-std::expected<void, std::string> Runtime::place_character_at_address(
-    const std::int16_t character_id, const Omikron::IamAreaAddressRecord& address) {
-  RuntimeCharacter* character{find(character_id)};
-  if (character == nullptr) {
-    return std::expected<void, std::string>{std::unexpect,
-        fmt::format("current controlled character {} is not materialized", character_id)};
-  }
-  character->serialized_area_position = address.serialized_position;
-  character->serialized_orientation_units = address.orientation_units;
-  character->runtime_orientation_degrees =
-      App::Runtime::area_angle_to_degrees(address.orientation_units);
-  character->transform.translation =
-      App::Runtime::area_position_to_inches(address.serialized_position);
-  character->set_principal_orientation(App::Runtime::Vec3{
-      .x = 0.0F, .y = static_cast<float>(character->runtime_orientation_degrees), .z = 0.0F});
-  character->transform.scale = App::Runtime::Vec3{.x = 1.0F, .y = 1.0F, .z = 1.0F};
-  character->pose_revision += 1U;
-  return {};
 }
 
 std::expected<void, std::string> Runtime::place_body_at_address(
@@ -582,7 +555,8 @@ std::expected<void, std::string> Runtime::place_body_at_address(
   return {};
 }
 
-std::expected<void, std::string> Runtime::materialize_character(const std::int32_t area_id,
+std::expected<MaterializedCharacterResult, std::string> Runtime::materialize_character(
+    const std::int32_t area_id,
     const std::optional<std::int32_t> scene_id,
     const std::int16_t character_id,
     const std::array<std::int32_t, 3>& serialized_position,
@@ -592,7 +566,7 @@ std::expected<void, std::string> Runtime::materialize_character(const std::int32
     const bool apply_transform,
     const bool activate) {
   if (model_resource.empty()) {
-    return std::expected<void, std::string>{
+    return std::expected<MaterializedCharacterResult, std::string>{
         std::unexpect, fmt::format("character definition {} has no model resource", character_id)};
   }
 
@@ -603,13 +577,15 @@ std::expected<void, std::string> Runtime::materialize_character(const std::int32
   } else {
     auto loaded{m_model_loader(model_resource)};
     if (!loaded) {
-      return std::expected<void, std::string>{std::unexpect, std::move(loaded).error()};
+      return std::expected<MaterializedCharacterResult, std::string>{
+          std::unexpect, std::move(loaded).error()};
     }
     resource = std::move(loaded).value();
     m_model_resources.emplace(std::string{model_resource}, resource);
   }
 
   RuntimeCharacter* character{find(character_id)};
+  const bool newly_created{character == nullptr};
   if (character == nullptr) {
     m_characters.push_back(RuntimeCharacter{.body_identity = allocate_body_identity(),
         .instance_id = m_characters.size(),
@@ -663,7 +639,8 @@ std::expected<void, std::string> Runtime::materialize_character(const std::int32
   character->dialog_performance.reset();
   character->pose_owner = PoseOwner::k_model_defaults;
   character->pose_revision += 1U;
-  return {};
+  return MaterializedCharacterResult{
+      .body_identity = character->body_identity, .newly_created = newly_created};
 }
 
 RuntimeCharacter* Runtime::find(const std::int16_t character_id) {
@@ -694,20 +671,6 @@ std::span<const RuntimeCharacter> Runtime::characters() const {
 
 std::size_t Runtime::model_resource_count() const {
   return m_model_resources.size();
-}
-
-void Runtime::reset_pose(const std::int16_t character_id) {
-  RuntimeCharacter* character{find(character_id)};
-  if (character == nullptr || character->model_resource == nullptr) {
-    return;
-  }
-  character->runtime_objects = character->model_resource->model.runtime_objects;
-  character->object_poses.assign(character->runtime_objects.size(), BodyAnimationObjectPose{});
-  character->posed_groups = character->model_resource->groups;
-  character->body_animation = BodyAnimationPlayback{};
-  character->dialog_performance.reset();
-  character->pose_owner = PoseOwner::k_model_defaults;
-  character->pose_revision += 1U;
 }
 
 void Runtime::reset_pose(const BodyIdentity body_identity) {

@@ -992,6 +992,76 @@ void write_structured_child_completion_fixtures(const TempDirectory& temp) {
   write_bytes(temp.root() / "MESHES" / "DECORS" / "GRID.3DO", make_minimal_3do());
 }
 
+void write_chained_structured_child_fixtures(const TempDirectory& temp) {
+  Buffer script;
+  script.u8(0x38).u16(136);
+  script.u8(0x2E).u16(221).u16(0);
+  script.u8(0x2E).u16(221).u16(0).u8(0x03);
+  std::vector<std::byte> area{make_area_archive()};
+  std::memcpy(area.data() + 0x800U + 0x3FCU, script.data().data(), script.data().size());
+
+  write_bytes(temp.root() / "IAM" / "START", make_start());
+  write_bytes(temp.root() / "IAM" / "GLOBAL", App::Tests::make_empty_iam_global());
+  write_bytes(temp.root() / "IAM" / "AREA", area);
+  write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
+  write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_kayl_arrives_scx(221));
+  write_bytes(temp.root() / "MESHES" / "DECORS" / "GRID.3DO", make_minimal_3do());
+}
+
+void write_possession_cycle_fixtures(const TempDirectory& temp) {
+  Buffer script;
+  script.u8(0x38).u16(310);
+  script.u8(0x2E).u16(221).u16(0);
+  script.u8(0x38).u16(136);
+  script.u8(0x2E).u16(221).u16(0);
+  script.u8(0x38).u16(310);
+  script.u8(0x38).u16(310).u8(0x03);
+  std::vector<std::byte> area{make_area_archive()};
+  std::memcpy(area.data() + 0x800U + 0x3FCU, script.data().data(), script.data().size());
+
+  write_bytes(temp.root() / "IAM" / "START", make_start());
+  write_bytes(temp.root() / "IAM" / "GLOBAL", App::Tests::make_empty_iam_global());
+  write_bytes(temp.root() / "IAM" / "AREA", area);
+  write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
+  write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_kayl_arrives_scx(221));
+  write_bytes(temp.root() / "MESHES" / "DECORS" / "GRID.3DO", make_minimal_3do());
+}
+
+void write_activation_alias_fixtures(const TempDirectory& temp) {
+  Buffer script;
+  script.u8(0x38).u16(310);
+  script.u8(0x2E).u16(221).u16(0);
+  script.u8(0x38).u16(136);
+  script.u8(0x2E).u16(221).u16(0);
+  script.u8(0x4F).u16(310);
+  script.u8(0x2E).u16(221).u16(0);
+  script.u8(0x4E).u16(310).u16(0).u8(0x03);
+  std::vector<std::byte> area{make_area_archive()};
+  std::memcpy(area.data() + 0x800U + 0x3FCU, script.data().data(), script.data().size());
+
+  write_bytes(temp.root() / "IAM" / "START", make_start());
+  write_bytes(temp.root() / "IAM" / "GLOBAL", App::Tests::make_empty_iam_global());
+  write_bytes(temp.root() / "IAM" / "AREA", area);
+  write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
+  write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_kayl_arrives_scx(221));
+  write_bytes(temp.root() / "SCPTDATA" / "B.SCX", make_minimal_scx());
+  write_bytes(temp.root() / "MESHES" / "DECORS" / "GRID.3DO", make_minimal_3do());
+}
+
+void write_explicitly_unbound_activation_fixtures(const TempDirectory& temp) {
+  Buffer script;
+  script.u8(0x38).u16(310);
+  script.u8(0x4E).u16(310).u16(0).u8(0x03);
+  std::vector<std::byte> area{make_area_archive()};
+  std::memcpy(area.data() + 0x800U + 0x3FCU, script.data().data(), script.data().size());
+  write_bytes(temp.root() / "IAM" / "START", make_start());
+  write_bytes(temp.root() / "IAM" / "GLOBAL", App::Tests::make_empty_iam_global());
+  write_bytes(temp.root() / "IAM" / "AREA", area);
+  write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
+  write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_minimal_scx());
+  write_bytes(temp.root() / "MESHES" / "DECORS" / "GRID.3DO", make_minimal_3do());
+}
+
 void write_character_value_fixtures(const TempDirectory& temp) {
   Buffer script;
   script.u8(0x38).u16(136);
@@ -1417,7 +1487,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK(controller.current_character_trigger_proxy()->synchronization_suspended);
   }
 
-  TEST_CASE("exact structured-child completion resumes ordinary service and proxy sync") {
+  TEST_CASE("exact structured-child completion defers ordinary service until a later dispatch") {
     const TempDirectory temp;
     write_structured_child_completion_fixtures(temp);
     const ScopedGameDataRoot root{temp.root()};
@@ -1442,6 +1512,8 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(controller.current_character_trigger_proxy().has_value());
     App::Character::RuntimeCharacter* character{runtime->character_runtime().find(136)};
     REQUIRE(character != nullptr);
+    const App::Runtime::Vec3 frozen_position{
+        controller.current_character_trigger_proxy()->position};
     const auto* instance{runtime->script_runtime()->instance(
         runtime->script_runtime()->instances().front().instance_id)};
     REQUIRE(instance != nullptr);
@@ -1453,12 +1525,278 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     const auto tick_result{controller.tick(1.0F / 30.0F)};
     INFO(controller.last_error());
     REQUIRE(tick_result.has_value());
+    CHECK_EQ(character->ordinary_actor_service_generation, 0U);
+    CHECK_EQ(
+        controller.current_character_trigger_proxy()->last_consumed_actor_spatial_generation, 0U);
+    CHECK_EQ(controller.current_character_trigger_proxy()->position.x, frozen_position.x);
+
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
     CHECK_EQ(character->ordinary_actor_service_generation, 1U);
     CHECK_EQ(
         controller.current_character_trigger_proxy()->last_consumed_actor_spatial_generation, 1U);
-    const auto& proxy{*controller.current_character_trigger_proxy()};
-    CHECK_FALSE(proxy.synchronization_suspended);
-    CHECK(proxy.contact_ready);
+    CHECK(controller.current_character_trigger_proxy()->contact_ready);
+  }
+
+  TEST_CASE("chained structured children never expose an ordinary actor service gap") {
+    const TempDirectory temp;
+    write_chained_structured_child_fixtures(temp);
+    const ScopedGameDataRoot root{temp.root()};
+
+    App::ScenarioManager manager;
+    App::ScenarioStartupController controller;
+    REQUIRE(controller.initialize(manager).has_value());
+    App::ScenarioRuntime* runtime{manager.world_runtime(0)};
+    REQUIRE(runtime != nullptr);
+    runtime->character_runtime().set_model_loader(
+        [](const std::string_view name)
+            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
+          auto resource{std::make_shared<App::Character::ModelResource>()};
+          resource->name = name;
+          resource->groups.push_back(App::Omikron::MaterialGroup{});
+          return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
+        });
+
+    REQUIRE(controller.begin_tick(1.0F / 30.0F).has_value());
+    App::Character::RuntimeCharacter* character{runtime->character_runtime().find(136)};
+    REQUIRE(character != nullptr);
+    REQUIRE(controller.current_character_trigger_proxy().has_value());
+    const App::Runtime::Vec3 frozen_position{
+        controller.current_character_trigger_proxy()->position};
+    runtime->tick(1.0F / 30.0F);
+    REQUIRE(controller.finish_tick(1.0F / 30.0F).has_value());
+    CHECK_EQ(character->ordinary_actor_service_generation, 0U);
+    CHECK_EQ(controller.current_character_trigger_proxy()->position.x, frozen_position.x);
+
+    REQUIRE(controller.begin_tick(1.0F / 30.0F).has_value());
+    REQUIRE_EQ(runtime->script_runtime()->instances().size(), 2U);
+    runtime->tick(1.0F / 30.0F);
+    REQUIRE(controller.finish_tick(1.0F / 30.0F).has_value());
+    CHECK_EQ(character->ordinary_actor_service_generation, 0U);
+    CHECK_EQ(
+        controller.current_character_trigger_proxy()->last_consumed_actor_spatial_generation, 0U);
+
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+    CHECK_EQ(character->ordinary_actor_service_generation, 1U);
+    CHECK_EQ(
+        controller.current_character_trigger_proxy()->last_consumed_actor_spatial_generation, 1U);
+  }
+
+  TEST_CASE("session reset clears structured owner proxy references and pending actor phase") {
+    const TempDirectory temp;
+    write_structured_child_completion_fixtures(temp);
+    const ScopedGameDataRoot root{temp.root()};
+
+    App::ScenarioManager manager;
+    App::ScenarioStartupController controller;
+    REQUIRE(controller.initialize(manager).has_value());
+    App::ScenarioRuntime* runtime{manager.world_runtime(0)};
+    REQUIRE(runtime != nullptr);
+    runtime->character_runtime().set_model_loader(
+        [](const std::string_view name)
+            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
+          auto resource{std::make_shared<App::Character::ModelResource>()};
+          resource->name = name;
+          resource->groups.push_back(App::Omikron::MaterialGroup{});
+          return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
+        });
+
+    REQUIRE(controller.begin_tick(1.0F / 30.0F).has_value());
+    CHECK(controller.structured_character_owner_active());
+    CHECK(controller.actor_phase_pending());
+    CHECK(controller.current_character_trigger_proxy().has_value());
+    CHECK_GT(controller.character_reference_entry_count(), 0U);
+
+    controller.reset_session();
+    CHECK_FALSE(controller.structured_character_owner_active());
+    CHECK_FALSE(controller.actor_phase_pending());
+    CHECK_FALSE(controller.current_character_trigger_proxy().has_value());
+    CHECK_EQ(controller.character_reference_entry_count(), 0U);
+  }
+
+  TEST_CASE("structured owner follows BodyIdentity transfer and expires with script world") {
+    const TempDirectory temp;
+    write_structured_child_completion_fixtures(temp);
+    write_bytes(temp.root() / "SCPTDATA" / "B.SCX", make_minimal_scx());
+    write_bytes(temp.root() / "SCPTDATA" / "C.SCX", make_minimal_scx());
+    const ScopedGameDataRoot root{temp.root()};
+
+    App::ScenarioManager manager;
+    App::ScenarioStartupController controller;
+    REQUIRE(controller.initialize(manager).has_value());
+    REQUIRE(manager.load_world_context(2U, std::nullopt, "SCPTDATA/B.SCX").has_value());
+    App::ScenarioRuntime* source{manager.world_runtime(0U)};
+    App::ScenarioRuntime* destination{manager.world_runtime(2U)};
+    REQUIRE(source != nullptr);
+    REQUIRE(destination != nullptr);
+    source->character_runtime().set_model_loader(
+        [](const std::string_view name)
+            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
+          auto resource{std::make_shared<App::Character::ModelResource>()};
+          resource->name = name;
+          resource->groups.push_back(App::Omikron::MaterialGroup{});
+          return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
+        });
+
+    REQUIRE(controller.begin_tick(1.0F / 30.0F).has_value());
+    REQUIRE(manager.controlled_character().has_value());
+    const App::Character::BodyIdentity body_identity{manager.controlled_character()->body_identity};
+    REQUIRE(manager.transfer_controlled_character(0U, 2U).has_value());
+    CHECK(controller.structured_character_owner_active());
+    REQUIRE(controller.finish_tick(1.0F / 30.0F).has_value());
+    App::Character::RuntimeCharacter* body{
+        destination->character_runtime().find_body(body_identity)};
+    REQUIRE(body != nullptr);
+    CHECK_EQ(body->ordinary_actor_service_generation, 0U);
+    CHECK(controller.structured_character_owner_active());
+
+    REQUIRE(controller.begin_tick(1.0F / 30.0F).has_value());
+    REQUIRE(manager.deactivate_world_context(0U).has_value());
+    REQUIRE(manager.unload_world_context(0U).has_value());
+    REQUIRE(manager.load_world_context(3U, std::nullopt, "SCPTDATA/C.SCX").has_value());
+    REQUIRE(controller.finish_tick(1.0F / 30.0F).has_value());
+    CHECK_FALSE(controller.structured_character_owner_active());
+    CHECK_EQ(body->ordinary_actor_service_generation, 1U);
+  }
+
+  TEST_CASE("0x38 possession cycles preserve exact bodies and mutable state") {
+    const TempDirectory temp;
+    write_possession_cycle_fixtures(temp);
+    const ScopedGameDataRoot root{temp.root()};
+
+    App::ScenarioManager manager;
+    App::ScenarioStartupController controller;
+    REQUIRE(controller.initialize(manager).has_value());
+    App::ScenarioRuntime* runtime{manager.world_runtime(0)};
+    REQUIRE(runtime != nullptr);
+    std::size_t model_loads{0};
+    runtime->character_runtime().set_model_loader(
+        [&model_loads](const std::string_view name)
+            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
+          ++model_loads;
+          auto resource{std::make_shared<App::Character::ModelResource>()};
+          resource->name = name;
+          resource->groups.push_back(App::Omikron::MaterialGroup{});
+          return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
+        });
+
+    REQUIRE(controller.begin_tick(1.0F / 30.0F).has_value());
+    App::Character::RuntimeCharacter* body_a{runtime->character_runtime().find(310)};
+    REQUIRE(body_a != nullptr);
+    const App::Character::BodyIdentity identity_a{body_a->body_identity};
+    body_a->transform.translation.x = 111.0F;
+    body_a->pose_revision = 21U;
+    const auto resource_a{body_a->model_resource};
+    runtime->tick(1.0F / 30.0F);
+    REQUIRE(controller.finish_tick(1.0F / 30.0F).has_value());
+
+    REQUIRE(controller.begin_tick(1.0F / 30.0F).has_value());
+    App::Character::RuntimeCharacter* body_b{runtime->character_runtime().find(136)};
+    REQUIRE(body_b != nullptr);
+    const App::Character::BodyIdentity identity_b{body_b->body_identity};
+    body_b->transform.translation.x = 222.0F;
+    body_b->pose_revision = 31U;
+    const auto resource_b{body_b->model_resource};
+    REQUIRE(manager.controlled_character().has_value());
+    CHECK_EQ(manager.controlled_character()->body_identity, identity_b);
+    runtime->tick(1.0F / 30.0F);
+    REQUIRE(controller.finish_tick(1.0F / 30.0F).has_value());
+
+    const auto reverse_selection{controller.tick(1.0F / 30.0F)};
+    INFO(controller.last_error());
+    REQUIRE(reverse_selection.has_value());
+    REQUIRE(manager.controlled_character().has_value());
+    CHECK_EQ(manager.controlled_character()->body_identity, identity_a);
+    REQUIRE_EQ(runtime->character_runtime().characters().size(), 2U);
+    body_a = runtime->character_runtime().find_body(identity_a);
+    body_b = runtime->character_runtime().find_body(identity_b);
+    REQUIRE(body_a != nullptr);
+    REQUIRE(body_b != nullptr);
+    CHECK_EQ(body_a->transform.translation.x, 111.0F);
+    CHECK_EQ(body_b->transform.translation.x, 222.0F);
+    CHECK_EQ(body_a->pose_revision, 21U);
+    CHECK_EQ(body_b->pose_revision, 31U);
+    CHECK(body_a->model_resource == resource_a);
+    CHECK(body_b->model_resource == resource_b);
+    CHECK_NE(identity_a, identity_b);
+    CHECK_EQ(model_loads, 1U);
+  }
+
+  TEST_CASE("activation and deactivation aliases operate on resolved BodyIdentity") {
+    const TempDirectory temp;
+    write_activation_alias_fixtures(temp);
+    const ScopedGameDataRoot root{temp.root()};
+
+    App::ScenarioManager manager;
+    App::ScenarioStartupController controller;
+    REQUIRE(controller.initialize(manager).has_value());
+    App::ScenarioRuntime* runtime{manager.world_runtime(0)};
+    REQUIRE(runtime != nullptr);
+    REQUIRE(manager.load_world_context(2U, std::nullopt, "SCPTDATA/B.SCX").has_value());
+    App::ScenarioRuntime* const other_runtime{manager.world_runtime(2U)};
+    REQUIRE(other_runtime != nullptr);
+    runtime->character_runtime().set_model_loader(
+        [](const std::string_view name)
+            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
+          auto resource{std::make_shared<App::Character::ModelResource>()};
+          resource->name = name;
+          resource->groups.push_back(App::Omikron::MaterialGroup{});
+          return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
+        });
+
+    REQUIRE(controller.begin_tick(1.0F / 30.0F).has_value());
+    App::Character::RuntimeCharacter* aliased_body{runtime->character_runtime().find(310)};
+    REQUIRE(aliased_body != nullptr);
+    const App::Character::BodyIdentity body_identity{aliased_body->body_identity};
+    runtime->tick(1.0F / 30.0F);
+    REQUIRE(controller.finish_tick(1.0F / 30.0F).has_value());
+    REQUIRE(controller.begin_tick(1.0F / 30.0F).has_value());
+    runtime->tick(1.0F / 30.0F);
+    REQUIRE(controller.finish_tick(1.0F / 30.0F).has_value());
+
+    aliased_body = runtime->character_runtime().find_body(body_identity);
+    REQUIRE(aliased_body != nullptr);
+    aliased_body->character_id = 999;
+    REQUIRE(runtime->character_runtime()
+            .transfer_body_to(other_runtime->character_runtime(), body_identity)
+            .has_value());
+    aliased_body = other_runtime->character_runtime().find_body(body_identity);
+    REQUIRE(aliased_body != nullptr);
+    REQUIRE(controller.begin_tick(1.0F / 30.0F).has_value());
+    CHECK(runtime->character_runtime().find(310) == nullptr);
+    CHECK_FALSE(aliased_body->active);
+    CHECK_FALSE(aliased_body->area_present);
+    runtime->tick(1.0F / 30.0F);
+    REQUIRE(controller.finish_tick(1.0F / 30.0F).has_value());
+
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+    CHECK(aliased_body->active);
+    CHECK(aliased_body->area_present);
+    CHECK_EQ(aliased_body->body_identity, body_identity);
+  }
+
+  TEST_CASE("activation does not rematerialize an explicitly-unbound placement") {
+    const TempDirectory temp;
+    write_explicitly_unbound_activation_fixtures(temp);
+    const ScopedGameDataRoot root{temp.root()};
+    App::ScenarioManager manager;
+    App::ScenarioStartupController controller;
+    REQUIRE(controller.initialize(manager).has_value());
+    App::ScenarioRuntime* runtime{manager.world_runtime(0)};
+    REQUIRE(runtime != nullptr);
+    runtime->character_runtime().set_model_loader(
+        [](const std::string_view name)
+            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
+          auto resource{std::make_shared<App::Character::ModelResource>()};
+          resource->name = name;
+          resource->groups.push_back(App::Omikron::MaterialGroup{});
+          return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
+        });
+
+    const auto result{controller.tick()};
+    REQUIRE_FALSE(result.has_value());
+    CHECK(result.error().find("without a materializable body") != std::string::npos);
+    REQUIRE_EQ(runtime->character_runtime().characters().size(), 1U);
+    CHECK_EQ(runtime->character_runtime().characters().front().character_id, 310);
   }
 
   TEST_CASE("ordinary actor service advances generation before proxy synchronization") {
@@ -1610,7 +1948,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(controller.tick(1.0F / 30.0F).has_value());
     CHECK(controller.current_character_trigger_proxy()->synchronization_suspended);
     CHECK_EQ(controller.current_character_trigger_proxy()->suspension_reason,
-        "current-character structured script active");
+        "ordinary actor service not yet consumed");
     CHECK_FALSE(controller.current_character_trigger_proxy()->contact_ready);
     CHECK_EQ(controller.zone_contact_count(), 0U);
     CHECK_EQ(character->ctl_controller->current_progress(), ctl_progress_before);
@@ -1926,11 +2264,17 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK_EQ(controller.current_character_trigger_proxy()->position.x, frozen_position.x);
     CHECK(controller.current_character_trigger_proxy()->synchronization_suspended);
 
-    // The child completes in the later world-runtime stage. There is no
-    // same-update proxy callback; the following ordinary scenario tick catches up.
+    // Native state 4 consumes exact-child completion, clears ownership and
+    // returns without ordinary actor service or spatial publication.
     destination_runtime->tick(1.0F / 30.0F);
     CHECK(instance->completed);
     CHECK_EQ(controller.current_character_trigger_proxy()->position.x, frozen_position.x);
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+    CHECK(controller.current_character_trigger_proxy()->synchronization_suspended);
+    CHECK_EQ(controller.current_character_trigger_proxy()->position.x, frozen_position.x);
+
+    // A later dispatch that begins without state-4 ownership may service the
+    // ordinary actor and publish its current logical position.
     REQUIRE(controller.tick(1.0F / 30.0F).has_value());
     CHECK_FALSE(controller.current_character_trigger_proxy()->synchronization_suspended);
     CHECK_EQ(controller.current_character_trigger_proxy()->position.x,
