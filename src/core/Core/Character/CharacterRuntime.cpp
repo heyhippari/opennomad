@@ -551,6 +551,7 @@ std::expected<void, std::string> Runtime::place_body_at_address(
   character->set_principal_orientation(App::Runtime::Vec3{
       .x = 0.0F, .y = static_cast<float>(character->runtime_orientation_degrees), .z = 0.0F});
   character->transform.scale = App::Runtime::Vec3{.x = 1.0F, .y = 1.0F, .z = 1.0F};
+  PhysicalMotionService::synchronize(*character);
   character->pose_revision += 1U;
   return {};
 }
@@ -631,6 +632,7 @@ std::expected<MaterializedCharacterResult, std::string> Runtime::materialize_cha
     character->set_principal_orientation(App::Runtime::Vec3{
         .x = 0.0F, .y = static_cast<float>(character->runtime_orientation_degrees), .z = 0.0F});
     character->transform.scale = App::Runtime::Vec3{.x = 1.0F, .y = 1.0F, .z = 1.0F};
+    PhysicalMotionService::synchronize(*character);
   }
   character->runtime_objects = character->model_resource->model.runtime_objects;
   character->object_poses.assign(character->runtime_objects.size(), BodyAnimationObjectPose{});

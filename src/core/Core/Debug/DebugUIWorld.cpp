@@ -412,6 +412,17 @@ void DebugUI::show_world_inspector() {
       ImGui::Text("Loaded: %s", character.loaded ? "yes" : "no");
       ImGui::Text("Renderable: %s", character.renderable ? "yes" : "no");
       ImGui::Text("Pose owner: %s", character.pose_owner.c_str());
+      ImGui::SeparatorText("Physical Motion");
+      ImGui::Text("Physical candidate XYZ: %.3f, %.3f, %.3f",
+          static_cast<double>(character.physical_candidate_translation.at(0)),
+          static_cast<double>(character.physical_candidate_translation.at(1)),
+          static_cast<double>(character.physical_candidate_translation.at(2)));
+      ImGui::Text("Physical accepted XYZ: %.3f, %.3f, %.3f",
+          static_cast<double>(character.physical_accepted_translation.at(0)),
+          static_cast<double>(character.physical_accepted_translation.at(1)),
+          static_cast<double>(character.physical_accepted_translation.at(2)));
+      ImGui::Text(
+          "Physical state initialized: %s", character.physical_state_initialized ? "yes" : "no");
       if (character.has_controller) {
         ImGui::SeparatorText("CTL Controller");
         ImGui::Text("Control set: %s", character.ctl_control_set.c_str());
@@ -436,14 +447,6 @@ void DebugUI::show_world_inspector() {
         ImGui::Text("Same-state restarts: %u, markers fired: %zu",
             character.ctl_restart_count,
             character.ctl_markers_fired);
-        ImGui::Text("Candidate XYZ: %.3f, %.3f, %.3f",
-            static_cast<double>(character.ctl_candidate_translation.at(0)),
-            static_cast<double>(character.ctl_candidate_translation.at(1)),
-            static_cast<double>(character.ctl_candidate_translation.at(2)));
-        ImGui::Text("Accepted XYZ: %.3f, %.3f, %.3f",
-            static_cast<double>(character.ctl_accepted_translation.at(0)),
-            static_cast<double>(character.ctl_accepted_translation.at(1)),
-            static_cast<double>(character.ctl_accepted_translation.at(2)));
       }
       ImGui::Text("Model groups: %zu", character.model_group_count);
       ImGui::Text("Runtime bounds: center %.3f, %.3f, %.3f radius %.3f",

@@ -56,6 +56,11 @@ add_executable(CharacterRuntimeTest CharacterRuntime.spec.cpp $<TARGET_OBJECTS:T
 add_test(NAME CharacterRuntimeTest COMMAND CharacterRuntimeTest)
 target_link_libraries(CharacterRuntimeTest PRIVATE doctest::doctest Core)
 
+add_executable(PhysicalMotionServiceTest
+  PhysicalMotionService.spec.cpp $<TARGET_OBJECTS:TestRunner>)
+add_test(NAME PhysicalMotionServiceTest COMMAND PhysicalMotionServiceTest)
+target_link_libraries(PhysicalMotionServiceTest PRIVATE doctest::doctest Core)
+
 add_executable(CharacterReferenceRuntimeTest
   CharacterReferenceRuntime.spec.cpp $<TARGET_OBJECTS:TestRunner>)
 add_test(NAME CharacterReferenceRuntimeTest COMMAND CharacterReferenceRuntimeTest)

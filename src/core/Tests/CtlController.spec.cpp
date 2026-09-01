@@ -313,8 +313,6 @@ App::Character::RuntimeCharacter make_character() {
   return character;
 }
 
-constexpr float K_TICK{1.0F / 30.0F};
-
 /// Default move 100: state 1 (default, persistent, key STAND) transitions on
 /// forward input 0x4 to state 2 (key MOVE, end-family goto back to 1).
 std::shared_ptr<const App::Omikron::CtlControlSet> make_simple_bank(
@@ -445,7 +443,7 @@ TEST_SUITE("Core::Character::CtlController") {
     REQUIRE(created.has_value());
     App::Character::RuntimeCharacter character{make_character()};
 
-    created->service(K_TICK, 0x4U, character);
+    created->service_tick(0x4U, character);
     CHECK_EQ(created->current_input(), 0x4U);
     CHECK_EQ(created->input_history().size(), 2U);
     // Recovered order: oldest at [0], newest at [count-1]
@@ -453,14 +451,14 @@ TEST_SUITE("Core::Character::CtlController") {
     CHECK_EQ(created->input_history()[1], 0x4U);
 
     // Holding the same mask does not append.
-    created->service(K_TICK, 0x4U, character);
+    created->service_tick(0x4U, character);
     CHECK_EQ(created->input_history().size(), 2U);
-    created->service(K_TICK, 0x0U, character);
+    created->service_tick(0x0U, character);
     CHECK_EQ(created->current_input(), App::Character::K_CTL_NO_INPUT);
     CHECK_EQ(created->input_history().size(), 3U);
 
     for (std::uint32_t tick{0}; tick < 20U; ++tick) {
-      created->service(K_TICK, tick % 2U == 0U ? 0x1U : 0x2U, character);
+      created->service_tick(tick % 2U == 0U ? 0x1U : 0x2U, character);
     }
     CHECK_EQ(created->input_history().size(), 16U);
   }
@@ -472,15 +470,15 @@ TEST_SUITE("Core::Character::CtlController") {
     App::Character::RuntimeCharacter character{make_character()};
 
     created->add_input_suppression(0x4U);
-    created->service(K_TICK, 0x4U, character);
+    created->service_tick(0x4U, character);
     // The forward bit is suppressed; canonical input is the no-input sentinel.
     CHECK_EQ(created->current_input(), App::Character::K_CTL_NO_INPUT);
     CHECK_EQ(created->current_state()->state_id, 1U);  // no forward transition
     CHECK_EQ(created->suppression_count(), 1U);
     // When the mask no longer matches, the entry is removed.
-    created->service(K_TICK, 0x0U, character);
+    created->service_tick(0x0U, character);
     CHECK_EQ(created->suppression_count(), 0U);
-    created->service(K_TICK, 0x4U, character);
+    created->service_tick(0x4U, character);
     CHECK_EQ(created->current_input(), 0x4U);
     CHECK_EQ(created->current_state()->state_id, 2U);
   }
@@ -491,9 +489,9 @@ TEST_SUITE("Core::Character::CtlController") {
     REQUIRE(created.has_value());
     App::Character::RuntimeCharacter character{make_character()};
     created->set_swap_turn_slots(true);
-    created->service(K_TICK, 0x1U, character);
+    created->service_tick(0x1U, character);
     CHECK_EQ(created->current_input(), 0x2U);
-    created->service(K_TICK, 0x2U, character);
+    created->service_tick(0x2U, character);
     CHECK_EQ(created->current_input(), 0x1U);
   }
 
@@ -506,26 +504,26 @@ TEST_SUITE("Core::Character::CtlController") {
 
     // Tick 1: phase 1 -> 2 reaches the animation end with no transition, so
     // the persistent state re-enters itself at phase 1.
-    created->service(K_TICK, 0x0U, character);
+    created->service_tick(0x0U, character);
     CHECK_EQ(created->current_state()->state_id, 1U);
     CHECK(created->current_progress() == doctest::Approx(1.0F));
     CHECK_EQ(created->same_state_restart_count(), 1U);
-    created->service(K_TICK, 0x0U, character);
+    created->service_tick(0x0U, character);
     CHECK_EQ(created->same_state_restart_count(), 2U);
 
     // Direct player control forces the restart count to zero.
     created->set_player_direct_control(true);
-    created->service(K_TICK, 0x0U, character);
-    created->service(K_TICK, 0x0U, character);
+    created->service_tick(0x0U, character);
+    created->service_tick(0x0U, character);
     CHECK_EQ(created->same_state_restart_count(), 0U);
     created->set_player_direct_control(false);
 
     // Forward input transitions 1 -> 2 immediately; state 2's animation ends
     // after one tick and the end/goto family follows its goto back to state 1
     // seeded with the authored transition value.
-    created->service(K_TICK, 0x4U, character);
+    created->service_tick(0x4U, character);
     CHECK_EQ(created->current_state()->state_id, 2U);
-    created->service(K_TICK, 0x0U, character);
+    created->service_tick(0x0U, character);
     CHECK_EQ(created->current_state()->state_id, 1U);
     CHECK(created->current_progress() == doctest::Approx(1.0F));
   }
@@ -651,19 +649,19 @@ TEST_SUITE("Core::Character::CtlController") {
     App::Character::RuntimeCharacter character{make_character()};
 
     // Selection stores the pending candidate with tick count 1.
-    created->service(K_TICK, 0x4U, character);
+    created->service_tick(0x4U, character);
     CHECK_EQ(created->current_state()->state_id, 1U);
     REQUIRE(created->transition_pending());
     CHECK_EQ(created->pending_ticks(), 1U);
 
     // No transition while the counter stays at or below defer_ticks.
-    created->service(K_TICK, 0x4U, character);
+    created->service_tick(0x4U, character);
     CHECK_EQ(created->current_state()->state_id, 1U);
-    created->service(K_TICK, 0x4U, character);
+    created->service_tick(0x4U, character);
     CHECK_EQ(created->current_state()->state_id, 1U);
 
     // Counter 4 > 3: the transition fires and pending state clears.
-    created->service(K_TICK, 0x4U, character);
+    created->service_tick(0x4U, character);
     CHECK_EQ(created->current_state()->state_id, 2U);
     CHECK_FALSE(created->transition_pending());
   }
@@ -677,22 +675,29 @@ TEST_SUITE("Core::Character::CtlController") {
     REQUIRE(created.has_value());
     App::Character::RuntimeCharacter character{make_character()};
     character.transform.translation = {.x = 100.0F, .y = 0.0F, .z = 200.0F};
+    App::Character::PhysicalMotionService::synchronize(character);
 
-    created->service(K_TICK, 0x0U, character);
+    created->service_tick(0x0U, character);
     // One 30 Hz logical tick advanced one phase and one interval of motion.
-    CHECK(character.transform.translation.x == doctest::Approx(100.0F));
+    CHECK(character.physical_motion.candidate_translation.x == doctest::Approx(100.0F));
+    CHECK(character.physical_motion.candidate_translation.z == doctest::Approx(210.0F));
+    CHECK(character.physical_motion.accepted_translation.z == doctest::Approx(200.0F));
+    CHECK(character.transform.translation.z == doctest::Approx(200.0F));
+    App::Character::PhysicalMotionService::resolve_tick(character);
     CHECK(character.transform.translation.z == doctest::Approx(210.0F));
     CHECK(created->current_progress() == doctest::Approx(2.0F));
 
     // Non-axis-aligned yaw rotates subsequent root motion.
     character.set_principal_orientation({.x = 0.0F, .y = 30.0F, .z = 0.0F});
-    created->service(K_TICK, 0x0U, character);
+    created->service_tick(0x0U, character);
     const App::Runtime::Vec3 expected{App::Runtime::transform_vector(
         App::Runtime::Vec3{.x = 0.0F, .y = 0.0F, .z = 10.0F}, character.live_root_orientation())};
-    CHECK(character.transform.translation.x == doctest::Approx(100.0F + expected.x));
-    CHECK(character.transform.translation.y == doctest::Approx(expected.y));
-    CHECK(character.transform.translation.z == doctest::Approx(210.0F + expected.z));
-    CHECK_FALSE(character.transform.translation.z == doctest::Approx(220.0F));
+    CHECK(
+        character.physical_motion.candidate_translation.x == doctest::Approx(100.0F + expected.x));
+    CHECK(character.physical_motion.candidate_translation.y == doctest::Approx(expected.y));
+    CHECK(
+        character.physical_motion.candidate_translation.z == doctest::Approx(210.0F + expected.z));
+    CHECK_FALSE(character.physical_motion.candidate_translation.z == doctest::Approx(220.0F));
   }
 
   TEST_CASE("lateral root motion rotates through a non-axis-aligned yaw") {
@@ -703,15 +708,16 @@ TEST_SUITE("Core::Character::CtlController") {
     REQUIRE(created.has_value());
     App::Character::RuntimeCharacter character{make_character()};
     character.set_principal_orientation({.x = 0.0F, .y = 45.0F, .z = 0.0F});
+    App::Character::PhysicalMotionService::synchronize(character);
 
-    created->service(K_TICK, 0x0U, character);
+    created->service_tick(0x0U, character);
     const App::Runtime::Vec3 expected{App::Runtime::transform_vector(
         App::Runtime::Vec3{.x = -5.0F, .y = 0.0F, .z = 0.0F}, character.live_root_orientation())};
     // The displacement must not be a fixed world-axis step.
-    CHECK(character.transform.translation.x == doctest::Approx(expected.x));
-    CHECK(character.transform.translation.z == doctest::Approx(expected.z));
-    CHECK_FALSE(character.transform.translation.x == doctest::Approx(-5.0F));
-    CHECK_FALSE(character.transform.translation.z == doctest::Approx(0.0F));
+    CHECK(character.physical_motion.candidate_translation.x == doctest::Approx(expected.x));
+    CHECK(character.physical_motion.candidate_translation.z == doctest::Approx(expected.z));
+    CHECK_FALSE(character.physical_motion.candidate_translation.x == doctest::Approx(-5.0F));
+    CHECK_FALSE(character.physical_motion.candidate_translation.z == doctest::Approx(0.0F));
   }
 
   TEST_CASE("transient helpers: one-shot orientation consumes input without becoming current") {
@@ -738,18 +744,18 @@ TEST_SUITE("Core::Character::CtlController") {
 
     // Turn-left style helper: the authored +25 degree yaw delta wraps 375 -> 15.
     // The helper never becomes the logical current state.
-    created->service(K_TICK, 0x1U, character);
+    created->service_tick(0x1U, character);
     CHECK_EQ(created->current_state()->state_id, 1U);
     CHECK(character.principal_orientation_degrees.y == doctest::Approx(15.0F));
 
     // A negative authored delta: 15 - 60 wraps to -45.
-    created->service(K_TICK, 0x8U, character);
+    created->service_tick(0x8U, character);
     CHECK_EQ(created->current_state()->state_id, 1U);
     CHECK(character.principal_orientation_degrees.y == doctest::Approx(-45.0F));
 
     // Helpers re-fire per tick while their condition matches (authored banks
     // use the 0x40000000 suppression producer when retriggering is unwanted).
-    created->service(K_TICK, 0x8U, character);
+    created->service_tick(0x8U, character);
     CHECK(character.principal_orientation_degrees.y == doctest::Approx(-105.0F));
   }
 
@@ -769,14 +775,15 @@ TEST_SUITE("Core::Character::CtlController") {
     REQUIRE(created.has_value());
     App::Character::RuntimeCharacter character{make_character()};
     character.set_principal_orientation({.x = 0.0F, .y = 30.0F, .z = 0.0F});
+    App::Character::PhysicalMotionService::synchronize(character);
 
     // Local +Z 30 transforms through the live orientation; no state change.
-    created->service(K_TICK, 0x2U, character);
+    created->service_tick(0x2U, character);
     CHECK_EQ(created->current_state()->state_id, 1U);
     const App::Runtime::Vec3 expected{App::Runtime::transform_vector(
         App::Runtime::Vec3{.x = 0.0F, .y = 0.0F, .z = 30.0F}, character.live_root_orientation())};
-    CHECK(character.transform.translation.x == doctest::Approx(expected.x));
-    CHECK(character.transform.translation.z == doctest::Approx(expected.z));
+    CHECK(character.physical_motion.candidate_translation.x == doctest::Approx(expected.x));
+    CHECK(character.physical_motion.candidate_translation.z == doctest::Approx(expected.z));
   }
 
   TEST_CASE("MDWALK snapshots the restart count; direct control keeps zero") {
@@ -797,7 +804,7 @@ TEST_SUITE("Core::Character::CtlController") {
     CHECK_EQ(created->walk_restart_snapshot(), 0U);
 
     for (std::uint32_t tick{0}; tick < 5U; ++tick) {
-      created->service(K_TICK, 0x0U, character);
+      created->service_tick(0x0U, character);
     }
     // Each end-of-animation re-entry increments then snapshots the count.
     CHECK(created->same_state_restart_count() > 0U);
@@ -807,8 +814,8 @@ TEST_SUITE("Core::Character::CtlController") {
     // Under direct player control the restart count stays zero and so do the
     // autonomous snapshots.
     created->set_player_direct_control(true);
-    created->service(K_TICK, 0x0U, character);
-    created->service(K_TICK, 0x0U, character);
+    created->service_tick(0x0U, character);
+    created->service_tick(0x0U, character);
     CHECK_EQ(created->same_state_restart_count(), 0U);
     CHECK_EQ(created->walk_restart_snapshot(), 0U);
   }
@@ -843,13 +850,13 @@ TEST_SUITE("Core::Character::CtlController") {
 
     // 40 one-frame executions: the run snapshot exceeds the recovered limit.
     for (std::uint32_t tick{0}; tick < 40U; ++tick) {
-      created->service(K_TICK, 0x0U, character);
+      created->service_tick(0x0U, character);
     }
     CHECK(created->run_restart_snapshot() > 30U);
 
     // The deferred MDSTOPR callback switches to move 164 and resets the
     // snapshot; it never generates movement itself.
-    created->service(K_TICK, 0x4U, character);
+    created->service_tick(0x4U, character);
     CHECK_EQ(created->current_move()->move_id, 164U);
     CHECK_EQ(created->current_state()->state_id, 1641U);
     CHECK_EQ(created->run_restart_snapshot(), 0U);
@@ -884,7 +891,7 @@ TEST_SUITE("Core::Character::CtlController") {
       character.adventure_mode = 1;
       created->set_player_direct_control(true);
       for (std::uint32_t tick{0}; tick < 30U; ++tick) {
-        created->service(K_TICK, 0x0U, character);
+        created->service_tick(0x0U, character);
       }
       CHECK_EQ(created->current_move()->move_id, 1U);
     }
@@ -896,7 +903,7 @@ TEST_SUITE("Core::Character::CtlController") {
       App::Character::RuntimeCharacter character{make_character()};
       character.adventure_mode = 1;
       for (std::uint32_t tick{0}; tick < 12U; ++tick) {
-        created->service(K_TICK, 0x0U, character);
+        created->service_tick(0x0U, character);
       }
       CHECK_EQ(created->current_move()->move_id, 43U);
       CHECK_EQ(created->run_restart_snapshot(), 0U);
@@ -906,7 +913,7 @@ TEST_SUITE("Core::Character::CtlController") {
       // alternation selects the long wait this time.
       REQUIRE(created->select_move(1).has_value());
       for (std::uint32_t tick{0}; tick < 12U; ++tick) {
-        created->service(K_TICK, 0x0U, character);
+        created->service_tick(0x0U, character);
       }
       CHECK_EQ(created->current_move()->move_id, 44U);
     }
@@ -931,14 +938,16 @@ TEST_SUITE("Core::Character::CtlController") {
     character.set_principal_orientation({.x = 45.0F, .y = 90.0F, .z = 30.0F});
 
     // MDROT000: transient flag set; the actor orientation is NOT rotated.
-    created->service(K_TICK, 0x0U, character);
+    created->service_tick(0x0U, character);
     CHECK(character.suppress_automatic_movement_heading);
     CHECK(character.principal_orientation_degrees.x == doctest::Approx(45.0F));
+    App::Character::PhysicalMotionService::resolve_tick(character);
+    CHECK_FALSE(character.suppress_automatic_movement_heading);
     CHECK(character.principal_orientation_degrees.y == doctest::Approx(90.0F));
 
     // RSTAVNT: adventure mode 1, pitch zeroed, yaw preserved, profile 0 with
     // a reseeded no-input history.
-    created->service(K_TICK, 0x4U, character);
+    created->service_tick(0x4U, character);
     CHECK_EQ(created->current_state()->state_id, 2U);
     CHECK_EQ(character.adventure_mode, 1);
     CHECK(character.principal_orientation_degrees.x == doctest::Approx(0.0F));
@@ -964,22 +973,22 @@ TEST_SUITE("Core::Character::CtlController") {
     App::Character::RuntimeCharacter character{make_character()};
 
     // 1 -> 2: no crossing. 2 -> 3: fires once. 3 -> 4: no second fire.
-    created->service(K_TICK, 0x0U, character);
+    created->service_tick(0x0U, character);
     CHECK(created->take_sound_marker_events().empty());
-    created->service(K_TICK, 0x0U, character);
+    created->service_tick(0x0U, character);
     auto events{created->take_sound_marker_events()};
     REQUIRE_EQ(events.size(), 1U);
     CHECK_EQ(events[0].sound_hid, 777U);  // hID, never a table index
-    created->service(K_TICK, 0x0U, character);
+    created->service_tick(0x0U, character);
     CHECK(created->take_sound_marker_events().empty());
     CHECK_EQ(created->markers_fired_this_execution(), 1U);
 
     // End-of-animation re-entry makes the marker eligible again.
-    created->service(K_TICK, 0x0U, character);  // 4 -> 5, end, re-enter at 1
-    created->service(K_TICK, 0x0U, character);  // 1 -> 2
+    created->service_tick(0x0U, character);  // 4 -> 5, end, re-enter at 1
+    created->service_tick(0x0U, character);  // 1 -> 2
     CHECK(created->take_sound_marker_events().empty());
     CHECK_EQ(created->markers_fired_this_execution(), 0U);
-    created->service(K_TICK, 0x0U, character);  // 2 -> 3
+    created->service_tick(0x0U, character);  // 2 -> 3
     events = created->take_sound_marker_events();
     REQUIRE_EQ(events.size(), 1U);
   }
@@ -1002,7 +1011,7 @@ TEST_SUITE("Core::Character::CtlController") {
     CHECK_EQ(character.pose_revision, revision);
     CHECK(character.runtime_objects[0].local_offset.x == doctest::Approx(7.0F));
 
-    created->service(K_TICK, 0x0U, character);
+    created->service_tick(0x0U, character);
     // The current CTL state's authored animation now owns the base pose; the
     // stale scripted root residual is gone.
     CHECK(character.pose_owner == App::Character::PoseOwner::k_ctl_controller);
@@ -1034,7 +1043,7 @@ TEST_SUITE("Core::Character::CtlController") {
 
     // Unsupported segmented modes are diagnosed and treated as
     // transition-only: no misinterpretation of 6 as a loop count.
-    created->service(K_TICK, 0x0U, character);
+    created->service_tick(0x0U, character);
     CHECK_EQ(character.pose_revision, revision);
     CHECK(character.pose_owner == App::Character::PoseOwner::k_model_defaults);
   }
@@ -1048,7 +1057,7 @@ TEST_SUITE("Core::Character::CtlController") {
     auto created{App::Character::CtlController::create(make_bank(moves), "TEST")};
     REQUIRE(created.has_value());
     App::Character::RuntimeCharacter character{make_character()};
-    created->service(K_TICK, 0x0U, character);
+    created->service_tick(0x0U, character);
     CHECK_EQ(created->callback_queue_size(), 0U);
     CHECK_EQ(created->current_state()->state_id, 1U);
   }
@@ -1094,7 +1103,7 @@ TEST_SUITE("Core::Character::CtlController") {
 
     // Input 0x5 keeps masks 0x1/0x4 matching but expires the middle 0x2 mask.
     // The hole stays a hole; the later 0x4 entry does NOT move into it.
-    created->service(K_TICK, 0x5U, character);
+    created->service_tick(0x5U, character);
     CHECK_EQ(created->suppression_slots()[0], 0x1U);
     CHECK_EQ(created->suppression_slots()[1], 0x0U);
     CHECK_EQ(created->suppression_slots()[2], 0x4U);
@@ -1130,7 +1139,7 @@ TEST_SUITE("Core::Character::CtlController") {
 
     // Masks can be reinserted after the reset and work immediately.
     created->add_input_suppression(0x4U);
-    created->service(K_TICK, 0x4U, character);
+    created->service_tick(0x4U, character);
     CHECK_EQ(created->current_input(), App::Character::K_CTL_NO_INPUT);
     CHECK_EQ(created->current_state()->state_id, 1U);
   }
@@ -1157,7 +1166,7 @@ TEST_SUITE("Core::Character::CtlController") {
     // ends without an input change, so the goto enters state 2 with the
     // singleton history intact.
     REQUIRE_EQ(created->input_history().size(), 1U);
-    created->service(K_TICK, 0x0U, character);
+    created->service_tick(0x0U, character);
     CHECK_EQ(created->current_state()->state_id, 2U);
     // 0x00100000 on entry with a singleton: the sole entry is cleared and the
     // count becomes zero (only an empty history is a no-op).
@@ -1180,14 +1189,14 @@ TEST_SUITE("Core::Character::CtlController") {
     App::Character::RuntimeCharacter character{make_character()};
 
     // Build a 3-entry history: [NO_INPUT, 0x1, 0x2].
-    created->service(K_TICK, 0x1U, character);
-    created->service(K_TICK, 0x2U, character);
+    created->service_tick(0x1U, character);
+    created->service_tick(0x2U, character);
     REQUIRE_EQ(created->input_history().size(), 3U);
 
     // 0x00100000 on entry drops exactly the oldest entry. The 0x4 change is
     // recorded before the transition, so [NO_INPUT, 0x1, 0x2, 0x4] drops to
     // [0x1, 0x2, 0x4].
-    created->service(K_TICK, 0x4U, character);
+    created->service_tick(0x4U, character);
     CHECK_EQ(created->current_state()->state_id, 2U);
     CHECK_EQ(created->input_history().size(), 3U);
     CHECK_EQ(created->input_history()[0], 0x1U);
@@ -1196,10 +1205,10 @@ TEST_SUITE("Core::Character::CtlController") {
 
     // Rebuild, then 0x01000000 on entry RESETS to the no-input singleton.
     REQUIRE(created->select_move(1).has_value());
-    created->service(K_TICK, 0x1U, character);
-    created->service(K_TICK, 0x2U, character);
+    created->service_tick(0x1U, character);
+    created->service_tick(0x2U, character);
     REQUIRE_EQ(created->input_history().size(), 3U);
-    created->service(K_TICK, 0x8U, character);
+    created->service_tick(0x8U, character);
     CHECK_EQ(created->current_state()->state_id, 3U);
     CHECK_EQ(created->input_history().size(), 1U);
     CHECK_EQ(created->input_history()[0], App::Character::K_CTL_NO_INPUT);
@@ -1220,8 +1229,8 @@ TEST_SUITE("Core::Character::CtlController") {
     App::Character::RuntimeCharacter character{make_character()};
 
     // History [NO_INPUT, 0x1]; then the 0x4 change records before the switch.
-    created->service(K_TICK, 0x1U, character);
-    created->service(K_TICK, 0x4U, character);
+    created->service_tick(0x1U, character);
+    created->service_tick(0x4U, character);
     CHECK_EQ(created->current_state()->state_id, 2U);
     // 0x00400000 on exit drops exactly the oldest entry.
     CHECK_EQ(created->input_history().size(), 2U);
@@ -1240,8 +1249,8 @@ TEST_SUITE("Core::Character::CtlController") {
         }}};
     auto resetting{App::Character::CtlController::create(make_bank(reset_moves), "TEST")};
     REQUIRE(resetting.has_value());
-    resetting->service(K_TICK, 0x1U, character);
-    resetting->service(K_TICK, 0x4U, character);
+    resetting->service_tick(0x1U, character);
+    resetting->service_tick(0x4U, character);
     CHECK_EQ(resetting->input_history().size(), 1U);
     CHECK_EQ(resetting->input_history()[0], App::Character::K_CTL_NO_INPUT);
   }
@@ -1258,10 +1267,10 @@ TEST_SUITE("Core::Character::CtlController") {
 
     // Each tick records the new input, then the post-service flag drops the
     // oldest entry again: the history holds only the newest change.
-    created->service(K_TICK, 0x1U, character);
+    created->service_tick(0x1U, character);
     CHECK_EQ(created->input_history().size(), 1U);
     CHECK_EQ(created->input_history()[0], 0x1U);
-    created->service(K_TICK, 0x2U, character);
+    created->service_tick(0x2U, character);
     CHECK_EQ(created->input_history().size(), 1U);
     CHECK_EQ(created->input_history()[0], 0x2U);
   }
@@ -1279,13 +1288,13 @@ TEST_SUITE("Core::Character::CtlController") {
     REQUIRE(created.has_value());
     App::Character::RuntimeCharacter character{make_character()};
 
-    created->service(K_TICK, 0x4U, character);
+    created->service_tick(0x4U, character);
     CHECK_EQ(created->current_state()->state_id, 2U);
     // The entry mutation cleared the latch to 0 (not the no-input sentinel).
     CHECK_EQ(created->current_input(), 0x0U);
     CHECK_EQ(created->input_history().size(), 2U);
     // The same physical input is therefore recorded as a fresh change.
-    created->service(K_TICK, 0x4U, character);
+    created->service_tick(0x4U, character);
     CHECK_EQ(created->input_history().size(), 3U);
   }
 
@@ -1316,7 +1325,7 @@ TEST_SUITE("Core::Character::CtlController") {
     REQUIRE(created.has_value());
     App::Character::RuntimeCharacter character{make_character()};
 
-    created->service(K_TICK, 0x4U, character);
+    created->service_tick(0x4U, character);
     // The transparent node 2 chained to state 3: state 2 never became the
     // logical current state; its transition value seeded the phase.
     CHECK_EQ(created->current_state()->state_id, 3U);
@@ -1343,7 +1352,7 @@ TEST_SUITE("Core::Character::CtlController") {
         make_bank(cycle_moves, {{"STAND", make_3da(10)}}), "TEST")};
     REQUIRE(cycled.has_value());
     App::Character::RuntimeCharacter character{make_character()};
-    cycled->service(K_TICK, 0x4U, character);
+    cycled->service_tick(0x4U, character);
     // The cyclic chain was rejected: the previous logical state survives.
     CHECK_EQ(cycled->current_state()->state_id, 1U);
 
@@ -1361,7 +1370,7 @@ TEST_SUITE("Core::Character::CtlController") {
     auto null_target{App::Character::CtlController::create(
         make_bank(null_moves, {{"STAND", make_3da(10)}}), "TEST")};
     REQUIRE(null_target.has_value());
-    null_target->service(K_TICK, 0x4U, character);
+    null_target->service_tick(0x4U, character);
     CHECK_EQ(null_target->current_state()->state_id, 1U);
   }
 
@@ -1393,7 +1402,7 @@ TEST_SUITE("Core::Character::CtlController") {
     REQUIRE(created.has_value());
     App::Character::RuntimeCharacter character{make_character()};
 
-    created->service(K_TICK, 0x4U, character);
+    created->service_tick(0x4U, character);
     // Logical current is the keyless resident state; its presentation
     // animation comes from the first key-bearing state of its goto chain.
     CHECK_EQ(created->current_state()->state_id, 2U);
@@ -1403,13 +1412,13 @@ TEST_SUITE("Core::Character::CtlController") {
 
     // The resident state remains active for its transition_count lifetime of
     // 5 phase units (seeded at 1): ticks 2..4 stay, tick 5 follows the goto.
-    created->service(K_TICK, 0x0U, character);  // phase 2
+    created->service_tick(0x0U, character);  // phase 2
     CHECK_EQ(created->current_state()->state_id, 2U);
-    created->service(K_TICK, 0x0U, character);  // phase 3
+    created->service_tick(0x0U, character);  // phase 3
     CHECK_EQ(created->current_state()->state_id, 2U);
-    created->service(K_TICK, 0x0U, character);  // phase 4
+    created->service_tick(0x0U, character);  // phase 4
     CHECK_EQ(created->current_state()->state_id, 2U);
-    created->service(K_TICK, 0x0U, character);  // phase 5: lifetime ends
+    created->service_tick(0x0U, character);  // phase 5: lifetime ends
     CHECK_EQ(created->current_state()->state_id, 3U);
     CHECK(created->current_progress() == doctest::Approx(1.0F));
   }
@@ -1439,7 +1448,7 @@ TEST_SUITE("Core::Character::CtlController") {
     App::Character::RuntimeCharacter character{make_character()};
 
     // The transition fires on the interval [1, 2]: (2/10) * 20 + 2 = 6.
-    created->service(K_TICK, 0x4U, character);
+    created->service_tick(0x4U, character);
     CHECK_EQ(created->current_state()->state_id, 2U);
     CHECK(created->current_progress() == doctest::Approx(6.0F));
   }
@@ -1469,7 +1478,7 @@ TEST_SUITE("Core::Character::CtlController") {
     App::Character::RuntimeCharacter character{make_character()};
 
     // (2/10) * 20 + 30 = 34 >= 20 wraps: 34 - 20 + 1 = 15.
-    created->service(K_TICK, 0x4U, character);
+    created->service_tick(0x4U, character);
     CHECK_EQ(created->current_state()->state_id, 2U);
     CHECK(created->current_progress() == doctest::Approx(15.0F));
   }
@@ -1514,9 +1523,9 @@ TEST_SUITE("Core::Character::CtlController") {
     auto created{App::Character::CtlController::create(make_blend_bank(0x1U), "TEST")};
     REQUIRE(created.has_value());
     App::Character::RuntimeCharacter character{make_character()};
-    created->service(K_TICK, 0x4U, character);  // enter resident state 2
-    created->service(K_TICK, 0x0U, character);  // phase 2
-    created->service(K_TICK, 0x8U, character);  // phase 3, transition to 4
+    created->service_tick(0x4U, character);  // enter resident state 2
+    created->service_tick(0x0U, character);  // phase 2
+    created->service_tick(0x8U, character);  // phase 3, transition to 4
     CHECK_EQ(created->current_state()->state_id, 4U);
     CHECK_EQ(created->transition_blend_count(), 8U);
 
@@ -1525,9 +1534,9 @@ TEST_SUITE("Core::Character::CtlController") {
     auto inherited{
         App::Character::CtlController::create(make_blend_bank(0x1U | K_BLEND_INHERIT), "TEST")};
     REQUIRE(inherited.has_value());
-    inherited->service(K_TICK, 0x4U, character);
-    inherited->service(K_TICK, 0x0U, character);
-    inherited->service(K_TICK, 0x8U, character);
+    inherited->service_tick(0x4U, character);
+    inherited->service_tick(0x0U, character);
+    inherited->service_tick(0x8U, character);
     CHECK_EQ(inherited->current_state()->state_id, 4U);
     CHECK_EQ(inherited->transition_blend_count(), 10U);
   }
@@ -1550,7 +1559,7 @@ TEST_SUITE("Core::Character::CtlController") {
 
     // The helper enqueues and the per-tick drain dispatches within the same
     // service; the helper never becomes logical current.
-    created->service(K_TICK, 0x4U, character);
+    created->service_tick(0x4U, character);
     CHECK_EQ(created->current_state()->state_id, 1U);
     CHECK_EQ(created->callback_queue_size(), 0U);
     CHECK(character.suppress_automatic_movement_heading);
@@ -1576,16 +1585,17 @@ TEST_SUITE("Core::Character::CtlController") {
     auto created{App::Character::CtlController::create(make_bank(moves), "TEST")};
     REQUIRE(created.has_value());
     App::Character::RuntimeCharacter character{make_character()};
+    App::Character::PhysicalMotionService::synchronize(character);
 
     // Input 0x3: the orientation helper consumes 0x1, then the movement
     // helper consumes 0x2 — both against the same logical current state.
-    created->service(K_TICK, 0x3U, character);
+    created->service_tick(0x3U, character);
     CHECK_EQ(created->current_state()->state_id, 1U);
     CHECK(character.principal_orientation_degrees.y == doctest::Approx(25.0F));
     const App::Runtime::Vec3 expected{App::Runtime::transform_vector(
         App::Runtime::Vec3{.x = 0.0F, .y = 0.0F, .z = 30.0F}, character.live_root_orientation())};
-    CHECK(character.transform.translation.x == doctest::Approx(expected.x));
-    CHECK(character.transform.translation.z == doctest::Approx(expected.z));
+    CHECK(character.physical_motion.candidate_translation.x == doctest::Approx(expected.x));
+    CHECK(character.physical_motion.candidate_translation.z == doctest::Approx(expected.z));
   }
 
   TEST_CASE("suppression producer flag 0x40000000 feeds the sparse suppression set") {
@@ -1605,13 +1615,13 @@ TEST_SUITE("Core::Character::CtlController") {
     App::Character::RuntimeCharacter character{make_character()};
 
     // The helper fires once and inserts its input condition into the set.
-    created->service(K_TICK, 0x1U, character);
+    created->service_tick(0x1U, character);
     CHECK(character.principal_orientation_degrees.y == doctest::Approx(25.0F));
     CHECK_EQ(created->suppression_count(), 1U);
 
     // The next tick's suppression scan strips the held input before the
     // helper pass: the helper does not re-fire.
-    created->service(K_TICK, 0x1U, character);
+    created->service_tick(0x1U, character);
     CHECK(character.principal_orientation_degrees.y == doctest::Approx(25.0F));
   }
 
@@ -1632,15 +1642,15 @@ TEST_SUITE("Core::Character::CtlController") {
     App::Character::RuntimeCharacter character{make_character()};
 
     // Interval [1,2] has zero overlap with [2,4]: no rotation yet.
-    created->service(K_TICK, 0x0U, character);
+    created->service_tick(0x0U, character);
     CHECK(character.principal_orientation_degrees.y == doctest::Approx(0.0F));
     // Intervals [2,3] and [3,4] overlap by one phase unit each: +10 per tick.
-    created->service(K_TICK, 0x0U, character);
+    created->service_tick(0x0U, character);
     CHECK(character.principal_orientation_degrees.y == doctest::Approx(10.0F));
-    created->service(K_TICK, 0x0U, character);
+    created->service_tick(0x0U, character);
     CHECK(character.principal_orientation_degrees.y == doctest::Approx(20.0F));
     // Interval [4,5] is past the window: no further rotation.
-    created->service(K_TICK, 0x0U, character);
+    created->service_tick(0x0U, character);
     CHECK(character.principal_orientation_degrees.y == doctest::Approx(20.0F));
   }
 
@@ -1659,15 +1669,16 @@ TEST_SUITE("Core::Character::CtlController") {
         App::Character::CtlController::create(make_bank(moves, {{"STAND", make_3da(10)}}), "TEST")};
     REQUIRE(created.has_value());
     App::Character::RuntimeCharacter character{make_character()};
+    App::Character::PhysicalMotionService::synchronize(character);
 
     // Intervals [1,2] and [2,3] overlap by one unit each: +5 Z per tick.
-    created->service(K_TICK, 0x0U, character);
-    CHECK(character.transform.translation.z == doctest::Approx(5.0F));
-    created->service(K_TICK, 0x0U, character);
-    CHECK(character.transform.translation.z == doctest::Approx(10.0F));
+    created->service_tick(0x0U, character);
+    CHECK(character.physical_motion.candidate_translation.z == doctest::Approx(5.0F));
+    created->service_tick(0x0U, character);
+    CHECK(character.physical_motion.candidate_translation.z == doctest::Approx(10.0F));
     // Interval [3,4] is past the window.
-    created->service(K_TICK, 0x0U, character);
-    CHECK(character.transform.translation.z == doctest::Approx(10.0F));
+    created->service_tick(0x0U, character);
+    CHECK(character.physical_motion.candidate_translation.z == doctest::Approx(10.0F));
   }
 
   TEST_CASE("callbacks drained in tick N affect tick N+1 of the same service call") {
@@ -1709,19 +1720,19 @@ TEST_SUITE("Core::Character::CtlController") {
 
     // 40 one-frame executions: the run snapshot exceeds the recovered limit.
     for (std::uint32_t tick{0}; tick < 40U; ++tick) {
-      created->service(K_TICK, 0x0U, character);
+      created->service_tick(0x0U, character);
     }
     REQUIRE(created->run_restart_snapshot() > 30U);
 
-    // One service call covering THREE logical ticks with forward held:
+    // Three logical ticks with forward held:
     //   tick 1: transition 1 -> 2 queues MDSTOPR; the per-tick drain switches
     //           to move 164 (snapshot > 30) immediately;
     //   tick 2: the new move's state 1641 evaluates its child 1642 against
     //           the still-held input and transitions;
     //   tick 3: state 1642 idles.
-    // With callbacks drained only after the accumulator loop, the move switch
-    // would happen after all three ticks and the final state would be 1641.
-    created->service(3.0F * K_TICK, 0x4U, character);
+    created->service_tick(0x4U, character);
+    created->service_tick(0x4U, character);
+    created->service_tick(0x4U, character);
     CHECK_EQ(created->current_move()->move_id, 164U);
     CHECK_EQ(created->current_state()->state_id, 1642U);
   }

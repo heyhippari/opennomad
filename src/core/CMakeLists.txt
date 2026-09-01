@@ -36,6 +36,7 @@ add_library(${NAME} STATIC
   Core/Dialog/DialogPerformanceRuntime.hpp Core/Dialog/DialogPerformanceRuntime.cpp
   Core/Character/CharacterRuntime.hpp Core/Character/CharacterRuntime.cpp
   Core/Character/CtlController.hpp Core/Character/CtlController.cpp
+  Core/Character/PhysicalMotionService.hpp Core/Character/PhysicalMotionService.cpp
   Core/Object/ObjectPlacementRuntime.hpp Core/Object/ObjectPlacementRuntime.cpp
   Core/CameraController.cpp Core/CameraController.hpp
   Core/Input/InputAction.hpp

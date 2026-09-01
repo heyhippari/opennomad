@@ -110,11 +110,9 @@ class CtlController {
   /// the 16-entry canonical input history.
   void add_input_suppression(std::uint32_t mask);
 
-  /// Advances the controller in the recovered 30 Hz logical domain using a
-  /// deterministic accumulator; display rate never drives animation speed.
-  /// `profile_input` carries the raw 14 profile slot bits. Sound marker
-  /// events accumulate and are drained by the caller afterwards.
-  void service(float delta_seconds, std::uint32_t profile_input, RuntimeCharacter& character);
+  /// Performs exactly one recovered 30 Hz controller tick and drains that
+  /// tick's deferred callbacks. The ordinary actor service owns scheduling.
+  void service_tick(std::uint32_t profile_input, RuntimeCharacter& character);
 
   /// Runtime 0x004A8BD0 against the controller's current state. Timing uses
   /// the exact interval most recently traversed by the active animation.
@@ -193,12 +191,6 @@ class CtlController {
   [[nodiscard]] bool autonomous_idle_suppressed() const {
     return m_autonomous_idle_suppressed;
   }
-  [[nodiscard]] const App::Runtime::Vec3& candidate_translation() const {
-    return m_candidate_translation;
-  }
-  [[nodiscard]] const App::Runtime::Vec3& accepted_translation() const {
-    return m_accepted_translation;
-  }
   /// Presentation source state of a keyless resident (0x8000) logical state:
   /// the first key-bearing state reached through its goto chain. Equals the
   /// logical current state for ordinary key-bearing states; null when the
@@ -276,7 +268,6 @@ class CtlController {
   void service_audio_markers(const Omikron::CtlState& state, float previous, float current);
   void drain_callbacks(RuntimeCharacter& character);
 
-  static constexpr float K_LOGIC_STEP_SECONDS{1.0F / 30.0F};
   static constexpr std::size_t K_INPUT_HISTORY_CAPACITY{16U};
   static constexpr std::size_t K_SUPPRESSION_CAPACITY{20U};
   static constexpr std::size_t K_CALLBACK_CAPACITY{10U};
@@ -322,19 +313,10 @@ class CtlController {
   /// MDSTAND wait-move alternation; the initial selection is the first move.
   bool m_wait_alternation{false};
 
-  /// Controller-motion position model (Phase 4.1): root motion updates the
-  /// candidate full XYZ; Phase 4.2 inserts collision/floor resolution before
-  /// acceptance. Both anchor from the live actor transform when controller
-  /// ownership starts.
-  App::Runtime::Vec3 m_candidate_translation{};
-  App::Runtime::Vec3 m_accepted_translation{};
-  bool m_motion_anchor_initialized{false};
-
   const Omikron::CtlState* m_presented_state{nullptr};
   bool m_presentation_pending{false};
   std::vector<bool> m_marker_fired;
   std::vector<SoundMarkerEvent> m_sound_events;
-  float m_accumulator_seconds{0.0F};
   std::unordered_set<std::string> m_warned_callbacks;
   bool m_segmented_animation_warned{false};
 };

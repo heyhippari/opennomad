@@ -602,9 +602,16 @@ std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state
           .ctl_pending_ticks = 0U,
           .ctl_callback_queue_size = 0U,
           .ctl_restart_count = 0U,
-          .ctl_candidate_translation = {},
-          .ctl_accepted_translation = {},
           .ctl_markers_fired = 0U};
+      debug_character.physical_candidate_translation = {
+          character.physical_motion.candidate_translation.x,
+          character.physical_motion.candidate_translation.y,
+          character.physical_motion.candidate_translation.z};
+      debug_character.physical_accepted_translation = {
+          character.physical_motion.accepted_translation.x,
+          character.physical_motion.accepted_translation.y,
+          character.physical_motion.accepted_translation.z};
+      debug_character.physical_state_initialized = character.physical_motion.initialized;
       const CinSfxPlayback* cin_sfx{nullptr};
       for (const CinSfxPlayback& playback : world_context->runtime->cin_sfx_playbacks()) {
         if (playback.character_body_identity == character.body_identity &&
@@ -679,12 +686,6 @@ std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state
         debug_character.ctl_pending_ticks = controller.pending_ticks();
         debug_character.ctl_callback_queue_size = controller.callback_queue_size();
         debug_character.ctl_restart_count = controller.same_state_restart_count();
-        debug_character.ctl_candidate_translation = {controller.candidate_translation().x,
-            controller.candidate_translation().y,
-            controller.candidate_translation().z};
-        debug_character.ctl_accepted_translation = {controller.accepted_translation().x,
-            controller.accepted_translation().y,
-            controller.accepted_translation().z};
         debug_character.ctl_markers_fired = controller.markers_fired_this_execution();
       }
       if (model_resource != nullptr) {

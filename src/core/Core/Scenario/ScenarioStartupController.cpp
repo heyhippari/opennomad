@@ -2202,35 +2202,6 @@ std::expected<void, std::string> ScenarioStartupController::set_current_characte
   return {};
 }
 
-void ScenarioStartupController::service_ctl_controller(const float delta_seconds) {
-  if (m_manager == nullptr) {
-    return;
-  }
-  const std::optional<ControlledCharacterRef> current{m_manager->controlled_character()};
-  if (!current.has_value()) {
-    return;
-  }
-  ScenarioRuntime* const runtime{m_manager->world_runtime(current->world_scene_id)};
-  Character::RuntimeCharacter* const character{
-      runtime == nullptr ? nullptr
-                         : runtime->character_runtime().find_body(current->body_identity)};
-  if (character == nullptr || !character->ctl_controller.has_value() ||
-      !character->controller_enabled || !character->active || !character->area_present) {
-    return;
-  }
-
-  // Runtime suppresses the ordinary CTL path while a character-bound structured
-  // child owns the current actor. `service_current_character_actor()` owns that
-  // gate, so CTL here is only reached for an actual ordinary service.
-  Character::CtlController& controller{character->ctl_controller.value()};
-  controller.service(delta_seconds, m_manager->ctl_input_mask(), *character);
-
-  for (const Character::CtlController::SoundMarkerEvent& event :
-      controller.take_sound_marker_events()) {
-    runtime->play_ctl_sound_marker(event.sound_hid, character->transform.translation);
-  }
-}
-
 void ScenarioStartupController::service_current_character_actor(const float delta_seconds) {
   if (m_manager == nullptr) {
     return;
@@ -2298,25 +2269,36 @@ void ScenarioStartupController::service_current_character_actor(const float delt
     }
   }
 
-  if (character->ctl_controller.has_value() && character->controller_enabled) {
-    character->ctl_controller->service(delta_seconds, m_manager->ctl_input_mask(), *character);
-    for (const Character::CtlController::SoundMarkerEvent& event :
-        character->ctl_controller->take_sound_marker_events()) {
-      runtime->play_ctl_sound_marker(event.sound_hid, character->transform.translation);
-    }
-  }
+  Character::PhysicalMotionState& motion{character->physical_motion};
+  motion.accumulator_seconds += std::max(delta_seconds, 0.0F);
+  while (motion.accumulator_seconds >= Character::PhysicalMotionService::K_LOGIC_STEP_SECONDS) {
+    motion.accumulator_seconds -= Character::PhysicalMotionService::K_LOGIC_STEP_SECONDS;
+    Character::PhysicalMotionService::synchronize_if_needed(*character);
 
-  ++character->ordinary_actor_service_generation;
-  App::Log::info(LogCategory::Scenario,
-      "CurrentActorServiced — character={} world={} generation={} xyz=({:.3f},{:.3f},{:.3f}) "
-      "radius={:.3f}",
-      current->character_id,
-      current->world_scene_id,
-      character->ordinary_actor_service_generation,
-      character->transform.translation.x,
-      character->transform.translation.y,
-      character->transform.translation.z,
-      character->model_resource == nullptr ? 0.0F : character->model_resource->bounds_radius);
+    if (character->ctl_controller.has_value() && character->controller_enabled) {
+      character->ctl_controller->service_tick(m_manager->ctl_input_mask(), *character);
+    }
+    Character::PhysicalMotionService::resolve_tick(*character);
+
+    if (character->ctl_controller.has_value() && character->controller_enabled) {
+      for (const Character::CtlController::SoundMarkerEvent& event :
+          character->ctl_controller->take_sound_marker_events()) {
+        runtime->play_ctl_sound_marker(event.sound_hid, character->transform.translation);
+      }
+    }
+
+    ++character->ordinary_actor_service_generation;
+    App::Log::info(LogCategory::Scenario,
+        "CurrentActorServiced — character={} world={} generation={} xyz=({:.3f},{:.3f},{:.3f}) "
+        "radius={:.3f}",
+        current->character_id,
+        current->world_scene_id,
+        character->ordinary_actor_service_generation,
+        character->transform.translation.x,
+        character->transform.translation.y,
+        character->transform.translation.z,
+        character->model_resource == nullptr ? 0.0F : character->model_resource->bounds_radius);
+  }
 }
 
 void ScenarioStartupController::register_current_character_trigger_proxy(

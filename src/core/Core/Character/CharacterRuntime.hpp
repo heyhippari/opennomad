@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "Core/Character/CtlController.hpp"
+#include "Core/Character/PhysicalMotionService.hpp"
 #include "Core/Omikron/IamArea.hpp"
 #include "Core/Omikron/IamScene.hpp"
 #include "Core/Omikron/Model3DO.hpp"
@@ -139,6 +140,9 @@ struct RuntimeCharacter {
   /// Last AREA/address yaw converted to integer degrees. This is placement
   /// provenance only; live orientation is `principal_orientation_degrees`.
   std::int32_t runtime_orientation_degrees{0};
+  /// Actor-owned candidate/accepted physical translation and ordinary 30 Hz
+  /// accumulator. This remains valid independently of CTL participation.
+  PhysicalMotionState physical_motion{};
   /// Persistent entity +0x1A0/+0x1A4/+0x1A8 equivalent. AREA/address
   /// placement initializes (0,Y,0); Script_Select*BodyAnimation and
   /// Script_SelectRelativeBodyAnimation overwrite all three components.
@@ -164,8 +168,7 @@ struct RuntimeCharacter {
   /// Character adventure/control mode consumed by CTL callbacks (RSTAVNT
   /// selects mode 1; MDSTAND's autonomous waits require it).
   std::int32_t adventure_mode{0};
-  /// Transient MDROT000 flag: suppresses the physical stage's automatic
-  /// movement-heading rewrite for the relevant update (consumed by Phase 4.2).
+  /// Transient MDROT000 flag observed and cleared by the next physical tick.
   bool suppress_automatic_movement_heading{false};
 
   std::string definition_name;

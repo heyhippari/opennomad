@@ -424,39 +424,10 @@ const Omikron::CtlState* CtlController::evaluate_transition(const std::uint32_t 
   return nullptr;
 }
 
-void CtlController::service(
-    const float delta_seconds, const std::uint32_t profile_input, RuntimeCharacter& character) {
+void CtlController::service_tick(const std::uint32_t profile_input, RuntimeCharacter& character) {
   m_sound_events.clear();
-  if (!m_motion_anchor_initialized) {
-    m_candidate_translation = character.transform.translation;
-    m_accepted_translation = character.transform.translation;
-    m_motion_anchor_initialized = true;
-  } else if (character.transform.translation.x != m_accepted_translation.x ||
-             character.transform.translation.y != m_accepted_translation.y ||
-             character.transform.translation.z != m_accepted_translation.z) {
-    // An external system (address placement, transition, script) moved the
-    // actor since the last controller service: re-anchor the motion model
-    // instead of snapping the actor back to the stale candidate.
-    m_candidate_translation = character.transform.translation;
-    m_accepted_translation = character.transform.translation;
-  }
-
-  m_accumulator_seconds += std::max(delta_seconds, 0.0F);
-  while (m_accumulator_seconds >= K_LOGIC_STEP_SECONDS) {
-    m_accumulator_seconds -= K_LOGIC_STEP_SECONDS;
-    tick_once(profile_input, character);
-    // Callbacks drain per logical tick: a callback produced during tick N
-    // takes effect before tick N+1. They stay deferred relative to transition
-    // evaluation and leave the Phase 4.2 seam (CTL tick -> callbacks ->
-    // [physics] -> [contacts] -> next CTL tick) intact.
-    drain_callbacks(character);
-  }
-
-  // Phase 4.1 accepts the controller candidate position directly. Phase 4.2
-  // inserts gravity/collision/floor resolution between candidate and
-  // accepted without redesigning this controller.
-  m_accepted_translation = m_candidate_translation;
-  character.transform.translation = m_accepted_translation;
+  tick_once(profile_input, character);
+  drain_callbacks(character);
 }
 
 void CtlController::tick_once(const std::uint32_t profile_input, RuntimeCharacter& character) {
@@ -568,9 +539,9 @@ void CtlController::tick_once(const std::uint32_t profile_input, RuntimeCharacte
             local_delta.has_value()) {
           const App::Runtime::Vec3 world_delta{App::Runtime::transform_vector(
               local_delta.value(), character.live_root_orientation())};
-          m_candidate_translation.x += world_delta.x;
-          m_candidate_translation.y += world_delta.y;
-          m_candidate_translation.z += world_delta.z;
+          character.physical_motion.candidate_translation.x += world_delta.x;
+          character.physical_motion.candidate_translation.y += world_delta.y;
+          character.physical_motion.candidate_translation.z += world_delta.z;
         }
       }
     }
@@ -869,9 +840,9 @@ void CtlController::run_transient_helpers(
         helper->movement_block.has_value()) {
       const App::Runtime::Vec3 world_delta{App::Runtime::transform_vector(
           helper->movement_block->local_delta, character.live_root_orientation())};
-      m_candidate_translation.x += world_delta.x;
-      m_candidate_translation.y += world_delta.y;
-      m_candidate_translation.z += world_delta.z;
+      character.physical_motion.candidate_translation.x += world_delta.x;
+      character.physical_motion.candidate_translation.y += world_delta.y;
+      character.physical_motion.candidate_translation.z += world_delta.z;
       working_input &= ~(helper->input_condition & K_CTL_POSITIVE_MASK);
     }
     if ((helper->flags & K_STATE_CALLBACK_FLAG) != 0U &&
@@ -933,9 +904,9 @@ void CtlController::service_continuous_auxiliary(
           .z = block.local_delta.z * overlap};
       const App::Runtime::Vec3 world_delta{
           App::Runtime::transform_vector(local_delta, character.live_root_orientation())};
-      m_candidate_translation.x += world_delta.x;
-      m_candidate_translation.y += world_delta.y;
-      m_candidate_translation.z += world_delta.z;
+      character.physical_motion.candidate_translation.x += world_delta.x;
+      character.physical_motion.candidate_translation.y += world_delta.y;
+      character.physical_motion.candidate_translation.z += world_delta.z;
     }
   }
 }

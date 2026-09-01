@@ -239,6 +239,10 @@ TEST_SUITE("Core::Character::Runtime") {
         static_cast<float>(App::Runtime::area_position_to_inches(-271)));
     CHECK_EQ(character->transform.translation.z,
         static_cast<float>(App::Runtime::area_position_to_inches(-816)));
+    CHECK(character->physical_motion.initialized);
+    CHECK_EQ(
+        character->physical_motion.candidate_translation.x, character->transform.translation.x);
+    CHECK_EQ(character->physical_motion.accepted_translation.x, character->transform.translation.x);
     CHECK_EQ(character->runtime_orientation_degrees, App::Runtime::area_angle_to_degrees(4084));
     CHECK_EQ(character->principal_orientation_degrees.x, doctest::Approx(0.0F));
     CHECK_EQ(character->principal_orientation_degrees.y,
@@ -307,6 +311,11 @@ TEST_SUITE("Core::Character::Runtime") {
     const std::shared_ptr<const App::Character::ModelResource> source_resource{
         character->model_resource};
     character->transform.translation = App::Runtime::Vec3{11.0F, 22.0F, 33.0F};
+    character->physical_motion = App::Character::PhysicalMotionState{
+        .candidate_translation = {.x = 44.0F, .y = 55.0F, .z = 66.0F},
+        .accepted_translation = {.x = 11.0F, .y = 22.0F, .z = 33.0F},
+        .accumulator_seconds = 0.01F,
+        .initialized = true};
     character->pose_revision = 17U;
     REQUIRE(source.set_body_presentation_enabled(body_identity, false).has_value());
     CHECK_FALSE(character->renderable());
@@ -329,6 +338,10 @@ TEST_SUITE("Core::Character::Runtime") {
     CHECK_EQ(character->transform.translation.x, 11.0F);
     CHECK_EQ(character->transform.translation.y, 22.0F);
     CHECK_EQ(character->transform.translation.z, 33.0F);
+    CHECK(character->physical_motion.initialized);
+    CHECK_EQ(character->physical_motion.candidate_translation.x, 44.0F);
+    CHECK_EQ(character->physical_motion.accepted_translation.y, 22.0F);
+    CHECK_EQ(character->physical_motion.accumulator_seconds, doctest::Approx(0.01F));
     CHECK_EQ(character->pose_revision, 17U);
     CHECK_FALSE(character->presentation_enabled);
     CHECK_FALSE(character->renderable());
@@ -386,6 +399,10 @@ TEST_SUITE("Core::Character::Runtime") {
     CHECK_EQ(character->serialized_orientation_units, 0);
     CHECK_EQ(character->transform.translation.z,
         static_cast<float>(App::Runtime::area_position_to_inches(19656)));
+    CHECK(character->physical_motion.initialized);
+    CHECK_EQ(
+        character->physical_motion.candidate_translation.z, character->transform.translation.z);
+    CHECK_EQ(character->physical_motion.accepted_translation.z, character->transform.translation.z);
 
     runtime.dematerialize_scene_characters(222, 55);
     character = runtime.find(57);

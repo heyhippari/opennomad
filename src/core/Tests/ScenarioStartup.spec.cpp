@@ -1301,6 +1301,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
 
     REQUIRE(controller.tick().has_value());
     REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
     REQUIRE(manager.game_state() != nullptr);
     CHECK_FALSE(manager.game_state()->zone_flag(3795).value());
     CHECK_EQ(controller.zone_contact_count(), 1U);
@@ -1358,6 +1359,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(character != nullptr);
     REQUIRE(character->ctl_controller.has_value());
     REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
     REQUIRE(controller.current_character_trigger_proxy().has_value());
     const App::CurrentCharacterTriggerProxy proxy{
         controller.current_character_trigger_proxy().value()};
@@ -1395,6 +1397,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     install_stub_ctl_loader(*runtime);
 
     REQUIRE(controller.tick().has_value());
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
     REQUIRE(controller.tick(1.0F / 30.0F).has_value());
     App::Character::RuntimeCharacter* character{runtime->character_runtime().find(136)};
     REQUIRE(character != nullptr);
@@ -1435,6 +1438,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     install_stub_ctl_loader(*runtime);
 
     REQUIRE(controller.tick().has_value());
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
     const App::Character::RuntimeCharacter* character{runtime->character_runtime().find(136)};
     REQUIRE(character != nullptr);
     REQUIRE(controller.current_character_trigger_proxy().has_value());
@@ -1517,6 +1521,8 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(character != nullptr);
     const App::Runtime::Vec3 frozen_position{
         controller.current_character_trigger_proxy()->position};
+    App::Character::PhysicalMotionService::synchronize(*character);
+    const App::Runtime::Vec3 stale_candidate{character->physical_motion.candidate_translation};
     const auto* instance{runtime->script_runtime()->instance(
         runtime->script_runtime()->instances().front().instance_id)};
     REQUIRE(instance != nullptr);
@@ -1524,6 +1530,8 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
 
     runtime->script_runtime()->tick(1.0F / 30.0F);
     CHECK(instance->completed);
+    character->transform.translation.x += 100.0F;
+    const App::Runtime::Vec3 structured_position{character->transform.translation};
 
     const auto tick_result{controller.tick(1.0F / 30.0F)};
     INFO(controller.last_error());
@@ -1532,12 +1540,16 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK_EQ(
         controller.current_character_trigger_proxy()->last_consumed_actor_spatial_generation, 0U);
     CHECK_EQ(controller.current_character_trigger_proxy()->position.x, frozen_position.x);
+    CHECK_EQ(character->physical_motion.candidate_translation.x, stale_candidate.x);
 
     REQUIRE(controller.tick(1.0F / 30.0F).has_value());
     CHECK_EQ(character->ordinary_actor_service_generation, 1U);
     CHECK_EQ(
         controller.current_character_trigger_proxy()->last_consumed_actor_spatial_generation, 1U);
     CHECK(controller.current_character_trigger_proxy()->contact_ready);
+    CHECK_EQ(character->physical_motion.candidate_translation.x, structured_position.x);
+    CHECK_EQ(character->physical_motion.accepted_translation.x, structured_position.x);
+    CHECK_EQ(character->transform.translation.x, structured_position.x);
   }
 
   TEST_CASE("chained structured children never expose an ordinary actor service gap") {
@@ -1802,7 +1814,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK_EQ(runtime->character_runtime().characters().front().character_id, 310);
   }
 
-  TEST_CASE("ordinary actor service advances generation before proxy synchronization") {
+  TEST_CASE("ordinary actor service advances generation for each due physical tick") {
     const TempDirectory temp;
     write_zone_contact_fixtures(temp, false, 19, false, false);
     const ScopedGameDataRoot root{temp.root()};
@@ -1826,15 +1838,28 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     App::Character::RuntimeCharacter* character{runtime->character_runtime().find(136)};
     REQUIRE(character != nullptr);
     REQUIRE(controller.current_character_trigger_proxy().has_value());
-    CHECK_EQ(character->ordinary_actor_service_generation, 1U);
+    CHECK_EQ(character->ordinary_actor_service_generation, 0U);
     CHECK_EQ(
-        controller.current_character_trigger_proxy()->last_consumed_actor_spatial_generation, 1U);
+        controller.current_character_trigger_proxy()->last_consumed_actor_spatial_generation, 0U);
 
     character->transform.translation.x += 200.0F;
+    REQUIRE(controller.tick(1.0F / 60.0F).has_value());
+    CHECK_EQ(character->ordinary_actor_service_generation, 0U);
+    REQUIRE(controller.tick(1.0F / 60.0F).has_value());
+    CHECK_EQ(character->ordinary_actor_service_generation, 1U);
+    CHECK_EQ(character->physical_motion.accepted_translation.x, character->transform.translation.x);
+
+    character->controller_enabled = false;
+    REQUIRE(character->ctl_controller.has_value());
     REQUIRE(controller.tick(1.0F / 30.0F).has_value());
     CHECK_EQ(character->ordinary_actor_service_generation, 2U);
+
+    character->ctl_controller.reset();
+    REQUIRE(controller.tick(2.0F / 30.0F).has_value());
+    CHECK_EQ(character->ordinary_actor_service_generation, 4U);
+    CHECK(character->physical_motion.initialized);
     CHECK_EQ(
-        controller.current_character_trigger_proxy()->last_consumed_actor_spatial_generation, 2U);
+        controller.current_character_trigger_proxy()->last_consumed_actor_spatial_generation, 4U);
   }
 
   TEST_CASE("ordinary proxy synchronization may create contact while controller is disabled") {
@@ -2042,6 +2067,8 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     install_stub_ctl_loader(*runtime);
 
     REQUIRE(controller.tick().has_value());
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
     REQUIRE(controller.tick(1.0F / 30.0F).has_value());
     CHECK_EQ(controller.zone_contact_count(), 1U);
     CHECK(controller.dialog_takeover_active());

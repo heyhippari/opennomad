@@ -137,6 +137,9 @@ struct RuntimeCharacterDebugState {
   bool loaded{false};
   bool renderable{false};
   std::uint64_t ordinary_actor_service_generation{0};
+  std::array<float, 3> physical_candidate_translation{};
+  std::array<float, 3> physical_accepted_translation{};
+  bool physical_state_initialized{false};
   std::array<std::int32_t, 3> serialized_position{};
   std::array<float, 3> runtime_position{};
   std::array<float, 3> render_position{};
@@ -207,8 +210,6 @@ struct RuntimeCharacterDebugState {
   std::uint32_t ctl_pending_ticks{0};
   std::size_t ctl_callback_queue_size{0};
   std::uint32_t ctl_restart_count{0};
-  std::array<float, 3> ctl_candidate_translation{};
-  std::array<float, 3> ctl_accepted_translation{};
   std::size_t ctl_markers_fired{0};
 };
 

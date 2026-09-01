@@ -1,7 +1,7 @@
 # CTL character control sets
 
 > **Status:** recovered format and controller documentation for OpenNomad
-> **Last updated:** 2026-08-30
+> **Last updated:** 2026-09-01
 >
 > CTL is Omikron's authored character-control/state-machine resource. One CTL
 > bank per character role is named by the IAM character definition
@@ -22,6 +22,8 @@ Related documentation:
   `0x68`, `0x69`;
 - [`runtime-coordinate-math.md`](runtime-coordinate-math.md) — row-vector
   orientation and root-motion conventions;
+- [`character-physical-motion.md`](character-physical-motion.md) — actor-owned
+  candidate/accepted positions and ordinary physical-service ordering;
 - [`audio.md`](audio.md) — SCX `DEAD0003` sound hIDs used by animation
   markers;
 - [`scx.md`](scx.md) — the embedded ordinary 3DA format reused by CTL.
@@ -391,7 +393,7 @@ states never become the logical current state. Per matching helper:
 - `flags & 0x100`: apply the one-shot orientation Vec3 (angle-wrapped) and
   consume the helper's `input_condition` from the working input.
 - `flags & 0x200`: transform the one-shot local movement Vec3 through the
-  live actor orientation, add it to the CTL candidate position, and consume
+  live actor orientation, add it to the actor's physical candidate position, and consume
   the helper's `input_condition`.
 - `flags & 0x10` AND `flags & 0x00200000`: enqueue the deferred callback and
   consume the helper's `input_condition`.
@@ -477,7 +479,7 @@ while (phase >= destination_effective_end)
   motion integrates only intervals 1..N through
   `Animation3DAChannel::integrate_translation(previous, current)` and the
   result is transformed through the character's live root orientation before
-  updating the candidate character position. Lateral (sidestep) displacement
+  updating the actor-owned physical candidate position. Lateral (sidestep) displacement
   is exactly this generic root motion; there is no separate strafe velocity.
 - **One-shot** auxiliary orientation (`0x100`) and local-movement (`0x200`)
   blocks belong to the transient helper pass (§4.4); presentation never
@@ -488,21 +490,24 @@ while (phase >= destination_effective_end)
   window (`min(current, end) - max(previous, start)`, clamped at zero) and
   applies for that tick only — orientation with angle wrapping (helpers
   0x0045C080/0x0045C1B0), movement transformed through the live orientation
-  into the candidate position (0x0045C2F0).
-- OpenNomad's Phase 4.1 motion model keeps a candidate/accepted position
-  pair: CTL updates the candidate full XYZ and Phase 4.1 accepts it directly;
-  Phase 4.2 inserts gravity/collision/floor resolution between the two
-  (**OpenNomad-only** seam).
+  into the actor-owned physical candidate position (0x0045C2F0).
+- Candidate and accepted XYZ belong to the actor, not `CtlController`. CTL is
+  only a motion producer. The downstream physical stage owns acceptance
+  (**Confirmed — Runtime** ownership; **OpenNomad-only** C++ representation).
+- Phase 4.2A's resolver deliberately accepts the candidate unchanged. Gravity,
+  floor, collision, slope, and automatic movement-heading behavior remain
+  deferred.
 
 ## 4.8 Callbacks — Runtime 0x0045D0E0 queue — Confirmed — Runtime
 
 Callbacks are queued at state activation (and by the transient helper pass)
-and drained **after each logical 30 Hz tick** inside the service accumulator
-loop — a callback produced during logical tick N takes effect before tick
-N+1. They stay deferred relative to transition evaluation (never invoked
-recursively inside evaluator code), leaving the Phase 4.2 seam `CTL tick ->
-callbacks -> [physics] -> [contacts] -> next CTL tick` intact. Unknown names
-log once and remain nonfatal. Recovered subset:
+and drained **after each logical 30 Hz CTL tick** before that tick's physical
+resolution. The actor-owned ordinary-service accumulator orchestrates `CTL
+tick -> callbacks -> physical resolution -> ordinary spatial/contact service`
+for every due tick, so a callback produced during tick N takes effect before
+physical resolution and tick N+1. Callbacks remain deferred relative to
+transition evaluation and are never invoked recursively inside evaluator code.
+Unknown names log once and remain nonfatal. Recovered subset:
 
 | Name | Address | Behavior |
 | ---- | ------- | -------- |
