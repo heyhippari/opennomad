@@ -123,7 +123,6 @@ std::vector<std::byte> make_structured_zone_area_archive() {
   constexpr std::uint16_t k_zone_id{77};
   Buffer script;
   script.u8(0x38).u16(136);
-  script.u8(0x68);
   script.u8(0x40).u16(k_zone_id);
   script.u8(0x77).u32(0x00FFFFFFU).u16(25).u16(0);
   script.u8(0x2E).u16(1).u16(0);
