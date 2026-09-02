@@ -427,6 +427,38 @@ void DebugUI::show_world_inspector() {
           static_cast<double>(character.physical_vertical_velocity));
       ImGui::Text("Gravity delta/tick: %.3f in/s",
           static_cast<double>(character.physical_gravity_delta_per_tick));
+      ImGui::Text("Horizontal intended XZ: %.3f, %.3f in",
+          static_cast<double>(character.horizontal_intended_displacement.at(0)),
+          static_cast<double>(character.horizontal_intended_displacement.at(2)));
+      ImGui::Text("Horizontal resolved XZ: %.3f, %.3f in",
+          static_cast<double>(character.horizontal_resolved_displacement.at(0)),
+          static_cast<double>(character.horizontal_resolved_displacement.at(2)));
+      ImGui::Text("Horizontal body: %s, radius %.3f, top/bottom %.3f / %.3f in",
+          character.horizontal_body_valid ? "valid" : "invalid",
+          static_cast<double>(character.horizontal_body_radius),
+          static_cast<double>(character.horizontal_body_top),
+          static_cast<double>(character.horizontal_body_bottom));
+      ImGui::Text("Collision scale: %.3f, forward: %s, depenetrated: %s",
+          static_cast<double>(character.horizontal_collision_scale),
+          character.horizontal_forward_collision ? "yes" : "no",
+          character.horizontal_depenetrated ? "yes" : "no");
+      ImGui::Text("Collision passes: %u, depenetration iterations: %u%s",
+          character.horizontal_collision_passes,
+          character.horizontal_depenetration_iterations,
+          character.horizontal_depenetration_limit_reached ? " (safety cap)" : "");
+      if (character.horizontal_object_index.has_value()) {
+        ImGui::Text("Last collision object: %zu, distance: %.3f in",
+            character.horizontal_object_index.value(),
+            static_cast<double>(character.horizontal_contact_distance));
+        ImGui::Text("Contact XYZ: %.3f, %.3f, %.3f in",
+            static_cast<double>(character.horizontal_contact_point.at(0)),
+            static_cast<double>(character.horizontal_contact_point.at(1)),
+            static_cast<double>(character.horizontal_contact_point.at(2)));
+        ImGui::Text("Response normal XYZ: %.3f, %.3f, %.3f",
+            static_cast<double>(character.horizontal_response_normal.at(0)),
+            static_cast<double>(character.horizontal_response_normal.at(1)),
+            static_cast<double>(character.horizontal_response_normal.at(2)));
+      }
       ImGui::Text("Support: %s", character.physical_support_valid ? "yes" : "no");
       if (character.physical_support_valid) {
         ImGui::Text("Support object: %zu (%s)",

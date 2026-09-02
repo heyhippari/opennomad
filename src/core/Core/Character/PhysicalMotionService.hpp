@@ -25,10 +25,30 @@ struct PhysicalSupportState {
   bool small_step_snapped_this_tick{false};
 };
 
+struct HorizontalCollisionState {
+  App::Runtime::Vec3 intended_displacement{};
+  App::Runtime::Vec3 resolved_displacement{};
+  float body_radius{0.0F};
+  float body_top{0.0F};
+  float body_bottom{0.0F};
+  float collision_scale{1.0F};
+  bool forward_collision{false};
+  bool depenetrated{false};
+  bool body_valid{false};
+  bool depenetration_limit_reached{false};
+  std::uint32_t collision_passes{0};
+  std::uint32_t depenetration_iterations{0};
+  std::optional<std::size_t> object_index;
+  App::Runtime::Vec3 contact_point{};
+  App::Runtime::Vec3 response_normal{};
+  float contact_distance{0.0F};
+};
+
 struct PhysicalMotionEnvironment {
   const Omikron::Model3DOData* decor_model{nullptr};
   std::span<const Omikron::Model3DOData::RuntimeObjectState> decor_runtime_objects{};
   bool suppress_small_support_snap{false};
+  float collision_scale{1.0F};
 };
 
 struct BodyVerticalExtents {
@@ -48,6 +68,7 @@ struct PhysicalMotionState {
   std::uint8_t fall_stage{0};
   float accumulated_fall_travel{0.0F};
   float maximum_support_gap{0.0F};
+  HorizontalCollisionState horizontal_collision{};
   PhysicalSupportState support{};
   bool missing_body_warning_emitted{false};
   bool initialized{false};
@@ -61,6 +82,8 @@ class PhysicalMotionService {
   static constexpr float K_SMALL_SUPPORT_SNAP_DISTANCE{7.8740158F};
   static constexpr float K_MAX_WALKABLE_SLOPE_DEGREES{30.0F};
   static constexpr float K_GROUND_CONTACT_DOWNWARD_VELOCITY{11.8110237F};
+  /// Runtime mode-1's independent 30 cm lower-cylinder step-over allowance.
+  static constexpr float K_HORIZONTAL_BODY_BOTTOM_TRIM{11.8110237F};
   static constexpr float K_FALL_STAGE_1_DISTANCE{59.0551186F};
   static constexpr float K_FALL_STAGE_3_DISTANCE{118.110237F};
   static constexpr float K_FALL_STAGE_4_DISTANCE{196.850388F};

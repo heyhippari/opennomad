@@ -7,6 +7,7 @@
 #include <string_view>
 
 #include "Core/Character/CharacterRuntime.hpp"
+#include "Core/Character/HorizontalCollisionQuery.hpp"
 #include "Core/Character/StaticSupportQuery.hpp"
 #include "Core/Log.hpp"
 #include "Core/LogCategory.hpp"
@@ -58,6 +59,7 @@ void clear_fall_episode(PhysicalMotionState& motion) {
 void reset_physical_episode_for_reanchor(PhysicalMotionState& motion) {
   motion.vertical_velocity = 0.0F;
   clear_fall_episode(motion);
+  motion.horizontal_collision = {};
   motion.support = {};
 }
 
@@ -202,6 +204,7 @@ std::uint8_t PhysicalMotionService::resolve_fall_stage(
 void PhysicalMotionService::resolve_tick(
     RuntimeCharacter& character, const PhysicalMotionEnvironment& environment) {
   PhysicalMotionState& motion{character.physical_motion};
+  motion.horizontal_collision = {};
   motion.support = {};
   motion.vertical_velocity =
       std::min(motion.vertical_velocity + motion.gravity_velocity_delta_per_tick,
@@ -213,8 +216,6 @@ void PhysicalMotionService::resolve_tick(
       .y = motion.candidate_translation.y - motion.accepted_translation.y,
       .z = motion.candidate_translation.z - motion.accepted_translation.z};
   motion.candidate_translation = motion.accepted_translation;
-  motion.candidate_translation.x += desired.x;
-  motion.candidate_translation.z += desired.z;
 
   const auto spheres{character.model_resource == nullptr
                          ? std::span<const Omikron::CollisionSphere>{}
@@ -222,6 +223,49 @@ void PhysicalMotionService::resolve_tick(
   const auto largest{largest_sphere(spheres)};
   const auto second_bottom{second_bottom_sphere(spheres)};
   const auto extents{body_vertical_extents(spheres)};
+  HorizontalCollisionState& horizontal_state{motion.horizontal_collision};
+  horizontal_state.intended_displacement = {.x = desired.x, .y = 0.0F, .z = desired.z};
+  horizontal_state.collision_scale = environment.collision_scale;
+  if (largest.has_value() && extents.has_value() && std::isfinite(environment.collision_scale) &&
+      environment.collision_scale > 0.0F) {
+    horizontal_state.body_radius =
+        spheres.subspan(largest.value(), 1U).front().radius * environment.collision_scale;
+    horizontal_state.body_top = extents->top;
+    horizontal_state.body_bottom = extents->bottom - K_HORIZONTAL_BODY_BOTTOM_TRIM;
+    horizontal_state.body_valid =
+        std::isfinite(horizontal_state.body_radius) && std::isfinite(horizontal_state.body_top) &&
+        std::isfinite(horizontal_state.body_bottom) && horizontal_state.body_radius > 0.0F &&
+        horizontal_state.body_bottom >= horizontal_state.body_top;
+  }
+
+  HorizontalResolveResult horizontal_result;
+  horizontal_result.resolved_displacement = horizontal_state.intended_displacement;
+  if (horizontal_state.body_valid && environment.decor_model != nullptr) {
+    horizontal_result = HorizontalCollisionQuery::resolve(*environment.decor_model,
+        environment.decor_runtime_objects,
+        motion.accepted_translation,
+        horizontal_state.intended_displacement,
+        {.radius = horizontal_state.body_radius,
+            .top_y = horizontal_state.body_top,
+            .bottom_y = horizontal_state.body_bottom});
+  }
+  horizontal_state.resolved_displacement = horizontal_result.resolved_displacement;
+  horizontal_state.forward_collision = horizontal_result.forward_collision;
+  horizontal_state.depenetrated = horizontal_result.depenetrated;
+  horizontal_state.depenetration_limit_reached = horizontal_result.depenetration_limit_reached;
+  horizontal_state.collision_passes = horizontal_result.collision_passes;
+  horizontal_state.depenetration_iterations = horizontal_result.depenetration_iterations;
+  if (horizontal_result.last_hit.has_value()) {
+    horizontal_state.object_index = horizontal_result.last_hit->object_index;
+    horizontal_state.contact_point = horizontal_result.last_hit->world_point;
+    horizontal_state.response_normal = {.x = horizontal_result.last_hit->world_normal.x,
+        .y = 0.0F,
+        .z = horizontal_result.last_hit->world_normal.z};
+    horizontal_state.contact_distance = horizontal_result.last_hit->travel_distance;
+  }
+  motion.candidate_translation.x += horizontal_result.resolved_displacement.x;
+  motion.candidate_translation.z += horizontal_result.resolved_displacement.z;
+
   if (!largest.has_value() || !second_bottom.has_value() || !extents.has_value()) {
     if (!motion.missing_body_warning_emitted) {
       App::Log::debug(LogCategory::Core,

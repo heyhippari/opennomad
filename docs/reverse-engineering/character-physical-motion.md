@@ -1,6 +1,6 @@
 # Character physical motion
 
-> **Status:** Phase 4.2B static vertical physical service complete
+> **Status:** Phase 4.2C.1 ordinary horizontal collision complete
 > **Last updated:** 2026-09-02
 
 This document separates recovered retail actor semantics from OpenNomad's modern C++ representation. Runtime did not contain a C++ abstraction named `PhysicalMotionService`.
@@ -52,6 +52,8 @@ synchronize or defensively re-anchor from the live transform
 -> one CTL logical tick when enabled
 -> drain that tick's deferred CTL callbacks
 -> gravity integration
+-> ordinary mode-1 horizontal finite-cylinder collision and wall sliding
+-> automatic collision heading (Phase C.2, deferred)
 -> owning-world static support query
 -> vertical displacement, grounding, and fall-state resolution
 -> accepted-position publication or complete rollback
@@ -59,7 +61,7 @@ synchronize or defensively re-anchor from the live transform
 -> advance ordinary actor service generation
 ```
 
-CTL root motion and one-shot/continuous movement auxiliaries update only the actor-owned candidate. The physical stage composes authored Y with one native gravity step, keeps X/Z identity-resolved, then uses authored character spheres and owning-world 3DO faces for static vertical response.
+CTL root motion and one-shot/continuous movement auxiliaries update only the actor-owned candidate. The physical stage composes authored Y with one native gravity step, saves the complete desired displacement, resolves desired X/Z through Runtime's ordinary finite-cylinder collision stage, then uses the resolved X/Z and original saved Y for static vertical response.
 
 Authoritative address placement and materialization with `apply_transform=true` synchronize both positions explicitly. Ordinary service also re-anchors when the live transform diverges from accepted XYZ, covering structured scripts and direct debug/test mutation without stale-position snapback.
 
@@ -104,15 +106,14 @@ the existing controller move-selection API. Serious stage entry selects move 2;
 completed landing selects move 5, 4, or 100 from the recovered episode table.
 Missing moves and absent or disabled controllers do not change physical results.
 
-## Deferred physical behavior
+## Phase 4.2C status
 
-Phase 4.2C owns:
+Phase C.1 implements ordinary horizontal collision around `0x00469580`, including continuous transformed-world triangle/quad feature collision, native skin/lookahead/depenetration, and iterative wall sliding. See [`character-horizontal-collision.md`](character-horizontal-collision.md) for the recovered formulas, constants, filters, and result semantics. The B-series support behavior remains documented in [`character-support-motion.md`](character-support-motion.md).
 
-- ordinary horizontal collision around `0x00469580`;
-- wall blocking and sliding;
-- automatic movement-heading rewriting;
-- `MDROT000`'s actual suppression effect;
-- mode-4 steep-slope horizontal response;
+Still deferred:
+
+- Phase C.2 automatic movement-heading rewriting and `MDROT000`'s actual steering suppression effect;
+- Phase C.3 mode-4 steep-slope horizontal response and extended/general collision consumers;
 - transformed/moving and class-2 support response;
 - moving platforms and conveyors;
 - generic actor/object collision;

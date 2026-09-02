@@ -61,6 +61,11 @@ add_executable(PhysicalMotionServiceTest
 add_test(NAME PhysicalMotionServiceTest COMMAND PhysicalMotionServiceTest)
 target_link_libraries(PhysicalMotionServiceTest PRIVATE doctest::doctest Core)
 
+add_executable(HorizontalCollisionQueryTest
+  HorizontalCollisionQuery.spec.cpp $<TARGET_OBJECTS:TestRunner>)
+add_test(NAME HorizontalCollisionQueryTest COMMAND HorizontalCollisionQueryTest)
+target_link_libraries(HorizontalCollisionQueryTest PRIVATE doctest::doctest Core)
+
 add_executable(StaticSupportQueryTest
   StaticSupportQuery.spec.cpp $<TARGET_OBJECTS:TestRunner>)
 add_test(NAME StaticSupportQueryTest COMMAND StaticSupportQueryTest)

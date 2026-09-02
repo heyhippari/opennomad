@@ -521,6 +521,7 @@ std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state
           .loaded = character.loaded(),
           .renderable = character.renderable(),
           .ordinary_actor_service_generation = character.ordinary_actor_service_generation,
+          .horizontal_object_index = std::nullopt,
           .physical_support_object_index = std::nullopt,
           .physical_support_object_name = {},
           .serialized_position = character.serialized_area_position,
@@ -617,6 +618,30 @@ std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state
       const Character::PhysicalMotionState& physical{character.physical_motion};
       debug_character.physical_vertical_velocity = physical.vertical_velocity;
       debug_character.physical_gravity_delta_per_tick = physical.gravity_velocity_delta_per_tick;
+      const Character::HorizontalCollisionState& horizontal{physical.horizontal_collision};
+      debug_character.horizontal_intended_displacement = {horizontal.intended_displacement.x,
+          horizontal.intended_displacement.y,
+          horizontal.intended_displacement.z};
+      debug_character.horizontal_resolved_displacement = {horizontal.resolved_displacement.x,
+          horizontal.resolved_displacement.y,
+          horizontal.resolved_displacement.z};
+      debug_character.horizontal_body_radius = horizontal.body_radius;
+      debug_character.horizontal_body_top = horizontal.body_top;
+      debug_character.horizontal_body_bottom = horizontal.body_bottom;
+      debug_character.horizontal_collision_scale = horizontal.collision_scale;
+      debug_character.horizontal_body_valid = horizontal.body_valid;
+      debug_character.horizontal_forward_collision = horizontal.forward_collision;
+      debug_character.horizontal_depenetrated = horizontal.depenetrated;
+      debug_character.horizontal_depenetration_limit_reached =
+          horizontal.depenetration_limit_reached;
+      debug_character.horizontal_collision_passes = horizontal.collision_passes;
+      debug_character.horizontal_depenetration_iterations = horizontal.depenetration_iterations;
+      debug_character.horizontal_object_index = horizontal.object_index;
+      debug_character.horizontal_contact_point = {
+          horizontal.contact_point.x, horizontal.contact_point.y, horizontal.contact_point.z};
+      debug_character.horizontal_response_normal = {
+          horizontal.response_normal.x, horizontal.response_normal.y, horizontal.response_normal.z};
+      debug_character.horizontal_contact_distance = horizontal.contact_distance;
       debug_character.physical_support_valid = physical.support.valid;
       debug_character.physical_support_object_index = physical.support.object_index;
       debug_character.physical_support_point = {

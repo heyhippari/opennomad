@@ -615,4 +615,70 @@ TEST_SUITE("Core::Character::PhysicalMotionService") {
     CHECK_EQ(character.physical_motion.gravity_velocity_delta_per_tick, 7.0F);
     CHECK_EQ(character.physical_motion.accumulator_seconds, 0.012F);
   }
+
+  TEST_CASE("horizontal collision resolves before support while preserving desired Y") {
+    PhysicalFixture fixture{12.0F};
+    fixture.resource->model.header.collision_sphere_count = 2;
+    fixture.resource->model.header.collision_sphere_slots.at(0) = {
+        .center = {.y = -10.0F}, .radius = 2.0F};
+    fixture.resource->model.header.collision_sphere_slots.at(1) = {
+        .center = {.y = 10.0F}, .radius = 2.0F};
+    fixture.decor.vertices.at(1).position.x = 10.0F;
+    fixture.decor.vertices.at(2).position.x = 10.0F;
+    fixture.decor.meshes.push_back(
+        App::Omikron::MeshDescriptor{.vertex_count = 4, .vertex_base = 3});
+    fixture.decor.polygons.push_back(
+        App::Omikron::MeshPolygons{.rectangles = {App::Omikron::Rectangle{
+                                       .vertices = {0, 1, 2, 3}, .face_normal = {.x = -1.0F}}}});
+    fixture.decor.vertices.insert(fixture.decor.vertices.end(),
+        {{.position = {.x = 10.0F, .y = -20.0F, .z = -20.0F}},
+            {.position = {.x = 10.0F, .y = -20.0F, .z = 20.0F}},
+            {.position = {.x = 10.0F, .y = 20.0F, .z = 20.0F}},
+            {.position = {.x = 10.0F, .y = 20.0F, .z = -20.0F}}});
+    fixture.decor.runtime_objects.push_back(App::Omikron::Model3DOData::RuntimeObjectState{});
+    App::Character::PhysicalMotionService::synchronize(fixture.character);
+    fixture.character.physical_motion.gravity_velocity_delta_per_tick = 0.0F;
+    fixture.character.physical_motion.candidate_translation = {.x = 20.0F, .y = -1.0F};
+
+    App::Character::PhysicalMotionService::resolve_tick(
+        fixture.character, fixture.environment(true));
+
+    const auto& motion{fixture.character.physical_motion};
+    CHECK(motion.horizontal_collision.body_valid);
+    CHECK(motion.horizontal_collision.forward_collision);
+    CHECK(motion.horizontal_collision.intended_displacement.x == doctest::Approx(20.0F));
+    CHECK(motion.horizontal_collision.resolved_displacement.x == doctest::Approx(7.0F));
+    CHECK(motion.horizontal_collision.body_radius == doctest::Approx(2.0F));
+    CHECK(motion.horizontal_collision.body_top == doctest::Approx(-12.0F));
+    CHECK(motion.horizontal_collision.body_bottom ==
+          doctest::Approx(
+              12.0F - App::Character::PhysicalMotionService::K_HORIZONTAL_BODY_BOTTOM_TRIM));
+    CHECK(motion.support.valid);
+    CHECK(motion.accepted_translation.x == doctest::Approx(7.0F));
+    CHECK(motion.accepted_translation.y == doctest::Approx(-1.0F));
+  }
+
+  TEST_CASE("collision scale is configurable and invalid horizontal bodies resolve as identity") {
+    PhysicalFixture fixture{12.0F};
+    fixture.resource->model.header.collision_sphere_count = 2;
+    fixture.resource->model.header.collision_sphere_slots.at(0) = {
+        .center = {.y = -10.0F}, .radius = 2.0F};
+    fixture.resource->model.header.collision_sphere_slots.at(1) = {
+        .center = {.y = 10.0F}, .radius = 2.0F};
+    App::Character::PhysicalMotionService::synchronize(fixture.character);
+    fixture.character.physical_motion.gravity_velocity_delta_per_tick = 0.0F;
+
+    auto environment{fixture.environment()};
+    environment.collision_scale = 1.5F;
+    App::Character::PhysicalMotionService::resolve_tick(fixture.character, environment);
+    CHECK(fixture.character.physical_motion.horizontal_collision.body_radius ==
+          doctest::Approx(3.0F));
+
+    fixture.character.physical_motion.candidate_translation.x = 2.0F;
+    environment.collision_scale = 0.0F;
+    App::Character::PhysicalMotionService::resolve_tick(fixture.character, environment);
+    CHECK_FALSE(fixture.character.physical_motion.horizontal_collision.body_valid);
+    CHECK(fixture.character.physical_motion.horizontal_collision.resolved_displacement.x ==
+          doctest::Approx(2.0F));
+  }
 }

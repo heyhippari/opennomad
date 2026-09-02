@@ -384,6 +384,18 @@ The collision callback around `0x0049A0E0` transforms each authored center and
 copies the radius. The ordinary physical collision path at `0x00469580`
 consumes these records as actor body collision spheres.
 
+Phase 4.2C.1's ordinary horizontal consumer aggregates this authored set into
+a world-Y-aligned finite cylinder: the largest radius supplies horizontal
+radius, while the minimum `centerY - radius` and maximum `centerY + radius`
+supply body top and bottom. The five spheres are not independently swept.
+See [`character-horizontal-collision.md`](character-horizontal-collision.md)
+for the mode-1 lower trim, scaling, and solver semantics.
+
+The same horizontal consumer reads runtime-transformed CPU triangle and quad
+geometry plus authored face normals. This is a collision consumer
+cross-reference only; it does not change the serialized polygon format or the
+render triangulation described below.
+
 **OpenNomad hardening:** successful parsing rejects a count greater than five.
 No equivalent retail Runtime loader validation has been observed; Runtime
 appears to trust cooked data. OpenNomad does not impose extra radius or
