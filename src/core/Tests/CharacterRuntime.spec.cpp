@@ -110,6 +110,22 @@ std::shared_ptr<const App::Character::ModelResource> fake_resource(const std::st
   return resource;
 }
 
+std::shared_ptr<const App::Character::ModelResource> fake_physical_resource(
+    const std::string_view name) {
+  auto resource{std::make_shared<App::Character::ModelResource>()};
+  resource->name = name;
+  resource->groups.push_back(App::Omikron::MaterialGroup{});
+  resource->model.header.collision_sphere_count = 2U;
+  resource->model.header.collision_sphere_slots.at(0) =
+      App::Omikron::CollisionSphere{.center = {.y = 5.0F}, .radius = 10.0F};
+  resource->model.header.collision_sphere_slots.at(1) =
+      App::Omikron::CollisionSphere{.center = {.y = 20.0F}, .radius = 7.0F};
+  resource->model.runtime_objects.resize(2U);
+  resource->model.runtime_objects.at(1).local_offset = {.x = 3.0F, .y = 4.0F, .z = 5.0F};
+  resource->model.runtime_objects.at(1).world_translation = {.x = 3.0F, .y = 4.0F, .z = 5.0F};
+  return resource;
+}
+
 std::shared_ptr<const App::Character::ModelResource> fake_morph_resource(
     const std::string_view name) {
   auto resource{std::make_shared<App::Character::ModelResource>()};
@@ -382,7 +398,7 @@ TEST_SUITE("Core::Character::Runtime") {
         [&loads](const std::string_view name)
             -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
           ++loads;
-          return fake_resource(name);
+          return fake_physical_resource(name);
         }};
 
     REQUIRE(runtime.preload_scene_characters(222, 55, scene).has_value());
@@ -430,6 +446,177 @@ TEST_SUITE("Core::Character::Runtime") {
     CHECK_FALSE(character->active);
     CHECK_FALSE(character->area_present);
     CHECK_FALSE(character->scene_id.has_value());
+  }
+
+  TEST_CASE("AREA address placement uses authored body bottom and preserves actor state") {
+    const App::Omikron::IamSceneRecord scene{make_scene()};
+    App::Character::Runtime runtime{
+        [](const std::string_view name)
+            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
+          return fake_physical_resource(name);
+        }};
+    runtime.set_ctl_bank_loader([](const std::string_view) {
+      return std::expected<std::shared_ptr<const App::Omikron::CtlControlSet>, std::string>{
+          fake_ctl_resource()};
+    });
+    const auto materialized{runtime.ensure_scene_character(222, 55, scene, 57)};
+    REQUIRE(materialized.has_value());
+    App::Character::RuntimeCharacter* character{runtime.find_body(materialized->body_identity)};
+    REQUIRE(character != nullptr);
+    REQUIRE(runtime.ensure_adventure_controller(character->body_identity, "TESTCTL").has_value());
+    REQUIRE(character->ctl_controller.has_value());
+    CHECK_FALSE(character->controller_enabled);
+
+    character->transform.translation = {.x = 10.0F, .y = 20.0F, .z = 30.0F};
+    character->transform.scale = {.x = 2.0F, .y = 3.0F, .z = 4.0F};
+    character->set_principal_orientation({.x = 11.0F, .y = 90.0F, .z = 17.0F});
+    character->physical_motion = App::Character::PhysicalMotionState{
+        .candidate_translation = {.x = 40.0F, .y = 50.0F, .z = 60.0F},
+        .accepted_translation = {.x = 70.0F, .y = 80.0F, .z = 90.0F},
+        .accumulator_seconds = 0.02F,
+        .horizontal_physical_x_per_tick = 2.0F,
+        .vertical_velocity = 70.0F,
+        .horizontal_physical_z_per_tick = -3.0F,
+        .gravity_velocity_delta_per_tick = 8.0F,
+        .fall_stage = 4U,
+        .accumulated_fall_travel = 120.0F,
+        .maximum_support_gap = 140.0F,
+        .horizontal_collision = {.forward_collision = true, .body_valid = true},
+        .support_mode4_response = {.attempted = true},
+        .class2_support_response = {.eligible = true},
+        .ceiling_collision = {.attempted = true, .hit = true},
+        .support = {.valid = true, .grounded = true},
+        .initialized = true};
+    character->pose_owner = App::Character::PoseOwner::k_script_animation;
+    character->body_animation.active = true;
+    character->body_animation.animation_name = "SCRIPTED";
+    character->object_poses.at(1).channel_id = 42U;
+    character->runtime_objects.at(1).animation_matrix = App::Runtime::rotation_x(0.25F);
+    character->pose_revision = 9U;
+    character->ordinary_actor_service_generation = 6U;
+
+    const App::Omikron::IamAreaAddressRecord address{
+        .serialized_position = {1000, 2000, 3000}, .orientation_units = 1024, .address_id = 44};
+    const App::Runtime::Vec3 address_position{
+        App::Runtime::area_position_to_inches(address.serialized_position)};
+    constexpr float k_expected_body_bottom{27.0F};
+    const App::Runtime::Vec3 old_actor_origin{character->transform.translation};
+    const auto zero_object_world_before{character->object_world_transform(0U)};
+    const auto offset_object_model_before{character->object_model_transform(1U)};
+    REQUIRE(zero_object_world_before.has_value());
+    REQUIRE(offset_object_model_before.has_value());
+
+    REQUIRE(runtime.place_body_at_address(character->body_identity, address).has_value());
+
+    const App::Runtime::Vec3 expected_origin{.x = address_position.x,
+        .y = address_position.y - k_expected_body_bottom,
+        .z = address_position.z};
+    CHECK_EQ(character->transform.translation.x, doctest::Approx(expected_origin.x));
+    CHECK_EQ(character->transform.translation.y, doctest::Approx(expected_origin.y));
+    CHECK_EQ(character->transform.translation.z, doctest::Approx(expected_origin.z));
+    CHECK_NE(character->transform.translation.y,
+        doctest::Approx(address_position.y -
+                        (k_expected_body_bottom -
+                            App::Character::PhysicalMotionService::K_HORIZONTAL_BODY_BOTTOM_TRIM)));
+    CHECK_EQ(character->serialized_area_position, address.serialized_position);
+    CHECK_EQ(character->serialized_orientation_units, address.orientation_units);
+    CHECK_EQ(character->runtime_orientation_degrees, 90);
+    CHECK_EQ(character->principal_orientation_degrees.x, doctest::Approx(0.0F));
+    CHECK_EQ(character->principal_orientation_degrees.y, doctest::Approx(90.0F));
+    CHECK_EQ(character->principal_orientation_degrees.z, doctest::Approx(17.0F));
+    CHECK_EQ(character->transform.matrix.values, character->principal_orientation().values);
+    CHECK_EQ(character->transform.scale.x, doctest::Approx(2.0F));
+    CHECK_EQ(character->transform.scale.y, doctest::Approx(3.0F));
+    CHECK_EQ(character->transform.scale.z, doctest::Approx(4.0F));
+
+    CHECK(character->physical_motion.initialized);
+    CHECK_EQ(
+        character->physical_motion.candidate_translation.x, doctest::Approx(expected_origin.x));
+    CHECK_EQ(
+        character->physical_motion.candidate_translation.y, doctest::Approx(expected_origin.y));
+    CHECK_EQ(
+        character->physical_motion.candidate_translation.z, doctest::Approx(expected_origin.z));
+    CHECK_EQ(character->physical_motion.accepted_translation.x, doctest::Approx(expected_origin.x));
+    CHECK_EQ(character->physical_motion.accepted_translation.y, doctest::Approx(expected_origin.y));
+    CHECK_EQ(character->physical_motion.accepted_translation.z, doctest::Approx(expected_origin.z));
+    CHECK_EQ(character->physical_motion.horizontal_physical_x_per_tick, doctest::Approx(0.0F));
+    CHECK_EQ(character->physical_motion.vertical_velocity, doctest::Approx(0.0F));
+    CHECK_EQ(character->physical_motion.horizontal_physical_z_per_tick, doctest::Approx(0.0F));
+    CHECK_EQ(character->physical_motion.fall_stage, 0U);
+    CHECK_EQ(character->physical_motion.accumulated_fall_travel, doctest::Approx(0.0F));
+    CHECK_EQ(character->physical_motion.maximum_support_gap, doctest::Approx(0.0F));
+    CHECK_FALSE(character->physical_motion.horizontal_collision.forward_collision);
+    CHECK_FALSE(character->physical_motion.support_mode4_response.attempted);
+    CHECK_FALSE(character->physical_motion.class2_support_response.eligible);
+    CHECK_FALSE(character->physical_motion.ceiling_collision.attempted);
+    CHECK_FALSE(character->physical_motion.support.valid);
+    CHECK_EQ(character->physical_motion.gravity_velocity_delta_per_tick, doctest::Approx(8.0F));
+    CHECK_EQ(character->physical_motion.accumulator_seconds, doctest::Approx(0.02F));
+
+    CHECK(character->pose_owner == App::Character::PoseOwner::k_script_animation);
+    CHECK(character->body_animation.active);
+    CHECK_EQ(character->body_animation.animation_name, "SCRIPTED");
+    CHECK_EQ(character->object_poses.at(1).channel_id, std::optional<std::uint32_t>{42U});
+    CHECK(character->runtime_objects.at(1).animation_matrix.has_value());
+    CHECK_EQ(character->posed_groups.size(), 1U);
+    CHECK(character->ctl_controller.has_value());
+    CHECK_EQ(character->current_move_id(), std::optional<std::int16_t>{7});
+    CHECK_FALSE(character->controller_enabled);
+    CHECK_EQ(character->ordinary_actor_service_generation, 6U);
+    CHECK_EQ(character->pose_revision, 10U);
+
+    const auto zero_object_world_after{character->object_world_transform(0U)};
+    const auto offset_object_model_after{character->object_model_transform(1U)};
+    const auto offset_object_world_after{character->object_world_transform(1U)};
+    REQUIRE(zero_object_world_after.has_value());
+    REQUIRE(offset_object_model_after.has_value());
+    REQUIRE(offset_object_world_after.has_value());
+    CHECK_EQ(offset_object_model_after->translation.x, offset_object_model_before->translation.x);
+    CHECK_EQ(offset_object_model_after->translation.y, offset_object_model_before->translation.y);
+    CHECK_EQ(offset_object_model_after->translation.z, offset_object_model_before->translation.z);
+    CHECK_EQ(zero_object_world_after->translation.x - zero_object_world_before->translation.x,
+        doctest::Approx(expected_origin.x - old_actor_origin.x));
+    CHECK_EQ(zero_object_world_after->translation.y - zero_object_world_before->translation.y,
+        doctest::Approx(expected_origin.y - old_actor_origin.y));
+    CHECK_EQ(zero_object_world_after->translation.z - zero_object_world_before->translation.z,
+        doctest::Approx(expected_origin.z - old_actor_origin.z));
+    const App::Runtime::Transform expected_offset_world{App::Runtime::compose(
+        offset_object_model_after.value(), character->presentation_transform())};
+    CHECK_EQ(offset_object_world_after->translation.x,
+        doctest::Approx(expected_offset_world.translation.x));
+    CHECK_EQ(offset_object_world_after->translation.y,
+        doctest::Approx(expected_offset_world.translation.y));
+    CHECK_EQ(offset_object_world_after->translation.z,
+        doctest::Approx(expected_offset_world.translation.z));
+  }
+
+  TEST_CASE("AREA address placement fails transactionally without authored collision spheres") {
+    const App::Omikron::IamSceneRecord scene{make_scene()};
+    App::Character::Runtime runtime{
+        [](const std::string_view name)
+            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
+          return fake_resource(name);
+        }};
+    const auto materialized{runtime.ensure_scene_character(222, 55, scene, 57)};
+    REQUIRE(materialized.has_value());
+    App::Character::RuntimeCharacter* character{runtime.find_body(materialized->body_identity)};
+    REQUIRE(character != nullptr);
+    character->serialized_area_position = {1, 2, 3};
+    character->serialized_orientation_units = 4;
+    character->transform.translation = {.x = 5.0F, .y = 6.0F, .z = 7.0F};
+    character->pose_revision = 8U;
+    const App::Omikron::IamAreaAddressRecord address{
+        .serialized_position = {1000, 2000, 3000}, .orientation_units = 1024, .address_id = 44};
+
+    const auto placed{runtime.place_body_at_address(character->body_identity, address)};
+    REQUIRE_FALSE(placed.has_value());
+    CHECK(placed.error().find("no authored collision spheres") != std::string::npos);
+    CHECK_EQ(character->serialized_area_position, std::array<std::int32_t, 3>{1, 2, 3});
+    CHECK_EQ(character->serialized_orientation_units, 4);
+    CHECK_EQ(character->transform.translation.x, doctest::Approx(5.0F));
+    CHECK_EQ(character->transform.translation.y, doctest::Approx(6.0F));
+    CHECK_EQ(character->transform.translation.z, doctest::Approx(7.0F));
+    CHECK_EQ(character->pose_revision, 8U);
   }
 
   TEST_CASE("BodyIdentity operations never rediscover a body through canonical ID") {

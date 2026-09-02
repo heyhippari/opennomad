@@ -542,15 +542,34 @@ std::expected<void, std::string> Runtime::place_body_at_address(
     return std::expected<void, std::string>{
         std::unexpect, fmt::format("body {} is not materialized", body_identity)};
   }
+  if (character->model_resource == nullptr) {
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format("body {} has no model resource for address placement", body_identity)};
+  }
+  const auto extents{PhysicalMotionService::body_vertical_extents(
+      character->model_resource->model.header.collision_spheres())};
+  if (!extents.has_value()) {
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format(
+            "body {} has no authored collision spheres for address placement", body_identity)};
+  }
+
+  const App::Runtime::Vec3 address_position{
+      App::Runtime::area_position_to_inches(address.serialized_position)};
+  const std::int32_t address_yaw{App::Runtime::area_angle_to_degrees(address.orientation_units)};
+  const App::Runtime::Vec3 actor_origin{
+      .x = address_position.x, .y = address_position.y - extents->bottom, .z = address_position.z};
+  const float preserved_principal_z{character->principal_orientation_degrees.z};
+
   character->serialized_area_position = address.serialized_position;
   character->serialized_orientation_units = address.orientation_units;
-  character->runtime_orientation_degrees =
-      App::Runtime::area_angle_to_degrees(address.orientation_units);
-  character->transform.translation =
-      App::Runtime::area_position_to_inches(address.serialized_position);
+  character->runtime_orientation_degrees = address_yaw;
+  // AREA table-5 Y is the floor/body-contact coordinate, not the actor origin.
+  character->transform.translation = actor_origin;
   character->set_principal_orientation(App::Runtime::Vec3{
-      .x = 0.0F, .y = static_cast<float>(character->runtime_orientation_degrees), .z = 0.0F});
-  character->transform.scale = App::Runtime::Vec3{.x = 1.0F, .y = 1.0F, .z = 1.0F};
+      .x = 0.0F, .y = static_cast<float>(address_yaw), .z = preserved_principal_z});
+  // Runtime objects remain actor-relative, so the logical transform moves their visual hierarchy
+  // exactly once while preserving the current scripted pose.
   PhysicalMotionService::synchronize(*character);
   character->pose_revision += 1U;
   return {};

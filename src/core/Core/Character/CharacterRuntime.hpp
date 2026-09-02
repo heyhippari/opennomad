@@ -143,8 +143,9 @@ struct RuntimeCharacter {
   /// Actor-owned candidate/accepted physical translation and ordinary 30 Hz
   /// accumulator. This remains valid independently of CTL participation.
   PhysicalMotionState physical_motion{};
-  /// Persistent entity +0x1A0/+0x1A4/+0x1A8 equivalent. AREA/address
-  /// placement initializes (0,Y,0); Script_Select*BodyAnimation and
+  /// Persistent entity +0x1A0/+0x1A4/+0x1A8 equivalent. AREA materialization
+  /// initializes (0,Y,0); address placement sets X=0/Y=authored yaw and preserves Z.
+  /// Script_Select*BodyAnimation and
   /// Script_SelectRelativeBodyAnimation overwrite all three components.
   App::Runtime::Vec3 principal_orientation_degrees{};
   /// Adventure CTL controller created from the current character definition's
@@ -325,7 +326,8 @@ class Runtime {
   [[nodiscard]] std::expected<void, std::string> transfer_body_to(
       Runtime& target, BodyIdentity body_identity);
 
-  /// Applies a named AREA address transform to one established runtime character.
+  /// Applies a named AREA address contact point to one established runtime character.
+  /// Requires authored body spheres so the logical origin can be derived from body bottom.
   [[nodiscard]] std::expected<void, std::string> place_body_at_address(
       BodyIdentity body_identity, const Omikron::IamAreaAddressRecord& address);
 

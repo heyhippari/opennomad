@@ -339,6 +339,8 @@ std::vector<std::byte> make_zone_contact_area_archive(const bool starts_dialog =
   }
   if (place_before_activation) {
     top_level.u8(0x49).u16(44);
+    top_level.u8(0x3F).u16(100);
+    top_level.u8(0x68);
   }
   top_level.u8(0x40).u16(static_cast<std::uint16_t>(zone_id));
   top_level.u8(0x03);
@@ -1433,16 +1435,42 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
           auto resource{std::make_shared<App::Character::ModelResource>()};
           resource->name = name;
           resource->groups.push_back(App::Omikron::MaterialGroup{});
+          resource->model.header.collision_sphere_count = 2U;
+          resource->model.header.collision_sphere_slots.at(0) =
+              App::Omikron::CollisionSphere{.center = {.y = 5.0F}, .radius = 10.0F};
+          resource->model.header.collision_sphere_slots.at(1) =
+              App::Omikron::CollisionSphere{.center = {.y = 20.0F}, .radius = 7.0F};
           return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
         });
     install_stub_ctl_loader(*runtime);
 
     REQUIRE(controller.tick().has_value());
-    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
     const App::Character::RuntimeCharacter* character{runtime->character_runtime().find(136)};
     REQUIRE(character != nullptr);
+    const App::Runtime::Vec3 address_position{
+        App::Runtime::area_position_to_inches(std::array<std::int32_t, 3>{500, 999, 500})};
+    CHECK_EQ(character->transform.translation.x, doctest::Approx(address_position.x));
+    CHECK_EQ(character->transform.translation.y, doctest::Approx(address_position.y - 27.0F));
+    CHECK_EQ(character->transform.translation.z, doctest::Approx(address_position.z));
+    CHECK_EQ(character->current_move_id(), std::optional<std::int16_t>{100});
+    CHECK(character->controller_enabled);
+    REQUIRE(character->ctl_controller.has_value());
+    CHECK(character->ctl_controller->direct_control_active());
+    CHECK_EQ(character->ordinary_actor_service_generation, 0U);
+    CHECK_EQ(character->physical_motion.candidate_translation.y,
+        doctest::Approx(character->transform.translation.y));
+    CHECK_EQ(character->physical_motion.accepted_translation.y,
+        doctest::Approx(character->transform.translation.y));
+    CHECK_EQ(character->physical_motion.vertical_velocity, doctest::Approx(0.0F));
     REQUIRE(controller.current_character_trigger_proxy().has_value());
     CHECK_EQ(character->serialized_area_position.at(0), 500);
+    CHECK_EQ(character->serialized_area_position.at(1), 999);
+    CHECK_NE(controller.current_character_trigger_proxy()->position.x,
+        character->transform.translation.x);
+    CHECK(controller.current_character_trigger_proxy()->synchronization_suspended);
+
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+    CHECK_EQ(character->ordinary_actor_service_generation, 1U);
     CHECK_EQ(controller.current_character_trigger_proxy()->position.x,
         character->transform.translation.x);
     CHECK_FALSE(controller.current_character_trigger_proxy()->synchronization_suspended);
@@ -2200,6 +2228,9 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
           auto resource{std::make_shared<App::Character::ModelResource>()};
           resource->name = name;
           resource->groups.push_back(App::Omikron::MaterialGroup{});
+          resource->model.header.collision_sphere_count = 1U;
+          resource->model.header.collision_sphere_slots.at(0) =
+              App::Omikron::CollisionSphere{.center = {.y = 8.0F}, .radius = 12.0F};
           return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
         });
 

@@ -3530,3 +3530,10 @@ explicit `0x30` release. If compact IAM has selected a current body with `0x38`,
 lookup for `0x49` still scans both resident AREA table-5 collections, then
 applies the resolved address only to the selected body's recorded owner world;
 it never guesses a current character when no `0x38` selection exists.
+
+The native consumer confirms table-5 XYZ uses the ordinary AREA positional
+normalization. Address Y denotes the body/floor contact coordinate, and
+`0x0041BF50` derives logical actor Y by subtracting the maximum raw authored
+collision-sphere bottom (`center.y + radius`). It preserves principal Z and the
+representative visual object's actor-relative offset while replacing X/Yaw and
+the authoritative physical position.

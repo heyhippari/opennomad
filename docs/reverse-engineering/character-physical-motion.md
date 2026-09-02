@@ -72,6 +72,22 @@ CTL root motion and one-shot/continuous movement auxiliaries update only the act
 
 Authoritative placement resets D8/DC/E0 equivalents while preserving the gravity parameter and OpenNomad's fractional accumulator remainder. Transfer between loaded world runtimes moves the complete actor-owned state unchanged and does not synchronize it.
 
+**Confirmed — Runtime:** current-character address placement (`0x0041BF50`)
+treats AREA table-5 Y as a floor/body-contact coordinate. It derives the logical
+origin with `actorY = addressY - bodyBottom`, where `bodyBottom` is the maximum
+raw authored collision-sphere `center.y + radius`. This is not the horizontally
+trimmed collision cylinder extent. Placement also sets principal X to zero and
+Y to the address yaw, preserves principal Z, synchronizes accepted/candidate
+positions, and resets transient physical state. It does not manufacture an
+ordinary actor generation or full physical tick.
+
+Runtime immediately invokes a support-probe path after placement. OpenNomad's
+`PhysicalMotionService::synchronize()` represents the confirmed authoritative
+reanchor and reset while preserving gravity configuration and fractional
+accumulator state. No exact probe-only helper currently exists, so that narrow
+post-placement probe remains deferred rather than being approximated with
+`resolve_tick()`.
+
 Authoritative address placement and materialization with `apply_transform=true` synchronize both positions explicitly. Ordinary service also re-anchors when the live transform diverges from accepted XYZ, covering structured scripts and direct debug/test mutation without stale-position snapback.
 
 Structured ownership is gated before ordinary time accumulation. No CTL ticks, physical ticks, generations, or catch-up debt accrue while it is active. The first later ordinary tick re-anchors before CTL can produce new movement.

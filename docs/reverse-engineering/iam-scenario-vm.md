@@ -3220,6 +3220,28 @@ interpreter and service bridges as AREA, but its compact context is independent:
 an unsupported SCENE opcode pauses that SCENE context without stopping its
 parent AREA context.
 
+**Confirmed — Runtime:** compact handler `0x00403C30` resolves the Scalar16
+address and reaches authoritative current-actor placement `0x0041BF50`. Table-5
+XYZ uses the ordinary AREA truncating positional conversion, but address Y is
+the body's floor/contact coordinate rather than its logical origin:
+
+```text
+bodyBottom = max(authoredSphere.center.y + authoredSphere.radius)
+actorOrigin = (addressX, addressY - bodyBottom, addressZ)
+```
+
+The routine sets principal X to zero and Y to the converted address yaw while
+preserving principal Z. It seeds both candidate and accepted physical XYZ and
+resets transient motion terms. Native code then performs a support probe without
+running the complete ordinary actor update.
+
+**OpenNomad representation:** moving `RuntimeCharacter::transform` while
+preserving actor-relative `runtime_objects` moves the visual hierarchy by the
+same world-space change exactly once. It is the architectural equivalent of
+Runtime explicitly preserving and replacing the representative object's offset;
+address placement does not reset scripted animation, pose ownership, CTL state,
+or transform scale. Exact probe-only post-placement parity remains deferred.
+
 ## Persistent ADDRESS and object-collection operations
 
 Three additional compact handlers mutate session state without depending on a

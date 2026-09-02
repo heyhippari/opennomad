@@ -136,7 +136,14 @@ The conversion above is directly confirmed for:
 ```text
 AREA table 0:
     character placement X/Y/Z
+
+AREA table 5:
+    named address X/Y/Z consumed by compact opcode 0x49
 ```
+
+Table-5 conversion produces an address contact point. Its Y component is not
+the final logical actor-origin Y: authoritative placement subtracts the actor's
+raw authored body-bottom extent after conversion. X and Z are used directly.
 
 Examples:
 
