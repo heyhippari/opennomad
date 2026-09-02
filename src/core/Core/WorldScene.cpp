@@ -616,7 +616,9 @@ std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state
           character.physical_motion.accepted_translation.z};
       debug_character.physical_state_initialized = character.physical_motion.initialized;
       const Character::PhysicalMotionState& physical{character.physical_motion};
+      debug_character.physical_horizontal_x_per_tick = physical.horizontal_physical_x_per_tick;
       debug_character.physical_vertical_velocity = physical.vertical_velocity;
+      debug_character.physical_horizontal_z_per_tick = physical.horizontal_physical_z_per_tick;
       debug_character.physical_gravity_delta_per_tick = physical.gravity_velocity_delta_per_tick;
       const Character::HorizontalCollisionState& horizontal{physical.horizontal_collision};
       debug_character.horizontal_intended_displacement = {horizontal.intended_displacement.x,
@@ -663,6 +665,21 @@ std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state
       debug_character.physical_support_special_deferred = physical.support.special_deferred;
       debug_character.physical_small_step_snapped_this_tick =
           physical.support.small_step_snapped_this_tick;
+      debug_character.physical_support_mover_flags = physical.support.mover_flags;
+      debug_character.physical_support_mover_applied = physical.support.mover_applied_this_tick;
+      const Character::SteepSupportResponseState& steep{physical.steep_support_response};
+      debug_character.steep_mode4_attempted = steep.attempted;
+      debug_character.steep_mode4_input = {
+          steep.input_displacement.x, steep.input_displacement.y, steep.input_displacement.z};
+      debug_character.steep_mode4_result = {steep.resolved_displacement.x,
+          steep.resolved_displacement.y,
+          steep.resolved_displacement.z};
+      debug_character.steep_mode4_forward_collision = steep.forward_collision;
+      debug_character.steep_mode4_depenetrated = steep.depenetrated;
+      debug_character.steep_mode4_collision_passes = steep.collision_passes;
+      debug_character.steep_mode4_response_normal = {
+          steep.response_normal.x, steep.response_normal.y, steep.response_normal.z};
+      debug_character.steep_physical_terms_seeded = steep.physical_terms_seeded;
       debug_character.physical_fall_stage = physical.fall_stage;
       debug_character.physical_accumulated_fall_travel = physical.accumulated_fall_travel;
       debug_character.physical_maximum_support_gap = physical.maximum_support_gap;

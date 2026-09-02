@@ -443,8 +443,12 @@ void DebugUI::show_world_inspector() {
           static_cast<double>(character.physical_accepted_translation.at(2)));
       ImGui::Text(
           "Physical state initialized: %s", character.physical_state_initialized ? "yes" : "no");
+      ImGui::Text("Physical X/tick: %.3f in",
+          static_cast<double>(character.physical_horizontal_x_per_tick));
       ImGui::Text("Vertical velocity: %.3f in/s",
           static_cast<double>(character.physical_vertical_velocity));
+      ImGui::Text("Physical Z/tick: %.3f in",
+          static_cast<double>(character.physical_horizontal_z_per_tick));
       ImGui::Text("Gravity delta/tick: %.3f in/s",
           static_cast<double>(character.physical_gravity_delta_per_tick));
       ImGui::Text("Horizontal intended XZ: %.3f, %.3f in",
@@ -518,6 +522,29 @@ void DebugUI::show_world_inspector() {
             character.physical_grounded ? "yes" : "no",
             character.physical_support_special_deferred ? "yes" : "no",
             character.physical_small_step_snapped_this_tick ? "yes" : "no");
+        ImGui::Text("Mover flags: 0x%08X, applied this tick: %s",
+            character.physical_support_mover_flags,
+            character.physical_support_mover_applied ? "yes" : "no");
+      }
+      ImGui::Text("Steep mode 4 attempted: %s", character.steep_mode4_attempted ? "yes" : "no");
+      if (character.steep_mode4_attempted) {
+        ImGui::Text("Mode 4 input XZ: %.3f, %.3f in",
+            static_cast<double>(character.steep_mode4_input.at(0)),
+            static_cast<double>(character.steep_mode4_input.at(2)));
+        ImGui::Text("Mode 4 result XZ: %.3f, %.3f in",
+            static_cast<double>(character.steep_mode4_result.at(0)),
+            static_cast<double>(character.steep_mode4_result.at(2)));
+        ImGui::Text("Mode 4 collision: %s, depenetrated: %s, passes: %u",
+            character.steep_mode4_forward_collision ? "yes" : "no",
+            character.steep_mode4_depenetrated ? "yes" : "no",
+            character.steep_mode4_collision_passes);
+        ImGui::Text("Mode 4 response normal XYZ: %.3f, %.3f, %.3f",
+            static_cast<double>(character.steep_mode4_response_normal.at(0)),
+            static_cast<double>(character.steep_mode4_response_normal.at(1)),
+            static_cast<double>(character.steep_mode4_response_normal.at(2)));
+        ImGui::Text("Steep physical response seeded: %s (downward velocity %.3f in/s)",
+            character.steep_physical_terms_seeded ? "yes" : "no",
+            static_cast<double>(character.physical_vertical_velocity));
       }
       ImGui::Text("Fall stage: %u", static_cast<unsigned int>(character.physical_fall_stage));
       ImGui::Text("Accumulated fall travel: %.3f in",

@@ -1,6 +1,6 @@
 # Character static support and vertical motion
 
-> **Status:** Phase 4.2B static vertical physical service complete
+> **Status:** Phase 4.2C.3A static support physical response complete
 > **Last updated:** 2026-09-02
 > **Runtime:** PE32/i386 `Runtime.exe`, image base `0x00400000`, SHA-256
 > `55f7120bfea7891b048c64e3682f3259cdbf2719a43fa24e42254b753c95d2ef`
@@ -18,23 +18,26 @@ complete candidate-minus-accepted Y displacement, resolves X/Z separately, probe
 support (`0x00467030`), applies vertical response (`0x00465460`), and either
 commits the complete candidate or rolls it back.
 
-Actor `+0xDC` is vertical velocity and `+0xE4` is the persistent velocity delta
-applied once per 30 Hz base tick. Positive Y and positive vertical velocity are
-downward. OpenNomad stores:
+Actor `+0xD8/+0xE0` are horizontal physical displacement terms added directly
+to candidate X/Z per logical tick. Actor `+0xDC` is vertical velocity and
+`+0xE4` is the persistent velocity delta applied once per 30 Hz base tick.
+Positive Y and positive vertical velocity are downward. OpenNomad stores:
 
 ```text
 gravity velocity delta/tick = 12.8608922958 in/s
 normal acceleration         = 12.8608922958 * 30 = 385.8267689 in/s^2 (~9.8 m/s^2)
 terminal downward velocity  = 787.40155 in/s (~20 m/s)
-ground-contact bias         = 11.8110237 in/s downward
+steep-response velocity     = 11.8110237 in/s downward
 ```
 
 Each logical tick adds the gravity delta, clamps velocity to terminal speed, and
 adds `vertical_velocity / 30` to candidate Y. The outer accumulator is the only
 consumer of real frame time. Gravity runs without an enabled CTL controller.
+The D8/E0 equivalents are native inches per logical tick and receive no `1/30`
+or display-frame scaling.
 
 **Confirmed — Runtime:** authoritative placement (`0x0041BDF0`) synchronizes
-candidate/accepted XYZ and resets current velocity and fall episode fields, but
+candidate/accepted XYZ and resets D8/DC/E0 and fall episode fields, but
 does not overwrite the gravity parameter. **OpenNomad implementation choice:**
 `synchronize()` also preserves the accumulator's fractional remainder. Body
 transfer preserves the entire actor-owned state; it is not placement.
@@ -118,7 +121,7 @@ the `0x004430A0` broadphase, collision callback `0x00444E60`, and the
 For native fall stage 0 or 2 only, `0 < new_gap < 7.8740158 in` (0.2 m) takes
 an early snap-and-return path. The comparison is strict. Candidate Y reaches
 support exactly, but that tick does not establish grounded state, apply the
-ground-contact velocity, run a landing reaction, or clear the fall episode.
+walkable motion reset, seed mover terms, run a landing reaction, or clear the fall episode.
 Genuine contact is processed on the following physical tick. Stages 1, 3, and
 4 return from the airborne branch before this predicate and therefore are not
 snapped near landing.
@@ -137,9 +140,43 @@ and no persistent global is modeled.
 
 **Confirmed — Runtime:** support is walkable when
 `-world_normal.y >= cos(30 degrees)`, including exactly 30 degrees. Stable
-walkable contact is grounded and writes the 11.8110237 in/s downward bias.
-Steep contact still blocks downward penetration, is not grounded, and zeros the
-vertical component; mode-4 horizontal/slide response remains deferred.
+walkable contact is grounded and clears D8, DC, and E0. The prior OpenNomad
+B-series interpretation of `11.8110237` as a grounded downward bias was corrected
+by the C.3 reverse-engineering pass.
+
+**Confirmed — Runtime:** unacceptable steep contact is not grounded. Runtime
+saves the current candidate-minus-accepted X/Z, rewinds candidate to accepted,
+and calls shared solver `0x00469580` in mode 4 with Y forced to zero. Mode 4 uses
+the C.1 finite-cylinder body, skin, lookahead, depenetration, sliding, and
+three-pass limit. Candidate Y remains accepted Y, and this internal retry does
+not invoke C.2 automatic heading. For the ordinary non-upward response:
+
+```text
+D8 += support_normal.x
+E0 += support_normal.z
+DC  = 11.8110237
+```
+
+The actual support-normal components and signs are used without horizontal
+normalization. Upward DC bypasses this normal steep physical-term assignment.
+
+### Walkable mover flags
+
+After walkable contact clears D8/DC/E0, Runtime processes the support mesh's
+low-byte `mover_flags`:
+
+| Flag | Next physical term |
+| --- | --- |
+| `0x10` | `D8 = +2` |
+| `0x20` | `D8 = -2` |
+| `0x40` | `E0 = +2` |
+| `0x80` | `E0 = -2` |
+
+Checks execute in table order, so `0x20` overwrites `0x10` and `0x80` overwrites
+`0x40`; opposing bits do not cancel. Values are Runtime-native inches per
+logical tick. They are seeded after contact response and first affect the next
+tick, when they compose with authored movement before C.1. A mover-handled
+diagnostic is retained so C.3B can skip later class-2 attachment response.
 
 ### Fall-stage lifetime and reactions
 
@@ -183,8 +220,8 @@ CTL service and is first serviced/presented by the next CTL tick.
 
 Completed ordinary support contact terminates the fall episode independently
 of walkability. Walkable contact separately establishes grounded state and the
-downward bias; steep contact remains ungrounded, zeros vertical velocity, and
-leaves horizontal mode-4 response deferred.
+D8/DC/E0 reset before optional mover seeding; steep contact remains ungrounded
+and applies the confirmed mode-4 and physical-term response above.
 
 Native actor dispatcher state `actor+0x194` suppresses moves 2/4/5/100 for
 values 2, 3, and 15. OpenNomad's current ordinary player service corresponds to
@@ -208,8 +245,12 @@ No qualifying support is not infinite free fall. Runtime rolls candidate back
 to accepted; OpenNomad also leaves the already-integrated velocity intact and
 clears the `MDROT000` transient at the physical boundary.
 
-Phase 4.2C retains horizontal mode-1 collision, walls/sliding, automatic heading,
-mode-4 steep response, transformed support/class 2, moving-platform association,
-conveyor `mover_flags`, exact ceiling sweep, and generic actor/object collision.
+An additional Runtime mode-4 branch involving fall stage 0/2, actor `+0x100`
+support history, primary/secondary support metrics, a 0.30 m comparison, and
+`MDSLIDOU` override remains deferred to C.3B support-query work. C.3B also owns
+transformed/general class-2 support, its secondary query, and one-eighth
+attachment response. C.3C owns the exact general swept-sphere ceiling path.
+SCENE/person association and `0x08000000` adventure state transition remain
+higher-level deferred behavior, not generic physical support.
 A future full `MDJP` implementation must provide native jump movement and feed
 its adventure-state predicate into `suppress_small_support_snap`.

@@ -315,7 +315,9 @@ TEST_SUITE("Core::Character::Runtime") {
         .candidate_translation = {.x = 44.0F, .y = 55.0F, .z = 66.0F},
         .accepted_translation = {.x = 11.0F, .y = 22.0F, .z = 33.0F},
         .accumulator_seconds = 0.01F,
+        .horizontal_physical_x_per_tick = 2.0F,
         .vertical_velocity = 70.0F,
+        .horizontal_physical_z_per_tick = -2.0F,
         .gravity_velocity_delta_per_tick = 8.0F,
         .fall_stage = 3,
         .accumulated_fall_travel = 90.0F,
@@ -348,7 +350,9 @@ TEST_SUITE("Core::Character::Runtime") {
     CHECK_EQ(character->physical_motion.candidate_translation.x, 44.0F);
     CHECK_EQ(character->physical_motion.accepted_translation.y, 22.0F);
     CHECK_EQ(character->physical_motion.accumulator_seconds, doctest::Approx(0.01F));
+    CHECK_EQ(character->physical_motion.horizontal_physical_x_per_tick, 2.0F);
     CHECK_EQ(character->physical_motion.vertical_velocity, 70.0F);
+    CHECK_EQ(character->physical_motion.horizontal_physical_z_per_tick, -2.0F);
     CHECK_EQ(character->physical_motion.gravity_velocity_delta_per_tick, 8.0F);
     CHECK_EQ(character->physical_motion.fall_stage, 3U);
     CHECK_EQ(character->physical_motion.accumulated_fall_travel, 90.0F);

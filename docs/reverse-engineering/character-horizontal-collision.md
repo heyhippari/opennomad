@@ -1,6 +1,6 @@
 # Character horizontal collision
 
-> **Status:** Phase 4.2C.2 automatic collision heading implemented
+> **Status:** Phase 4.2C.3A mode-1 collision and steep mode-4 reuse implemented
 > **Last updated:** 2026-09-02
 > **Runtime.exe SHA-256:** `55f7120bfea7891b048c64e3682f3259cdbf2719a43fa24e42254b753c95d2ef`
 
@@ -29,7 +29,7 @@ bottom = maximum(sphere.centerY + sphere.radius)
 effective bottom = bottom - 11.8110237 in
 ```
 
-The retail `collidescale` default is `1.0`. Only the horizontal radius is scaled. The 11.8110237-inch (30 cm) lower trim is the mode-1 step-over allowance; it is semantically independent from the equal-valued grounded velocity bias.
+The retail `collidescale` default is `1.0`. Only the horizontal radius is scaled. The 11.8110237-inch (30 cm) lower trim is the mode-1 step-over allowance; it is semantically independent from the equal-valued steep-support downward response.
 
 OpenNomad represents the future preference seam as `PhysicalMotionEnvironment::collision_scale`, defaulting to `1.0F`. Invalid/non-finite dimensions or scale make horizontal resolution identity-only; the existing B-series body/support path still decides the physical outcome. This validation is OpenNomad hardening.
 
@@ -158,4 +158,10 @@ These comparisons are also strict: yaw exactly `360` remains `360`. This differs
 
 ## Deferred behavior
 
-Phase C.2 does not implement mode 4, D8/E0 horizontal physical velocity, conveyors, moving-platform attachment, support class 2, ceiling collision, actor-vs-actor collision, jump choreography, the native spatial-service latch, the special-movement guard, or adventure event dispatch. Runtime's normal mode-1 forward-collision side effect that clears D8/E0 remains deferred until C.3 introduces meaningful producers and consumers.
+## Mode-4 reuse by steep support
+
+Phase C.3A reuses `HorizontalCollisionQuery::resolve()` for Runtime's confirmed steep-support mode-4 retry. The input is the support-stage candidate-minus-accepted X/Z displacement with Y forced to zero, and the same C.1 finite-cylinder body and environment are used. Results are stored in separate steep-response diagnostics, leaving ordinary mode-1 and C.2 diagnostics intact. Mode 4 does not run C.2 automatic heading.
+
+The ordinary mode-1 result now clears actor-owned D8/E0-equivalent per-tick physical terms only for a real `forward_collision`. Pure starting depenetration preserves them.
+
+Still deferred are C.3B transformed/class-2 and secondary support behavior, C.3C ceiling collision, moving-platform/person association, actor-vs-actor collision, jump choreography, the native spatial-service latch, the special-movement guard, and adventure event dispatch.

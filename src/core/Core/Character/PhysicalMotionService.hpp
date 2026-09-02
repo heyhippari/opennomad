@@ -23,6 +23,20 @@ struct PhysicalSupportState {
   bool grounded{false};
   bool special_deferred{false};
   bool small_step_snapped_this_tick{false};
+  std::uint32_t mover_flags{0};
+  bool mover_applied_this_tick{false};
+};
+
+struct SteepSupportResponseState {
+  bool attempted{false};
+  App::Runtime::Vec3 input_displacement{};
+  App::Runtime::Vec3 resolved_displacement{};
+  bool forward_collision{false};
+  bool depenetrated{false};
+  std::uint32_t collision_passes{0};
+  std::optional<std::size_t> object_index;
+  App::Runtime::Vec3 response_normal{};
+  bool physical_terms_seeded{false};
 };
 
 enum class AutomaticHeadingSuppressionReason : std::uint8_t {
@@ -81,12 +95,15 @@ struct PhysicalMotionState {
   App::Runtime::Vec3 candidate_translation{};
   App::Runtime::Vec3 accepted_translation{};
   float accumulator_seconds{0.0F};
+  float horizontal_physical_x_per_tick{0.0F};
   float vertical_velocity{0.0F};
+  float horizontal_physical_z_per_tick{0.0F};
   float gravity_velocity_delta_per_tick{12.8608922958F};
   std::uint8_t fall_stage{0};
   float accumulated_fall_travel{0.0F};
   float maximum_support_gap{0.0F};
   HorizontalCollisionState horizontal_collision{};
+  SteepSupportResponseState steep_support_response{};
   PhysicalSupportState support{};
   bool missing_body_warning_emitted{false};
   bool initialized{false};
@@ -99,7 +116,8 @@ class PhysicalMotionService {
   static constexpr float K_TERMINAL_DOWNWARD_VELOCITY{787.40155F};
   static constexpr float K_SMALL_SUPPORT_SNAP_DISTANCE{7.8740158F};
   static constexpr float K_MAX_WALKABLE_SLOPE_DEGREES{30.0F};
-  static constexpr float K_GROUND_CONTACT_DOWNWARD_VELOCITY{11.8110237F};
+  static constexpr float K_STEEP_SUPPORT_DOWNWARD_VELOCITY{11.8110237F};
+  static constexpr float K_MOVER_HORIZONTAL_STEP{2.0F};
   /// Runtime mode-1's independent 30 cm lower-cylinder step-over allowance.
   static constexpr float K_HORIZONTAL_BODY_BOTTOM_TRIM{11.8110237F};
   static constexpr float K_FALL_STAGE_1_DISTANCE{59.0551186F};

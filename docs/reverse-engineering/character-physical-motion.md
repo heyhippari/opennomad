@@ -1,6 +1,6 @@
 # Character physical motion
 
-> **Status:** Phase 4.2C.2 automatic collision heading complete
+> **Status:** Phase 4.2C.3A horizontal physical response, steep support, and movers complete
 > **Last updated:** 2026-09-02
 
 This document separates recovered retail actor semantics from OpenNomad's modern C++ representation. Runtime did not contain a C++ abstraction named `PhysicalMotionService`.
@@ -51,17 +51,24 @@ For every due ordinary fixed step:
 synchronize or defensively re-anchor from the live transform
 -> one CTL logical tick when enabled
 -> drain that tick's deferred CTL callbacks
--> gravity integration
+-> compose D8/E0-equivalent per-tick X/Z terms and DC/30 vertical movement
 -> ordinary mode-1 horizontal finite-cylinder collision and wall sliding
 -> C.2 collision-induced heading correction
+-> clear D8/E0 equivalents on a real forward collision
 -> owning-world static support query
--> vertical displacement, grounding, and fall-state resolution
+-> vertical displacement, grounding, steep mode-4, mover response, and fall-state resolution
 -> accepted-position publication or complete rollback
 -> play CTL markers at the accepted actor position
 -> advance ordinary actor service generation
 ```
 
-CTL root motion and one-shot/continuous movement auxiliaries update only the actor-owned candidate. The physical stage composes authored Y with one native gravity step, saves the complete desired displacement, resolves desired X/Z through Runtime's ordinary finite-cylinder collision stage, then uses the resolved X/Z and original saved Y for static vertical response.
+CTL root motion and one-shot/continuous movement auxiliaries update only the actor-owned candidate. The physical stage adds actor-owned horizontal physical X/Z terms directly to that authored movement, adds `vertical_velocity / 30` to Y, and only then captures the complete desired displacement. A real mode-1 forward collision clears the X/Z terms after C.2 steering and before support response; pure depenetration does not.
+
+## Native D8/E0 semantics
+
+**Confirmed — Runtime:** actor `+0xD8` and `+0xE0` are horizontal physical displacement terms in Runtime-native inches per logical 30 Hz tick. The ordinary integrator applies them directly to candidate X/Z; unlike actor `+0xDC`, they are not multiplied by `1/30`. OpenNomad therefore names them `horizontal_physical_x_per_tick` and `horizontal_physical_z_per_tick`, not velocities.
+
+Authoritative placement resets D8/DC/E0 equivalents while preserving the gravity parameter and OpenNomad's fractional accumulator remainder. Transfer between loaded world runtimes moves the complete actor-owned state unchanged and does not synchronize it.
 
 Authoritative address placement and materialization with `apply_transform=true` synchronize both positions explicitly. Ordinary service also re-anchors when the live transform diverges from accepted XYZ, covering structured scripts and direct debug/test mutation without stale-position snapback.
 
@@ -95,9 +102,11 @@ serialized layouts and Runtime evidence are documented in [`3do.md`](3do.md).
 Phase 4.2B.2 consumes this metadata through the CPU-only static support query.
 It implements native 30 Hz gravity, terminal velocity, body-bottom gaps, exact
 floor clamp/snap and depenetration, the strict 0.2 m step-down snap and jump-state
-suppression input, 30-degree walkability, grounded velocity bias, no-support
+suppression input, 30-degree walkability, grounded response, no-support
 rollback, and actor-owned fall episode tracking. Full formulas and Runtime
 evidence live in [`character-support-motion.md`](character-support-motion.md).
+
+The later C.3 Runtime pass corrected the B-series interpretation of stable grounded DC. Ordinary walkable support clears D8, DC, and E0; `11.8110237` belongs to the steep-support downward response instead of a persistent grounded bias.
 
 Phase 4.2B.3 completes the ordinary static vertical state machine with latched
 fall severity, pre-movement maximum-gap tracking, native fall-travel timing,
@@ -112,13 +121,15 @@ Phase C.1 implements ordinary horizontal collision around `0x00469580`, includin
 
 Phase C.2 consumes C.1's original intended and final resolved X/Z immediately before B support. A qualifying forward collision rotates principal yaw by one eighth of the shortest resolved-minus-intended heading difference. It uses the fall stage entering B, works independently of CTL presence or enablement, and preserves corrected yaw if later B processing rolls position back.
 
+Phase C.3A adds the actor-owned D8/E0-equivalent terms and their complete ordinary lifecycle. Walkable support clears D8/DC/E0, then low-byte mover flags may seed exact `+/-2` inch X/Z terms for the next tick. Steep static support rewinds candidate to accepted, retries its current X/Z displacement through the C.1 finite-cylinder kernel with Y forced to zero, leaves candidate Y at accepted Y, and does not invoke C.2 a second time. Eligible steep response adds the support normal's unnormalized X/Z components to the physical terms and assigns DC `11.8110237`.
+
 Still deferred:
 
-- Phase C.3 mode-4 steep-slope horizontal response and extended/general collision consumers;
-- D8/E0 horizontal physical velocity, moving/conveyor support, and class-2 support;
-- moving-platform association;
+- Phase C.3B transformed/class-2 support, secondary support query, class-2 one-eighth attachment response, and the remaining support-history mode-4 trigger;
+- Phase C.3C exact general 3D swept-sphere ceiling collision using the largest authored sphere;
+- SCENE/person support association and moving-platform person integration;
 - generic actor/object collision;
-- exact swept ceiling collision through the general collision pipeline.
+- native `0x08000000` adventure/gameplay support transition.
 
 Adventure fall/landing event dispatch through `0x00414DE0` and the native jump
 callback choreography remain deferred to their owning systems. The native

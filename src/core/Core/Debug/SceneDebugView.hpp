@@ -140,7 +140,9 @@ struct RuntimeCharacterDebugState {
   std::array<float, 3> physical_candidate_translation{};
   std::array<float, 3> physical_accepted_translation{};
   bool physical_state_initialized{false};
+  float physical_horizontal_x_per_tick{0.0F};
   float physical_vertical_velocity{0.0F};
+  float physical_horizontal_z_per_tick{0.0F};
   float physical_gravity_delta_per_tick{0.0F};
   std::array<float, 3> horizontal_intended_displacement{};
   std::array<float, 3> horizontal_resolved_displacement{};
@@ -178,6 +180,16 @@ struct RuntimeCharacterDebugState {
   bool physical_grounded{false};
   bool physical_support_special_deferred{false};
   bool physical_small_step_snapped_this_tick{false};
+  std::uint32_t physical_support_mover_flags{0};
+  bool physical_support_mover_applied{false};
+  bool steep_mode4_attempted{false};
+  std::array<float, 3> steep_mode4_input{};
+  std::array<float, 3> steep_mode4_result{};
+  bool steep_mode4_forward_collision{false};
+  bool steep_mode4_depenetrated{false};
+  std::uint32_t steep_mode4_collision_passes{0};
+  std::array<float, 3> steep_mode4_response_normal{};
+  bool steep_physical_terms_seeded{false};
   std::uint8_t physical_fall_stage{0};
   float physical_accumulated_fall_travel{0.0F};
   float physical_maximum_support_gap{0.0F};

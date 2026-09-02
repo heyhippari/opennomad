@@ -120,10 +120,12 @@ TEST_SUITE("Core::Character::PhysicalMotionService") {
     CHECK_EQ(character.physical_motion.accepted_translation.z, 33.0F);
   }
 
-  TEST_CASE("grounded resolution keeps exact contact and applies the downward bias") {
+  TEST_CASE("grounded resolution keeps exact contact and clears physical motion terms") {
     PhysicalFixture fixture;
     fixture.character.transform.translation = {.x = 1.0F, .y = 10.0F, .z = 3.0F};
     App::Character::PhysicalMotionService::synchronize(fixture.character);
+    fixture.character.physical_motion.horizontal_physical_x_per_tick = 2.0F;
+    fixture.character.physical_motion.horizontal_physical_z_per_tick = -2.0F;
     fixture.character.suppress_automatic_movement_heading = true;
 
     App::Character::PhysicalMotionService::resolve_tick(fixture.character, fixture.environment());
@@ -134,10 +136,54 @@ TEST_SUITE("Core::Character::PhysicalMotionService") {
     CHECK(fixture.character.physical_motion.support.walkable);
     CHECK(fixture.character.physical_motion.support.grounded);
     CHECK_EQ(fixture.character.physical_motion.support.gap, 0.0F);
-    CHECK(
-        fixture.character.physical_motion.vertical_velocity ==
-        doctest::Approx(App::Character::PhysicalMotionService::K_GROUND_CONTACT_DOWNWARD_VELOCITY));
+    CHECK_EQ(fixture.character.physical_motion.horizontal_physical_x_per_tick, 0.0F);
+    CHECK_EQ(fixture.character.physical_motion.vertical_velocity, 0.0F);
+    CHECK_EQ(fixture.character.physical_motion.horizontal_physical_z_per_tick, 0.0F);
     CHECK_FALSE(fixture.character.suppress_automatic_movement_heading);
+  }
+
+  TEST_CASE("horizontal physical terms compose with authored movement before collision") {
+    PhysicalFixture fixture;
+    App::Character::PhysicalMotionService::synchronize(fixture.character);
+    fixture.character.physical_motion.gravity_velocity_delta_per_tick = 0.0F;
+    fixture.character.physical_motion.candidate_translation = {.x = 5.0F, .z = 4.0F};
+    fixture.character.physical_motion.horizontal_physical_x_per_tick = 2.0F;
+    fixture.character.physical_motion.horizontal_physical_z_per_tick = -2.0F;
+
+    App::Character::PhysicalMotionService::resolve_tick(fixture.character, fixture.environment());
+
+    CHECK_EQ(fixture.character.physical_motion.horizontal_collision.intended_displacement.x, 7.0F);
+    CHECK_EQ(fixture.character.physical_motion.horizontal_collision.intended_displacement.z, 2.0F);
+  }
+
+  TEST_CASE("grounded actors integrate gravity and return to zero velocity each tick") {
+    PhysicalFixture fixture;
+    fixture.character.transform.translation.y = 10.0F;
+    App::Character::PhysicalMotionService::synchronize(fixture.character);
+
+    App::Character::PhysicalMotionService::resolve_tick(fixture.character, fixture.environment());
+    App::Character::PhysicalMotionService::resolve_tick(fixture.character, fixture.environment());
+
+    CHECK_EQ(fixture.character.physical_motion.accepted_translation.y, 10.0F);
+    CHECK_EQ(fixture.character.physical_motion.vertical_velocity, 0.0F);
+    CHECK(fixture.character.physical_motion.support.grounded);
+  }
+
+  TEST_CASE("horizontal physical terms run while an attached controller is disabled") {
+    PhysicalFixture fixture;
+    attach_controller(fixture.character, {1U});
+    fixture.character.controller_enabled = false;
+    App::Character::PhysicalMotionService::synchronize(fixture.character);
+    fixture.character.physical_motion.gravity_velocity_delta_per_tick = 0.0F;
+    fixture.character.physical_motion.horizontal_physical_x_per_tick = 2.0F;
+    fixture.character.physical_motion.horizontal_physical_z_per_tick = -2.0F;
+
+    App::Character::PhysicalMotionService::resolve_tick(fixture.character);
+
+    CHECK_EQ(fixture.character.physical_motion.horizontal_collision.intended_displacement.x, 2.0F);
+    CHECK_EQ(fixture.character.physical_motion.horizontal_collision.intended_displacement.z, -2.0F);
+    CHECK_EQ(fixture.character.physical_motion.horizontal_physical_x_per_tick, 2.0F);
+    CHECK_EQ(fixture.character.physical_motion.horizontal_physical_z_per_tick, -2.0F);
   }
 
   TEST_CASE("external live-transform changes re-anchor both positions") {
@@ -354,8 +400,7 @@ TEST_SUITE("Core::Character::PhysicalMotionService") {
     CHECK_FALSE(fixture.character.physical_motion.support.small_step_snapped_this_tick);
     CHECK(fixture.character.physical_motion.support.grounded);
     CHECK_EQ(fixture.character.physical_motion.fall_stage, 0U);
-    CHECK(fixture.character.physical_motion.vertical_velocity ==
-          doctest::Approx(Service::K_GROUND_CONTACT_DOWNWARD_VELOCITY));
+    CHECK_EQ(fixture.character.physical_motion.vertical_velocity, 0.0F);
   }
 
   TEST_CASE("small support snap is limited to stages zero and two") {
@@ -432,6 +477,22 @@ TEST_SUITE("Core::Character::PhysicalMotionService") {
     CHECK_FALSE(fixture.character.suppress_automatic_movement_heading);
   }
 
+  TEST_CASE("no-support rollback preserves horizontal physical terms without a collision") {
+    PhysicalFixture fixture;
+    App::Character::PhysicalMotionService::synchronize(fixture.character);
+    fixture.character.physical_motion.horizontal_physical_x_per_tick = 2.0F;
+    fixture.character.physical_motion.horizontal_physical_z_per_tick = -2.0F;
+
+    App::Character::PhysicalMotionService::resolve_tick(fixture.character);
+
+    CHECK_EQ(fixture.character.physical_motion.horizontal_collision.intended_displacement.x, 2.0F);
+    CHECK_EQ(fixture.character.physical_motion.horizontal_collision.intended_displacement.z, -2.0F);
+    CHECK_EQ(fixture.character.physical_motion.horizontal_physical_x_per_tick, 2.0F);
+    CHECK_EQ(fixture.character.physical_motion.horizontal_physical_z_per_tick, -2.0F);
+    CHECK_EQ(fixture.character.transform.translation.x, 0.0F);
+    CHECK_EQ(fixture.character.transform.translation.z, 0.0F);
+  }
+
   TEST_CASE("walkable penetration is corrected to exact contact") {
     PhysicalFixture fixture{5.0F};
     fixture.character.transform.translation.y = 5.0F;
@@ -463,12 +524,148 @@ TEST_SUITE("Core::Character::PhysicalMotionService") {
     CHECK_FALSE(fixture.character.physical_motion.support.walkable);
     CHECK_FALSE(fixture.character.physical_motion.support.grounded);
     CHECK_EQ(fixture.character.physical_motion.support.gap, 0.0F);
-    CHECK_EQ(fixture.character.physical_motion.vertical_velocity, 0.0F);
+    CHECK(fixture.character.physical_motion.steep_support_response.attempted);
+    CHECK_EQ(fixture.character.physical_motion.steep_support_response.input_displacement.y, 0.0F);
+    CHECK(fixture.character.physical_motion.steep_support_response.physical_terms_seeded);
+    CHECK(fixture.character.physical_motion.horizontal_physical_x_per_tick ==
+          doctest::Approx(fixture.character.physical_motion.support.normal.x));
+    CHECK(fixture.character.physical_motion.horizontal_physical_z_per_tick ==
+          doctest::Approx(fixture.character.physical_motion.support.normal.z));
+    CHECK(
+        fixture.character.physical_motion.vertical_velocity ==
+        doctest::Approx(App::Character::PhysicalMotionService::K_STEEP_SUPPORT_DOWNWARD_VELOCITY));
     CHECK_EQ(fixture.character.physical_motion.fall_stage, 0U);
     CHECK_EQ(fixture.character.physical_motion.accumulated_fall_travel, 0.0F);
     CHECK_EQ(fixture.character.physical_motion.maximum_support_gap, 0.0F);
     CHECK_EQ(fixture.character.transform.translation.x, 0.0F);
+    CHECK_EQ(fixture.character.transform.translation.y, 0.0F);
     CHECK_EQ(fixture.character.transform.translation.z, 0.0F);
+  }
+
+  TEST_CASE("support at exactly 30 degrees remains walkable without mode 4") {
+    PhysicalFixture fixture{5.0F};
+    constexpr float angle{30.0F * std::numbers::pi_v<float> / 180.0F};
+    fixture.decor.polygons.front().triangles.front().face_normal = {
+        .x = std::sin(angle), .y = -std::cos(angle)};
+    fixture.decor.vertices.at(0).position = {.x = 0.0F, .y = 5.0F, .z = -1000.0F};
+    fixture.decor.vertices.at(1).position = {
+        .x = 1000.0F, .y = 5.0F + (std::tan(angle) * 1000.0F), .z = -1000.0F};
+    fixture.decor.vertices.at(2).position = {.x = 0.0F, .y = 5.0F, .z = 1000.0F};
+    App::Character::PhysicalMotionService::synchronize(fixture.character);
+
+    App::Character::PhysicalMotionService::resolve_tick(fixture.character, fixture.environment());
+
+    CHECK(fixture.character.physical_motion.support.walkable);
+    CHECK(fixture.character.physical_motion.support.grounded);
+    CHECK_FALSE(fixture.character.physical_motion.steep_support_response.attempted);
+    CHECK_EQ(fixture.character.physical_motion.horizontal_physical_x_per_tick, 0.0F);
+    CHECK_EQ(fixture.character.physical_motion.vertical_velocity, 0.0F);
+    CHECK_EQ(fixture.character.physical_motion.horizontal_physical_z_per_tick, 0.0F);
+  }
+
+  TEST_CASE("upward steep contact retries mode 4 without seeding slide terms") {
+    PhysicalFixture fixture{5.0F};
+    fixture.decor.polygons.front().triangles.front().face_normal = {
+        .x = 1.0F, .y = -1.0F, .z = 0.0F};
+    fixture.decor.vertices.at(0).position = {.x = 0.0F, .y = 5.0F, .z = -1000.0F};
+    fixture.decor.vertices.at(1).position = {.x = 1000.0F, .y = 1005.0F, .z = -1000.0F};
+    fixture.decor.vertices.at(2).position = {.x = 0.0F, .y = 5.0F, .z = 1000.0F};
+    fixture.character.transform.translation.y = 5.0F;
+    App::Character::PhysicalMotionService::synchronize(fixture.character);
+    fixture.character.physical_motion.gravity_velocity_delta_per_tick = 0.0F;
+    fixture.character.physical_motion.vertical_velocity = -20.0F;
+
+    App::Character::PhysicalMotionService::resolve_tick(fixture.character, fixture.environment());
+
+    CHECK(fixture.character.physical_motion.steep_support_response.attempted);
+    CHECK_FALSE(fixture.character.physical_motion.steep_support_response.physical_terms_seeded);
+    CHECK_EQ(fixture.character.physical_motion.horizontal_physical_x_per_tick, 0.0F);
+    CHECK_EQ(fixture.character.physical_motion.vertical_velocity, -20.0F);
+    CHECK_EQ(fixture.character.physical_motion.horizontal_physical_z_per_tick, 0.0F);
+    CHECK_EQ(fixture.character.physical_motion.accepted_translation.y, 5.0F);
+  }
+
+  TEST_CASE("walkable mover flags seed exact next-tick terms with negative priority") {
+    PhysicalFixture fixture;
+    fixture.decor.meshes.front().mover_flags = 0x10U | 0x20U | 0x40U | 0x80U;
+    fixture.character.transform.translation = {.x = 1.0F, .y = 10.0F, .z = 3.0F};
+    App::Character::PhysicalMotionService::synchronize(fixture.character);
+
+    App::Character::PhysicalMotionService::resolve_tick(fixture.character, fixture.environment());
+
+    const auto& motion{fixture.character.physical_motion};
+    CHECK(motion.support.grounded);
+    CHECK_EQ(motion.support.mover_flags, 0xF0U);
+    CHECK(motion.support.mover_applied_this_tick);
+    CHECK_EQ(motion.horizontal_physical_x_per_tick, -2.0F);
+    CHECK_EQ(motion.vertical_velocity, 0.0F);
+    CHECK_EQ(motion.horizontal_physical_z_per_tick, -2.0F);
+    CHECK_EQ(motion.accepted_translation.x, 1.0F);
+    CHECK_EQ(motion.accepted_translation.z, 3.0F);
+  }
+
+  TEST_CASE("individual mover bits seed their exact horizontal axis terms") {
+    struct Expectation {
+      std::uint32_t flags;
+      float x;
+      float z;
+    };
+    for (const Expectation expected : {Expectation{.flags = 0x10U, .x = 2.0F, .z = 0.0F},
+             Expectation{.flags = 0x20U, .x = -2.0F, .z = 0.0F},
+             Expectation{.flags = 0x40U, .x = 0.0F, .z = 2.0F},
+             Expectation{.flags = 0x80U, .x = 0.0F, .z = -2.0F},
+             Expectation{.flags = 0x50U, .x = 2.0F, .z = 2.0F}}) {
+      CAPTURE(expected.flags);
+      PhysicalFixture fixture;
+      fixture.decor.meshes.front().mover_flags = expected.flags;
+      fixture.character.transform.translation.y = 10.0F;
+      App::Character::PhysicalMotionService::synchronize(fixture.character);
+
+      App::Character::PhysicalMotionService::resolve_tick(fixture.character, fixture.environment());
+
+      CHECK_EQ(fixture.character.physical_motion.horizontal_physical_x_per_tick, expected.x);
+      CHECK_EQ(fixture.character.physical_motion.horizontal_physical_z_per_tick, expected.z);
+      CHECK_EQ(fixture.character.physical_motion.vertical_velocity, 0.0F);
+    }
+  }
+
+  TEST_CASE("mover displacement starts on the tick after contact") {
+    PhysicalFixture fixture;
+    fixture.decor.meshes.front().mover_flags = 0x10U;
+    fixture.character.transform.translation = {.x = 1.0F, .y = 10.0F};
+    App::Character::PhysicalMotionService::synchronize(fixture.character);
+
+    App::Character::PhysicalMotionService::resolve_tick(fixture.character, fixture.environment());
+    CHECK_EQ(fixture.character.physical_motion.accepted_translation.x, 1.0F);
+    CHECK_EQ(fixture.character.physical_motion.horizontal_physical_x_per_tick, 2.0F);
+
+    App::Character::PhysicalMotionService::resolve_tick(fixture.character, fixture.environment());
+    CHECK_EQ(fixture.character.physical_motion.horizontal_collision.intended_displacement.x, 2.0F);
+    CHECK_EQ(fixture.character.physical_motion.accepted_translation.x, 3.0F);
+  }
+
+  TEST_CASE("wall collision clears mover-generated physical terms on the next tick") {
+    PhysicalFixture fixture{12.0F};
+    fixture.resource->model.header.collision_sphere_count = 2;
+    fixture.resource->model.header.collision_sphere_slots.at(0) = {
+        .center = {.y = -10.0F}, .radius = 2.0F};
+    fixture.resource->model.header.collision_sphere_slots.at(1) = {
+        .center = {.y = 10.0F}, .radius = 2.0F};
+    fixture.decor.meshes.front().mover_flags = 0x10U;
+    fixture.add_wall();
+    fixture.character.transform.translation.x = 7.0F;
+    App::Character::PhysicalMotionService::synchronize(fixture.character);
+    fixture.character.physical_motion.gravity_velocity_delta_per_tick = 0.0F;
+
+    App::Character::PhysicalMotionService::resolve_tick(fixture.character, fixture.environment());
+    REQUIRE_EQ(fixture.character.physical_motion.horizontal_physical_x_per_tick, 2.0F);
+
+    fixture.decor.meshes.front().mover_flags = 0U;
+    App::Character::PhysicalMotionService::resolve_tick(fixture.character, fixture.environment());
+
+    CHECK(fixture.character.physical_motion.horizontal_collision.forward_collision);
+    CHECK_EQ(fixture.character.physical_motion.horizontal_physical_x_per_tick, 0.0F);
+    CHECK_EQ(fixture.character.physical_motion.horizontal_physical_z_per_tick, 0.0F);
   }
 
   TEST_CASE("special support is diagnosed and rolls the complete attempt back") {
@@ -709,7 +906,9 @@ TEST_SUITE("Core::Character::PhysicalMotionService") {
     character.transform.translation = {.x = 1.0F, .y = 2.0F, .z = 3.0F};
     character.physical_motion.accumulator_seconds = 0.012F;
     character.physical_motion.gravity_velocity_delta_per_tick = 7.0F;
+    character.physical_motion.horizontal_physical_x_per_tick = 2.0F;
     character.physical_motion.vertical_velocity = 99.0F;
+    character.physical_motion.horizontal_physical_z_per_tick = -2.0F;
     character.physical_motion.fall_stage = 4;
     character.physical_motion.accumulated_fall_travel = 20.0F;
     character.physical_motion.maximum_support_gap = 30.0F;
@@ -717,7 +916,9 @@ TEST_SUITE("Core::Character::PhysicalMotionService") {
 
     App::Character::PhysicalMotionService::synchronize(character);
 
+    CHECK_EQ(character.physical_motion.horizontal_physical_x_per_tick, 0.0F);
     CHECK_EQ(character.physical_motion.vertical_velocity, 0.0F);
+    CHECK_EQ(character.physical_motion.horizontal_physical_z_per_tick, 0.0F);
     CHECK_EQ(character.physical_motion.fall_stage, 0U);
     CHECK_EQ(character.physical_motion.accumulated_fall_travel, 0.0F);
     CHECK_EQ(character.physical_motion.maximum_support_gap, 0.0F);
@@ -777,6 +978,9 @@ TEST_SUITE("Core::Character::PhysicalMotionService") {
     App::Character::PhysicalMotionService::synchronize(fixture.character);
     fixture.character.physical_motion.gravity_velocity_delta_per_tick = 0.0F;
     fixture.character.physical_motion.candidate_translation.x = 5.5F;
+    fixture.character.physical_motion.horizontal_physical_x_per_tick = -2.0F;
+    fixture.decor = {};
+    fixture.add_wall();
 
     App::Character::PhysicalMotionService::resolve_tick(fixture.character, fixture.environment());
 
@@ -784,6 +988,7 @@ TEST_SUITE("Core::Character::PhysicalMotionService") {
     CHECK(horizontal.depenetrated);
     CHECK_FALSE(horizontal.forward_collision);
     CHECK_FALSE(horizontal.automatic_heading_applied);
+    CHECK_EQ(fixture.character.physical_motion.horizontal_physical_x_per_tick, -2.0F);
     CHECK_EQ(fixture.character.principal_orientation_degrees.y, 0.0F);
   }
 
@@ -858,6 +1063,32 @@ TEST_SUITE("Core::Character::PhysicalMotionService") {
     CHECK(motion.horizontal_collision.automatic_heading_applied);
     CHECK(fixture.character.principal_orientation_degrees.y ==
           doctest::Approx(first_correction * 2.0F));
+    CHECK_EQ(motion.accepted_translation.x, 0.0F);
+  }
+
+  TEST_CASE("MDROT suppresses steering but a real collision still clears physical terms") {
+    PhysicalFixture fixture;
+    fixture.resource->model.header.collision_sphere_count = 2;
+    fixture.resource->model.header.collision_sphere_slots.at(0) = {
+        .center = {.y = -10.0F}, .radius = 2.0F};
+    fixture.resource->model.header.collision_sphere_slots.at(1) = {
+        .center = {.y = 10.0F}, .radius = 2.0F};
+    fixture.decor = {};
+    fixture.add_wall();
+    App::Character::PhysicalMotionService::synchronize(fixture.character);
+    fixture.character.physical_motion.gravity_velocity_delta_per_tick = 0.0F;
+    fixture.character.physical_motion.candidate_translation = {.x = 19.0F, .z = 19.0F};
+    fixture.character.physical_motion.horizontal_physical_x_per_tick = 1.0F;
+    fixture.character.physical_motion.horizontal_physical_z_per_tick = 1.0F;
+    fixture.character.suppress_automatic_movement_heading = true;
+
+    App::Character::PhysicalMotionService::resolve_tick(fixture.character, fixture.environment());
+
+    const auto& motion{fixture.character.physical_motion};
+    CHECK(motion.horizontal_collision.forward_collision);
+    CHECK_FALSE(motion.horizontal_collision.automatic_heading_applied);
+    CHECK_EQ(motion.horizontal_physical_x_per_tick, 0.0F);
+    CHECK_EQ(motion.horizontal_physical_z_per_tick, 0.0F);
     CHECK_EQ(motion.accepted_translation.x, 0.0F);
   }
 

@@ -16,6 +16,10 @@ namespace App::Character {
 namespace {
 
 constexpr std::uint32_t K_SPECIAL_SUPPORT_MASK{0x20000000U};
+constexpr std::uint32_t K_MOVER_POSITIVE_X{0x10U};
+constexpr std::uint32_t K_MOVER_NEGATIVE_X{0x20U};
+constexpr std::uint32_t K_MOVER_POSITIVE_Z{0x40U};
+constexpr std::uint32_t K_MOVER_NEGATIVE_Z{0x80U};
 
 [[nodiscard]] bool is_serious_fall_stage(const std::uint8_t stage) {
   return stage == 1U || stage == 3U || stage == 4U;
@@ -57,10 +61,32 @@ void clear_fall_episode(PhysicalMotionState& motion) {
 }
 
 void reset_physical_episode_for_reanchor(PhysicalMotionState& motion) {
+  motion.horizontal_physical_x_per_tick = 0.0F;
   motion.vertical_velocity = 0.0F;
+  motion.horizontal_physical_z_per_tick = 0.0F;
   clear_fall_episode(motion);
   motion.horizontal_collision = {};
+  motion.steep_support_response = {};
   motion.support = {};
+}
+
+void apply_support_mover_terms(PhysicalMotionState& motion, const std::uint32_t mover_flags) {
+  if ((mover_flags & K_MOVER_POSITIVE_X) != 0U) {
+    motion.horizontal_physical_x_per_tick = PhysicalMotionService::K_MOVER_HORIZONTAL_STEP;
+    motion.support.mover_applied_this_tick = true;
+  }
+  if ((mover_flags & K_MOVER_NEGATIVE_X) != 0U) {
+    motion.horizontal_physical_x_per_tick = -PhysicalMotionService::K_MOVER_HORIZONTAL_STEP;
+    motion.support.mover_applied_this_tick = true;
+  }
+  if ((mover_flags & K_MOVER_POSITIVE_Z) != 0U) {
+    motion.horizontal_physical_z_per_tick = PhysicalMotionService::K_MOVER_HORIZONTAL_STEP;
+    motion.support.mover_applied_this_tick = true;
+  }
+  if ((mover_flags & K_MOVER_NEGATIVE_Z) != 0U) {
+    motion.horizontal_physical_z_per_tick = -PhysicalMotionService::K_MOVER_HORIZONTAL_STEP;
+    motion.support.mover_applied_this_tick = true;
+  }
 }
 
 void commit(RuntimeCharacter& character) {
@@ -287,11 +313,14 @@ void PhysicalMotionService::resolve_tick(
     RuntimeCharacter& character, const PhysicalMotionEnvironment& environment) {
   PhysicalMotionState& motion{character.physical_motion};
   motion.horizontal_collision = {};
+  motion.steep_support_response = {};
   motion.support = {};
   motion.vertical_velocity =
       std::min(motion.vertical_velocity + motion.gravity_velocity_delta_per_tick,
           K_TERMINAL_DOWNWARD_VELOCITY);
+  motion.candidate_translation.x += motion.horizontal_physical_x_per_tick;
   motion.candidate_translation.y += motion.vertical_velocity * K_LOGIC_STEP_SECONDS;
+  motion.candidate_translation.z += motion.horizontal_physical_z_per_tick;
 
   const App::Runtime::Vec3 desired{
       .x = motion.candidate_translation.x - motion.accepted_translation.x,
@@ -348,6 +377,10 @@ void PhysicalMotionService::resolve_tick(
   motion.candidate_translation.x += horizontal_result.resolved_displacement.x;
   motion.candidate_translation.z += horizontal_result.resolved_displacement.z;
   apply_automatic_collision_heading(character);
+  if (horizontal_state.forward_collision) {
+    motion.horizontal_physical_x_per_tick = 0.0F;
+    motion.horizontal_physical_z_per_tick = 0.0F;
+  }
 
   if (!largest.has_value() || !second_bottom.has_value() || !extents.has_value()) {
     if (!motion.missing_body_warning_emitted) {
@@ -383,8 +416,10 @@ void PhysicalMotionService::resolve_tick(
   motion.support.point = hit->world_point;
   motion.support.normal = hit->world_normal;
   motion.support.clearance = hit->clearance;
-  if ((environment.decor_model->meshes.at(hit->object_index).flags & K_SPECIAL_SUPPORT_MASK) !=
-      0U) {
+  const Omikron::MeshDescriptor& support_mesh{
+      environment.decor_model->meshes.at(hit->object_index)};
+  motion.support.mover_flags = support_mesh.mover_flags;
+  if ((support_mesh.flags & K_SPECIAL_SUPPORT_MASK) != 0U) {
     motion.support.special_deferred = true;
     rollback(character);
     return;
@@ -417,9 +452,45 @@ void PhysicalMotionService::resolve_tick(
     }
     if (motion.support.walkable) {
       motion.support.grounded = true;
-      motion.vertical_velocity = K_GROUND_CONTACT_DOWNWARD_VELOCITY;
-    } else {
+      motion.horizontal_physical_x_per_tick = 0.0F;
       motion.vertical_velocity = 0.0F;
+      motion.horizontal_physical_z_per_tick = 0.0F;
+      apply_support_mover_terms(motion, support_mesh.mover_flags);
+    } else {
+      SteepSupportResponseState& steep{motion.steep_support_response};
+      steep.attempted = true;
+      steep.input_displacement = {
+          .x = motion.candidate_translation.x - motion.accepted_translation.x,
+          .y = 0.0F,
+          .z = motion.candidate_translation.z - motion.accepted_translation.z};
+      motion.candidate_translation = motion.accepted_translation;
+      HorizontalResolveResult steep_result;
+      steep_result.resolved_displacement = steep.input_displacement;
+      if (horizontal_state.body_valid && environment.decor_model != nullptr) {
+        steep_result = HorizontalCollisionQuery::resolve(*environment.decor_model,
+            environment.decor_runtime_objects,
+            motion.accepted_translation,
+            steep.input_displacement,
+            {.radius = horizontal_state.body_radius,
+                .top_y = horizontal_state.body_top,
+                .bottom_y = horizontal_state.body_bottom});
+      }
+      steep.resolved_displacement = steep_result.resolved_displacement;
+      steep.forward_collision = steep_result.forward_collision;
+      steep.depenetrated = steep_result.depenetrated;
+      steep.collision_passes = steep_result.collision_passes;
+      if (steep_result.last_hit.has_value()) {
+        steep.object_index = steep_result.last_hit->object_index;
+        steep.response_normal = steep_result.last_hit->world_normal;
+      }
+      motion.candidate_translation.x += steep_result.resolved_displacement.x;
+      motion.candidate_translation.z += steep_result.resolved_displacement.z;
+      if (motion.vertical_velocity >= 0.0F) {
+        motion.horizontal_physical_x_per_tick += motion.support.normal.x;
+        motion.horizontal_physical_z_per_tick += motion.support.normal.z;
+        motion.vertical_velocity = K_STEEP_SUPPORT_DOWNWARD_VELOCITY;
+        steep.physical_terms_seeded = true;
+      }
     }
     if (previous_fall_stage != 0U && character.ctl_controller.has_value()) {
       if (const auto reaction{landing_reaction_move(motion, character.current_move_id())};
