@@ -499,6 +499,33 @@ void DebugUI::show_world_inspector() {
             static_cast<double>(character.horizontal_response_normal.at(1)),
             static_cast<double>(character.horizontal_response_normal.at(2)));
       }
+      ImGui::Text("Ceiling attempted/hit/clamped: %s / %s / %s",
+          character.ceiling_collision_attempted ? "yes" : "no",
+          character.ceiling_collision_hit ? "yes" : "no",
+          character.ceiling_collision_clamped ? "yes" : "no");
+      if (character.ceiling_collision_attempted) {
+        ImGui::Text("Ceiling requested/resolved Y: %.3f / %.3f in",
+            static_cast<double>(character.ceiling_requested_delta_y),
+            static_cast<double>(character.ceiling_resolved_delta_y));
+        ImGui::Text("Ceiling body top/radius/adjustment: %.3f / %.3f / %.3f in",
+            static_cast<double>(character.ceiling_body_top),
+            static_cast<double>(character.ceiling_sphere_radius),
+            static_cast<double>(character.ceiling_clearance_adjustment));
+        if (character.ceiling_collision_hit) {
+          ImGui::Text("Ceiling object: %zu, distance/limit: %.3f / %.3f in",
+              character.ceiling_object_index.value_or(0U),
+              static_cast<double>(character.ceiling_hit_distance),
+              static_cast<double>(character.ceiling_limit));
+          ImGui::Text("Ceiling contact XYZ: %.3f, %.3f, %.3f in",
+              static_cast<double>(character.ceiling_contact_point.at(0)),
+              static_cast<double>(character.ceiling_contact_point.at(1)),
+              static_cast<double>(character.ceiling_contact_point.at(2)));
+          ImGui::Text("Ceiling normal XYZ: %.3f, %.3f, %.3f",
+              static_cast<double>(character.ceiling_contact_normal.at(0)),
+              static_cast<double>(character.ceiling_contact_normal.at(1)),
+              static_cast<double>(character.ceiling_contact_normal.at(2)));
+        }
+      }
       ImGui::Text("Support: %s", character.physical_support_valid ? "yes" : "no");
       if (character.physical_support_valid) {
         const char* support_class{

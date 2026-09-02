@@ -121,10 +121,11 @@ new_gap = g - dy
 
 Upward movement remains allowed, including exact floor depenetration. On an
 ordinary walkable contact, any residual negative gap is snapped exactly to zero.
-The native swept-body ceiling path through `0x00444F60` is **Deferred parity**.
-Further analysis confirmed that it enters the generic collision pipeline through
-the `0x004430A0` broadphase, collision callback `0x00444E60`, and the
-`0x004992D0` family; it is not a standalone floor/ceiling ray query.
+Phase C.3C implements the native swept-body ceiling path through `0x00444F60`.
+It enters the generic collision pipeline through the `0x004430A0` broadphase,
+collision callback `0x00444E60`, and the `0x004992D0` family; it is not a
+standalone floor/ceiling ray query. The exact inputs, filter, ordering, and clamp
+formula are documented in [`character-physical-motion.md`](character-physical-motion.md).
 
 For native fall stage 0 or 2 only, `0 < new_gap < 7.8740158 in` (0.2 m) takes
 an early snap-and-return path. The comparison is strict. Candidate Y reaches
@@ -291,8 +292,9 @@ No qualifying support is not infinite free fall. Runtime rolls candidate back
 to accepted; OpenNomad also leaves the already-integrated velocity intact and
 clears the `MDROT000` transient at the physical boundary.
 
-C.3C owns ceiling/upward swept-sphere response and primary `0x20000000`
-behavior. Full `MDSLIDOU` callback choreography remains deferred; C.3B exposes
+C.3C owns ceiling/upward swept-sphere response. Primary `0x20000000` support
+behavior remains deferred even though such geometry participates in the ceiling
+query. Full `MDSLIDOU` callback choreography also remains deferred; C.3B exposes
 only its support-history override seam.
 SCENE/person association and `0x08000000` adventure state transition remain
 higher-level deferred behavior, not generic physical support.

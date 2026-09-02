@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <span>
 
@@ -25,6 +26,10 @@ struct SweptSphereHit {
 
 class SweptSphereQuery {
  public:
+  [[nodiscard]] static std::optional<SweptSphereHit> find(const Omikron::Model3DOData& model,
+      std::span<const Omikron::Model3DOData::RuntimeObjectState> runtime_objects,
+      const SweptSphereQueryInput& query,
+      std::uint32_t excluded_object_flags);
   [[nodiscard]] static std::optional<SweptSphereHit> find_in_object(
       const Omikron::Model3DOData& model,
       std::span<const Omikron::Model3DOData::RuntimeObjectState> runtime_objects,

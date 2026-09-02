@@ -1,6 +1,6 @@
 # Character physical motion
 
-> **Status:** Phase 4.2C.3B transformed support, history response, and attachment complete
+> **Status:** Phase 4.2C.3C exact upward swept-sphere collision complete
 > **Last updated:** 2026-09-02
 
 This document separates recovered retail actor semantics from OpenNomad's modern C++ representation. Runtime did not contain a C++ abstraction named `PhysicalMotionService`.
@@ -56,7 +56,9 @@ synchronize or defensively re-anchor from the live transform
 -> C.2 collision-induced heading correction
 -> clear D8/E0 equivalents on a real forward collision
 -> owning-world static support query
--> vertical displacement, grounding, steep mode-4, mover response, and fall-state resolution
+-> floor-resolved vertical displacement and fall-travel accumulation
+-> upward swept-sphere ceiling clamp when resolved Y is negative
+-> final Y application, support post-gaps, grounding, steep mode-4, mover response, and fall-state resolution
 -> accepted-position publication or complete rollback
 -> play CTL markers at the accepted actor position
 -> advance ordinary actor service generation
@@ -125,9 +127,33 @@ Phase C.3A adds the actor-owned D8/E0-equivalent terms and their complete ordina
 
 Phase C.3B unifies class-1 static and `0x00080000` class-2 transformed support. The main query retains primary and alternate hits from distinct runtime objects; persistent primary-relative-Y history can request the shared mode-4 retry for stage 0/2. A separate secondary point probe drives class-2 attachment after grounded reset and only when mover flags did not handle the support. Attachment writes one eighth of candidate-minus-primary-contact X/Z into the next-tick physical terms. See [`character-support-motion.md`](character-support-motion.md) for exact formulas and strict predicates.
 
+Phase C.3C implements Runtime's exact upward general swept-sphere pass. It runs
+only when floor resolution leaves `dy < 0`, from the current candidate actor
+origin after C.1 X/Z resolution, along world direction `(0, -1, 0)`. The sphere
+radius is the largest raw authored collision-sphere radius and is not multiplied
+by `collidescale`; body top is independently aggregated as the minimum authored
+`center.y - radius`. Eligible world geometry excludes only object flags `0x41`,
+so class-2 `0x00080000` and special `0x20000000` geometry remain collidable.
+Stable object/face traversal and strict-earlier replacement preserve native tie
+ordering across transformed faces, finite authored outer edges, and vertices.
+
+For nearest hit distance `d`, raw radius `r`, and aggregate body top `t`, the
+exact upward displacement limit is:
+
+```text
+limit = -(t + d + r - 19.6850395)
+```
+
+The service clamps only when `dy < limit`; equality records a hit without a
+clamp. Final Y is applied once after this decision, and C.3B post-movement gaps
+and history consume that final value. The pass does not change DC, D8/E0,
+controller state, heading, or support ownership. Its attempted/hit/clamped
+record, exact inputs, object/contact, distance, and limit are transient debug
+diagnostics reset on every physical tick and authoritative re-anchor.
+
 Still deferred:
 
-- Phase C.3C exact general 3D swept-sphere ceiling collision using the largest authored sphere;
+- primary `0x20000000` special-support response semantics;
 - SCENE/person support association and moving-platform person integration;
 - generic actor/object collision;
 - native `0x08000000` adventure/gameplay support transition.

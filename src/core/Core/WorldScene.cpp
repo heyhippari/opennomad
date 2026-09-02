@@ -522,6 +522,7 @@ std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state
           .renderable = character.renderable(),
           .ordinary_actor_service_generation = character.ordinary_actor_service_generation,
           .horizontal_object_index = std::nullopt,
+          .ceiling_object_index = std::nullopt,
           .physical_support_class = std::nullopt,
           .physical_support_object_index = std::nullopt,
           .physical_support_object_name = {},
@@ -647,6 +648,22 @@ std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state
       debug_character.horizontal_response_normal = {
           horizontal.response_normal.x, horizontal.response_normal.y, horizontal.response_normal.z};
       debug_character.horizontal_contact_distance = horizontal.contact_distance;
+      const Character::CeilingCollisionState& ceiling{physical.ceiling_collision};
+      debug_character.ceiling_collision_attempted = ceiling.attempted;
+      debug_character.ceiling_collision_hit = ceiling.hit;
+      debug_character.ceiling_collision_clamped = ceiling.clamped;
+      debug_character.ceiling_requested_delta_y = ceiling.requested_delta_y;
+      debug_character.ceiling_resolved_delta_y = ceiling.resolved_delta_y;
+      debug_character.ceiling_body_top = ceiling.body_top;
+      debug_character.ceiling_sphere_radius = ceiling.sphere_radius;
+      debug_character.ceiling_clearance_adjustment = ceiling.clearance_adjustment;
+      debug_character.ceiling_object_index = ceiling.object_index;
+      debug_character.ceiling_contact_point = {
+          ceiling.contact_point.x, ceiling.contact_point.y, ceiling.contact_point.z};
+      debug_character.ceiling_contact_normal = {
+          ceiling.contact_normal.x, ceiling.contact_normal.y, ceiling.contact_normal.z};
+      debug_character.ceiling_hit_distance = ceiling.hit_distance;
+      debug_character.ceiling_limit = ceiling.ceiling_limit;
       debug_character.automatic_heading_applied = horizontal.automatic_heading_applied;
       debug_character.mdrot_suppression_active = horizontal.mdrot_suppression_active;
       debug_character.automatic_heading_suppression = horizontal.automatic_heading_suppression;

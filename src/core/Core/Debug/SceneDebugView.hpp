@@ -160,6 +160,19 @@ struct RuntimeCharacterDebugState {
   std::array<float, 3> horizontal_contact_point{};
   std::array<float, 3> horizontal_response_normal{};
   float horizontal_contact_distance{0.0F};
+  bool ceiling_collision_attempted{false};
+  bool ceiling_collision_hit{false};
+  bool ceiling_collision_clamped{false};
+  float ceiling_requested_delta_y{0.0F};
+  float ceiling_resolved_delta_y{0.0F};
+  float ceiling_body_top{0.0F};
+  float ceiling_sphere_radius{0.0F};
+  float ceiling_clearance_adjustment{0.0F};
+  std::optional<std::size_t> ceiling_object_index;
+  std::array<float, 3> ceiling_contact_point{};
+  std::array<float, 3> ceiling_contact_normal{};
+  float ceiling_hit_distance{0.0F};
+  float ceiling_limit{0.0F};
   bool automatic_heading_applied{false};
   bool mdrot_suppression_active{false};
   Character::AutomaticHeadingSuppressionReason automatic_heading_suppression{

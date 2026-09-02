@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <numbers>
 #include <optional>
 #include <string_view>
@@ -10,6 +11,7 @@
 #include "Core/Character/HorizontalCollisionQuery.hpp"
 #include "Core/Character/SecondarySupportQuery.hpp"
 #include "Core/Character/StaticSupportQuery.hpp"
+#include "Core/Character/SweptSphereQuery.hpp"
 #include "Core/Log.hpp"
 #include "Core/LogCategory.hpp"
 
@@ -17,6 +19,7 @@ namespace App::Character {
 namespace {
 
 constexpr std::uint32_t K_SPECIAL_SUPPORT_MASK{0x20000000U};
+constexpr std::uint32_t K_CEILING_EXCLUDED_OBJECT_FLAGS{0x00000041U};
 constexpr std::uint32_t K_MOVER_POSITIVE_X{0x10U};
 constexpr std::uint32_t K_MOVER_NEGATIVE_X{0x20U};
 constexpr std::uint32_t K_MOVER_POSITIVE_Z{0x40U};
@@ -69,6 +72,7 @@ void reset_physical_episode_for_reanchor(PhysicalMotionState& motion) {
   motion.horizontal_collision = {};
   motion.support_mode4_response = {};
   motion.class2_support_response = {};
+  motion.ceiling_collision = {};
   motion.support = {};
 }
 
@@ -235,6 +239,16 @@ float PhysicalMotionService::resolve_vertical_displacement(
   return desired_delta_y;
 }
 
+float PhysicalMotionService::ceiling_displacement_limit(
+    const float body_top, const float hit_distance, const float sphere_radius) {
+  return -(body_top + hit_distance + sphere_radius - K_CEILING_CLEARANCE_ADJUSTMENT);
+}
+
+float PhysicalMotionService::clamp_upward_displacement(
+    const float desired_delta_y, const float ceiling_limit) {
+  return desired_delta_y < ceiling_limit ? ceiling_limit : desired_delta_y;
+}
+
 float PhysicalMotionService::support_delta_term(
     const float primary_clearance, const float anchor_y, const float previous_primary_relative_y) {
   return primary_clearance + anchor_y - previous_primary_relative_y;
@@ -378,6 +392,7 @@ void PhysicalMotionService::resolve_tick(
   motion.horizontal_collision = {};
   motion.support_mode4_response = {};
   motion.class2_support_response = {};
+  motion.ceiling_collision = {};
   motion.support = {};
   motion.vertical_velocity =
       std::min(motion.vertical_velocity + motion.gravity_velocity_delta_per_tick,
@@ -512,10 +527,40 @@ void PhysicalMotionService::resolve_tick(
           ? std::optional{motion.support.alternate_relative_y - extents->bottom}
           : std::nullopt};
   motion.maximum_support_gap = std::max(motion.maximum_support_gap, old_gap);
-  const float resolved_delta_y{resolve_vertical_displacement(old_gap, desired.y)};
+  float resolved_delta_y{resolve_vertical_displacement(old_gap, desired.y)};
   const std::uint8_t previous_fall_stage{motion.fall_stage};
   if (previous_fall_stage != 0U && resolved_delta_y > 0.0F) {
     motion.accumulated_fall_travel += resolved_delta_y;
+  }
+  if (resolved_delta_y < 0.0F) {
+    CeilingCollisionState& ceiling{motion.ceiling_collision};
+    ceiling.attempted = true;
+    ceiling.requested_delta_y = resolved_delta_y;
+    ceiling.resolved_delta_y = resolved_delta_y;
+    ceiling.body_top = extents->top;
+    ceiling.sphere_radius = spheres.subspan(largest.value(), 1U).front().radius;
+    ceiling.clearance_adjustment = K_CEILING_CLEARANCE_ADJUSTMENT;
+    const auto ceiling_hit{SweptSphereQuery::find(*environment.decor_model,
+        environment.decor_runtime_objects,
+        {.start = motion.candidate_translation,
+            .direction = {.x = 0.0F, .y = -1.0F, .z = 0.0F},
+            .max_distance = std::numeric_limits<float>::max(),
+            .radius = ceiling.sphere_radius},
+        K_CEILING_EXCLUDED_OBJECT_FLAGS)};
+    if (ceiling_hit.has_value()) {
+      ceiling.hit = true;
+      ceiling.object_index = ceiling_hit->object_index;
+      ceiling.contact_point = ceiling_hit->world_point;
+      ceiling.contact_normal = ceiling_hit->world_normal;
+      ceiling.hit_distance = ceiling_hit->travel_distance;
+      ceiling.ceiling_limit =
+          ceiling_displacement_limit(ceiling.body_top, ceiling.hit_distance, ceiling.sphere_radius);
+      const float limited_delta_y{
+          clamp_upward_displacement(resolved_delta_y, ceiling.ceiling_limit)};
+      ceiling.clamped = limited_delta_y != resolved_delta_y;
+      resolved_delta_y = limited_delta_y;
+      ceiling.resolved_delta_y = resolved_delta_y;
+    }
   }
   motion.candidate_translation.y += resolved_delta_y;
   float new_gap{old_gap - resolved_delta_y};

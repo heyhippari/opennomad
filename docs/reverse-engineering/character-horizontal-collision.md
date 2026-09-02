@@ -1,6 +1,6 @@
 # Character horizontal collision
 
-> **Status:** Phase 4.2C.3B mode-1 collision and unified support mode-4 reuse implemented
+> **Status:** Phase 4.2C.3C mode-1, support mode-4, and upward sphere reuse implemented
 > **Last updated:** 2026-09-02
 > **Runtime.exe SHA-256:** `55f7120bfea7891b048c64e3682f3259cdbf2719a43fa24e42254b753c95d2ef`
 
@@ -166,4 +166,9 @@ Only steep support can seed the steep physical terms.
 
 The ordinary mode-1 result now clears actor-owned D8/E0-equivalent per-tick physical terms only for a real `forward_collision`. Pure starting depenetration preserves them.
 
-Still deferred are C.3C ceiling collision, moving-platform/person association, actor-vs-actor collision, jump choreography, the native spatial-service latch, the special-movement guard, and adventure event dispatch.
+C.3C now reuses the general transformed face/edge/vertex sphere kernel for exact
+upward ceiling collision; its vertical inputs and clamp are documented in
+[`character-physical-motion.md`](character-physical-motion.md). Still deferred
+are moving-platform/person association, actor-vs-actor collision, jump
+choreography, the native spatial-service latch, the special-movement guard, and
+adventure event dispatch.

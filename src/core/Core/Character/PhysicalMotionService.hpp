@@ -73,6 +73,22 @@ struct Class2SupportResponseState {
   float output_z_per_tick{0.0F};
 };
 
+struct CeilingCollisionState {
+  bool attempted{false};
+  bool hit{false};
+  bool clamped{false};
+  float requested_delta_y{0.0F};
+  float resolved_delta_y{0.0F};
+  float body_top{0.0F};
+  float sphere_radius{0.0F};
+  float clearance_adjustment{0.0F};
+  std::optional<std::size_t> object_index;
+  App::Runtime::Vec3 contact_point{};
+  App::Runtime::Vec3 contact_normal{};
+  float hit_distance{0.0F};
+  float ceiling_limit{0.0F};
+};
+
 enum class AutomaticHeadingSuppressionReason : std::uint8_t {
   k_none,
   k_no_forward_collision,
@@ -141,6 +157,7 @@ struct PhysicalMotionState {
   HorizontalCollisionState horizontal_collision{};
   SupportMode4ResponseState support_mode4_response{};
   Class2SupportResponseState class2_support_response{};
+  CeilingCollisionState ceiling_collision{};
   PhysicalSupportState support{};
   bool missing_body_warning_emitted{false};
   bool initialized{false};
@@ -158,6 +175,7 @@ class PhysicalMotionService {
   static constexpr float K_SUPPORT_SECONDARY_PENETRATION_THRESHOLD{11.8110237F};
   static constexpr float K_CLASS2_SECONDARY_GAP_THRESHOLD{11.8110237F};
   static constexpr float K_CLASS2_ATTACHMENT_FACTOR{0.125F};
+  static constexpr float K_CEILING_CLEARANCE_ADJUSTMENT{19.6850395F};
   /// Runtime mode-1's independent 30 cm lower-cylinder step-over allowance.
   static constexpr float K_HORIZONTAL_BODY_BOTTOM_TRIM{11.8110237F};
   static constexpr float K_FALL_STAGE_1_DISTANCE{59.0551186F};
@@ -181,6 +199,9 @@ class PhysicalMotionService {
       std::span<const Omikron::CollisionSphere> spheres);
   [[nodiscard]] static float resolve_vertical_displacement(
       float support_gap, float desired_delta_y);
+  [[nodiscard]] static float ceiling_displacement_limit(
+      float body_top, float hit_distance, float sphere_radius);
+  [[nodiscard]] static float clamp_upward_displacement(float desired_delta_y, float ceiling_limit);
   [[nodiscard]] static float support_delta_term(
       float primary_clearance, float anchor_y, float previous_primary_relative_y);
   [[nodiscard]] static float primary_relative_y(

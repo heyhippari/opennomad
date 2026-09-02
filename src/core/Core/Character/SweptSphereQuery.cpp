@@ -259,6 +259,25 @@ void consider_polygon(const std::array<Runtime::Vec3, Size>& vertices,
 
 }  // namespace
 
+std::optional<SweptSphereHit> SweptSphereQuery::find(const Omikron::Model3DOData& model,
+    const std::span<const Omikron::Model3DOData::RuntimeObjectState> runtime_objects,
+    const SweptSphereQueryInput& query,
+    const std::uint32_t excluded_object_flags) {
+  std::optional<SweptSphereHit> best;
+  const std::size_t object_count{
+      std::min({model.meshes.size(), model.polygons.size(), runtime_objects.size()})};
+  for (std::size_t object_index{0}; object_index < object_count; ++object_index) {
+    if ((model.meshes.at(object_index).flags & excluded_object_flags) != 0U) {
+      continue;
+    }
+    const auto hit{find_in_object(model, runtime_objects, object_index, query)};
+    if (hit.has_value() && (!best.has_value() || hit->travel_distance < best->travel_distance)) {
+      best = hit;
+    }
+  }
+  return best;
+}
+
 std::optional<SweptSphereHit> SweptSphereQuery::find_in_object(const Omikron::Model3DOData& model,
     const std::span<const Omikron::Model3DOData::RuntimeObjectState> runtime_objects,
     const std::size_t object_index,

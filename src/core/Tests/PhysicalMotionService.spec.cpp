@@ -66,6 +66,24 @@ struct PhysicalFixture {
     decor.runtime_objects.push_back(App::Omikron::Model3DOData::RuntimeObjectState{});
   }
 
+  void add_ceiling(const float ceiling_y,
+      const std::uint32_t flags = 0U,
+      const float minimum_x = -1000.0F,
+      const float maximum_x = 1000.0F) {
+    const std::uint32_t vertex_base{static_cast<std::uint32_t>(decor.vertices.size())};
+    decor.meshes.push_back(App::Omikron::MeshDescriptor{
+        .flags = flags, .vertex_count = 4, .vertex_base = vertex_base});
+    decor.polygons.push_back(
+        App::Omikron::MeshPolygons{.rectangles = {App::Omikron::Rectangle{.vertices = {0, 1, 2, 3},
+                                       .face_normal = {.x = 0.0F, .y = 1.0F, .z = 0.0F}}}});
+    decor.vertices.insert(decor.vertices.end(),
+        {{.position = {.x = minimum_x, .y = ceiling_y, .z = -1000.0F}},
+            {.position = {.x = minimum_x, .y = ceiling_y, .z = 1000.0F}},
+            {.position = {.x = maximum_x, .y = ceiling_y, .z = 1000.0F}},
+            {.position = {.x = maximum_x, .y = ceiling_y, .z = -1000.0F}}});
+    decor.runtime_objects.push_back(App::Omikron::Model3DOData::RuntimeObjectState{});
+  }
+
   [[nodiscard]] App::Character::PhysicalMotionEnvironment environment(
       const bool suppress_snap = false) const {
     return {.decor_model = &decor,
@@ -248,6 +266,176 @@ TEST_SUITE("Core::Character::PhysicalMotionService") {
     CHECK_EQ(Service::resolve_vertical_displacement(-5.0F, 1.0F), 0.0F);
     CHECK_EQ(Service::resolve_vertical_displacement(-5.0F, -2.0F), -5.0F);
     CHECK_EQ(Service::resolve_vertical_displacement(-5.0F, -10.0F), -10.0F);
+  }
+
+  TEST_CASE("ceiling displacement limit and strict clamp preserve native algebra") {
+    using Service = App::Character::PhysicalMotionService;
+    const float limit{Service::ceiling_displacement_limit(-30.0F, 40.0F, 10.0F)};
+    CHECK(limit == doctest::Approx(-0.3149605F));
+    CHECK(Service::clamp_upward_displacement(-5.0F, limit) == doctest::Approx(limit));
+    CHECK_EQ(Service::clamp_upward_displacement(limit, limit), limit);
+    CHECK_EQ(Service::clamp_upward_displacement(
+                 -5.0F, Service::ceiling_displacement_limit(-30.0F, 100.0F, 10.0F)),
+        -5.0F);
+  }
+
+  TEST_CASE("ceiling query runs only for upward floor-resolved displacement") {
+    for (const float velocity : {0.0F, 30.0F}) {
+      PhysicalFixture fixture;
+      fixture.add_ceiling(-30.0F);
+      App::Character::PhysicalMotionService::synchronize(fixture.character);
+      fixture.character.physical_motion.gravity_velocity_delta_per_tick = 0.0F;
+      fixture.character.physical_motion.vertical_velocity = velocity;
+
+      App::Character::PhysicalMotionService::resolve_tick(fixture.character, fixture.environment());
+
+      CHECK_FALSE(fixture.character.physical_motion.ceiling_collision.attempted);
+    }
+  }
+
+  TEST_CASE("upward ceiling hit clamps before candidate and post-gap calculation") {
+    PhysicalFixture fixture;
+    fixture.add_ceiling(-30.0F);
+    App::Character::PhysicalMotionService::synchronize(fixture.character);
+    fixture.character.physical_motion.gravity_velocity_delta_per_tick = 0.0F;
+    fixture.character.physical_motion.vertical_velocity = -300.0F;
+    fixture.character.physical_motion.horizontal_physical_x_per_tick = 1.0F;
+    fixture.character.physical_motion.horizontal_physical_z_per_tick = 2.0F;
+
+    App::Character::PhysicalMotionService::resolve_tick(fixture.character, fixture.environment());
+
+    const auto& motion{fixture.character.physical_motion};
+    const auto& ceiling{motion.ceiling_collision};
+    CHECK(ceiling.attempted);
+    CHECK(ceiling.hit);
+    CHECK(ceiling.clamped);
+    CHECK_EQ(ceiling.object_index, 1U);
+    CHECK(ceiling.requested_delta_y == doctest::Approx(-10.0F));
+    CHECK(ceiling.hit_distance == doctest::Approx(25.0F));
+    CHECK(ceiling.ceiling_limit == doctest::Approx(-5.3149605F));
+    CHECK(ceiling.resolved_delta_y == doctest::Approx(ceiling.ceiling_limit));
+    CHECK(motion.accepted_translation.y == doctest::Approx(ceiling.ceiling_limit));
+    CHECK(
+        motion.support.primary_post_movement_gap == doctest::Approx(10.0F - ceiling.ceiling_limit));
+    CHECK_EQ(motion.vertical_velocity, -300.0F);
+    CHECK_EQ(motion.horizontal_physical_x_per_tick, 1.0F);
+    CHECK_EQ(motion.horizontal_physical_z_per_tick, 2.0F);
+  }
+
+  TEST_CASE("physical ceiling pass includes class-two and special-support geometry") {
+    for (const std::uint32_t flags : {0x00080000U, 0x20000000U}) {
+      PhysicalFixture fixture;
+      fixture.add_ceiling(-30.0F, flags);
+      App::Character::PhysicalMotionService::synchronize(fixture.character);
+      fixture.character.physical_motion.gravity_velocity_delta_per_tick = 0.0F;
+      fixture.character.physical_motion.vertical_velocity = -300.0F;
+
+      App::Character::PhysicalMotionService::resolve_tick(fixture.character, fixture.environment());
+
+      const auto& ceiling{fixture.character.physical_motion.ceiling_collision};
+      CHECK(ceiling.hit);
+      CHECK(ceiling.clamped);
+      CHECK_EQ(ceiling.object_index, 1U);
+    }
+  }
+
+  TEST_CASE("ceiling diagnostics reset on the following non-upward tick") {
+    PhysicalFixture fixture;
+    fixture.add_ceiling(-30.0F);
+    App::Character::PhysicalMotionService::synchronize(fixture.character);
+    fixture.character.physical_motion.gravity_velocity_delta_per_tick = 0.0F;
+    fixture.character.physical_motion.vertical_velocity = -300.0F;
+    App::Character::PhysicalMotionService::resolve_tick(fixture.character, fixture.environment());
+    REQUIRE(fixture.character.physical_motion.ceiling_collision.hit);
+
+    fixture.character.physical_motion.vertical_velocity = 0.0F;
+    App::Character::PhysicalMotionService::resolve_tick(fixture.character, fixture.environment());
+
+    const auto& ceiling{fixture.character.physical_motion.ceiling_collision};
+    CHECK_FALSE(ceiling.attempted);
+    CHECK_FALSE(ceiling.hit);
+    CHECK_FALSE(ceiling.object_index.has_value());
+  }
+
+  TEST_CASE("far ceiling hit does not constrain current upward movement") {
+    PhysicalFixture fixture;
+    fixture.add_ceiling(-100.0F);
+    App::Character::PhysicalMotionService::synchronize(fixture.character);
+    fixture.character.physical_motion.gravity_velocity_delta_per_tick = 0.0F;
+    fixture.character.physical_motion.vertical_velocity = -150.0F;
+
+    App::Character::PhysicalMotionService::resolve_tick(fixture.character, fixture.environment());
+
+    const auto& ceiling{fixture.character.physical_motion.ceiling_collision};
+    CHECK(ceiling.attempted);
+    CHECK(ceiling.hit);
+    CHECK_FALSE(ceiling.clamped);
+    CHECK(ceiling.requested_delta_y == doctest::Approx(-5.0F));
+    CHECK(ceiling.resolved_delta_y == doctest::Approx(-5.0F));
+  }
+
+  TEST_CASE("ceiling uses actor origin raw largest radius and aggregate body top") {
+    PhysicalFixture fixture{30.0F};
+    fixture.resource->model.header.collision_sphere_count = 2;
+    fixture.resource->model.header.collision_sphere_slots.at(0) = {
+        .center = {.y = -30.0F}, .radius = 5.0F};
+    fixture.resource->model.header.collision_sphere_slots.at(1) = {
+        .center = {.x = 50.0F, .y = 10.0F, .z = 50.0F}, .radius = 12.0F};
+    fixture.add_ceiling(-70.0F, 0U, -20.0F, 20.0F);
+    App::Character::PhysicalMotionService::synchronize(fixture.character);
+    fixture.character.physical_motion.gravity_velocity_delta_per_tick = 0.0F;
+    fixture.character.physical_motion.vertical_velocity = -900.0F;
+    auto environment{fixture.environment()};
+    environment.collision_scale = 2.0F;
+
+    App::Character::PhysicalMotionService::resolve_tick(fixture.character, environment);
+
+    const auto& ceiling{fixture.character.physical_motion.ceiling_collision};
+    CHECK(ceiling.hit);
+    CHECK(ceiling.clamped);
+    CHECK_EQ(ceiling.body_top, -35.0F);
+    CHECK_EQ(ceiling.sphere_radius, 12.0F);
+    CHECK(ceiling.hit_distance == doctest::Approx(58.0F));
+    CHECK(ceiling.ceiling_limit == doctest::Approx(-15.3149605F));
+    CHECK(ceiling.contact_point.x >= -20.0F);
+    CHECK(ceiling.contact_point.x <= 20.0F);
+  }
+
+  TEST_CASE("no support rolls back before an otherwise eligible ceiling query") {
+    PhysicalFixture fixture;
+    fixture.decor.meshes.front().flags = 0x1U;
+    fixture.add_ceiling(-30.0F);
+    App::Character::PhysicalMotionService::synchronize(fixture.character);
+    fixture.character.physical_motion.gravity_velocity_delta_per_tick = 0.0F;
+    fixture.character.physical_motion.vertical_velocity = -300.0F;
+
+    App::Character::PhysicalMotionService::resolve_tick(fixture.character, fixture.environment());
+
+    CHECK_FALSE(fixture.character.physical_motion.ceiling_collision.attempted);
+    CHECK_EQ(fixture.character.physical_motion.accepted_translation.y, 0.0F);
+  }
+
+  TEST_CASE("ceiling sweep starts at C1-resolved horizontal location") {
+    PhysicalFixture fixture;
+    fixture.resource->model.header.collision_sphere_count = 2;
+    fixture.resource->model.header.collision_sphere_slots.at(0) = {
+        .center = {.y = -10.0F}, .radius = 2.0F};
+    fixture.resource->model.header.collision_sphere_slots.at(1) = {
+        .center = {.y = 10.0F}, .radius = 2.0F};
+    fixture.add_wall();
+    fixture.add_ceiling(-30.0F, 0U, -10.0F, 8.0F);
+    App::Character::PhysicalMotionService::synchronize(fixture.character);
+    fixture.character.physical_motion.gravity_velocity_delta_per_tick = 0.0F;
+    fixture.character.physical_motion.vertical_velocity = -300.0F;
+    fixture.character.physical_motion.horizontal_physical_x_per_tick = 20.0F;
+
+    App::Character::PhysicalMotionService::resolve_tick(fixture.character, fixture.environment());
+
+    const auto& motion{fixture.character.physical_motion};
+    CHECK(motion.horizontal_collision.forward_collision);
+    CHECK(motion.candidate_translation.x <= 8.0F);
+    CHECK(motion.ceiling_collision.hit);
+    CHECK_EQ(motion.ceiling_collision.object_index, 2U);
   }
 
   TEST_CASE("automatic heading math preserves native shortest-turn and wrapping boundaries") {
