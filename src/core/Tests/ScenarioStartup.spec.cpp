@@ -328,7 +328,8 @@ std::vector<std::byte> make_zone_contact_area_archive(const bool starts_dialog =
     const std::uint32_t initial_xz = 50U,
     const std::int16_t orientation_center_units = 4090,
     const std::int16_t orientation_span_units = 0,
-    const bool launch_fire_and_forget = false) {
+    const bool launch_fire_and_forget = false,
+    const bool enable_controller_after_camera = false) {
   Buffer top_level;
   top_level.u8(0x38).u16(136);
   if (launch_fire_and_forget) {
@@ -341,6 +342,10 @@ std::vector<std::byte> make_zone_contact_area_archive(const bool starts_dialog =
     top_level.u8(0x49).u16(44);
   }
   top_level.u8(0x40).u16(static_cast<std::uint16_t>(zone_id));
+  if (enable_controller_after_camera) {
+    top_level.u8(0x60).u16(42).u16(1).u16(3);
+    top_level.u8(0x68);
+  }
   top_level.u8(0x03);
 
   Buffer zone_event;
@@ -928,7 +933,8 @@ void write_zone_contact_fixtures(const TempDirectory& temp,
     const std::uint32_t initial_xz = 50U,
     const std::int16_t orientation_center_units = 4090,
     const std::int16_t orientation_span_units = 0,
-    const bool launch_fire_and_forget = false) {
+    const bool launch_fire_and_forget = false,
+    const bool enable_controller_after_camera = false) {
   write_bytes(temp.root() / "IAM" / "START", make_start());
   write_bytes(temp.root() / "IAM" / "GLOBAL", make_camera_namespace_global(true));
   write_bytes(temp.root() / "IAM" / "AREA",
@@ -941,7 +947,8 @@ void write_zone_contact_fixtures(const TempDirectory& temp,
           initial_xz,
           orientation_center_units,
           orientation_span_units,
-          launch_fire_and_forget));
+          launch_fire_and_forget,
+          enable_controller_after_camera));
   write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
   write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX",
       launch_fire_and_forget ? make_kayl_arrives_scx(221) : make_minimal_scx());
@@ -1331,10 +1338,12 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK_EQ(controller.zone_contact_count(), 0U);
   }
 
-  TEST_CASE("registered proxy permits fresh contact while controller is disabled") {
+  TEST_CASE(
+      "persistent zone refresh suppresses fresh contact while controller is disabled and "
+      "reports after compact ControllerOn") {
     constexpr std::int16_t k_zone_id{12};
     const TempDirectory temp;
-    write_zone_contact_fixtures(temp, false, k_zone_id);
+    write_zone_contact_fixtures(temp, false, k_zone_id, false, false, 50U, 4090, 0, false, true);
     const ScopedGameDataRoot root{temp.root()};
 
     App::ScenarioManager manager;
@@ -1359,20 +1368,38 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(character != nullptr);
     REQUIRE(character->ctl_controller.has_value());
     REQUIRE(controller.tick(1.0F / 30.0F).has_value());
-    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
     REQUIRE(controller.current_character_trigger_proxy().has_value());
-    const App::CurrentCharacterTriggerProxy proxy{
-        controller.current_character_trigger_proxy().value()};
-    CHECK(proxy.registered);
-    CHECK_EQ(proxy.owner.character_id, 136);
-    CHECK_EQ(proxy.owner.world_scene_id, 0U);
+    CHECK(controller.current_character_trigger_proxy()->registered);
+    CHECK(controller.current_character_trigger_proxy()->contact_ready);
+    CHECK_EQ(controller.current_character_trigger_proxy()->owner.character_id, 136);
+    CHECK_EQ(controller.current_character_trigger_proxy()->owner.world_scene_id, 0U);
+    CHECK_FALSE(character->controller_enabled);
+    CHECK_FALSE(character->ctl_controller->direct_control_active());
+    CHECK_EQ(character->current_move_id(), std::optional<std::int16_t>{7});
+    CHECK_EQ(controller.zone_contact_count(), 0U);
+    CHECK(manager.game_state()->zone_flag(k_zone_id).value());
+
+    const auto camera{manager.world_presentation().take_camera()};
+    REQUIRE(camera.has_value());
+    REQUIRE(camera->operation_generation.has_value());
+    manager.world_presentation().enqueue_camera_completion(App::WorldCameraOperationCompletion{
+        .operation_generation = camera->operation_generation.value(),
+        .scene_id = camera->scene_id,
+        .scene_generation = camera->scene_generation,
+        .source_area_id = camera->source_area_id,
+        .camera_id = camera->camera_id});
+
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
     CHECK_EQ(controller.zone_contact_count(), 1U);
-    CHECK_EQ(character->current_move_id(), std::optional<std::int16_t>{100});
     CHECK(character->controller_enabled);
     CHECK(character->ctl_controller->direct_control_active());
-    CHECK_EQ(controller.current_character_trigger_proxy()->position.x, proxy.position.x);
-    CHECK_EQ(controller.current_character_trigger_proxy()->position.y, proxy.position.y);
-    CHECK_EQ(controller.current_character_trigger_proxy()->position.z, proxy.position.z);
+    CHECK_EQ(character->current_move_id(), std::optional<std::int16_t>{7});
+
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+    CHECK_EQ(controller.zone_contact_count(), 1U);
+    CHECK_EQ(character->current_move_id(), std::optional<std::int16_t>{100});
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+    CHECK_EQ(controller.zone_contact_count(), 1U);
   }
 
   TEST_CASE("zone contact in progress survives controller-off inside its event") {
@@ -1886,7 +1913,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
         controller.current_character_trigger_proxy()->last_consumed_actor_spatial_generation, 4U);
   }
 
-  TEST_CASE("ordinary proxy synchronization may create contact while controller is disabled") {
+  TEST_CASE("ordinary proxy synchronization remains contact-ready while controller is disabled") {
     constexpr std::int16_t k_zone_id{15};
     const TempDirectory temp;
     write_zone_contact_fixtures(temp, false, k_zone_id, false, false, 500U);
@@ -1916,10 +1943,15 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
         App::Runtime::area_position_to_inches(std::array<std::int32_t, 3>{50, 999, 50});
 
     REQUIRE(controller.tick(1.0F / 30.0F).has_value());
-    CHECK_EQ(controller.zone_contact_count(), 1U);
+    REQUIRE(controller.current_character_trigger_proxy().has_value());
+    CHECK(controller.current_character_trigger_proxy()->registered);
+    CHECK(controller.current_character_trigger_proxy()->contact_ready);
+    CHECK_EQ(controller.zone_contact_count(), 0U);
     REQUIRE(controller.tick(1.0F / 30.0F).has_value());
-    CHECK_EQ(character->current_move_id(), std::optional<std::int16_t>{100});
-    CHECK(character->controller_enabled);
+    CHECK_EQ(controller.zone_contact_count(), 0U);
+    CHECK_EQ(character->current_move_id(), std::optional<std::int16_t>{7});
+    CHECK_FALSE(character->controller_enabled);
+    CHECK(manager.game_state()->zone_flag(k_zone_id).value());
   }
 
   TEST_CASE("proxy qualification uses live degree heading instead of placement yaw") {
@@ -1927,7 +1959,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     constexpr std::int16_t k_quarter_turn_units{1024};
     const TempDirectory temp;
     write_zone_contact_fixtures(
-        temp, false, k_zone_id, false, false, 500U, k_quarter_turn_units, 100);
+        temp, true, k_zone_id, false, false, 500U, k_quarter_turn_units, 100);
     const ScopedGameDataRoot root{temp.root()};
 
     App::ScenarioManager manager;

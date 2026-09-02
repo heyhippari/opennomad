@@ -3452,6 +3452,14 @@ bool ScenarioStartupController::zone_contact_reporting_enabled(
   if (!current.has_value() || current->world_scene_id != slot.world_scene_id) {
     return false;
   }
+  ScenarioRuntime* const runtime{m_manager->world_runtime(slot.world_scene_id)};
+  const Character::RuntimeCharacter* const character{
+      runtime == nullptr ? nullptr
+                         : runtime->character_runtime().find_body(current->body_identity)};
+  if (character == nullptr || !character->active || !character->area_present ||
+      !character->controller_enabled) {
+    return false;
+  }
   const CurrentCharacterTriggerProxy& proxy{m_current_character_trigger_proxy.value()};
   if (!proxy.registered || !proxy.contact_ready || proxy.owner != current.value() ||
       !zone_intersects_proxy_bounds(active_zone.zone, proxy.position, proxy.radius)) {
