@@ -2,7 +2,13 @@
 
 #include <doctest/doctest.h>
 
+#include <initializer_list>
+#include <memory>
+#include <numbers>
+
 #include "Core/Character/CharacterRuntime.hpp"
+#include "Core/Omikron/CtlControlSet.hpp"
+#include "OmikronTestBuffer.hpp"
 
 namespace {
 
@@ -21,10 +27,10 @@ struct PhysicalFixture {
     decor.polygons.push_back(
         App::Omikron::MeshPolygons{.triangles = {App::Omikron::Triangle{
                                        .vertices = {{{.index = 0}, {.index = 1}, {.index = 2}}},
-                                       .face_normal = {0.0F, -1.0F, 0.0F}}}});
-    decor.vertices = {{.position = {-1000.0F, floor_y, -1000.0F}},
-        {.position = {1000.0F, floor_y, -1000.0F}},
-        {.position = {0.0F, floor_y, 1000.0F}}};
+                                       .face_normal = {.x = 0.0F, .y = -1.0F, .z = 0.0F}}}});
+    decor.vertices = {{.position = {.x = -1000.0F, .y = floor_y, .z = -1000.0F}},
+        {.position = {.x = 1000.0F, .y = floor_y, .z = -1000.0F}},
+        {.position = {.x = 0.0F, .y = floor_y, .z = 1000.0F}}};
     decor.runtime_objects.push_back(App::Omikron::Model3DOData::RuntimeObjectState{});
   }
 
@@ -35,6 +41,50 @@ struct PhysicalFixture {
         .suppress_small_support_snap = suppress_snap};
   }
 };
+
+std::shared_ptr<const App::Omikron::CtlControlSet> make_ctl_bank(
+    const std::initializer_list<std::uint32_t> move_ids) {
+  Buffer bytes;
+  bytes.u32(0x30374543U)
+      .u32(0x101U)
+      .u32(0)
+      .u32(static_cast<std::uint32_t>(move_ids.size()))
+      .zeros(0x48U);
+  std::size_t move_index{0};
+  for (const std::uint32_t move_id : move_ids) {
+    bytes.u32(move_id).u32(1).u32(move_index == 0U ? 1U : 0U).u32(0).u32(0).chars("Move", 12);
+    ++move_index;
+  }
+  for (const std::uint32_t move_id : move_ids) {
+    bytes.u32(1000U + move_id).u32(0).u32(0x8020U).zeros(0x58U - 12U);
+  }
+  auto parsed{App::Omikron::CtlControlSet::load(bytes.data())};
+  REQUIRE(parsed.has_value());
+  return std::make_shared<const App::Omikron::CtlControlSet>(std::move(parsed).value());
+}
+
+void attach_controller(App::Character::RuntimeCharacter& character,
+    const std::initializer_list<std::uint32_t> move_ids) {
+  auto controller{App::Character::CtlController::create(make_ctl_bank(move_ids), "PHYSICS_TEST")};
+  REQUIRE(controller.has_value());
+  character.ctl_controller = std::move(controller).value();
+}
+
+[[nodiscard]] std::optional<std::uint32_t> controller_restart_count(
+    const App::Character::RuntimeCharacter& character) {
+  if (!character.ctl_controller.has_value()) {
+    return std::nullopt;
+  }
+  return character.ctl_controller->same_state_restart_count();
+}
+
+[[nodiscard]] bool select_controller_move(
+    App::Character::RuntimeCharacter& character, const std::uint32_t move_id) {
+  if (!character.ctl_controller.has_value()) {
+    return false;
+  }
+  return character.ctl_controller->select_move(move_id).has_value();
+}
 
 }  // namespace
 
@@ -104,8 +154,9 @@ TEST_SUITE("Core::Character::PhysicalMotionService") {
     CHECK_EQ(App::Character::PhysicalMotionService::second_bottom_sphere(spheres), 0U);
     const auto extents{App::Character::PhysicalMotionService::body_vertical_extents(spheres)};
     REQUIRE(extents.has_value());
-    CHECK_EQ(extents->top, -4.0F);
-    CHECK_EQ(extents->bottom, 10.0F);
+    const auto resolved_extents{extents.value_or(App::Character::BodyVerticalExtents{})};
+    CHECK_EQ(resolved_extents.top, -4.0F);
+    CHECK_EQ(resolved_extents.bottom, 10.0F);
 
     const std::array one{App::Omikron::CollisionSphere{.center = {.y = 3.0F}, .radius = 2.0F}};
     CHECK_EQ(App::Character::PhysicalMotionService::second_bottom_sphere(one), 0U);
@@ -156,10 +207,13 @@ TEST_SUITE("Core::Character::PhysicalMotionService") {
     };
 
     const auto below{resolve_gap(Service::K_SMALL_SUPPORT_SNAP_DISTANCE - 0.001F, false)};
-    CHECK(below.support.grounded);
+    CHECK_FALSE(below.support.grounded);
     CHECK_EQ(below.support.gap, 0.0F);
+    CHECK(below.support.small_step_snapped_this_tick);
+    CHECK_EQ(below.vertical_velocity, 0.0F);
     const auto exact{resolve_gap(Service::K_SMALL_SUPPORT_SNAP_DISTANCE, false)};
     CHECK_FALSE(exact.support.grounded);
+    CHECK_FALSE(exact.support.small_step_snapped_this_tick);
     CHECK(exact.support.gap == doctest::Approx(Service::K_SMALL_SUPPORT_SNAP_DISTANCE));
     const auto above{resolve_gap(Service::K_SMALL_SUPPORT_SNAP_DISTANCE + 0.001F, false)};
     CHECK_FALSE(above.support.grounded);
@@ -168,11 +222,60 @@ TEST_SUITE("Core::Character::PhysicalMotionService") {
     CHECK(suppressed.support.gap > 0.0F);
   }
 
+  TEST_CASE("small support snap defers grounded contact and episode reset by one tick") {
+    using Service = App::Character::PhysicalMotionService;
+    PhysicalFixture fixture{5.0F + Service::K_SMALL_SUPPORT_SNAP_DISTANCE - 1.0F};
+    Service::synchronize(fixture.character);
+    fixture.character.physical_motion.gravity_velocity_delta_per_tick = 0.0F;
+    fixture.character.physical_motion.fall_stage = 2U;
+    fixture.character.physical_motion.accumulated_fall_travel = 10.0F;
+    fixture.character.physical_motion.maximum_support_gap = 20.0F;
+
+    Service::resolve_tick(fixture.character, fixture.environment());
+
+    CHECK(fixture.character.physical_motion.support.small_step_snapped_this_tick);
+    CHECK_FALSE(fixture.character.physical_motion.support.grounded);
+    CHECK_EQ(fixture.character.physical_motion.fall_stage, 2U);
+    CHECK_EQ(fixture.character.physical_motion.accumulated_fall_travel, 10.0F);
+    CHECK_EQ(fixture.character.physical_motion.maximum_support_gap, 20.0F);
+
+    Service::resolve_tick(fixture.character, fixture.environment());
+
+    CHECK_FALSE(fixture.character.physical_motion.support.small_step_snapped_this_tick);
+    CHECK(fixture.character.physical_motion.support.grounded);
+    CHECK_EQ(fixture.character.physical_motion.fall_stage, 0U);
+    CHECK(fixture.character.physical_motion.vertical_velocity ==
+          doctest::Approx(Service::K_GROUND_CONTACT_DOWNWARD_VELOCITY));
+  }
+
+  TEST_CASE("small support snap is limited to stages zero and two") {
+    using Service = App::Character::PhysicalMotionService;
+    for (const std::uint8_t stage : {0U, 2U}) {
+      PhysicalFixture fixture{5.0F + Service::K_SMALL_SUPPORT_SNAP_DISTANCE - 1.0F};
+      Service::synchronize(fixture.character);
+      fixture.character.physical_motion.gravity_velocity_delta_per_tick = 0.0F;
+      fixture.character.physical_motion.fall_stage = stage;
+      Service::resolve_tick(fixture.character, fixture.environment());
+      CHECK(fixture.character.physical_motion.support.small_step_snapped_this_tick);
+      CHECK_EQ(fixture.character.physical_motion.fall_stage, stage);
+    }
+    for (const std::uint8_t stage : {1U, 3U, 4U}) {
+      PhysicalFixture fixture{5.0F + Service::K_SMALL_SUPPORT_SNAP_DISTANCE};
+      Service::synchronize(fixture.character);
+      fixture.character.physical_motion.gravity_velocity_delta_per_tick = 0.0F;
+      fixture.character.physical_motion.vertical_velocity = 30.0F;
+      fixture.character.physical_motion.fall_stage = stage;
+      Service::resolve_tick(fixture.character, fixture.environment());
+      CHECK_FALSE(fixture.character.physical_motion.support.small_step_snapped_this_tick);
+      CHECK_EQ(fixture.character.physical_motion.fall_stage, stage);
+      CHECK(fixture.character.physical_motion.support.gap > 0.0F);
+    }
+  }
+
   TEST_CASE("walkability and native fall stages retain exact boundaries") {
     using Service = App::Character::PhysicalMotionService;
-    constexpr float pi{3.14159265358979323846F};
-    const auto normal = [pi](const float degrees) {
-      const float radians{degrees * pi / 180.0F};
+    const auto normal = [](const float degrees) {
+      const float radians{degrees * std::numbers::pi_v<float> / 180.0F};
       return App::Runtime::Vec3{.x = std::sin(radians), .y = -std::cos(radians)};
     };
     CHECK(Service::support_is_walkable(normal(0.0F)));
@@ -186,6 +289,21 @@ TEST_SUITE("Core::Character::PhysicalMotionService") {
     CHECK_EQ(Service::fall_stage_for_gap(Service::K_FALL_STAGE_3_DISTANCE), 3U);
     CHECK_EQ(Service::fall_stage_for_gap(Service::K_FALL_STAGE_4_DISTANCE - 0.001F), 3U);
     CHECK_EQ(Service::fall_stage_for_gap(Service::K_FALL_STAGE_4_DISTANCE), 4U);
+
+    CHECK_EQ(Service::resolve_fall_stage(4U, 1.0F), 4U);
+    CHECK_EQ(Service::resolve_fall_stage(3U, 1.0F), 3U);
+    CHECK_EQ(Service::resolve_fall_stage(1U, 1.0F), 1U);
+    CHECK_EQ(Service::resolve_fall_stage(2U, Service::K_FALL_STAGE_3_DISTANCE), 3U);
+  }
+
+  TEST_CASE("serious fall stages latch while stage two can promote") {
+    using Service = App::Character::PhysicalMotionService;
+    for (const std::uint8_t stage : {1U, 3U, 4U}) {
+      CHECK_EQ(Service::resolve_fall_stage(stage, Service::K_FALL_STAGE_1_DISTANCE - 1.0F), stage);
+      CHECK_EQ(Service::resolve_fall_stage(stage, 1.0F), stage);
+    }
+    CHECK_EQ(Service::resolve_fall_stage(2U, Service::K_FALL_STAGE_1_DISTANCE - 1.0F), 2U);
+    CHECK_EQ(Service::resolve_fall_stage(2U, Service::K_FALL_STAGE_4_DISTANCE), 4U);
   }
 
   TEST_CASE("no support rolls position back but retains integrated velocity and clears transient") {
@@ -219,11 +337,15 @@ TEST_SUITE("Core::Character::PhysicalMotionService") {
 
   TEST_CASE("steep contact blocks vertical penetration without claiming grounded sliding") {
     PhysicalFixture fixture{5.0F};
-    fixture.decor.polygons.front().triangles.front().face_normal = {1.0F, -1.0F, 0.0F};
-    fixture.decor.vertices.at(0).position = {0.0F, 5.0F, -1000.0F};
-    fixture.decor.vertices.at(1).position = {1000.0F, 1005.0F, -1000.0F};
-    fixture.decor.vertices.at(2).position = {0.0F, 5.0F, 1000.0F};
+    fixture.decor.polygons.front().triangles.front().face_normal = {
+        .x = 1.0F, .y = -1.0F, .z = 0.0F};
+    fixture.decor.vertices.at(0).position = {.x = 0.0F, .y = 5.0F, .z = -1000.0F};
+    fixture.decor.vertices.at(1).position = {.x = 1000.0F, .y = 1005.0F, .z = -1000.0F};
+    fixture.decor.vertices.at(2).position = {.x = 0.0F, .y = 5.0F, .z = 1000.0F};
     App::Character::PhysicalMotionService::synchronize(fixture.character);
+    fixture.character.physical_motion.fall_stage = 3U;
+    fixture.character.physical_motion.accumulated_fall_travel = 20.0F;
+    fixture.character.physical_motion.maximum_support_gap = 30.0F;
 
     App::Character::PhysicalMotionService::resolve_tick(fixture.character, fixture.environment());
 
@@ -232,6 +354,9 @@ TEST_SUITE("Core::Character::PhysicalMotionService") {
     CHECK_FALSE(fixture.character.physical_motion.support.grounded);
     CHECK_EQ(fixture.character.physical_motion.support.gap, 0.0F);
     CHECK_EQ(fixture.character.physical_motion.vertical_velocity, 0.0F);
+    CHECK_EQ(fixture.character.physical_motion.fall_stage, 0U);
+    CHECK_EQ(fixture.character.physical_motion.accumulated_fall_travel, 0.0F);
+    CHECK_EQ(fixture.character.physical_motion.maximum_support_gap, 0.0F);
     CHECK_EQ(fixture.character.transform.translation.x, 0.0F);
     CHECK_EQ(fixture.character.transform.translation.z, 0.0F);
   }
@@ -251,6 +376,28 @@ TEST_SUITE("Core::Character::PhysicalMotionService") {
     CHECK_EQ(fixture.character.transform.translation.x, 0.0F);
   }
 
+  TEST_CASE("current support diagnostics are reset before each result") {
+    PhysicalFixture fixture{5.0F};
+    App::Character::PhysicalMotionService::synchronize(fixture.character);
+    App::Character::PhysicalMotionService::resolve_tick(fixture.character, fixture.environment());
+    REQUIRE(fixture.character.physical_motion.support.grounded);
+
+    fixture.decor.vertices.at(0).position.y = 105.0F;
+    fixture.decor.vertices.at(1).position.y = 105.0F;
+    fixture.decor.vertices.at(2).position.y = 105.0F;
+    fixture.character.physical_motion.gravity_velocity_delta_per_tick = 0.0F;
+    fixture.character.physical_motion.vertical_velocity = 0.0F;
+    App::Character::PhysicalMotionService::resolve_tick(fixture.character, fixture.environment());
+    CHECK_FALSE(fixture.character.physical_motion.support.grounded);
+
+    fixture.decor.meshes.front().flags = 0x20000000U;
+    App::Character::PhysicalMotionService::resolve_tick(fixture.character, fixture.environment());
+    REQUIRE(fixture.character.physical_motion.support.special_deferred);
+    fixture.decor.meshes.front().flags = 0U;
+    App::Character::PhysicalMotionService::resolve_tick(fixture.character, fixture.environment());
+    CHECK_FALSE(fixture.character.physical_motion.support.special_deferred);
+  }
+
   TEST_CASE("fall travel accumulates downward and maximum gap never decreases") {
     PhysicalFixture fixture{105.0F};
     App::Character::PhysicalMotionService::synchronize(fixture.character);
@@ -258,8 +405,8 @@ TEST_SUITE("Core::Character::PhysicalMotionService") {
     App::Character::PhysicalMotionService::resolve_tick(fixture.character, fixture.environment());
     const float first_travel{fixture.character.physical_motion.accumulated_fall_travel};
     const float first_maximum{fixture.character.physical_motion.maximum_support_gap};
-    CHECK(first_travel > 0.0F);
-    CHECK(first_maximum > 0.0F);
+    CHECK_EQ(first_travel, 0.0F);
+    CHECK(first_maximum == doctest::Approx(100.0F));
 
     fixture.decor.vertices.at(0).position.y = 55.0F;
     fixture.decor.vertices.at(1).position.y = 55.0F;
@@ -268,6 +415,167 @@ TEST_SUITE("Core::Character::PhysicalMotionService") {
 
     CHECK(fixture.character.physical_motion.accumulated_fall_travel > first_travel);
     CHECK_EQ(fixture.character.physical_motion.maximum_support_gap, first_maximum);
+  }
+
+  TEST_CASE("pre-movement gap and previous stage control episode accounting") {
+    PhysicalFixture fixture{105.0F};
+    App::Character::PhysicalMotionService::synchronize(fixture.character);
+    fixture.character.physical_motion.gravity_velocity_delta_per_tick = 0.0F;
+    fixture.character.physical_motion.vertical_velocity = 600.0F;
+
+    App::Character::PhysicalMotionService::resolve_tick(fixture.character, fixture.environment());
+
+    CHECK(fixture.character.physical_motion.maximum_support_gap == doctest::Approx(100.0F));
+    CHECK(fixture.character.physical_motion.support.gap == doctest::Approx(80.0F));
+    CHECK_EQ(fixture.character.physical_motion.fall_stage, 1U);
+    CHECK_EQ(fixture.character.physical_motion.accumulated_fall_travel, 0.0F);
+
+    fixture.character.physical_motion.vertical_velocity = 300.0F;
+    App::Character::PhysicalMotionService::resolve_tick(fixture.character, fixture.environment());
+    CHECK(fixture.character.physical_motion.accumulated_fall_travel == doctest::Approx(10.0F));
+    CHECK(fixture.character.physical_motion.maximum_support_gap == doctest::Approx(100.0F));
+  }
+
+  TEST_CASE("serious fall entry selects move two once even when servicing is disabled") {
+    using Service = App::Character::PhysicalMotionService;
+    PhysicalFixture fixture{5.0F + Service::K_FALL_STAGE_3_DISTANCE + 10.0F};
+    attach_controller(fixture.character, {1U, 2U});
+    fixture.character.controller_enabled = false;
+    Service::synchronize(fixture.character);
+    fixture.character.physical_motion.gravity_velocity_delta_per_tick = 0.0F;
+
+    Service::resolve_tick(fixture.character, fixture.environment(true));
+    CHECK_EQ(fixture.character.current_move_id(), std::optional<std::int16_t>{2});
+    const auto restart_count{controller_restart_count(fixture.character)};
+    REQUIRE(restart_count.has_value());
+
+    Service::resolve_tick(fixture.character, fixture.environment(true));
+    CHECK_EQ(fixture.character.current_move_id(), std::optional<std::int16_t>{2});
+    CHECK_EQ(controller_restart_count(fixture.character), restart_count);
+  }
+
+  TEST_CASE("serious fall classification is independent of controller availability and move data") {
+    using Service = App::Character::PhysicalMotionService;
+    for (const bool attach_missing_move_controller : {false, true}) {
+      PhysicalFixture fixture{5.0F + Service::K_FALL_STAGE_3_DISTANCE + 10.0F};
+      if (attach_missing_move_controller) {
+        attach_controller(fixture.character, {1U});
+      }
+      Service::synchronize(fixture.character);
+      fixture.character.physical_motion.gravity_velocity_delta_per_tick = 0.0F;
+      Service::resolve_tick(fixture.character, fixture.environment(true));
+      CHECK_EQ(fixture.character.physical_motion.fall_stage, 3U);
+      CHECK(fixture.character.physical_motion.accepted_translation.y == doctest::Approx(0.0F));
+    }
+  }
+
+  TEST_CASE("final landing displacement counts before move four reaction") {
+    PhysicalFixture fixture{7.0F};
+    attach_controller(fixture.character, {1U, 4U});
+    App::Character::PhysicalMotionService::synchronize(fixture.character);
+    fixture.character.physical_motion.gravity_velocity_delta_per_tick = 0.0F;
+    fixture.character.physical_motion.vertical_velocity = 60.0F;
+    fixture.character.physical_motion.fall_stage = 3U;
+    fixture.character.physical_motion.accumulated_fall_travel = 117.0F;
+    fixture.character.physical_motion.maximum_support_gap = 120.0F;
+
+    App::Character::PhysicalMotionService::resolve_tick(fixture.character, fixture.environment());
+
+    CHECK_EQ(fixture.character.current_move_id(), std::optional<std::int16_t>{4});
+    CHECK(fixture.character.physical_motion.support.grounded);
+    CHECK_EQ(fixture.character.physical_motion.fall_stage, 0U);
+    CHECK_EQ(fixture.character.physical_motion.accumulated_fall_travel, 0.0F);
+    CHECK_EQ(fixture.character.physical_motion.maximum_support_gap, 0.0F);
+  }
+
+  TEST_CASE("landing reaction thresholds preserve native priority and paired 1.5 metre gate") {
+    using Service = App::Character::PhysicalMotionService;
+    struct Case {
+      float travel;
+      float gap;
+      std::int16_t expected_move;
+    };
+    const std::array cases{Case{.travel = Service::K_FALL_STAGE_4_DISTANCE,
+                               .gap = Service::K_FALL_STAGE_4_DISTANCE,
+                               .expected_move = 5},
+        Case{.travel = Service::K_FALL_STAGE_3_DISTANCE,
+            .gap = Service::K_FALL_STAGE_3_DISTANCE,
+            .expected_move = 4},
+        Case{.travel = Service::K_FALL_STAGE_1_DISTANCE,
+            .gap = Service::K_FALL_STAGE_1_DISTANCE,
+            .expected_move = 4},
+        Case{.travel = Service::K_FALL_STAGE_1_DISTANCE,
+            .gap = Service::K_FALL_STAGE_1_DISTANCE - 1.0F,
+            .expected_move = 1},
+        Case{.travel = Service::K_FALL_STAGE_1_DISTANCE - 1.0F,
+            .gap = Service::K_FALL_STAGE_1_DISTANCE,
+            .expected_move = 1}};
+    for (const Case& test_case : cases) {
+      PhysicalFixture fixture{5.0F};
+      attach_controller(fixture.character, {1U, 4U, 5U});
+      Service::synchronize(fixture.character);
+      fixture.character.physical_motion.gravity_velocity_delta_per_tick = 0.0F;
+      fixture.character.physical_motion.fall_stage = 3U;
+      fixture.character.physical_motion.accumulated_fall_travel = test_case.travel;
+      fixture.character.physical_motion.maximum_support_gap = test_case.gap;
+      Service::resolve_tick(fixture.character, fixture.environment());
+      CHECK_EQ(fixture.character.current_move_id(),
+          std::optional<std::int16_t>{test_case.expected_move});
+    }
+  }
+
+  TEST_CASE("small snap delays low-severity move-two recovery until contact") {
+    using Service = App::Character::PhysicalMotionService;
+    PhysicalFixture fixture{5.0F + Service::K_SMALL_SUPPORT_SNAP_DISTANCE - 1.0F};
+    attach_controller(fixture.character, {1U, 2U, 100U});
+    REQUIRE(select_controller_move(fixture.character, 2U));
+    Service::synchronize(fixture.character);
+    fixture.character.physical_motion.gravity_velocity_delta_per_tick = 0.0F;
+    fixture.character.physical_motion.fall_stage = 2U;
+
+    Service::resolve_tick(fixture.character, fixture.environment());
+    CHECK_EQ(fixture.character.current_move_id(), std::optional<std::int16_t>{2});
+    CHECK_EQ(fixture.character.physical_motion.fall_stage, 2U);
+    CHECK(fixture.character.physical_motion.support.small_step_snapped_this_tick);
+
+    Service::resolve_tick(fixture.character, fixture.environment());
+    CHECK_EQ(fixture.character.current_move_id(), std::optional<std::int16_t>{100});
+    CHECK_EQ(fixture.character.physical_motion.fall_stage, 0U);
+  }
+
+  TEST_CASE("low landing does not force recovery unless current move is two") {
+    PhysicalFixture fixture{5.0F};
+    attach_controller(fixture.character, {1U, 100U});
+    App::Character::PhysicalMotionService::synchronize(fixture.character);
+    fixture.character.physical_motion.gravity_velocity_delta_per_tick = 0.0F;
+    fixture.character.physical_motion.fall_stage = 2U;
+
+    App::Character::PhysicalMotionService::resolve_tick(fixture.character, fixture.environment());
+
+    CHECK_EQ(fixture.character.current_move_id(), std::optional<std::int16_t>{1});
+  }
+
+  TEST_CASE("missing landing move is nonfatal and disabled controllers still react") {
+    using Service = App::Character::PhysicalMotionService;
+    for (const bool include_reaction : {false, true}) {
+      PhysicalFixture fixture{5.0F};
+      if (include_reaction) {
+        attach_controller(fixture.character, {1U, 5U});
+      } else {
+        attach_controller(fixture.character, {1U});
+      }
+      fixture.character.controller_enabled = false;
+      Service::synchronize(fixture.character);
+      fixture.character.physical_motion.gravity_velocity_delta_per_tick = 0.0F;
+      fixture.character.physical_motion.fall_stage = 4U;
+      fixture.character.physical_motion.accumulated_fall_travel = Service::K_FALL_STAGE_4_DISTANCE;
+      fixture.character.physical_motion.maximum_support_gap = Service::K_FALL_STAGE_4_DISTANCE;
+      Service::resolve_tick(fixture.character, fixture.environment());
+      CHECK(fixture.character.physical_motion.support.grounded);
+      CHECK_EQ(fixture.character.physical_motion.fall_stage, 0U);
+      CHECK_EQ(fixture.character.current_move_id(),
+          std::optional<std::int16_t>{include_reaction ? 5 : 1});
+    }
   }
 
   TEST_CASE("landing clears the active fall episode") {
@@ -288,7 +596,7 @@ TEST_SUITE("Core::Character::PhysicalMotionService") {
   TEST_CASE(
       "authoritative synchronization resets episodes but preserves parameters and remainder") {
     App::Character::RuntimeCharacter character;
-    character.transform.translation = {1.0F, 2.0F, 3.0F};
+    character.transform.translation = {.x = 1.0F, .y = 2.0F, .z = 3.0F};
     character.physical_motion.accumulator_seconds = 0.012F;
     character.physical_motion.gravity_velocity_delta_per_tick = 7.0F;
     character.physical_motion.vertical_velocity = 99.0F;

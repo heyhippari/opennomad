@@ -628,6 +628,8 @@ std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state
       debug_character.physical_support_walkable = physical.support.walkable;
       debug_character.physical_grounded = physical.support.grounded;
       debug_character.physical_support_special_deferred = physical.support.special_deferred;
+      debug_character.physical_small_step_snapped_this_tick =
+          physical.support.small_step_snapped_this_tick;
       debug_character.physical_fall_stage = physical.fall_stage;
       debug_character.physical_accumulated_fall_travel = physical.accumulated_fall_travel;
       debug_character.physical_maximum_support_gap = physical.maximum_support_gap;

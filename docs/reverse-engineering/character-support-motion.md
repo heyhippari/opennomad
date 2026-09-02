@@ -1,6 +1,6 @@
 # Character static support and vertical motion
 
-> **Status:** Phase 4.2B.2 implemented; Runtime static vertical behavior confirmed
+> **Status:** Phase 4.2B static vertical physical service complete
 > **Last updated:** 2026-09-02
 > **Runtime:** PE32/i386 `Runtime.exe`, image base `0x00400000`, SHA-256
 > `55f7120bfea7891b048c64e3682f3259cdbf2719a43fa24e42254b753c95d2ef`
@@ -111,17 +111,27 @@ new_gap = g - dy
 Upward movement remains allowed, including exact floor depenetration. On an
 ordinary walkable contact, any residual negative gap is snapped exactly to zero.
 The native swept-body ceiling path through `0x00444F60` is **Deferred parity**.
+Further analysis confirmed that it enters the generic collision pipeline through
+the `0x004430A0` broadphase, collision callback `0x00444E60`, and the
+`0x004992D0` family; it is not a standalone floor/ceiling ray query.
 
-If `0 < new_gap < 7.8740158 in` (0.2 m), ordinary response snaps down exactly.
-The comparison is strict. `0x0047CF00` suppresses this snap when no current
-adventure actor exists or `(adventureFlags & 0x00000810) != 0`. `MDJP` reaches
-`0x0046B710 -> 0x0047D2E0`; successful jump start sets both jump-active `0x10`
-and one-update jump-start latch `0x800`. OpenNomad exposes a per-tick
+For native fall stage 0 or 2 only, `0 < new_gap < 7.8740158 in` (0.2 m) takes
+an early snap-and-return path. The comparison is strict. Candidate Y reaches
+support exactly, but that tick does not establish grounded state, apply the
+ground-contact velocity, run a landing reaction, or clear the fall episode.
+Genuine contact is processed on the following physical tick. Stages 1, 3, and
+4 return from the airborne branch before this predicate and therefore are not
+snapped near landing.
+
+`0x0047CF00` suppresses the small snap when no current adventure actor exists
+or `(adventureFlags & 0x00000810) != 0`. `MDJP` reaches `0x0046B710 ->
+0x0047D2E0`; successful jump start sets both jump-active `0x10` and one-update
+jump-start latch `0x800`. OpenNomad exposes a per-tick
 `suppress_small_support_snap` input, currently false in production. Native jump
 movement is not implemented. `MDSLIDOU` temporarily sets global `0x00910327`
-while doing callback-specific support reconciliation, forcing the snap despite
-the jump predicate; that callback path is deferred and no persistent global is
-modeled.
+while doing callback-specific support reconciliation, forcing its support-snap
+branch independently of the ordinary predicate; that callback path is deferred
+and no persistent global is modeled.
 
 ## Walkability and fall episodes
 
@@ -131,7 +141,9 @@ walkable contact is grounded and writes the 11.8110237 in/s downward bias.
 Steep contact still blocks downward penetration, is not grounded, and zeros the
 vertical component; mode-4 horizontal/slide response remains deferred.
 
-Positive support gaps classify native fall stages with inclusive thresholds:
+### Fall-stage lifetime and reactions
+
+**Confirmed - Runtime:** positive support gaps use these inclusive thresholds:
 
 | Gap | Native stage |
 | --- | ---: |
@@ -140,14 +152,55 @@ Positive support gaps classify native fall stages with inclusive thresholds:
 | at least 118.110237 in (3 m) | 3 |
 | at least 196.850388 in (5 m) | 4 |
 
-Maximum observed positive support gap never decreases during an episode.
-Resolved positive/downward displacement accumulates fall travel; upward and
-zero displacement do not. Ordinary walkable landing clears stage, accumulated
-travel, and maximum gap after preserving the final contact position.
+Stage is stateful rather than recomputed every tick. Stage 0 has no established
+severity and stage 2 is a small/unclassified episode; only those two stages are
+eligible for classification. Serious stages 1, 3, and 4 latch until contact. A
+stage-4 actor therefore remains stage 4 as its support gap decreases through
+the lower thresholds while falling.
 
-Runtime can select CTL moves 2/4/5/100 and events from stage/travel thresholds.
-Those presentation reactions are **Deferred parity**; gravity does not depend
-on them.
+Maximum support gap is updated from the pre-movement gap at the beginning of
+`0x00465460`, before resolved Y movement reduces it. Resolved positive/downward
+movement is added to accumulated fall travel before the airborne/contact branch
+only when the tick began with a nonzero fall stage. Consequently, the initial
+stage-0 classification tick does not count its movement, while the final
+movement that reaches support does count.
+
+Entering serious stage 1, 3, or 4 requests exact CTL move 2 through native move
+lookup `0x0046ACE0` and selection `0x0045A630`. Contact evaluates the completed
+episode before clearing it:
+
+```text
+fall travel >= 196.850388 in                         -> move 5
+else fall travel >= 118.110237 in                    -> move 4
+else fall travel >= 59.0551186 in and max gap >= it -> move 4
+else current CTL move is exactly 2                   -> move 100
+```
+
+Missing authored moves are nonfatal. Selection uses the controller when one
+exists regardless of whether ordinary controller servicing is enabled; physics
+remains valid without a controller. Physical selection occurs after that tick's
+CTL service and is first serviced/presented by the next CTL tick.
+
+Completed ordinary support contact terminates the fall episode independently
+of walkability. Walkable contact separately establishes grounded state and the
+downward bias; steep contact remains ungrounded, zeros vertical velocity, and
+leaves horizontal mode-4 response deferred.
+
+Native actor dispatcher state `actor+0x194` suppresses moves 2/4/5/100 for
+values 2, 3, and 15. OpenNomad's current ordinary player service corresponds to
+native state 1, so no speculative native-state field is introduced.
+
+The broader adventure event dispatcher `0x00414DE0` observes serious fall entry
+as event `0x12`, severe current-player landing as `0x13`, and can request event
+`0x10` on other landing/recovery paths. Packet construction, adventure state,
+and the `0x00414BF0` subsystem remain deferred; OpenNomad does not model these
+IDs as standalone events.
+
+Before positive-gap classification/snap, native global `0x006A52CC` can return
+early. It is controlled by authored jump callback choreography including
+`MDJUMP0AP` and `MDJUMP0BP`, not a generic physics mode. Its producer lifecycle
+remains deferred with the complete jump callback family.
+
 
 ## Failure and deferred branches
 

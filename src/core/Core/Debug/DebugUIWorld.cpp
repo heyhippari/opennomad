@@ -445,10 +445,11 @@ void DebugUI::show_world_inspector() {
         ImGui::Text("Support clearance: %.3f in, gap: %.3f in",
             static_cast<double>(character.physical_support_clearance),
             static_cast<double>(character.physical_support_gap));
-        ImGui::Text("Walkable: %s, grounded: %s, special/deferred: %s",
+        ImGui::Text("Walkable: %s, grounded: %s, special/deferred: %s, small-step snap: %s",
             character.physical_support_walkable ? "yes" : "no",
             character.physical_grounded ? "yes" : "no",
-            character.physical_support_special_deferred ? "yes" : "no");
+            character.physical_support_special_deferred ? "yes" : "no",
+            character.physical_small_step_snapped_this_tick ? "yes" : "no");
       }
       ImGui::Text("Fall stage: %u", static_cast<unsigned int>(character.physical_fall_stage));
       ImGui::Text("Accumulated fall travel: %.3f in",

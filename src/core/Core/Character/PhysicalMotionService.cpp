@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cmath>
 #include <numbers>
+#include <optional>
+#include <string_view>
 
 #include "Core/Character/CharacterRuntime.hpp"
 #include "Core/Character/StaticSupportQuery.hpp"
@@ -14,12 +16,56 @@ namespace {
 
 constexpr std::uint32_t K_SPECIAL_SUPPORT_MASK{0x20000000U};
 
-void clear_episode(PhysicalMotionState& motion) {
-  motion.vertical_velocity = 0.0F;
+[[nodiscard]] bool is_serious_fall_stage(const std::uint8_t stage) {
+  return stage == 1U || stage == 3U || stage == 4U;
+}
+
+void try_select_physical_reaction_move(
+    CtlController& controller, const std::uint32_t move_id, const std::string_view reason) {
+  if (const auto selected{controller.select_move(move_id)}; !selected) {
+    App::Log::warn(LogCategory::Core,
+        "Unable to select physical {} reaction move {}: {}",
+        reason,
+        move_id,
+        selected.error());
+  }
+}
+
+[[nodiscard]] std::optional<std::uint32_t> landing_reaction_move(
+    const PhysicalMotionState& motion, const std::optional<std::int16_t> current_move_id) {
+  if (motion.accumulated_fall_travel >= PhysicalMotionService::K_FALL_STAGE_4_DISTANCE) {
+    return 5U;
+  }
+  if (motion.accumulated_fall_travel >= PhysicalMotionService::K_FALL_STAGE_3_DISTANCE) {
+    return 4U;
+  }
+  if (motion.accumulated_fall_travel >= PhysicalMotionService::K_FALL_STAGE_1_DISTANCE &&
+      motion.maximum_support_gap >= PhysicalMotionService::K_FALL_STAGE_1_DISTANCE) {
+    return 4U;
+  }
+  if (current_move_id == 2) {
+    return 100U;
+  }
+  return std::nullopt;
+}
+
+void clear_fall_episode(PhysicalMotionState& motion) {
   motion.fall_stage = 0;
   motion.accumulated_fall_travel = 0.0F;
   motion.maximum_support_gap = 0.0F;
+}
+
+void reset_physical_episode_for_reanchor(PhysicalMotionState& motion) {
+  motion.vertical_velocity = 0.0F;
+  clear_fall_episode(motion);
   motion.support = {};
+}
+
+void commit(RuntimeCharacter& character) {
+  PhysicalMotionState& motion{character.physical_motion};
+  motion.accepted_translation = motion.candidate_translation;
+  character.transform.translation = motion.accepted_translation;
+  character.suppress_automatic_movement_heading = false;
 }
 
 void rollback(RuntimeCharacter& character) {
@@ -35,7 +81,7 @@ void PhysicalMotionService::synchronize(RuntimeCharacter& character) {
   PhysicalMotionState& motion{character.physical_motion};
   motion.candidate_translation = character.transform.translation;
   motion.accepted_translation = character.transform.translation;
-  clear_episode(motion);
+  reset_physical_episode_for_reanchor(motion);
   motion.initialized = true;
 }
 
@@ -145,9 +191,18 @@ std::uint8_t PhysicalMotionService::fall_stage_for_gap(const float positive_gap)
   return positive_gap > 0.0F ? 2 : 0;
 }
 
+std::uint8_t PhysicalMotionService::resolve_fall_stage(
+    const std::uint8_t current_stage, const float positive_gap) {
+  if (current_stage != 0U && current_stage != 2U) {
+    return current_stage;
+  }
+  return fall_stage_for_gap(positive_gap);
+}
+
 void PhysicalMotionService::resolve_tick(
     RuntimeCharacter& character, const PhysicalMotionEnvironment& environment) {
   PhysicalMotionState& motion{character.physical_motion};
+  motion.support = {};
   motion.vertical_velocity =
       std::min(motion.vertical_velocity + motion.gravity_velocity_delta_per_tick,
           K_TERMINAL_DOWNWARD_VELOCITY);
@@ -168,7 +223,6 @@ void PhysicalMotionService::resolve_tick(
   const auto second_bottom{second_bottom_sphere(spheres)};
   const auto extents{body_vertical_extents(spheres)};
   if (!largest.has_value() || !second_bottom.has_value() || !extents.has_value()) {
-    motion.support = {};
     if (!motion.missing_body_warning_emitted) {
       App::Log::debug(LogCategory::Core,
           "Physical support unavailable for character '{}': no authored collision spheres",
@@ -193,7 +247,6 @@ void PhysicalMotionService::resolve_tick(
                      : StaticSupportQuery::find(
                            *environment.decor_model, environment.decor_runtime_objects, query)};
   if (!hit.has_value()) {
-    motion.support = {};
     rollback(character);
     return;
   }
@@ -211,17 +264,25 @@ void PhysicalMotionService::resolve_tick(
   }
 
   const float old_gap{hit->world_point.y - motion.accepted_translation.y - extents->bottom};
-  float resolved_delta_y{resolve_vertical_displacement(old_gap, desired.y)};
+  motion.maximum_support_gap = std::max(motion.maximum_support_gap, old_gap);
+  const float resolved_delta_y{resolve_vertical_displacement(old_gap, desired.y)};
+  const std::uint8_t previous_fall_stage{motion.fall_stage};
+  if (previous_fall_stage != 0U && resolved_delta_y > 0.0F) {
+    motion.accumulated_fall_travel += resolved_delta_y;
+  }
   motion.candidate_translation.y += resolved_delta_y;
   float new_gap{old_gap - resolved_delta_y};
-  if (new_gap > 0.0F && new_gap < K_SMALL_SUPPORT_SNAP_DISTANCE &&
-      !environment.suppress_small_support_snap) {
-    motion.candidate_translation.y += new_gap;
-    resolved_delta_y += new_gap;
-    new_gap = 0.0F;
-  }
 
   motion.support.walkable = support_is_walkable(hit->world_normal);
+  if (new_gap > 0.0F && (previous_fall_stage == 0U || previous_fall_stage == 2U) &&
+      new_gap < K_SMALL_SUPPORT_SNAP_DISTANCE && !environment.suppress_small_support_snap) {
+    motion.candidate_translation.y += new_gap;
+    motion.support.gap = 0.0F;
+    motion.support.small_step_snapped_this_tick = true;
+    commit(character);
+    return;
+  }
+
   if (new_gap <= 0.0F) {
     if (new_gap < 0.0F) {
       motion.candidate_translation.y += new_gap;
@@ -230,23 +291,26 @@ void PhysicalMotionService::resolve_tick(
     if (motion.support.walkable) {
       motion.support.grounded = true;
       motion.vertical_velocity = K_GROUND_CONTACT_DOWNWARD_VELOCITY;
-      motion.fall_stage = 0;
-      motion.accumulated_fall_travel = 0.0F;
-      motion.maximum_support_gap = 0.0F;
     } else {
       motion.vertical_velocity = 0.0F;
     }
+    if (previous_fall_stage != 0U && character.ctl_controller.has_value()) {
+      if (const auto reaction{landing_reaction_move(motion, character.current_move_id())};
+          reaction.has_value()) {
+        try_select_physical_reaction_move(
+            character.ctl_controller.value(), reaction.value(), "landing");
+      }
+    }
+    clear_fall_episode(motion);
   } else {
-    motion.fall_stage = fall_stage_for_gap(new_gap);
-    motion.maximum_support_gap = std::max(motion.maximum_support_gap, new_gap);
-    if (resolved_delta_y > 0.0F) {
-      motion.accumulated_fall_travel += resolved_delta_y;
+    motion.fall_stage = resolve_fall_stage(previous_fall_stage, new_gap);
+    if (motion.fall_stage != previous_fall_stage && is_serious_fall_stage(motion.fall_stage) &&
+        character.ctl_controller.has_value()) {
+      try_select_physical_reaction_move(character.ctl_controller.value(), 2U, "serious-fall");
     }
   }
   motion.support.gap = new_gap;
-  motion.accepted_translation = motion.candidate_translation;
-  character.transform.translation = motion.accepted_translation;
-  character.suppress_automatic_movement_heading = false;
+  commit(character);
 }
 
 }  // namespace App::Character

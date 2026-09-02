@@ -22,6 +22,7 @@ struct PhysicalSupportState {
   bool walkable{false};
   bool grounded{false};
   bool special_deferred{false};
+  bool small_step_snapped_this_tick{false};
 };
 
 struct PhysicalMotionEnvironment {
@@ -81,6 +82,8 @@ class PhysicalMotionService {
       float support_gap, float desired_delta_y);
   [[nodiscard]] static bool support_is_walkable(const App::Runtime::Vec3& normal);
   [[nodiscard]] static std::uint8_t fall_stage_for_gap(float positive_gap);
+  [[nodiscard]] static std::uint8_t resolve_fall_stage(
+      std::uint8_t current_stage, float positive_gap);
 };
 
 }  // namespace App::Character

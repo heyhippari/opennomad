@@ -152,6 +152,7 @@ struct RuntimeCharacterDebugState {
   bool physical_support_walkable{false};
   bool physical_grounded{false};
   bool physical_support_special_deferred{false};
+  bool physical_small_step_snapped_this_tick{false};
   std::uint8_t physical_fall_stage{0};
   float physical_accumulated_fall_travel{0.0F};
   float physical_maximum_support_gap{0.0F};

@@ -1,6 +1,6 @@
 # Character physical motion
 
-> **Status:** Phase 4.2B.2 static vertical physical service implemented
+> **Status:** Phase 4.2B static vertical physical service complete
 > **Last updated:** 2026-09-02
 
 This document separates recovered retail actor semantics from OpenNomad's modern C++ representation. Runtime did not contain a C++ abstraction named `PhysicalMotionService`.
@@ -97,6 +97,13 @@ suppression input, 30-degree walkability, grounded velocity bias, no-support
 rollback, and actor-owned fall episode tracking. Full formulas and Runtime
 evidence live in [`character-support-motion.md`](character-support-motion.md).
 
+Phase 4.2B.3 completes the ordinary static vertical state machine with latched
+fall severity, pre-movement maximum-gap tracking, native fall-travel timing,
+the one-tick small-step snap early return, and CTL fall/landing reactions through
+the existing controller move-selection API. Serious stage entry selects move 2;
+completed landing selects move 5, 4, or 100 from the recovered episode table.
+Missing moves and absent or disabled controllers do not change physical results.
+
 ## Deferred physical behavior
 
 Phase 4.2C owns:
@@ -105,9 +112,15 @@ Phase 4.2C owns:
 - wall blocking and sliding;
 - automatic movement-heading rewriting;
 - `MDROT000`'s actual suppression effect;
+- mode-4 steep-slope horizontal response;
 - transformed/moving and class-2 support response;
-- mode-4 steep-slope horizontal response and exact ceiling swept-body collision;
-- moving platforms, conveyors, and generic actor/object response.
+- moving platforms and conveyors;
+- generic actor/object collision;
+- exact swept ceiling collision through the general collision pipeline.
+
+Adventure fall/landing event dispatch through `0x00414DE0` and the native jump
+callback choreography remain deferred to their owning systems; they are not
+substituted with physical-service event IDs or a partial jump mode.
 
 See [`3do.md`](3do.md) for the authored collision substrate and [`ctl.md`](ctl.md)
 for CTL motion production and the deferred native jump dependency.

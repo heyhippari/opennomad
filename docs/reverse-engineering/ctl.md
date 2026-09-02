@@ -494,9 +494,33 @@ while (phase >= destination_effective_end)
 - Candidate and accepted XYZ belong to the actor, not `CtlController`. CTL is
   only a motion producer. The downstream physical stage owns acceptance
   (**Confirmed — Runtime** ownership; **OpenNomad-only** C++ representation).
-- Phase 4.2B.2 composes candidate Y with gravity and resolves static support,
-  grounding, and fall state. Horizontal collision and automatic
+- Phase 4.2B composes candidate Y with gravity and resolves static support,
+  grounding, latched fall state, and physical CTL fall/landing reactions.
+  Horizontal collision and automatic
   movement-heading behavior remain deferred.
+
+### 4.7a Physical-stage move selection - Confirmed - Runtime
+
+CTL move selection can originate downstream in native physical resolution, not
+only in scripts and CTL callbacks. Entry into serious fall stage 1, 3, or 4
+selects move 2. Completed landing selects move 5, move 4, or recovery move 100
+according to the physical episode thresholds documented in
+[`character-support-motion.md`](character-support-motion.md).
+
+OpenNomad uses `CtlController::select_move()` for these reactions, preserving
+exact authored lookup and normal move activation. The ordering is:
+
+```text
+CTL tick N
+-> callbacks
+-> physical resolution selects a reaction move
+-> no recursive CTL service
+-> CTL tick N+1 first services/presents the selected move
+```
+
+Physical selection may update a controller's logical move while ordinary
+controller servicing is disabled. A missing move or absent controller is
+nonfatal and does not alter physical resolution.
 
 ## 4.8 Callbacks — Runtime 0x0045D0E0 queue — Confirmed — Runtime
 
@@ -527,6 +551,12 @@ that mask to suppress the ordinary strict `<0.2 m` support snap, preventing an
 active jump from being stuck back to the floor. OpenNomad Phase 4.2B.2 exposes
 this only as the physical resolver's per-tick `suppress_small_support_snap`
 input; it does not implement or dispatch native MDJP jump movement yet.
+
+Native global `0x006A52CC` is a separate jump-sequence guard checked before
+positive-gap fall classification and small-step processing. Observed producers
+belong to authored callbacks including `MDJUMP0AP` and `MDJUMP0BP`. OpenNomad
+does not add a producerless suppression flag; the guard remains deferred until
+the complete jump callback choreography is implemented.
 
 `MDSLIDOU` temporarily sets native global `0x00910327`, performs its own support
 reconciliation, and clears the flag. During that callback the temporary override
