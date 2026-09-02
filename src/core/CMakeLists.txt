@@ -38,7 +38,9 @@ add_library(${NAME} STATIC
   Core/Character/CtlController.hpp Core/Character/CtlController.cpp
   Core/Character/HorizontalCollisionQuery.hpp Core/Character/HorizontalCollisionQuery.cpp
   Core/Character/PhysicalMotionService.hpp Core/Character/PhysicalMotionService.cpp
+  Core/Character/SecondarySupportQuery.hpp Core/Character/SecondarySupportQuery.cpp
   Core/Character/StaticSupportQuery.hpp Core/Character/StaticSupportQuery.cpp
+  Core/Character/SweptSphereQuery.hpp Core/Character/SweptSphereQuery.cpp
   Core/Object/ObjectPlacementRuntime.hpp Core/Object/ObjectPlacementRuntime.cpp
   Core/CameraController.cpp Core/CameraController.hpp
   Core/Input/InputAction.hpp

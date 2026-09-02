@@ -25,6 +25,8 @@ App::Character::StaticSupportQueryInput query_at(
 
 }  // namespace
 
+// NOLINTBEGIN(bugprone-unchecked-optional-access)
+
 TEST_SUITE("Core::Character::StaticSupportQuery") {
   TEST_CASE("finds a translated flat triangle beneath the probe") {
     const App::Omikron::Model3DOData model{flat_triangle_model()};
@@ -106,6 +108,35 @@ TEST_SUITE("Core::Character::StaticSupportQuery") {
     CHECK(value.clearance == doctest::Approx(-5.0F));
   }
 
+  TEST_CASE("exposes primary and alternate candidates from distinct runtime objects") {
+    App::Omikron::Model3DOData model{flat_triangle_model()};
+    model.meshes.push_back(model.meshes.front());
+    model.polygons.push_back(model.polygons.front());
+    model.runtime_objects.push_back(App::Omikron::Model3DOData::RuntimeObjectState{
+        .world_translation = {.x = 0.0F, .y = 30.0F, .z = 0.0F}});
+
+    const auto result{App::Character::StaticSupportQuery::find_candidates(
+        model, model.runtime_objects, query_at())};
+
+    REQUIRE(result.has_value());
+    CHECK_EQ(result->primary.object_index, 0U);
+    CHECK_EQ(result->primary.support_class, App::Character::SupportClass::k_static_polygon);
+    REQUIRE(result->alternate.has_value());
+    CHECK_EQ(result->alternate->object_index, 1U);
+    CHECK(result->alternate->clearance == doctest::Approx(21.0F));
+  }
+
+  TEST_CASE("multiple faces from one runtime object do not create an alternate") {
+    App::Omikron::Model3DOData model{flat_triangle_model()};
+    model.polygons.front().triangles.push_back(model.polygons.front().triangles.front());
+
+    const auto result{App::Character::StaticSupportQuery::find_candidates(
+        model, model.runtime_objects, query_at())};
+
+    REQUIRE(result.has_value());
+    CHECK_FALSE(result->alternate.has_value());
+  }
+
   TEST_CASE("honors static filtering masks") {
     App::Omikron::Model3DOData model{flat_triangle_model()};
     model.meshes.front().flags = 0x00000001U;
@@ -114,9 +145,40 @@ TEST_SUITE("Core::Character::StaticSupportQuery") {
     model.meshes.front().flags = 0x00000040U;
     CHECK_FALSE(App::Character::StaticSupportQuery::find(model, model.runtime_objects, query_at())
             .has_value());
+  }
+
+  TEST_CASE("includes transformed support as class two at its runtime location") {
+    App::Omikron::Model3DOData model{flat_triangle_model()};
     model.meshes.front().flags = 0x00080000U;
-    CHECK_FALSE(App::Character::StaticSupportQuery::find(model, model.runtime_objects, query_at())
-            .has_value());
+    model.runtime_objects.front().world_translation.y = 25.0F;
+
+    const auto hit{
+        App::Character::StaticSupportQuery::find(model, model.runtime_objects, query_at())};
+
+    REQUIRE(hit.has_value());
+    CHECK_EQ(hit->support_class, App::Character::SupportClass::k_transformed_general);
+    CHECK(hit->world_point.y == doctest::Approx(25.0F));
+    CHECK(hit->clearance == doctest::Approx(16.0F));
+  }
+
+  TEST_CASE("transformed class-two support catches a finite-radius outer edge") {
+    App::Omikron::Model3DOData model;
+    model.meshes.push_back(App::Omikron::MeshDescriptor{.flags = 0x00080000U, .vertex_count = 4});
+    model.polygons.push_back(
+        App::Omikron::MeshPolygons{.rectangles = {App::Omikron::Rectangle{.vertices = {0, 1, 2, 3},
+                                       .face_normal = {.x = 0.0F, .y = -1.0F, .z = 0.0F}}}});
+    model.vertices = {{.position = {.x = -10.0F, .y = 20.0F, .z = -10.0F}},
+        {.position = {.x = 10.0F, .y = 20.0F, .z = -10.0F}},
+        {.position = {.x = 10.0F, .y = 20.0F, .z = 10.0F}},
+        {.position = {.x = -10.0F, .y = 20.0F, .z = 10.0F}}};
+    model.runtime_objects.push_back(App::Omikron::Model3DOData::RuntimeObjectState{});
+
+    const auto hit{App::Character::StaticSupportQuery::find(
+        model, model.runtime_objects, query_at(11.0F, 5.0F, 0.0F, 2.0F))};
+
+    REQUIRE(hit.has_value());
+    CHECK_EQ(hit->support_class, App::Character::SupportClass::k_transformed_general);
+    CHECK(hit->world_point.x == doctest::Approx(10.0F));
   }
 
   TEST_CASE("uses authored face normals independently of material and vertex normals") {
@@ -141,3 +203,5 @@ TEST_SUITE("Core::Character::StaticSupportQuery") {
             .has_value());
   }
 }
+
+// NOLINTEND(bugprone-unchecked-optional-access)

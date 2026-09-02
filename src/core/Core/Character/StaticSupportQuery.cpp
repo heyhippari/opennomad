@@ -8,6 +8,8 @@
 #include <optional>
 #include <span>
 
+#include "Core/Character/SweptSphereQuery.hpp"
+
 namespace App::Character {
 namespace {
 
@@ -26,6 +28,21 @@ constexpr float K_GEOMETRY_EPSILON{1.0e-5F};
     return {};
   }
   return {.x = vector.x / length, .y = vector.y / length, .z = vector.z / length};
+}
+
+[[nodiscard]] std::optional<Runtime::Vec3> transform_normal(
+    const Runtime::Vec3& normal, const Omikron::Model3DOData::RuntimeObjectState& object) {
+  if (std::abs(object.scale.x) <= K_GEOMETRY_EPSILON ||
+      std::abs(object.scale.y) <= K_GEOMETRY_EPSILON ||
+      std::abs(object.scale.z) <= K_GEOMETRY_EPSILON) {
+    return std::nullopt;
+  }
+  const Runtime::Vec3 result{
+      normalize(Runtime::transform_vector({.x = normal.x / object.scale.x,
+                                              .y = normal.y / object.scale.y,
+                                              .z = normal.z / object.scale.z},
+          object.world_matrix))};
+  return dot(result, result) > K_GEOMETRY_EPSILON ? std::optional{result} : std::nullopt;
 }
 
 [[nodiscard]] bool outside_horizontal_bounds(const Omikron::MeshDescriptor& mesh,
@@ -130,8 +147,11 @@ void consider_face(const std::array<Runtime::Vec3, Size>& vertices,
     const std::size_t object_index,
     const StaticSupportQueryInput& query,
     std::optional<StaticSupportHit>& best) {
-  const Runtime::Vec3 world_normal{
-      normalize(Runtime::transform_vector(authored_normal, object.world_matrix))};
+  const auto transformed_normal{transform_normal(authored_normal, object)};
+  if (!transformed_normal.has_value()) {
+    return;
+  }
+  const Runtime::Vec3 world_normal{transformed_normal.value()};
   if (world_normal.y >= K_MINIMUM_FLOOR_NORMAL_Y) {
     return;
   }
@@ -161,21 +181,49 @@ void consider_face(const std::array<Runtime::Vec3, Size>& vertices,
 std::optional<StaticSupportHit> StaticSupportQuery::find(const Omikron::Model3DOData& model,
     const std::span<const Omikron::Model3DOData::RuntimeObjectState> runtime_objects,
     const StaticSupportQueryInput& query) {
-  std::optional<StaticSupportHit> best;
+  const auto candidates{find_candidates(model, runtime_objects, query)};
+  return candidates.has_value() ? std::optional{candidates->primary} : std::nullopt;
+}
+
+std::optional<SupportQueryResult> StaticSupportQuery::find_candidates(
+    const Omikron::Model3DOData& model,
+    const std::span<const Omikron::Model3DOData::RuntimeObjectState> runtime_objects,
+    const StaticSupportQueryInput& query) {
+  std::optional<StaticSupportHit> primary;
+  std::optional<StaticSupportHit> alternate;
   const std::size_t object_count{
       std::min({model.meshes.size(), model.polygons.size(), runtime_objects.size()})};
   for (std::size_t object_index{0}; object_index < object_count; ++object_index) {
     const Omikron::MeshDescriptor& mesh{model.meshes.at(object_index)};
-    if ((mesh.flags & K_STATIC_SUPPORT_SKIP_MASK) != 0U ||
-        (mesh.flags & K_TRANSFORMED_COLLISION_MASK) != 0U) {
+    if ((mesh.flags & K_STATIC_SUPPORT_SKIP_MASK) != 0U) {
       continue;
     }
     const auto& object{runtime_objects.subspan(object_index, 1U).front()};
     if (outside_horizontal_bounds(mesh, object, query)) {
       continue;
     }
+    std::optional<StaticSupportHit> object_best;
+    if ((mesh.flags & K_TRANSFORMED_COLLISION_MASK) != 0U) {
+      const auto hit{SweptSphereQuery::find_in_object(model,
+          runtime_objects,
+          object_index,
+          {.start = query.world_probe,
+              .direction = {.x = 0.0F, .y = 1.0F, .z = 0.0F},
+              .max_distance = std::numeric_limits<float>::max(),
+              .radius = query.radius})};
+      if (hit.has_value()) {
+        object_best = StaticSupportHit{.object_index = object_index,
+            .world_point = hit->world_point,
+            .world_normal = hit->world_normal,
+            .clearance = hit->travel_distance,
+            .support_class = SupportClass::k_transformed_general};
+      }
+    }
     const Omikron::MeshPolygons& polygons{model.polygons.at(object_index)};
-    for (const Omikron::Triangle& triangle : polygons.triangles) {
+    for (const Omikron::Triangle& triangle :
+        (mesh.flags & K_TRANSFORMED_COLLISION_MASK) == 0U
+            ? std::span<const Omikron::Triangle>{polygons.triangles}
+            : std::span<const Omikron::Triangle>{}) {
       std::array<Runtime::Vec3, 3> vertices{};
       bool valid{true};
       for (std::size_t corner{0}; corner < vertices.size(); ++corner) {
@@ -197,10 +245,13 @@ std::optional<StaticSupportHit> StaticSupportQuery::find(const Omikron::Model3DO
         vertices.at(corner) = vertex.value();
       }
       if (valid) {
-        consider_face(vertices, triangle.face_normal, object, object_index, query, best);
+        consider_face(vertices, triangle.face_normal, object, object_index, query, object_best);
       }
     }
-    for (const Omikron::Rectangle& rectangle : polygons.rectangles) {
+    for (const Omikron::Rectangle& rectangle :
+        (mesh.flags & K_TRANSFORMED_COLLISION_MASK) == 0U
+            ? std::span<const Omikron::Rectangle>{polygons.rectangles}
+            : std::span<const Omikron::Rectangle>{}) {
       std::array<Runtime::Vec3, 4> vertices{};
       bool valid{true};
       for (std::size_t corner{0}; corner < vertices.size(); ++corner) {
@@ -213,11 +264,23 @@ std::optional<StaticSupportHit> StaticSupportQuery::find(const Omikron::Model3DO
         vertices.at(corner) = vertex.value();
       }
       if (valid) {
-        consider_face(vertices, rectangle.face_normal, object, object_index, query, best);
+        consider_face(vertices, rectangle.face_normal, object, object_index, query, object_best);
       }
     }
+    if (!object_best.has_value()) {
+      continue;
+    }
+    if (!primary.has_value() || object_best->clearance < primary->clearance) {
+      alternate = primary;
+      primary = object_best;
+    } else if (!alternate.has_value() || object_best->clearance < alternate->clearance) {
+      alternate = object_best;
+    }
   }
-  return best;
+  if (!primary.has_value()) {
+    return std::nullopt;
+  }
+  return SupportQueryResult{.primary = primary.value(), .alternate = alternate};
 }
 
 }  // namespace App::Character

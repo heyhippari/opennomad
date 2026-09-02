@@ -522,8 +522,11 @@ std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state
           .renderable = character.renderable(),
           .ordinary_actor_service_generation = character.ordinary_actor_service_generation,
           .horizontal_object_index = std::nullopt,
+          .physical_support_class = std::nullopt,
           .physical_support_object_index = std::nullopt,
           .physical_support_object_name = {},
+          .physical_alternate_support_object_index = std::nullopt,
+          .class2_secondary_object_index = std::nullopt,
           .serialized_position = character.serialized_area_position,
           .runtime_position = {character.transform.translation.x,
               character.transform.translation.y,
@@ -653,6 +656,7 @@ std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state
       debug_character.yaw_before_degrees = horizontal.yaw_before_degrees;
       debug_character.yaw_after_degrees = horizontal.yaw_after_degrees;
       debug_character.physical_support_valid = physical.support.valid;
+      debug_character.physical_support_class = physical.support.support_class;
       debug_character.physical_support_object_index = physical.support.object_index;
       debug_character.physical_support_point = {
           physical.support.point.x, physical.support.point.y, physical.support.point.z};
@@ -660,6 +664,18 @@ std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state
           physical.support.normal.x, physical.support.normal.y, physical.support.normal.z};
       debug_character.physical_support_clearance = physical.support.clearance;
       debug_character.physical_support_gap = physical.support.gap;
+      debug_character.physical_alternate_support_object_index =
+          physical.support.alternate_object_index;
+      debug_character.physical_alternate_support_clearance = physical.support.alternate_clearance;
+      debug_character.physical_previous_primary_relative_y =
+          physical.support.previous_primary_relative_y;
+      debug_character.physical_primary_relative_y = physical.support.primary_relative_y;
+      debug_character.physical_alternate_relative_y = physical.support.alternate_relative_y;
+      debug_character.physical_support_delta_term = physical.support.support_delta_term;
+      debug_character.physical_primary_post_movement_gap =
+          physical.support.primary_post_movement_gap;
+      debug_character.physical_alternate_gap = physical.support.alternate_gap;
+      debug_character.physical_history_mode4_condition = physical.support.history_mode4_condition;
       debug_character.physical_support_walkable = physical.support.walkable;
       debug_character.physical_grounded = physical.support.grounded;
       debug_character.physical_support_special_deferred = physical.support.special_deferred;
@@ -667,19 +683,33 @@ std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state
           physical.support.small_step_snapped_this_tick;
       debug_character.physical_support_mover_flags = physical.support.mover_flags;
       debug_character.physical_support_mover_applied = physical.support.mover_applied_this_tick;
-      const Character::SteepSupportResponseState& steep{physical.steep_support_response};
-      debug_character.steep_mode4_attempted = steep.attempted;
-      debug_character.steep_mode4_input = {
-          steep.input_displacement.x, steep.input_displacement.y, steep.input_displacement.z};
-      debug_character.steep_mode4_result = {steep.resolved_displacement.x,
-          steep.resolved_displacement.y,
-          steep.resolved_displacement.z};
-      debug_character.steep_mode4_forward_collision = steep.forward_collision;
-      debug_character.steep_mode4_depenetrated = steep.depenetrated;
-      debug_character.steep_mode4_collision_passes = steep.collision_passes;
-      debug_character.steep_mode4_response_normal = {
-          steep.response_normal.x, steep.response_normal.y, steep.response_normal.z};
-      debug_character.steep_physical_terms_seeded = steep.physical_terms_seeded;
+      const Character::SupportMode4ResponseState& mode4{physical.support_mode4_response};
+      debug_character.support_mode4_attempted = mode4.attempted;
+      debug_character.support_mode4_triggered_by_history = mode4.triggered_by_history;
+      debug_character.support_mode4_triggered_by_steep_slope = mode4.triggered_by_steep_slope;
+      debug_character.support_mode4_input = {
+          mode4.input_displacement.x, mode4.input_displacement.y, mode4.input_displacement.z};
+      debug_character.support_mode4_result = {mode4.resolved_displacement.x,
+          mode4.resolved_displacement.y,
+          mode4.resolved_displacement.z};
+      debug_character.support_mode4_forward_collision = mode4.forward_collision;
+      debug_character.support_mode4_depenetrated = mode4.depenetrated;
+      debug_character.support_mode4_collision_passes = mode4.collision_passes;
+      debug_character.support_mode4_response_normal = {
+          mode4.response_normal.x, mode4.response_normal.y, mode4.response_normal.z};
+      debug_character.steep_physical_terms_seeded = mode4.steep_physical_terms_seeded;
+      const Character::Class2SupportResponseState& class2{physical.class2_support_response};
+      debug_character.class2_support_eligible = class2.eligible;
+      debug_character.class2_secondary_query_attempted = class2.secondary_query_attempted;
+      debug_character.class2_secondary_hit = class2.secondary_hit;
+      debug_character.class2_secondary_object_index = class2.secondary_object_index;
+      debug_character.class2_secondary_distance = class2.secondary_distance;
+      debug_character.class2_secondary_gap = class2.secondary_gap;
+      debug_character.class2_triggered_by_gap = class2.triggered_by_gap;
+      debug_character.class2_triggered_by_slope = class2.triggered_by_slope;
+      debug_character.class2_triggered_by_special_flag = class2.triggered_by_special_flag;
+      debug_character.class2_attachment_applied = class2.attachment_applied;
+      debug_character.class2_output_terms = {class2.output_x_per_tick, class2.output_z_per_tick};
       debug_character.physical_fall_stage = physical.fall_stage;
       debug_character.physical_accumulated_fall_travel = physical.accumulated_fall_travel;
       debug_character.physical_maximum_support_gap = physical.maximum_support_gap;

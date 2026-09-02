@@ -322,6 +322,7 @@ TEST_SUITE("Core::Character::Runtime") {
         .fall_stage = 3,
         .accumulated_fall_travel = 90.0F,
         .maximum_support_gap = 120.0F,
+        .support_history = {.primary_relative_y = 37.5F},
         .support = {.valid = true, .object_index = 4U, .gap = 25.0F},
         .initialized = true};
     character->pose_revision = 17U;
@@ -357,6 +358,7 @@ TEST_SUITE("Core::Character::Runtime") {
     CHECK_EQ(character->physical_motion.fall_stage, 3U);
     CHECK_EQ(character->physical_motion.accumulated_fall_travel, 90.0F);
     CHECK_EQ(character->physical_motion.maximum_support_gap, 120.0F);
+    CHECK_EQ(character->physical_motion.support_history.primary_relative_y, 37.5F);
     CHECK(character->physical_motion.support.valid);
     CHECK_EQ(character->physical_motion.support.object_index, 4U);
     CHECK_EQ(character->physical_motion.support.gap, 25.0F);

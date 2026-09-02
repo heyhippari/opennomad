@@ -501,6 +501,11 @@ void DebugUI::show_world_inspector() {
       }
       ImGui::Text("Support: %s", character.physical_support_valid ? "yes" : "no");
       if (character.physical_support_valid) {
+        const char* support_class{
+            character.physical_support_class == Character::SupportClass::k_transformed_general
+                ? "class 2 transformed"
+                : "class 1 static"};
+        ImGui::Text("Support class: %s", support_class);
         ImGui::Text("Support object: %zu (%s)",
             character.physical_support_object_index.value_or(0U),
             character.physical_support_object_name.empty()
@@ -517,6 +522,19 @@ void DebugUI::show_world_inspector() {
         ImGui::Text("Support clearance: %.3f in, gap: %.3f in",
             static_cast<double>(character.physical_support_clearance),
             static_cast<double>(character.physical_support_gap));
+        ImGui::Text("Alternate: %s, object: %zu, clearance/gap: %.3f / %.3f in",
+            character.physical_alternate_support_object_index.has_value() ? "yes" : "no",
+            character.physical_alternate_support_object_index.value_or(0U),
+            static_cast<double>(character.physical_alternate_support_clearance),
+            static_cast<double>(character.physical_alternate_gap));
+        ImGui::Text("History previous/primary/alternate: %.3f / %.3f / %.3f in",
+            static_cast<double>(character.physical_previous_primary_relative_y),
+            static_cast<double>(character.physical_primary_relative_y),
+            static_cast<double>(character.physical_alternate_relative_y));
+        ImGui::Text("Support delta/post-gap/history mode 4: %.3f / %.3f / %s",
+            static_cast<double>(character.physical_support_delta_term),
+            static_cast<double>(character.physical_primary_post_movement_gap),
+            character.physical_history_mode4_condition ? "yes" : "no");
         ImGui::Text("Walkable: %s, grounded: %s, special/deferred: %s, small-step snap: %s",
             character.physical_support_walkable ? "yes" : "no",
             character.physical_grounded ? "yes" : "no",
@@ -526,25 +544,46 @@ void DebugUI::show_world_inspector() {
             character.physical_support_mover_flags,
             character.physical_support_mover_applied ? "yes" : "no");
       }
-      ImGui::Text("Steep mode 4 attempted: %s", character.steep_mode4_attempted ? "yes" : "no");
-      if (character.steep_mode4_attempted) {
+      ImGui::Text("Support mode 4 attempted: %s", character.support_mode4_attempted ? "yes" : "no");
+      if (character.support_mode4_attempted) {
+        ImGui::Text("Mode 4 reasons history/steep: %s / %s",
+            character.support_mode4_triggered_by_history ? "yes" : "no",
+            character.support_mode4_triggered_by_steep_slope ? "yes" : "no");
         ImGui::Text("Mode 4 input XZ: %.3f, %.3f in",
-            static_cast<double>(character.steep_mode4_input.at(0)),
-            static_cast<double>(character.steep_mode4_input.at(2)));
+            static_cast<double>(character.support_mode4_input.at(0)),
+            static_cast<double>(character.support_mode4_input.at(2)));
         ImGui::Text("Mode 4 result XZ: %.3f, %.3f in",
-            static_cast<double>(character.steep_mode4_result.at(0)),
-            static_cast<double>(character.steep_mode4_result.at(2)));
+            static_cast<double>(character.support_mode4_result.at(0)),
+            static_cast<double>(character.support_mode4_result.at(2)));
         ImGui::Text("Mode 4 collision: %s, depenetrated: %s, passes: %u",
-            character.steep_mode4_forward_collision ? "yes" : "no",
-            character.steep_mode4_depenetrated ? "yes" : "no",
-            character.steep_mode4_collision_passes);
+            character.support_mode4_forward_collision ? "yes" : "no",
+            character.support_mode4_depenetrated ? "yes" : "no",
+            character.support_mode4_collision_passes);
         ImGui::Text("Mode 4 response normal XYZ: %.3f, %.3f, %.3f",
-            static_cast<double>(character.steep_mode4_response_normal.at(0)),
-            static_cast<double>(character.steep_mode4_response_normal.at(1)),
-            static_cast<double>(character.steep_mode4_response_normal.at(2)));
+            static_cast<double>(character.support_mode4_response_normal.at(0)),
+            static_cast<double>(character.support_mode4_response_normal.at(1)),
+            static_cast<double>(character.support_mode4_response_normal.at(2)));
         ImGui::Text("Steep physical response seeded: %s (downward velocity %.3f in/s)",
             character.steep_physical_terms_seeded ? "yes" : "no",
             static_cast<double>(character.physical_vertical_velocity));
+      }
+      ImGui::Text("Class 2 eligible/probed/hit/attached: %s / %s / %s / %s",
+          character.class2_support_eligible ? "yes" : "no",
+          character.class2_secondary_query_attempted ? "yes" : "no",
+          character.class2_secondary_hit ? "yes" : "no",
+          character.class2_attachment_applied ? "yes" : "no");
+      if (character.class2_secondary_hit) {
+        ImGui::Text("Secondary object/distance/gap: %zu / %.3f / %.3f in",
+            character.class2_secondary_object_index.value_or(0U),
+            static_cast<double>(character.class2_secondary_distance),
+            static_cast<double>(character.class2_secondary_gap));
+        ImGui::Text("Attachment reasons gap/slope/special: %s / %s / %s",
+            character.class2_triggered_by_gap ? "yes" : "no",
+            character.class2_triggered_by_slope ? "yes" : "no",
+            character.class2_triggered_by_special_flag ? "yes" : "no");
+        ImGui::Text("Attachment output XZ: %.3f, %.3f in/tick",
+            static_cast<double>(character.class2_output_terms.at(0)),
+            static_cast<double>(character.class2_output_terms.at(1)));
       }
       ImGui::Text("Fall stage: %u", static_cast<unsigned int>(character.physical_fall_stage));
       ImGui::Text("Accumulated fall travel: %.3f in",

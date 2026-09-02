@@ -50,6 +50,22 @@ struct PhysicalFixture {
     decor.runtime_objects.push_back(App::Omikron::Model3DOData::RuntimeObjectState{});
   }
 
+  void add_floor(
+      const float floor_y, const std::uint32_t flags = 0U, const std::uint32_t mover_flags = 0U) {
+    const std::uint32_t vertex_base{static_cast<std::uint32_t>(decor.vertices.size())};
+    decor.meshes.push_back(App::Omikron::MeshDescriptor{
+        .flags = flags, .mover_flags = mover_flags, .vertex_count = 3, .vertex_base = vertex_base});
+    decor.polygons.push_back(
+        App::Omikron::MeshPolygons{.triangles = {App::Omikron::Triangle{
+                                       .vertices = {{{.index = 0}, {.index = 1}, {.index = 2}}},
+                                       .face_normal = {.x = 0.0F, .y = -1.0F, .z = 0.0F}}}});
+    decor.vertices.insert(decor.vertices.end(),
+        {{.position = {.x = -1000.0F, .y = floor_y, .z = -1000.0F}},
+            {.position = {.x = 1000.0F, .y = floor_y, .z = -1000.0F}},
+            {.position = {.x = 0.0F, .y = floor_y, .z = 1000.0F}}});
+    decor.runtime_objects.push_back(App::Omikron::Model3DOData::RuntimeObjectState{});
+  }
+
   [[nodiscard]] App::Character::PhysicalMotionEnvironment environment(
       const bool suppress_snap = false) const {
     return {.decor_model = &decor,
@@ -451,6 +467,79 @@ TEST_SUITE("Core::Character::PhysicalMotionService") {
     CHECK_EQ(Service::resolve_fall_stage(2U, Service::K_FALL_STAGE_3_DISTANCE), 3U);
   }
 
+  TEST_CASE("support-history formulas preserve every recovered term") {
+    using Service = App::Character::PhysicalMotionService;
+    CHECK(Service::support_delta_term(7.0F, -3.0F, 11.0F) == doctest::Approx(-7.0F));
+    CHECK(Service::primary_relative_y(20.0F, 17.0F, 7.0F, -3.0F, 5.0F) == doctest::Approx(12.0F));
+    CHECK(Service::alternate_relative_y(19.0F, 12.0F, 7.0F) == doctest::Approx(24.0F));
+  }
+
+  TEST_CASE("synchronize preserves persistent support history") {
+    PhysicalFixture fixture;
+    fixture.character.physical_motion.support_history.primary_relative_y = 37.5F;
+
+    App::Character::PhysicalMotionService::synchronize(fixture.character);
+
+    CHECK_EQ(fixture.character.physical_motion.support_history.primary_relative_y, 37.5F);
+    CHECK_FALSE(fixture.character.physical_motion.support.valid);
+  }
+
+  TEST_CASE("history mode-4 predicate keeps strict thresholds stages and override") {
+    using Service = App::Character::PhysicalMotionService;
+    const float threshold{Service::K_SUPPORT_SECONDARY_PENETRATION_THRESHOLD};
+    CHECK(Service::history_mode4_required(0U, -1.0F, 0.0F, -threshold - 0.001F, false));
+    CHECK(Service::history_mode4_required(2U, -1.0F, 0.0F, -threshold - 0.001F, false));
+    CHECK_FALSE(Service::history_mode4_required(1U, -1.0F, 0.0F, -threshold - 0.001F, false));
+    CHECK_FALSE(Service::history_mode4_required(3U, -1.0F, 0.0F, -threshold - 0.001F, false));
+    CHECK_FALSE(Service::history_mode4_required(4U, -1.0F, 0.0F, -threshold - 0.001F, false));
+    CHECK_FALSE(Service::history_mode4_required(0U, 0.0F, 0.0F, -threshold - 0.001F, false));
+    CHECK_FALSE(Service::history_mode4_required(0U, -1.0F, 0.0F, -threshold, false));
+    CHECK_FALSE(Service::history_mode4_required(0U, -1.0F, 0.0F, std::nullopt, false));
+    CHECK_FALSE(Service::history_mode4_required(0U, -1.0F, 0.0F, -threshold - 0.001F, true));
+  }
+
+  TEST_CASE("walkable alternate penetration triggers one history mode-4 retry") {
+    PhysicalFixture fixture{-10.0F};
+    fixture.resource->model.header.collision_sphere_count = 2;
+    fixture.resource->model.header.collision_sphere_slots.at(0) = {
+        .center = {.y = -10.0F}, .radius = 2.0F};
+    fixture.resource->model.header.collision_sphere_slots.at(1) = {
+        .center = {.y = 10.0F}, .radius = 2.0F};
+    fixture.add_floor(-9.0F);
+    App::Character::PhysicalMotionService::synchronize(fixture.character);
+    fixture.character.physical_motion.gravity_velocity_delta_per_tick = 0.0F;
+
+    App::Character::PhysicalMotionService::resolve_tick(fixture.character, fixture.environment());
+
+    const auto& motion{fixture.character.physical_motion};
+    CHECK(motion.support.walkable);
+    CHECK(motion.support.alternate_object_index.has_value());
+    CHECK(motion.support.history_mode4_condition);
+    CHECK(motion.support_mode4_response.attempted);
+    CHECK(motion.support_mode4_response.triggered_by_history);
+    CHECK_FALSE(motion.support_mode4_response.triggered_by_steep_slope);
+    CHECK_FALSE(motion.support_mode4_response.steep_physical_terms_seeded);
+  }
+
+  TEST_CASE("MDSLIDOU override suppresses history retry but not steep retry") {
+    PhysicalFixture fixture{-10.0F};
+    fixture.resource->model.header.collision_sphere_count = 2;
+    fixture.resource->model.header.collision_sphere_slots.at(0) = {
+        .center = {.y = -10.0F}, .radius = 2.0F};
+    fixture.resource->model.header.collision_sphere_slots.at(1) = {
+        .center = {.y = 10.0F}, .radius = 2.0F};
+    fixture.add_floor(-9.0F);
+    App::Character::PhysicalMotionService::synchronize(fixture.character);
+    fixture.character.physical_motion.gravity_velocity_delta_per_tick = 0.0F;
+    auto environment{fixture.environment()};
+    environment.mdslidou_support_override_active = true;
+
+    App::Character::PhysicalMotionService::resolve_tick(fixture.character, environment);
+
+    CHECK_FALSE(fixture.character.physical_motion.support.history_mode4_condition);
+    CHECK_FALSE(fixture.character.physical_motion.support_mode4_response.attempted);
+  }
+
   TEST_CASE("serious fall stages latch while stage two can promote") {
     using Service = App::Character::PhysicalMotionService;
     for (const std::uint8_t stage : {1U, 3U, 4U}) {
@@ -524,9 +613,9 @@ TEST_SUITE("Core::Character::PhysicalMotionService") {
     CHECK_FALSE(fixture.character.physical_motion.support.walkable);
     CHECK_FALSE(fixture.character.physical_motion.support.grounded);
     CHECK_EQ(fixture.character.physical_motion.support.gap, 0.0F);
-    CHECK(fixture.character.physical_motion.steep_support_response.attempted);
-    CHECK_EQ(fixture.character.physical_motion.steep_support_response.input_displacement.y, 0.0F);
-    CHECK(fixture.character.physical_motion.steep_support_response.physical_terms_seeded);
+    CHECK(fixture.character.physical_motion.support_mode4_response.attempted);
+    CHECK_EQ(fixture.character.physical_motion.support_mode4_response.input_displacement.y, 0.0F);
+    CHECK(fixture.character.physical_motion.support_mode4_response.steep_physical_terms_seeded);
     CHECK(fixture.character.physical_motion.horizontal_physical_x_per_tick ==
           doctest::Approx(fixture.character.physical_motion.support.normal.x));
     CHECK(fixture.character.physical_motion.horizontal_physical_z_per_tick ==
@@ -557,7 +646,7 @@ TEST_SUITE("Core::Character::PhysicalMotionService") {
 
     CHECK(fixture.character.physical_motion.support.walkable);
     CHECK(fixture.character.physical_motion.support.grounded);
-    CHECK_FALSE(fixture.character.physical_motion.steep_support_response.attempted);
+    CHECK_FALSE(fixture.character.physical_motion.support_mode4_response.attempted);
     CHECK_EQ(fixture.character.physical_motion.horizontal_physical_x_per_tick, 0.0F);
     CHECK_EQ(fixture.character.physical_motion.vertical_velocity, 0.0F);
     CHECK_EQ(fixture.character.physical_motion.horizontal_physical_z_per_tick, 0.0F);
@@ -577,8 +666,9 @@ TEST_SUITE("Core::Character::PhysicalMotionService") {
 
     App::Character::PhysicalMotionService::resolve_tick(fixture.character, fixture.environment());
 
-    CHECK(fixture.character.physical_motion.steep_support_response.attempted);
-    CHECK_FALSE(fixture.character.physical_motion.steep_support_response.physical_terms_seeded);
+    CHECK(fixture.character.physical_motion.support_mode4_response.attempted);
+    CHECK_FALSE(
+        fixture.character.physical_motion.support_mode4_response.steep_physical_terms_seeded);
     CHECK_EQ(fixture.character.physical_motion.horizontal_physical_x_per_tick, 0.0F);
     CHECK_EQ(fixture.character.physical_motion.vertical_velocity, -20.0F);
     CHECK_EQ(fixture.character.physical_motion.horizontal_physical_z_per_tick, 0.0F);
@@ -602,6 +692,78 @@ TEST_SUITE("Core::Character::PhysicalMotionService") {
     CHECK_EQ(motion.horizontal_physical_z_per_tick, -2.0F);
     CHECK_EQ(motion.accepted_translation.x, 1.0F);
     CHECK_EQ(motion.accepted_translation.z, 3.0F);
+  }
+
+  TEST_CASE("walkable transformed support runs class-two probe without default attachment") {
+    PhysicalFixture fixture;
+    fixture.decor.meshes.front().flags = 0x00080000U;
+    fixture.character.transform.translation.y = 10.0F;
+    App::Character::PhysicalMotionService::synchronize(fixture.character);
+
+    App::Character::PhysicalMotionService::resolve_tick(fixture.character, fixture.environment());
+
+    const auto& motion{fixture.character.physical_motion};
+    REQUIRE(motion.support.support_class.has_value());
+    // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+    CHECK_EQ(
+        motion.support.support_class.value(), App::Character::SupportClass::k_transformed_general);
+    CHECK(motion.support.grounded);
+    CHECK(motion.class2_support_response.eligible);
+    CHECK(motion.class2_support_response.secondary_query_attempted);
+    CHECK(motion.class2_support_response.secondary_hit);
+    CHECK_FALSE(motion.class2_support_response.attachment_applied);
+  }
+
+  TEST_CASE("class-two mover response has priority over secondary attachment") {
+    PhysicalFixture fixture;
+    fixture.decor.meshes.front().flags = 0x00080000U;
+    fixture.decor.meshes.front().mover_flags = 0x10U;
+    fixture.character.transform.translation.y = 10.0F;
+    App::Character::PhysicalMotionService::synchronize(fixture.character);
+
+    App::Character::PhysicalMotionService::resolve_tick(fixture.character, fixture.environment());
+
+    CHECK(fixture.character.physical_motion.support.mover_applied_this_tick);
+    CHECK_EQ(fixture.character.physical_motion.horizontal_physical_x_per_tick, 2.0F);
+    CHECK_FALSE(fixture.character.physical_motion.class2_support_response.eligible);
+    CHECK_FALSE(
+        fixture.character.physical_motion.class2_support_response.secondary_query_attempted);
+  }
+
+  TEST_CASE("class-two attachment writes exact one-eighth primary-point terms for next tick") {
+    PhysicalFixture fixture;
+    fixture.resource->model.header.collision_sphere_slots.at(0) = {.center = {}, .radius = 60.0F};
+    fixture.decor = {};
+    fixture.decor.meshes.push_back(
+        App::Omikron::MeshDescriptor{.flags = 0x00080000U, .vertex_count = 4});
+    fixture.decor.polygons.push_back(
+        App::Omikron::MeshPolygons{.rectangles = {App::Omikron::Rectangle{.vertices = {0, 1, 2, 3},
+                                       .face_normal = {.x = 0.0F, .y = -1.0F, .z = 0.0F}}}});
+    fixture.decor.vertices = {{.position = {.x = 80.0F, .y = 60.0F, .z = 32.0F}},
+        {.position = {.x = 104.0F, .y = 60.0F, .z = 32.0F}},
+        {.position = {.x = 104.0F, .y = 60.0F, .z = 56.0F}},
+        {.position = {.x = 80.0F, .y = 60.0F, .z = 56.0F}}};
+    fixture.decor.runtime_objects.push_back(App::Omikron::Model3DOData::RuntimeObjectState{});
+    fixture.add_floor(100.0F);
+    constexpr float contact_center_y{7.3881507F};
+    fixture.character.transform.translation = {.x = 120.0F, .y = contact_center_y, .z = 80.0F};
+    App::Character::PhysicalMotionService::synchronize(fixture.character);
+    fixture.character.physical_motion.gravity_velocity_delta_per_tick = 0.0F;
+    fixture.character.physical_motion.vertical_velocity = 100.0F;
+
+    App::Character::PhysicalMotionService::resolve_tick(fixture.character, fixture.environment());
+
+    const auto& motion{fixture.character.physical_motion};
+    REQUIRE_EQ(motion.support.support_class, App::Character::SupportClass::k_transformed_general);
+    CHECK(motion.support.grounded);
+    CHECK(motion.class2_support_response.attachment_applied);
+    CHECK(motion.class2_support_response.triggered_by_gap);
+    CHECK(motion.class2_support_response.primary_support_point.x == doctest::Approx(104.0F));
+    CHECK(motion.class2_support_response.primary_support_point.z == doctest::Approx(56.0F));
+    CHECK(motion.horizontal_physical_x_per_tick == doctest::Approx(2.0F));
+    CHECK(motion.horizontal_physical_z_per_tick == doctest::Approx(3.0F));
+    CHECK(motion.accepted_translation.x == doctest::Approx(120.0F));
+    CHECK(motion.accepted_translation.z == doctest::Approx(80.0F));
   }
 
   TEST_CASE("individual mover bits seed their exact horizontal axis terms") {

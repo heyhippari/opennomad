@@ -5,6 +5,7 @@
 #include <optional>
 #include <span>
 
+#include "Core/Character/StaticSupportQuery.hpp"
 #include "Core/Omikron/Model3DO.hpp"
 #include "Core/RuntimeMath.hpp"
 
@@ -14,11 +15,21 @@ struct RuntimeCharacter;
 
 struct PhysicalSupportState {
   bool valid{false};
+  std::optional<SupportClass> support_class;
   std::optional<std::size_t> object_index;
   App::Runtime::Vec3 point{};
   App::Runtime::Vec3 normal{};
   float clearance{0.0F};
   float gap{0.0F};
+  std::optional<std::size_t> alternate_object_index;
+  float alternate_clearance{0.0F};
+  float previous_primary_relative_y{0.0F};
+  float primary_relative_y{0.0F};
+  float alternate_relative_y{0.0F};
+  float support_delta_term{0.0F};
+  float primary_post_movement_gap{0.0F};
+  float alternate_gap{0.0F};
+  bool history_mode4_condition{false};
   bool walkable{false};
   bool grounded{false};
   bool special_deferred{false};
@@ -27,8 +38,10 @@ struct PhysicalSupportState {
   bool mover_applied_this_tick{false};
 };
 
-struct SteepSupportResponseState {
+struct SupportMode4ResponseState {
   bool attempted{false};
+  bool triggered_by_history{false};
+  bool triggered_by_steep_slope{false};
   App::Runtime::Vec3 input_displacement{};
   App::Runtime::Vec3 resolved_displacement{};
   bool forward_collision{false};
@@ -36,7 +49,28 @@ struct SteepSupportResponseState {
   std::uint32_t collision_passes{0};
   std::optional<std::size_t> object_index;
   App::Runtime::Vec3 response_normal{};
-  bool physical_terms_seeded{false};
+  bool steep_physical_terms_seeded{false};
+};
+
+struct SupportHistoryState {
+  float primary_relative_y{0.0F};
+};
+
+struct Class2SupportResponseState {
+  bool eligible{false};
+  bool secondary_query_attempted{false};
+  bool secondary_hit{false};
+  std::optional<std::size_t> secondary_object_index;
+  App::Runtime::Vec3 secondary_normal{};
+  float secondary_distance{0.0F};
+  float secondary_gap{0.0F};
+  bool triggered_by_gap{false};
+  bool triggered_by_slope{false};
+  bool triggered_by_special_flag{false};
+  bool attachment_applied{false};
+  App::Runtime::Vec3 primary_support_point{};
+  float output_x_per_tick{0.0F};
+  float output_z_per_tick{0.0F};
 };
 
 enum class AutomaticHeadingSuppressionReason : std::uint8_t {
@@ -80,6 +114,7 @@ struct PhysicalMotionEnvironment {
   const Omikron::Model3DOData* decor_model{nullptr};
   std::span<const Omikron::Model3DOData::RuntimeObjectState> decor_runtime_objects{};
   bool suppress_small_support_snap{false};
+  bool mdslidou_support_override_active{false};
   float collision_scale{1.0F};
 };
 
@@ -102,8 +137,10 @@ struct PhysicalMotionState {
   std::uint8_t fall_stage{0};
   float accumulated_fall_travel{0.0F};
   float maximum_support_gap{0.0F};
+  SupportHistoryState support_history{};
   HorizontalCollisionState horizontal_collision{};
-  SteepSupportResponseState steep_support_response{};
+  SupportMode4ResponseState support_mode4_response{};
+  Class2SupportResponseState class2_support_response{};
   PhysicalSupportState support{};
   bool missing_body_warning_emitted{false};
   bool initialized{false};
@@ -118,6 +155,9 @@ class PhysicalMotionService {
   static constexpr float K_MAX_WALKABLE_SLOPE_DEGREES{30.0F};
   static constexpr float K_STEEP_SUPPORT_DOWNWARD_VELOCITY{11.8110237F};
   static constexpr float K_MOVER_HORIZONTAL_STEP{2.0F};
+  static constexpr float K_SUPPORT_SECONDARY_PENETRATION_THRESHOLD{11.8110237F};
+  static constexpr float K_CLASS2_SECONDARY_GAP_THRESHOLD{11.8110237F};
+  static constexpr float K_CLASS2_ATTACHMENT_FACTOR{0.125F};
   /// Runtime mode-1's independent 30 cm lower-cylinder step-over allowance.
   static constexpr float K_HORIZONTAL_BODY_BOTTOM_TRIM{11.8110237F};
   static constexpr float K_FALL_STAGE_1_DISTANCE{59.0551186F};
@@ -141,6 +181,17 @@ class PhysicalMotionService {
       std::span<const Omikron::CollisionSphere> spheres);
   [[nodiscard]] static float resolve_vertical_displacement(
       float support_gap, float desired_delta_y);
+  [[nodiscard]] static float support_delta_term(
+      float primary_clearance, float anchor_y, float previous_primary_relative_y);
+  [[nodiscard]] static float primary_relative_y(
+      float accepted_y, float candidate_y, float primary_clearance, float anchor_y, float radius);
+  [[nodiscard]] static float alternate_relative_y(
+      float alternate_clearance, float primary_relative_y, float primary_clearance);
+  [[nodiscard]] static bool history_mode4_required(std::uint8_t previous_fall_stage,
+      float support_delta,
+      float primary_gap_after,
+      std::optional<float> alternate_gap_after,
+      bool mdslidou_override_active);
   [[nodiscard]] static bool support_is_walkable(const App::Runtime::Vec3& normal);
   [[nodiscard]] static std::uint8_t fall_stage_for_gap(float positive_gap);
   [[nodiscard]] static std::uint8_t resolve_fall_stage(

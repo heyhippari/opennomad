@@ -8,6 +8,7 @@
 
 #include "Core/Character/CharacterRuntime.hpp"
 #include "Core/Character/HorizontalCollisionQuery.hpp"
+#include "Core/Character/SecondarySupportQuery.hpp"
 #include "Core/Character/StaticSupportQuery.hpp"
 #include "Core/Log.hpp"
 #include "Core/LogCategory.hpp"
@@ -66,7 +67,8 @@ void reset_physical_episode_for_reanchor(PhysicalMotionState& motion) {
   motion.horizontal_physical_z_per_tick = 0.0F;
   clear_fall_episode(motion);
   motion.horizontal_collision = {};
-  motion.steep_support_response = {};
+  motion.support_mode4_response = {};
+  motion.class2_support_response = {};
   motion.support = {};
 }
 
@@ -87,6 +89,39 @@ void apply_support_mover_terms(PhysicalMotionState& motion, const std::uint32_t 
     motion.horizontal_physical_z_per_tick = -PhysicalMotionService::K_MOVER_HORIZONTAL_STEP;
     motion.support.mover_applied_this_tick = true;
   }
+}
+
+void run_support_mode4(PhysicalMotionState& motion,
+    const PhysicalMotionEnvironment& environment,
+    const HorizontalCollisionState& horizontal_state) {
+  SupportMode4ResponseState& response{motion.support_mode4_response};
+  response.attempted = true;
+  response.input_displacement = {
+      .x = motion.candidate_translation.x - motion.accepted_translation.x,
+      .y = 0.0F,
+      .z = motion.candidate_translation.z - motion.accepted_translation.z};
+  motion.candidate_translation = motion.accepted_translation;
+  HorizontalResolveResult result;
+  result.resolved_displacement = response.input_displacement;
+  if (horizontal_state.body_valid && environment.decor_model != nullptr) {
+    result = HorizontalCollisionQuery::resolve(*environment.decor_model,
+        environment.decor_runtime_objects,
+        motion.accepted_translation,
+        response.input_displacement,
+        {.radius = horizontal_state.body_radius,
+            .top_y = horizontal_state.body_top,
+            .bottom_y = horizontal_state.body_bottom});
+  }
+  response.resolved_displacement = result.resolved_displacement;
+  response.forward_collision = result.forward_collision;
+  response.depenetrated = result.depenetrated;
+  response.collision_passes = result.collision_passes;
+  if (result.last_hit.has_value()) {
+    response.object_index = result.last_hit->object_index;
+    response.response_normal = result.last_hit->world_normal;
+  }
+  motion.candidate_translation.x += result.resolved_displacement.x;
+  motion.candidate_translation.z += result.resolved_displacement.z;
 }
 
 void commit(RuntimeCharacter& character) {
@@ -198,6 +233,34 @@ float PhysicalMotionService::resolve_vertical_displacement(
     return support_gap;
   }
   return desired_delta_y;
+}
+
+float PhysicalMotionService::support_delta_term(
+    const float primary_clearance, const float anchor_y, const float previous_primary_relative_y) {
+  return primary_clearance + anchor_y - previous_primary_relative_y;
+}
+
+float PhysicalMotionService::primary_relative_y(const float accepted_y,
+    const float candidate_y,
+    const float primary_clearance,
+    const float anchor_y,
+    const float radius) {
+  return accepted_y - candidate_y + primary_clearance + anchor_y + radius;
+}
+
+float PhysicalMotionService::alternate_relative_y(
+    const float alternate_clearance, const float primary_relative, const float primary_clearance) {
+  return alternate_clearance + primary_relative - primary_clearance;
+}
+
+bool PhysicalMotionService::history_mode4_required(const std::uint8_t previous_fall_stage,
+    const float support_delta,
+    const float primary_gap_after,
+    const std::optional<float> alternate_gap_after,
+    const bool mdslidou_override_active) {
+  return !mdslidou_override_active && (previous_fall_stage == 0U || previous_fall_stage == 2U) &&
+         support_delta + primary_gap_after < 0.0F && alternate_gap_after.has_value() &&
+         -alternate_gap_after.value() > K_SUPPORT_SECONDARY_PENETRATION_THRESHOLD;
 }
 
 bool PhysicalMotionService::support_is_walkable(const App::Runtime::Vec3& normal) {
@@ -313,7 +376,8 @@ void PhysicalMotionService::resolve_tick(
     RuntimeCharacter& character, const PhysicalMotionEnvironment& environment) {
   PhysicalMotionState& motion{character.physical_motion};
   motion.horizontal_collision = {};
-  motion.steep_support_response = {};
+  motion.support_mode4_response = {};
+  motion.class2_support_response = {};
   motion.support = {};
   motion.vertical_velocity =
       std::min(motion.vertical_velocity + motion.gravity_velocity_delta_per_tick,
@@ -402,22 +466,39 @@ void PhysicalMotionService::resolve_tick(
           .y = motion.accepted_translation.y + anchor_offset.y,
           .z = motion.candidate_translation.z + anchor_offset.z},
       .radius = spheres.subspan(largest.value(), 1U).front().radius};
-  const auto hit{environment.decor_model == nullptr
-                     ? std::optional<StaticSupportHit>{}
-                     : StaticSupportQuery::find(
-                           *environment.decor_model, environment.decor_runtime_objects, query)};
-  if (!hit.has_value()) {
+  const auto query_result{
+      environment.decor_model == nullptr
+          ? std::optional<SupportQueryResult>{}
+          : StaticSupportQuery::find_candidates(
+                *environment.decor_model, environment.decor_runtime_objects, query)};
+  if (!query_result.has_value()) {
     rollback(character);
     return;
   }
+  const StaticSupportHit& hit{query_result->primary};
 
   motion.support.valid = true;
-  motion.support.object_index = hit->object_index;
-  motion.support.point = hit->world_point;
-  motion.support.normal = hit->world_normal;
-  motion.support.clearance = hit->clearance;
-  const Omikron::MeshDescriptor& support_mesh{
-      environment.decor_model->meshes.at(hit->object_index)};
+  motion.support.support_class = hit.support_class;
+  motion.support.object_index = hit.object_index;
+  motion.support.point = hit.world_point;
+  motion.support.normal = hit.world_normal;
+  motion.support.clearance = hit.clearance;
+  motion.support.previous_primary_relative_y = motion.support_history.primary_relative_y;
+  motion.support.support_delta_term = support_delta_term(
+      hit.clearance, anchor_offset.y, motion.support.previous_primary_relative_y);
+  motion.support.primary_relative_y = primary_relative_y(motion.accepted_translation.y,
+      motion.candidate_translation.y,
+      hit.clearance,
+      anchor_offset.y,
+      query.radius);
+  if (query_result->alternate.has_value()) {
+    motion.support.alternate_object_index = query_result->alternate->object_index;
+    motion.support.alternate_clearance = query_result->alternate->clearance;
+    motion.support.alternate_relative_y = alternate_relative_y(
+        query_result->alternate->clearance, motion.support.primary_relative_y, hit.clearance);
+  }
+  motion.support_history.primary_relative_y = motion.support.primary_relative_y;
+  const Omikron::MeshDescriptor& support_mesh{environment.decor_model->meshes.at(hit.object_index)};
   motion.support.mover_flags = support_mesh.mover_flags;
   if ((support_mesh.flags & K_SPECIAL_SUPPORT_MASK) != 0U) {
     motion.support.special_deferred = true;
@@ -425,7 +506,11 @@ void PhysicalMotionService::resolve_tick(
     return;
   }
 
-  const float old_gap{hit->world_point.y - motion.accepted_translation.y - extents->bottom};
+  const float old_gap{motion.support.primary_relative_y - extents->bottom};
+  const std::optional<float> alternate_gap_before{
+      query_result->alternate.has_value()
+          ? std::optional{motion.support.alternate_relative_y - extents->bottom}
+          : std::nullopt};
   motion.maximum_support_gap = std::max(motion.maximum_support_gap, old_gap);
   const float resolved_delta_y{resolve_vertical_displacement(old_gap, desired.y)};
   const std::uint8_t previous_fall_stage{motion.fall_stage};
@@ -434,8 +519,16 @@ void PhysicalMotionService::resolve_tick(
   }
   motion.candidate_translation.y += resolved_delta_y;
   float new_gap{old_gap - resolved_delta_y};
+  const std::optional<float> alternate_gap_after{
+      alternate_gap_before.has_value()
+          ? std::optional{alternate_gap_before.value() - resolved_delta_y}
+          : std::nullopt};
+  motion.support.primary_post_movement_gap = new_gap;
+  if (alternate_gap_after.has_value()) {
+    motion.support.alternate_gap = alternate_gap_after.value();
+  }
 
-  motion.support.walkable = support_is_walkable(hit->world_normal);
+  motion.support.walkable = support_is_walkable(hit.world_normal);
   if (new_gap > 0.0F && (previous_fall_stage == 0U || previous_fall_stage == 2U) &&
       new_gap < K_SMALL_SUPPORT_SNAP_DISTANCE && !environment.suppress_small_support_snap) {
     motion.candidate_translation.y += new_gap;
@@ -446,9 +539,22 @@ void PhysicalMotionService::resolve_tick(
   }
 
   if (new_gap <= 0.0F) {
+    const bool normal_response_eligible{motion.vertical_velocity >= 0.0F};
+    const bool history_mode4{history_mode4_required(previous_fall_stage,
+        motion.support.support_delta_term,
+        new_gap,
+        alternate_gap_after,
+        environment.mdslidou_support_override_active)};
+    motion.support.history_mode4_condition = history_mode4;
+    const bool steep_slope{!motion.support.walkable};
     if (new_gap < 0.0F) {
       motion.candidate_translation.y += new_gap;
       new_gap = 0.0F;
+    }
+    if (history_mode4 || steep_slope) {
+      motion.support_mode4_response.triggered_by_history = history_mode4;
+      motion.support_mode4_response.triggered_by_steep_slope = steep_slope;
+      run_support_mode4(motion, environment, horizontal_state);
     }
     if (motion.support.walkable) {
       motion.support.grounded = true;
@@ -456,40 +562,44 @@ void PhysicalMotionService::resolve_tick(
       motion.vertical_velocity = 0.0F;
       motion.horizontal_physical_z_per_tick = 0.0F;
       apply_support_mover_terms(motion, support_mesh.mover_flags);
-    } else {
-      SteepSupportResponseState& steep{motion.steep_support_response};
-      steep.attempted = true;
-      steep.input_displacement = {
-          .x = motion.candidate_translation.x - motion.accepted_translation.x,
-          .y = 0.0F,
-          .z = motion.candidate_translation.z - motion.accepted_translation.z};
-      motion.candidate_translation = motion.accepted_translation;
-      HorizontalResolveResult steep_result;
-      steep_result.resolved_displacement = steep.input_displacement;
-      if (horizontal_state.body_valid && environment.decor_model != nullptr) {
-        steep_result = HorizontalCollisionQuery::resolve(*environment.decor_model,
+      Class2SupportResponseState& class2{motion.class2_support_response};
+      class2.eligible = hit.support_class == SupportClass::k_transformed_general &&
+                        normal_response_eligible && !motion.support.mover_applied_this_tick;
+      class2.primary_support_point = hit.world_point;
+      if (class2.eligible) {
+        class2.secondary_query_attempted = true;
+        const auto secondary{SecondarySupportQuery::find(*environment.decor_model,
             environment.decor_runtime_objects,
-            motion.accepted_translation,
-            steep.input_displacement,
-            {.radius = horizontal_state.body_radius,
-                .top_y = horizontal_state.body_top,
-                .bottom_y = horizontal_state.body_bottom});
+            motion.candidate_translation)};
+        if (secondary.has_value()) {
+          class2.secondary_hit = true;
+          class2.secondary_object_index = secondary->object_index;
+          class2.secondary_normal = secondary->world_normal;
+          class2.secondary_distance = secondary->distance;
+          class2.secondary_gap = secondary->distance - extents->bottom;
+          class2.triggered_by_gap = class2.secondary_gap > K_CLASS2_SECONDARY_GAP_THRESHOLD;
+          class2.triggered_by_slope = !support_is_walkable(secondary->world_normal);
+          class2.triggered_by_special_flag =
+              (environment.decor_model->meshes.at(secondary->object_index).flags &
+                  K_SPECIAL_SUPPORT_MASK) != 0U;
+          if (class2.triggered_by_gap || class2.triggered_by_slope ||
+              class2.triggered_by_special_flag) {
+            motion.horizontal_physical_x_per_tick =
+                (motion.candidate_translation.x - hit.world_point.x) * K_CLASS2_ATTACHMENT_FACTOR;
+            motion.horizontal_physical_z_per_tick =
+                (motion.candidate_translation.z - hit.world_point.z) * K_CLASS2_ATTACHMENT_FACTOR;
+            class2.attachment_applied = true;
+            class2.output_x_per_tick = motion.horizontal_physical_x_per_tick;
+            class2.output_z_per_tick = motion.horizontal_physical_z_per_tick;
+          }
+        }
       }
-      steep.resolved_displacement = steep_result.resolved_displacement;
-      steep.forward_collision = steep_result.forward_collision;
-      steep.depenetrated = steep_result.depenetrated;
-      steep.collision_passes = steep_result.collision_passes;
-      if (steep_result.last_hit.has_value()) {
-        steep.object_index = steep_result.last_hit->object_index;
-        steep.response_normal = steep_result.last_hit->world_normal;
-      }
-      motion.candidate_translation.x += steep_result.resolved_displacement.x;
-      motion.candidate_translation.z += steep_result.resolved_displacement.z;
-      if (motion.vertical_velocity >= 0.0F) {
+    } else {
+      if (normal_response_eligible) {
         motion.horizontal_physical_x_per_tick += motion.support.normal.x;
         motion.horizontal_physical_z_per_tick += motion.support.normal.z;
         motion.vertical_velocity = K_STEEP_SUPPORT_DOWNWARD_VELOCITY;
-        steep.physical_terms_seeded = true;
+        motion.support_mode4_response.steep_physical_terms_seeded = true;
       }
     }
     if (previous_fall_stage != 0U && character.ctl_controller.has_value()) {

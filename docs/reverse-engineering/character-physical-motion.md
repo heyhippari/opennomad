@@ -1,6 +1,6 @@
 # Character physical motion
 
-> **Status:** Phase 4.2C.3A horizontal physical response, steep support, and movers complete
+> **Status:** Phase 4.2C.3B transformed support, history response, and attachment complete
 > **Last updated:** 2026-09-02
 
 This document separates recovered retail actor semantics from OpenNomad's modern C++ representation. Runtime did not contain a C++ abstraction named `PhysicalMotionService`.
@@ -123,9 +123,10 @@ Phase C.2 consumes C.1's original intended and final resolved X/Z immediately be
 
 Phase C.3A adds the actor-owned D8/E0-equivalent terms and their complete ordinary lifecycle. Walkable support clears D8/DC/E0, then low-byte mover flags may seed exact `+/-2` inch X/Z terms for the next tick. Steep static support rewinds candidate to accepted, retries its current X/Z displacement through the C.1 finite-cylinder kernel with Y forced to zero, leaves candidate Y at accepted Y, and does not invoke C.2 a second time. Eligible steep response adds the support normal's unnormalized X/Z components to the physical terms and assigns DC `11.8110237`.
 
+Phase C.3B unifies class-1 static and `0x00080000` class-2 transformed support. The main query retains primary and alternate hits from distinct runtime objects; persistent primary-relative-Y history can request the shared mode-4 retry for stage 0/2. A separate secondary point probe drives class-2 attachment after grounded reset and only when mover flags did not handle the support. Attachment writes one eighth of candidate-minus-primary-contact X/Z into the next-tick physical terms. See [`character-support-motion.md`](character-support-motion.md) for exact formulas and strict predicates.
+
 Still deferred:
 
-- Phase C.3B transformed/class-2 support, secondary support query, class-2 one-eighth attachment response, and the remaining support-history mode-4 trigger;
 - Phase C.3C exact general 3D swept-sphere ceiling collision using the largest authored sphere;
 - SCENE/person support association and moving-platform person integration;
 - generic actor/object collision;

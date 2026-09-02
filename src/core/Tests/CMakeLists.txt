@@ -71,6 +71,16 @@ add_executable(StaticSupportQueryTest
 add_test(NAME StaticSupportQueryTest COMMAND StaticSupportQueryTest)
 target_link_libraries(StaticSupportQueryTest PRIVATE doctest::doctest Core)
 
+add_executable(SweptSphereQueryTest
+  SweptSphereQuery.spec.cpp $<TARGET_OBJECTS:TestRunner>)
+add_test(NAME SweptSphereQueryTest COMMAND SweptSphereQueryTest)
+target_link_libraries(SweptSphereQueryTest PRIVATE doctest::doctest Core)
+
+add_executable(SecondarySupportQueryTest
+  SecondarySupportQuery.spec.cpp $<TARGET_OBJECTS:TestRunner>)
+add_test(NAME SecondarySupportQueryTest COMMAND SecondarySupportQueryTest)
+target_link_libraries(SecondarySupportQueryTest PRIVATE doctest::doctest Core)
+
 add_executable(CharacterReferenceRuntimeTest
   CharacterReferenceRuntime.spec.cpp $<TARGET_OBJECTS:TestRunner>)
 add_test(NAME CharacterReferenceRuntimeTest COMMAND CharacterReferenceRuntimeTest)

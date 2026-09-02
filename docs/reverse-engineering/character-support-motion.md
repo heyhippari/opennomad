@@ -1,6 +1,6 @@
 # Character static support and vertical motion
 
-> **Status:** Phase 4.2C.3A static support physical response complete
+> **Status:** Phase 4.2C.3B unified support and attachment response complete
 > **Last updated:** 2026-09-02
 > **Runtime:** PE32/i386 `Runtime.exe`, image base `0x00400000`, SHA-256
 > `55f7120bfea7891b048c64e3682f3259cdbf2719a43fa24e42254b753c95d2ef`
@@ -65,7 +65,7 @@ Characters without authored spheres have no physical body. OpenNomad rolls the
 attempt back deterministically and emits a one-time debug diagnostic; it does
 not synthesize a capsule or use render bounds.
 
-## Static support query
+## Unified support query
 
 **Confirmed — Runtime:** objects matching `flags & 0x00000041` are excluded.
 Objects matching `flags & 0x00080000` enter a transformed/moving path and are
@@ -88,6 +88,14 @@ The vertical intersection must lie beneath the probe and inside the actual
 triangle or quad. OpenNomad uses the dominant normal axis for a projected
 boundary-inclusive point-in-polygon test. Negative clearance is valid. The
 nearest clearance wins, with authored object/face order breaking ties.
+
+**OpenNomad implementation choice:** `0x00080000` objects are support class 2
+and use a true 3D swept sphere against transformed faces, finite outer edges,
+and vertices. Other accepted objects are class 1. The nearest hit per runtime
+object is retained first; the globally nearest object is primary and the nearest
+distinct object is alternate. Multiple faces from one object cannot produce an
+alternate. Transformed normals use inverse component scale, the runtime world
+matrix, and normalization.
 
 Object `flags & 0x20000000` identifies a special response branch whose source
 semantic name is not recovered. OpenNomad reports it as special/deferred and
@@ -178,6 +186,44 @@ logical tick. They are seeded after contact response and first affect the next
 tick, when they compose with authored movement before C.1. A mover-handled
 diagnostic is retained so C.3B can skip later class-2 attachment response.
 
+### Support history and class-2 attachment
+
+Every successful main query updates persistent primary support history, even
+before the deferred primary `0x20000000` response. For primary clearance `P`,
+alternate clearance `S`, anchor `anchorY`, and largest radius `r`:
+
+```text
+supportDelta       = P + anchorY - previousPrimaryRelativeY
+primaryRelativeY   = acceptedY - candidateY + P + anchorY + r
+alternateRelativeY = S + primaryRelativeY - P
+```
+
+Stage 0 or 2 requests the shared mode-4 horizontal retry when an alternate
+exists and both comparisons are strict:
+
+```text
+supportDelta + primaryGapAfter < 0
+alternateGapAfter < -11.8110237
+```
+
+The `MDSLIDOU` environment seam suppresses only this history reason. If history
+and steepness both request mode 4, it runs once; history-only response does not
+seed steep D8/DC/E0 terms.
+
+After grounded class-2 response clears D8/DC/E0, mover flags retain priority.
+Without a mover, a separate zero-radius vertical point probe returns nearest
+distance, normal, and runtime-object index. This is independent from the main
+query's alternate and includes transformed and `0x20000000` objects. Attachment
+applies when its gap is strictly greater than `11.8110237`, its normal is
+nonwalkable, or its mesh has `0x20000000`:
+
+```text
+D8 = (candidate.x - primaryPoint.x) * 0.125
+E0 = (candidate.z - primaryPoint.z) * 0.125
+```
+
+Secondary failure preserves grounded primary response and zero terms.
+
 ### Fall-stage lifetime and reactions
 
 **Confirmed - Runtime:** positive support gaps use these inclusive thresholds:
@@ -245,11 +291,9 @@ No qualifying support is not infinite free fall. Runtime rolls candidate back
 to accepted; OpenNomad also leaves the already-integrated velocity intact and
 clears the `MDROT000` transient at the physical boundary.
 
-An additional Runtime mode-4 branch involving fall stage 0/2, actor `+0x100`
-support history, primary/secondary support metrics, a 0.30 m comparison, and
-`MDSLIDOU` override remains deferred to C.3B support-query work. C.3B also owns
-transformed/general class-2 support, its secondary query, and one-eighth
-attachment response. C.3C owns the exact general swept-sphere ceiling path.
+C.3C owns ceiling/upward swept-sphere response and primary `0x20000000`
+behavior. Full `MDSLIDOU` callback choreography remains deferred; C.3B exposes
+only its support-history override seam.
 SCENE/person association and `0x08000000` adventure state transition remain
 higher-level deferred behavior, not generic physical support.
 A future full `MDJP` implementation must provide native jump movement and feed

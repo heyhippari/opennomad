@@ -1,6 +1,6 @@
 # Character horizontal collision
 
-> **Status:** Phase 4.2C.3A mode-1 collision and steep mode-4 reuse implemented
+> **Status:** Phase 4.2C.3B mode-1 collision and unified support mode-4 reuse implemented
 > **Last updated:** 2026-09-02
 > **Runtime.exe SHA-256:** `55f7120bfea7891b048c64e3682f3259cdbf2719a43fa24e42254b753c95d2ef`
 
@@ -156,12 +156,14 @@ These comparisons are also strict: yaw exactly `360` remains `360`. This differs
 
 `MDROT000` sets a one-tick suppression transient. C.1 collision, sliding, and depenetration still run; only C.2 yaw correction is skipped, B support/vertical processing still runs, and commit or rollback clears the transient. C.2 precedes B, so it observes the fall stage entering support processing. A later B position rollback restores translation but intentionally does not restore the corrected yaw.
 
-## Deferred behavior
-
-## Mode-4 reuse by steep support
+## Mode-4 reuse by support response
 
 Phase C.3A reuses `HorizontalCollisionQuery::resolve()` for Runtime's confirmed steep-support mode-4 retry. The input is the support-stage candidate-minus-accepted X/Z displacement with Y forced to zero, and the same C.1 finite-cylinder body and environment are used. Results are stored in separate steep-response diagnostics, leaving ordinary mode-1 and C.2 diagnostics intact. Mode 4 does not run C.2 automatic heading.
 
+Phase C.3B adds support history as a second reason for the same retry. Steep and
+history reasons are diagnosed separately, but if both apply the query runs once.
+Only steep support can seed the steep physical terms.
+
 The ordinary mode-1 result now clears actor-owned D8/E0-equivalent per-tick physical terms only for a real `forward_collision`. Pure starting depenetration preserves them.
 
-Still deferred are C.3B transformed/class-2 and secondary support behavior, C.3C ceiling collision, moving-platform/person association, actor-vs-actor collision, jump choreography, the native spatial-service latch, the special-movement guard, and adventure event dispatch.
+Still deferred are C.3C ceiling collision, moving-platform/person association, actor-vs-actor collision, jump choreography, the native spatial-service latch, the special-movement guard, and adventure event dispatch.
