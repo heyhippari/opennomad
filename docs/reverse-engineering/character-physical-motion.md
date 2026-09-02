@@ -1,6 +1,6 @@
 # Character physical motion
 
-> **Status:** confirmed Runtime ownership and ordering; Phase 4.2B.1 collision data recovered
+> **Status:** Phase 4.2B.2 static vertical physical service implemented
 > **Last updated:** 2026-09-02
 
 This document separates recovered retail actor semantics from OpenNomad's modern C++ representation. Runtime did not contain a C++ abstraction named `PhysicalMotionService`.
@@ -41,7 +41,7 @@ CTL/controller update
 
 State 4 structured character/body-script ownership bypasses this ordinary state-1 path. Completion hands ownership back without retroactively running a missed physical update in that call.
 
-## OpenNomad Phase 4.2A architecture
+## OpenNomad ordinary physical architecture
 
 **OpenNomad-only architecture reproducing confirmed Runtime ordering:** `RuntimeCharacter` owns `PhysicalMotionState`, containing candidate XYZ, accepted XYZ, the shared ordinary 30 Hz accumulator, and initialization state. It moves with the complete logical body between world runtimes.
 
@@ -51,12 +51,15 @@ For every due ordinary fixed step:
 synchronize or defensively re-anchor from the live transform
 -> one CTL logical tick when enabled
 -> drain that tick's deferred CTL callbacks
--> neutral physical resolution
+-> gravity integration
+-> owning-world static support query
+-> vertical displacement, grounding, and fall-state resolution
+-> accepted-position publication or complete rollback
 -> play CTL markers at the accepted actor position
 -> advance ordinary actor service generation
 ```
 
-CTL root motion and one-shot/continuous movement auxiliaries update only the actor-owned candidate. The Phase 4.2A resolver intentionally commits candidate to accepted and publishes accepted to the live transform without gravity or collision.
+CTL root motion and one-shot/continuous movement auxiliaries update only the actor-owned candidate. The physical stage composes authored Y with one native gravity step, keeps X/Z identity-resolved, then uses authored character spheres and owning-world 3DO faces for static vertical response.
 
 Authoritative address placement and materialization with `apply_transform=true` synchronize both positions explicitly. Ordinary service also re-anchors when the live transform diverges from accepted XYZ, covering structured scripts and direct debug/test mutation without stale-position snapback.
 
@@ -64,7 +67,7 @@ Structured ownership is gated before ordinary time accumulation. No CTL ticks, p
 
 `MDROT000` remains visible after CTL callback dispatch and through entry to physical resolution. Phase 4.2A then clears it at the physical boundary; automatic movement-heading calculation is not implemented yet.
 
-## OpenNomad Phase 4.2B.1 data substrate
+## OpenNomad Phase 4.2B data and vertical service
 
 Phase 4.2B.1 makes Runtime's authored collision inputs available through the
 typed 3DO model without changing physical execution:
@@ -87,17 +90,14 @@ The root sphere centers, polygon face normals, and object bounds remain in
 model-local Runtime XYZ; distances remain native inches. The authoritative
 serialized layouts and Runtime evidence are documented in [`3do.md`](3do.md).
 
-`PhysicalMotionService` does not consume this metadata yet. It still performs
-the neutral candidate-to-accepted commit established in Phase 4.2A.
+Phase 4.2B.2 consumes this metadata through the CPU-only static support query.
+It implements native 30 Hz gravity, terminal velocity, body-bottom gaps, exact
+floor clamp/snap and depenetration, the strict 0.2 m step-down snap and jump-state
+suppression input, 30-degree walkability, grounded velocity bias, no-support
+rollback, and actor-owned fall episode tracking. Full formulas and Runtime
+evidence live in [`character-support-motion.md`](character-support-motion.md).
 
 ## Deferred physical behavior
-
-Phase 4.2B.2 owns:
-
-- static support/floor queries, including the path around `0x00467030`;
-- gravity and vertical velocity;
-- grounding, falling, and floor resolution around `0x00465460`;
-- walkable-slope response and ceiling clearance as appropriate.
 
 Phase 4.2C owns:
 
@@ -105,7 +105,9 @@ Phase 4.2C owns:
 - wall blocking and sliding;
 - automatic movement-heading rewriting;
 - `MDROT000`'s actual suppression effect;
-- more complete transformed/secondary collision response.
+- transformed/moving and class-2 support response;
+- mode-4 steep-slope horizontal response and exact ceiling swept-body collision;
+- moving platforms, conveyors, and generic actor/object response.
 
-Those later phases can replace the neutral resolver without changing CTL
-ownership again.
+See [`3do.md`](3do.md) for the authored collision substrate and [`ctl.md`](ctl.md)
+for CTL motion production and the deferred native jump dependency.

@@ -2278,7 +2278,10 @@ void ScenarioStartupController::service_current_character_actor(const float delt
     if (character->ctl_controller.has_value() && character->controller_enabled) {
       character->ctl_controller->service_tick(m_manager->ctl_input_mask(), *character);
     }
-    Character::PhysicalMotionService::resolve_tick(*character);
+    Character::PhysicalMotionService::resolve_tick(*character,
+        {.decor_model = runtime->decor_model(),
+            .decor_runtime_objects = runtime->decor_runtime_objects(),
+            .suppress_small_support_snap = false});
 
     if (character->ctl_controller.has_value() && character->controller_enabled) {
       for (const Character::CtlController::SoundMarkerEvent& event :

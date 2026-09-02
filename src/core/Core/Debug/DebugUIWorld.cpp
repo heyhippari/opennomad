@@ -423,6 +423,38 @@ void DebugUI::show_world_inspector() {
           static_cast<double>(character.physical_accepted_translation.at(2)));
       ImGui::Text(
           "Physical state initialized: %s", character.physical_state_initialized ? "yes" : "no");
+      ImGui::Text("Vertical velocity: %.3f in/s",
+          static_cast<double>(character.physical_vertical_velocity));
+      ImGui::Text("Gravity delta/tick: %.3f in/s",
+          static_cast<double>(character.physical_gravity_delta_per_tick));
+      ImGui::Text("Support: %s", character.physical_support_valid ? "yes" : "no");
+      if (character.physical_support_valid) {
+        ImGui::Text("Support object: %zu (%s)",
+            character.physical_support_object_index.value_or(0U),
+            character.physical_support_object_name.empty()
+                ? "<unnamed>"
+                : character.physical_support_object_name.c_str());
+        ImGui::Text("Support point XYZ: %.3f, %.3f, %.3f in",
+            static_cast<double>(character.physical_support_point.at(0)),
+            static_cast<double>(character.physical_support_point.at(1)),
+            static_cast<double>(character.physical_support_point.at(2)));
+        ImGui::Text("Support normal XYZ: %.3f, %.3f, %.3f",
+            static_cast<double>(character.physical_support_normal.at(0)),
+            static_cast<double>(character.physical_support_normal.at(1)),
+            static_cast<double>(character.physical_support_normal.at(2)));
+        ImGui::Text("Support clearance: %.3f in, gap: %.3f in",
+            static_cast<double>(character.physical_support_clearance),
+            static_cast<double>(character.physical_support_gap));
+        ImGui::Text("Walkable: %s, grounded: %s, special/deferred: %s",
+            character.physical_support_walkable ? "yes" : "no",
+            character.physical_grounded ? "yes" : "no",
+            character.physical_support_special_deferred ? "yes" : "no");
+      }
+      ImGui::Text("Fall stage: %u", static_cast<unsigned int>(character.physical_fall_stage));
+      ImGui::Text("Accumulated fall travel: %.3f in",
+          static_cast<double>(character.physical_accumulated_fall_travel));
+      ImGui::Text("Maximum support gap: %.3f in",
+          static_cast<double>(character.physical_maximum_support_gap));
       if (character.has_controller) {
         ImGui::SeparatorText("CTL Controller");
         ImGui::Text("Control set: %s", character.ctl_control_set.c_str());

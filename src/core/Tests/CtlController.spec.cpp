@@ -683,8 +683,6 @@ TEST_SUITE("Core::Character::CtlController") {
     CHECK(character.physical_motion.candidate_translation.z == doctest::Approx(210.0F));
     CHECK(character.physical_motion.accepted_translation.z == doctest::Approx(200.0F));
     CHECK(character.transform.translation.z == doctest::Approx(200.0F));
-    App::Character::PhysicalMotionService::resolve_tick(character);
-    CHECK(character.transform.translation.z == doctest::Approx(210.0F));
     CHECK(created->current_progress() == doctest::Approx(2.0F));
 
     // Non-axis-aligned yaw rotates subsequent root motion.

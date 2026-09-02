@@ -315,6 +315,12 @@ TEST_SUITE("Core::Character::Runtime") {
         .candidate_translation = {.x = 44.0F, .y = 55.0F, .z = 66.0F},
         .accepted_translation = {.x = 11.0F, .y = 22.0F, .z = 33.0F},
         .accumulator_seconds = 0.01F,
+        .vertical_velocity = 70.0F,
+        .gravity_velocity_delta_per_tick = 8.0F,
+        .fall_stage = 3,
+        .accumulated_fall_travel = 90.0F,
+        .maximum_support_gap = 120.0F,
+        .support = {.valid = true, .object_index = 4U, .gap = 25.0F},
         .initialized = true};
     character->pose_revision = 17U;
     REQUIRE(source.set_body_presentation_enabled(body_identity, false).has_value());
@@ -342,6 +348,14 @@ TEST_SUITE("Core::Character::Runtime") {
     CHECK_EQ(character->physical_motion.candidate_translation.x, 44.0F);
     CHECK_EQ(character->physical_motion.accepted_translation.y, 22.0F);
     CHECK_EQ(character->physical_motion.accumulator_seconds, doctest::Approx(0.01F));
+    CHECK_EQ(character->physical_motion.vertical_velocity, 70.0F);
+    CHECK_EQ(character->physical_motion.gravity_velocity_delta_per_tick, 8.0F);
+    CHECK_EQ(character->physical_motion.fall_stage, 3U);
+    CHECK_EQ(character->physical_motion.accumulated_fall_travel, 90.0F);
+    CHECK_EQ(character->physical_motion.maximum_support_gap, 120.0F);
+    CHECK(character->physical_motion.support.valid);
+    CHECK_EQ(character->physical_motion.support.object_index, 4U);
+    CHECK_EQ(character->physical_motion.support.gap, 25.0F);
     CHECK_EQ(character->pose_revision, 17U);
     CHECK_FALSE(character->presentation_enabled);
     CHECK_FALSE(character->renderable());

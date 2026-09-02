@@ -521,6 +521,8 @@ std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state
           .loaded = character.loaded(),
           .renderable = character.renderable(),
           .ordinary_actor_service_generation = character.ordinary_actor_service_generation,
+          .physical_support_object_index = std::nullopt,
+          .physical_support_object_name = {},
           .serialized_position = character.serialized_area_position,
           .runtime_position = {character.transform.translation.x,
               character.transform.translation.y,
@@ -612,6 +614,28 @@ std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state
           character.physical_motion.accepted_translation.y,
           character.physical_motion.accepted_translation.z};
       debug_character.physical_state_initialized = character.physical_motion.initialized;
+      const Character::PhysicalMotionState& physical{character.physical_motion};
+      debug_character.physical_vertical_velocity = physical.vertical_velocity;
+      debug_character.physical_gravity_delta_per_tick = physical.gravity_velocity_delta_per_tick;
+      debug_character.physical_support_valid = physical.support.valid;
+      debug_character.physical_support_object_index = physical.support.object_index;
+      debug_character.physical_support_point = {
+          physical.support.point.x, physical.support.point.y, physical.support.point.z};
+      debug_character.physical_support_normal = {
+          physical.support.normal.x, physical.support.normal.y, physical.support.normal.z};
+      debug_character.physical_support_clearance = physical.support.clearance;
+      debug_character.physical_support_gap = physical.support.gap;
+      debug_character.physical_support_walkable = physical.support.walkable;
+      debug_character.physical_grounded = physical.support.grounded;
+      debug_character.physical_support_special_deferred = physical.support.special_deferred;
+      debug_character.physical_fall_stage = physical.fall_stage;
+      debug_character.physical_accumulated_fall_travel = physical.accumulated_fall_travel;
+      debug_character.physical_maximum_support_gap = physical.maximum_support_gap;
+      if (physical.support.object_index.has_value() && world_context->decor_model.has_value() &&
+          physical.support.object_index.value() < world_context->decor_model->meshes.size()) {
+        debug_character.physical_support_object_name =
+            world_context->decor_model->meshes.at(physical.support.object_index.value()).name;
+      }
       const CinSfxPlayback* cin_sfx{nullptr};
       for (const CinSfxPlayback& playback : world_context->runtime->cin_sfx_playbacks()) {
         if (playback.character_body_identity == character.body_identity &&

@@ -1,7 +1,7 @@
 # CTL character control sets
 
 > **Status:** recovered format and controller documentation for OpenNomad
-> **Last updated:** 2026-09-01
+> **Last updated:** 2026-09-02
 >
 > CTL is Omikron's authored character-control/state-machine resource. One CTL
 > bank per character role is named by the IAM character definition
@@ -494,9 +494,9 @@ while (phase >= destination_effective_end)
 - Candidate and accepted XYZ belong to the actor, not `CtlController`. CTL is
   only a motion producer. The downstream physical stage owns acceptance
   (**Confirmed — Runtime** ownership; **OpenNomad-only** C++ representation).
-- Phase 4.2A's resolver deliberately accepts the candidate unchanged. Gravity,
-  floor, collision, slope, and automatic movement-heading behavior remain
-  deferred.
+- Phase 4.2B.2 composes candidate Y with gravity and resolves static support,
+  grounding, and fall state. Horizontal collision and automatic
+  movement-heading behavior remain deferred.
 
 ## 4.8 Callbacks — Runtime 0x0045D0E0 queue — Confirmed — Runtime
 
@@ -518,6 +518,21 @@ Unknown names log once and remain nonfatal. Recovered subset:
 | `MDSTOPR` | `0x0046C0E0` | `run_snapshot > 30` selects move 164; resets run snapshot |
 | `RSTAVNT` | `0x0046C120` | adventure mode = 1, principal orientation X = 0 (**yaw preserved**), input profile 0 (reseeds no-input history) |
 | `MDROT000`| `0x0046C170` | sets the transient suppress-automatic-movement-heading flag; does **not** rotate |
+
+`MDJP` dispatches through `0x0046B710 -> 0x0047D2E0`. Successful native jump
+start initializes its repeat timer and authored vertical adventure term, then
+sets `adventureFlags |= 0x810`: `0x10` is continuing jump-active state and
+`0x800` is a one-adventure-update jump-start latch. Helper `0x0047CF00` tests
+that mask to suppress the ordinary strict `<0.2 m` support snap, preventing an
+active jump from being stuck back to the floor. OpenNomad Phase 4.2B.2 exposes
+this only as the physical resolver's per-tick `suppress_small_support_snap`
+input; it does not implement or dispatch native MDJP jump movement yet.
+
+`MDSLIDOU` temporarily sets native global `0x00910327`, performs its own support
+reconciliation, and clears the flag. During that callback the temporary override
+forces small-gap snapping even when the jump predicate would suppress it. This
+callback-specific path remains deferred; OpenNomad does not model a persistent
+global for it. See [`character-support-motion.md`](character-support-motion.md).
 
 The move IDs 43/44/164/166 are part of these callbacks' own recovered native
 behavior, not generic controller constants.

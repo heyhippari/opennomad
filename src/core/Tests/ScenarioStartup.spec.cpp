@@ -1522,6 +1522,10 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     const App::Runtime::Vec3 frozen_position{
         controller.current_character_trigger_proxy()->position};
     App::Character::PhysicalMotionService::synchronize(*character);
+    character->physical_motion.vertical_velocity = 50.0F;
+    character->physical_motion.fall_stage = 3;
+    character->physical_motion.accumulated_fall_travel = 120.0F;
+    character->physical_motion.maximum_support_gap = 140.0F;
     const App::Runtime::Vec3 stale_candidate{character->physical_motion.candidate_translation};
     const auto* instance{runtime->script_runtime()->instance(
         runtime->script_runtime()->instances().front().instance_id)};
@@ -1541,6 +1545,9 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
         controller.current_character_trigger_proxy()->last_consumed_actor_spatial_generation, 0U);
     CHECK_EQ(controller.current_character_trigger_proxy()->position.x, frozen_position.x);
     CHECK_EQ(character->physical_motion.candidate_translation.x, stale_candidate.x);
+    CHECK_EQ(character->physical_motion.vertical_velocity, 50.0F);
+    CHECK_EQ(character->physical_motion.fall_stage, 3U);
+    CHECK_EQ(character->physical_motion.accumulated_fall_travel, 120.0F);
 
     REQUIRE(controller.tick(1.0F / 30.0F).has_value());
     CHECK_EQ(character->ordinary_actor_service_generation, 1U);
@@ -1550,6 +1557,12 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK_EQ(character->physical_motion.candidate_translation.x, structured_position.x);
     CHECK_EQ(character->physical_motion.accepted_translation.x, structured_position.x);
     CHECK_EQ(character->transform.translation.x, structured_position.x);
+    CHECK(character->physical_motion.vertical_velocity ==
+          doctest::Approx(
+              App::Character::PhysicalMotionService::K_DEFAULT_GRAVITY_VELOCITY_DELTA_PER_TICK));
+    CHECK_EQ(character->physical_motion.fall_stage, 0U);
+    CHECK_EQ(character->physical_motion.accumulated_fall_travel, 0.0F);
+    CHECK_EQ(character->physical_motion.maximum_support_gap, 0.0F);
   }
 
   TEST_CASE("chained structured children never expose an ordinary actor service gap") {
@@ -1848,15 +1861,26 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(controller.tick(1.0F / 60.0F).has_value());
     CHECK_EQ(character->ordinary_actor_service_generation, 1U);
     CHECK_EQ(character->physical_motion.accepted_translation.x, character->transform.translation.x);
+    CHECK(character->physical_motion.vertical_velocity ==
+          doctest::Approx(
+              App::Character::PhysicalMotionService::K_DEFAULT_GRAVITY_VELOCITY_DELTA_PER_TICK));
 
     character->controller_enabled = false;
     REQUIRE(character->ctl_controller.has_value());
     REQUIRE(controller.tick(1.0F / 30.0F).has_value());
     CHECK_EQ(character->ordinary_actor_service_generation, 2U);
+    CHECK(character->physical_motion.vertical_velocity ==
+          doctest::Approx(
+              2.0F *
+              App::Character::PhysicalMotionService::K_DEFAULT_GRAVITY_VELOCITY_DELTA_PER_TICK));
 
     character->ctl_controller.reset();
     REQUIRE(controller.tick(2.0F / 30.0F).has_value());
     CHECK_EQ(character->ordinary_actor_service_generation, 4U);
+    CHECK(character->physical_motion.vertical_velocity ==
+          doctest::Approx(
+              4.0F *
+              App::Character::PhysicalMotionService::K_DEFAULT_GRAVITY_VELOCITY_DELTA_PER_TICK));
     CHECK(character->physical_motion.initialized);
     CHECK_EQ(
         controller.current_character_trigger_proxy()->last_consumed_actor_spatial_generation, 4U);

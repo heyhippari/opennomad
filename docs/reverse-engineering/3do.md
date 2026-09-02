@@ -850,9 +850,12 @@ information used by other 3DO consumers:
 ```
 
 There is no evidence that this path requires a separate collision-mesh asset.
-OpenNomad therefore keeps collision metadata in `Model3DOData`; later query code
-can combine immutable model data with mutable runtime-object transforms without
-deriving geometry from render `MaterialGroup`s.
+OpenNomad therefore keeps collision metadata in `Model3DOData`. Phase 4.2B.2's
+CPU static-support query combines immutable model data with mutable runtime-object
+transforms directly, without deriving geometry from render `MaterialGroup`s.
+Authored character body spheres provide the support footprint and body bottom;
+mesh bounds/radius are available for broadphase, while authored face normals
+drive floor planes. Face material IDs are irrelevant to ordinary floor qualification.
 
 The following flag behavior is confirmed, while original source-level names
 remain unknown:
@@ -862,8 +865,10 @@ flags & 0x00000041 != 0  -> skipped by the relevant support/static collision pat
 flags & 0x00080000 != 0  -> transformed/moving-object collision path
 ```
 
-Ordinary horizontal actor collision also observes `0x20000000`; its exact role
-belongs to later actor-collision work and is not implemented by this milestone.
+The `0x00080000` transformed/moving path remains deferred. Static support may
+identify `flags & 0x20000000`, but its exact semantic name is unresolved and
+OpenNomad conservatively classifies it as special/deferred rather than ordinary
+walkable support. See [`character-support-motion.md`](character-support-motion.md).
 
 ---
 
