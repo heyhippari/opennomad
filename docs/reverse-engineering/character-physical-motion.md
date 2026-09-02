@@ -1,7 +1,7 @@
 # Character physical motion
 
-> **Status:** confirmed Runtime ownership and ordering; neutral OpenNomad Phase 4.2A service
-> **Last updated:** 2026-09-01
+> **Status:** confirmed Runtime ownership and ordering; Phase 4.2B.1 collision data recovered
+> **Last updated:** 2026-09-02
 
 This document separates recovered retail actor semantics from OpenNomad's modern C++ representation. Runtime did not contain a C++ abstraction named `PhysicalMotionService`.
 
@@ -64,13 +64,48 @@ Structured ownership is gated before ordinary time accumulation. No CTL ticks, p
 
 `MDROT000` remains visible after CTL callback dispatch and through entry to physical resolution. Phase 4.2A then clears it at the physical boundary; automatic movement-heading calculation is not implemented yet.
 
+## OpenNomad Phase 4.2B.1 data substrate
+
+Phase 4.2B.1 makes Runtime's authored collision inputs available through the
+typed 3DO model without changing physical execution:
+
+```text
+character model
+	root CollisionSphere[5]
+	-> authored actor body collider
+
+world/decor Model3DOData
+	mesh bounding radius
+	mesh bounds min/max
+	raw vertices
+	triangle/quad topology
+	authored face normals
+	runtime object transforms
+```
+
+The root sphere centers, polygon face normals, and object bounds remain in
+model-local Runtime XYZ; distances remain native inches. The authoritative
+serialized layouts and Runtime evidence are documented in [`3do.md`](3do.md).
+
+`PhysicalMotionService` does not consume this metadata yet. It still performs
+the neutral candidate-to-accepted commit established in Phase 4.2A.
+
 ## Deferred physical behavior
 
-Phase 4.2A does not implement the later behavior reached through physical resolution, including:
+Phase 4.2B.2 owns:
 
-- `0x00469580` ordinary world/horizontal collision query;
-- `0x00467030` floor/contact probe;
-- `0x00465460` vertical/floor response;
-- gravity, floor snapping, slopes, stairs, collider dimensions, collision response, or automatic movement-heading rewriting.
+- static support/floor queries, including the path around `0x00467030`;
+- gravity and vertical velocity;
+- grounding, falling, and floor resolution around `0x00465460`;
+- walkable-slope response and ceiling clearance as appropriate.
 
-Those belong to Phase 4.2B/4.2C and can replace the neutral resolver without changing CTL ownership again.
+Phase 4.2C owns:
+
+- ordinary horizontal collision around `0x00469580`;
+- wall blocking and sliding;
+- automatic movement-heading rewriting;
+- `MDROT000`'s actual suppression effect;
+- more complete transformed/secondary collision response.
+
+Those later phases can replace the neutral resolver without changing CTL
+ownership again.

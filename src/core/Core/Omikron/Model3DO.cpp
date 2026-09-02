@@ -64,6 +64,12 @@ std::expected<Model3DOData, std::string> Model3DO::load(const std::span<const st
   if (reader.has_error()) {
     return std::expected<Model3DOData, std::string>{std::unexpect, reader.error()};
   }
+  if (model.header.collision_sphere_count > Header::k_collision_sphere_capacity) {
+    return std::expected<Model3DOData, std::string>{std::unexpect,
+        fmt::format("collision sphere count {} exceeds serialized capacity {}",
+            model.header.collision_sphere_count,
+            Header::k_collision_sphere_capacity)};
+  }
 
   App::Log::debug(LogCategory::Renderer,
       "3DO signature '{}', version {}, root offset {:#x}",
@@ -699,20 +705,24 @@ void Model3DO::read_header(BinaryReader& reader, Header& header) {
   header.root_mesh_id = reader.read_u32();    // +0xB4
 
   header.base_light_level = reader.read_f32();
-  header.triangle_count = reader.read_u32();   // +0xBC
-  header.rectangle_count = reader.read_u32();  // +0xC0
-  header.vertex_count = reader.read_u32();     // +0xC4
-  header.reserved2 = reader.read_u64();        // +0xC8
-  header.material_count = reader.read_u32();   // +0xD0
-  header.unknown3 = reader.read_u32();         // +0xD4
-  header.reserved3 = reader.read_u32();        // +0xD8
-  header.camera_count = reader.read_u32();     // +0xDC
-  header.object_count = reader.read_u32();     // +0xE0
-  header.unknown2 = reader.read_u32();         // +0xE4 relationship count
-  header.light_count = reader.read_u32();      // +0xE8 serialized light count
-  header.lights_unknown1 = reader.read_u32();  // +0xEC
-  header.lights_unknown2 = reader.read_u32();  // +0xF0 processed light count
-  read_raw_array(reader, header.unknown4);     // +0xF4..+0x147
+  header.triangle_count = reader.read_u32();          // +0xBC
+  header.rectangle_count = reader.read_u32();         // +0xC0
+  header.vertex_count = reader.read_u32();            // +0xC4
+  header.reserved2 = reader.read_u64();               // +0xC8
+  header.material_count = reader.read_u32();          // +0xD0
+  header.unknown3 = reader.read_u32();                // +0xD4
+  header.reserved3 = reader.read_u32();               // +0xD8
+  header.camera_count = reader.read_u32();            // +0xDC
+  header.object_count = reader.read_u32();            // +0xE0
+  header.unknown2 = reader.read_u32();                // +0xE4 relationship count
+  header.light_count = reader.read_u32();             // +0xE8 serialized light count
+  header.lights_unknown1 = reader.read_u32();         // +0xEC
+  header.lights_unknown2 = reader.read_u32();         // +0xF0 processed light count
+  header.collision_sphere_count = reader.read_u32();  // +0xF4
+  for (CollisionSphere& sphere : header.collision_sphere_slots) {
+    sphere.center = read_vec3(reader);
+    sphere.radius = reader.read_f32();
+  }
 
   // Compatibility aliases retained until Header is cleaned up separately.
   // They are not additional serialized fields.
@@ -758,8 +768,8 @@ MeshDescriptor Model3DO::read_mesh_descriptor(BinaryReader& reader) {
   mesh.unknown09 = reader.read_f32();
   mesh.unknown10 = reader.read_f32();
   mesh.bounding_radius = reader.read_f32();
-  mesh.box_extent_neg = read_vec3(reader);
-  mesh.box_extent_pos = read_vec3(reader);
+  mesh.bounds_min = read_vec3(reader);
+  mesh.bounds_max = read_vec3(reader);
   mesh.unknown18 = reader.read_f32();
   mesh.unknown19 = reader.read_f32();
   mesh.unknown20 = reader.read_f32();
@@ -783,6 +793,7 @@ Triangle Model3DO::read_triangle(BinaryReader& reader) {
   Triangle triangle;
   for (std::size_t corner{0}; corner < triangle.vertices.size(); ++corner) {
     const std::uint16_t reference{reader.read_u16()};
+    triangle.vertices.at(corner).raw = reference;
     // Bit 15 flags that the index belongs to the skin parent's vertex block.
     triangle.vertices.at(corner).parented = (reference & K_PARENTED_FLAG) != 0U;
     triangle.vertices.at(corner).index =
@@ -792,9 +803,7 @@ Triangle Model3DO::read_triangle(BinaryReader& reader) {
     triangle.uv.at(channel) = reader.read_u8();
   }
   triangle.material_id = reader.read_i32();
-  for (std::size_t value{0}; value < triangle.unknown_ints.size(); ++value) {
-    triangle.unknown_ints.at(value) = reader.read_i32();
-  }
+  triangle.face_normal = read_vec3(reader);
   return triangle;
 }
 
@@ -807,9 +816,7 @@ Rectangle Model3DO::read_rectangle(BinaryReader& reader) {
     rectangle.uv.at(channel) = reader.read_u8();
   }
   rectangle.material_id = reader.read_i32();
-  for (std::size_t value{0}; value < rectangle.unknown_ints.size(); ++value) {
-    rectangle.unknown_ints.at(value) = reader.read_i32();
-  }
+  rectangle.face_normal = read_vec3(reader);
   return rectangle;
 }
 

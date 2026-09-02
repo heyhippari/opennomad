@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <numbers>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -26,6 +27,11 @@ constexpr std::size_t K_MESH_SIZE{140};
 constexpr std::size_t K_CAMERA_SIZE{52};
 constexpr std::size_t K_LIGHT_SIZE{304};
 
+struct CollisionSphereFixture {
+  std::array<float, 3> center{};
+  float radius{0.0F};
+};
+
 /// Builds a header whose sections immediately follow it in the order
 /// materials, vertices, triangles, rectangles, meshes, cameras, lights.
 Buffer make_header(const std::uint32_t material_count,
@@ -40,7 +46,9 @@ Buffer make_header(const std::uint32_t material_count,
     const std::uint32_t object_count = 0,
     const std::uint32_t root_mesh_id = 1,
     const std::uint32_t root_offset = K_DIRECTORY_SIZE,
-    const std::uint32_t camera_count = 0) {
+    const std::uint32_t camera_count = 0,
+    const std::uint32_t collision_sphere_count = 0,
+    const std::span<const CollisionSphereFixture> collision_sphere_slots = {}) {
   // These two legacy fixture arguments used to populate fields from the
   // incorrect flat-header interpretation. Keep their positions temporarily
   // so existing tests do not need unrelated call-site churn.
@@ -94,7 +102,16 @@ Buffer make_header(const std::uint32_t material_count,
       .u32(lights_unknown1 + lights_unknown2)  // +0xE8 serialized light count.
       .u32(lights_unknown1)
       .u32(lights_unknown2)
-      .zeros(84);
+      .u32(collision_sphere_count);
+  for (std::size_t index{0}; index < App::Omikron::Header::k_collision_sphere_capacity; ++index) {
+    const CollisionSphereFixture sphere{index < collision_sphere_slots.size()
+                                            ? collision_sphere_slots[index]
+                                            : CollisionSphereFixture{}};
+    buffer.f32(sphere.center.at(0))
+        .f32(sphere.center.at(1))
+        .f32(sphere.center.at(2))
+        .f32(sphere.radius);
+  }
   return buffer;
 }
 
@@ -109,7 +126,10 @@ void append_mesh(Buffer& buffer,
     const float position_x,
     const std::int32_t first_child_id = -1,
     const std::int32_t next_sibling_id = -1,
-    const float bone_position_x = 0.0F) {
+    const float bone_position_x = 0.0F,
+    const float bounding_radius = 0.0F,
+    const std::array<float, 3> bounds_min = {1.0F, 1.0F, 1.0F},
+    const std::array<float, 3> bounds_max = {2.0F, 2.0F, 2.0F}) {
   buffer.u32(flags)
       .u32(0)
       .u32(mesh_id)
@@ -128,13 +148,13 @@ void append_mesh(Buffer& buffer,
       .f32(0.0F)
       .f32(0.0F)
       .f32(0.0F)
-      .f32(0.0F)
-      .f32(1.0F)
-      .f32(1.0F)
-      .f32(1.0F)
-      .f32(2.0F)
-      .f32(2.0F)
-      .f32(2.0F)
+      .f32(bounding_radius)
+      .f32(bounds_min.at(0))
+      .f32(bounds_min.at(1))
+      .f32(bounds_min.at(2))
+      .f32(bounds_max.at(0))
+      .f32(bounds_max.at(1))
+      .f32(bounds_max.at(2))
       .f32(0.0F)
       .f32(0.0F)
       .f32(0.0F)
@@ -172,9 +192,9 @@ void append_degenerate_triangle(Buffer& buffer, const std::int32_t material_id =
       .u8(0)
       .u8(0)
       .i32(material_id)
-      .i32(0)
-      .i32(0)
-      .i32(0);
+      .f32(0.0F)
+      .f32(0.0F)
+      .f32(0.0F);
 }
 
 /// Appends one 304-byte light record in serialized native XYZ order.
@@ -239,11 +259,64 @@ TEST_SUITE("Core::Omikron::Model3DO") {
     CHECK_EQ(model->header.material_count, 0U);
     CHECK_EQ(model->header.object_count, 0U);
     CHECK_EQ(model->header.mesh_count, 0U);
+    CHECK_EQ(model->header.collision_sphere_count, 0U);
+    CHECK(model->header.collision_spheres().empty());
     CHECK(model->materials.empty());
     CHECK(model->meshes.empty());
     CHECK(model->vertices.empty());
     CHECK(model->cameras.empty());
     CHECK(model->lights.empty());
+  }
+
+  TEST_CASE("Parses one authored collision sphere and preserves the following section") {
+    const std::array spheres{
+        CollisionSphereFixture{.center = {12.5F, -30.25F, 7.75F}, .radius = 18.5F}};
+    Buffer file{make_header(1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, K_DIRECTORY_SIZE, 0, 1, spheres)};
+    append_material(file, "AFTER_ROOT");
+
+    const auto model{App::Omikron::Model3DO::load(file.data())};
+    REQUIRE(model.has_value());
+    CHECK_EQ(model->header.collision_sphere_count, 1U);
+    REQUIRE_EQ(model->header.collision_spheres().size(), std::size_t{1});
+    const App::Omikron::CollisionSphere& sphere{model->header.collision_spheres().front()};
+    CHECK(sphere.center.x == doctest::Approx(12.5F));
+    CHECK(sphere.center.y == doctest::Approx(-30.25F));
+    CHECK(sphere.center.z == doctest::Approx(7.75F));
+    CHECK(sphere.radius == doctest::Approx(18.5F));
+    REQUIRE_EQ(model->materials.size(), std::size_t{1});
+    CHECK_EQ(model->materials.front().name, "AFTER_ROOT");
+  }
+
+  TEST_CASE("Preserves all five authored collision sphere slots in order") {
+    const std::array spheres{CollisionSphereFixture{.center = {1.0F, 2.0F, 3.0F}, .radius = 4.0F},
+        CollisionSphereFixture{.center = {5.0F, 6.0F, 7.0F}, .radius = 8.0F},
+        CollisionSphereFixture{.center = {9.0F, 10.0F, 11.0F}, .radius = 12.0F},
+        CollisionSphereFixture{.center = {13.0F, 14.0F, 15.0F}, .radius = 16.0F},
+        CollisionSphereFixture{.center = {17.0F, 18.0F, 19.0F}, .radius = 20.0F}};
+    const Buffer file{
+        make_header(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, K_DIRECTORY_SIZE, 0, 5, spheres)};
+
+    const auto model{App::Omikron::Model3DO::load(file.data())};
+    REQUIRE(model.has_value());
+    REQUIRE_EQ(model->header.collision_spheres().size(), spheres.size());
+    for (std::size_t index{0}; index < spheres.size(); ++index) {
+      // The span count is validated by REQUIRE_EQ above.
+      // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
+      const auto& parsed{model->header.collision_spheres()[index]};
+      CHECK(parsed.center.x == doctest::Approx(spheres.at(index).center.at(0)));
+      CHECK(parsed.center.y == doctest::Approx(spheres.at(index).center.at(1)));
+      CHECK(parsed.center.z == doctest::Approx(spheres.at(index).center.at(2)));
+      CHECK(parsed.radius == doctest::Approx(spheres.at(index).radius));
+    }
+  }
+
+  TEST_CASE("Rejects a collision sphere count beyond the five serialized slots") {
+    const Buffer file{make_header(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, K_DIRECTORY_SIZE, 0, 6)};
+
+    const auto model{App::Omikron::Model3DO::load(file.data())};
+    REQUIRE_FALSE(model.has_value());
+    CHECK(model.error().find("collision sphere count 6 exceeds serialized capacity 5") !=
+          std::string::npos);
   }
 
   TEST_CASE("Parses named 0x34-byte scene cameras in Runtime-native units") {
@@ -280,7 +353,9 @@ TEST_SUITE("Core::Omikron::Model3DO") {
 
   TEST_CASE("Seeks a non-default serialized root offset") {
     constexpr std::uint32_t root_offset{0x60};
-    Buffer file{make_header(0, 1, 0, 0, 0, 0, 0, 5, 7, 3, 42, root_offset)};
+    const std::array spheres{
+        CollisionSphereFixture{.center = {-4.0F, 8.0F, 12.0F}, .radius = 16.0F}};
+    Buffer file{make_header(0, 1, 0, 0, 0, 0, 0, 5, 7, 3, 42, root_offset, 0, 1, spheres)};
     append_mesh(file, 0, 42, -1, 0, 0, 0, 0.0F);
 
     const auto model{App::Omikron::Model3DO::load(file.data())};
@@ -292,6 +367,9 @@ TEST_SUITE("Core::Omikron::Model3DO") {
     CHECK_EQ(model->header.texture_count, 0U);
     CHECK_EQ(model->header.object_count, 1U);
     CHECK_EQ(model->header.mesh_count, 1U);
+    REQUIRE_EQ(model->header.collision_spheres().size(), std::size_t{1});
+    CHECK(model->header.collision_spheres().front().center.y == doctest::Approx(8.0F));
+    CHECK(model->header.collision_spheres().front().radius == doctest::Approx(16.0F));
   }
 
   TEST_CASE("Does not read past the 0x148-byte serialized root") {
@@ -346,7 +424,8 @@ TEST_SUITE("Core::Omikron::Model3DO") {
         .u8(0x33)
         .u8(0x44);
     // Triangle.
-    file.u16(0).u16(0).u16(0).u8(1).u8(2).u8(3).u8(4).u8(5).u8(6).i32(0).i32(0).i32(0).i32(0);
+    file.u16(0).u16(0).u16(0).u8(1).u8(2).u8(3).u8(4).u8(5).u8(6).i32(0).f32(0.6F).f32(-0.8F).f32(
+        0.0F);
     // Mesh descriptor.
     append_mesh(file, 0, 7, -1, 1, 1, 0, 0.0F);
 
@@ -389,12 +468,16 @@ TEST_SUITE("Core::Omikron::Model3DO") {
     CHECK_EQ(triangle.material_id, 0);
     CHECK_EQ(triangle.vertices.at(0).index, 0U);
     CHECK_FALSE(triangle.vertices.at(0).parented);
+    CHECK(triangle.face_normal.x == doctest::Approx(0.6F));
+    CHECK(triangle.face_normal.y == doctest::Approx(-0.8F));
+    CHECK(triangle.face_normal.z == doctest::Approx(0.0F));
   }
 
   TEST_CASE("Triangle references decode the parented flag and index mask") {
     Buffer file{make_header(0, 1, 0, 1, 0)};
 
-    file.u16(0x8005)
+    constexpr std::uint16_t encoded_reference{0x9405U};
+    file.u16(encoded_reference)
         .u16(7)
         .u16(0x8FFF)
         .u8(0)
@@ -404,22 +487,53 @@ TEST_SUITE("Core::Omikron::Model3DO") {
         .u8(0)
         .u8(0)
         .i32(-1)
-        .i32(0)
-        .i32(0)
-        .i32(0);
+        .f32(0.0F)
+        .f32(0.0F)
+        .f32(0.0F);
     append_mesh(file, 0, 1, -1, 0, 1, 0, 0.0F);
 
     const auto model{App::Omikron::Model3DO::load(file.data())};
     REQUIRE(model.has_value());
 
     const auto& triangle{model->polygons.at(0).triangles.at(0)};
+    CHECK_EQ(triangle.vertices.at(0).raw, encoded_reference);
     CHECK_EQ(triangle.vertices.at(0).index, 5U);
     CHECK(triangle.vertices.at(0).parented);
+    CHECK_EQ(triangle.vertices.at(1).raw, 7U);
     CHECK_EQ(triangle.vertices.at(1).index, 7U);
     CHECK_FALSE(triangle.vertices.at(1).parented);
     CHECK_EQ(triangle.vertices.at(2).index, 0x03FFU);
     CHECK(triangle.vertices.at(2).parented);
     CHECK_EQ(triangle.material_id, -1);
+  }
+
+  TEST_CASE("Parses object collision broadphase bounds as local min and max") {
+    Buffer file{make_header(0, 1, 0, 0, 0)};
+    append_mesh(file,
+        0,
+        1,
+        -1,
+        0,
+        0,
+        0,
+        0.0F,
+        -1,
+        -1,
+        0.0F,
+        42.5F,
+        {-12.0F, 3.0F, -4.5F},
+        {8.0F, 19.0F, 2.25F});
+
+    const auto model{App::Omikron::Model3DO::load(file.data())};
+    REQUIRE(model.has_value());
+    const auto& mesh{model->meshes.front()};
+    CHECK(mesh.bounding_radius == doctest::Approx(42.5F));
+    CHECK(mesh.bounds_min.x == doctest::Approx(-12.0F));
+    CHECK(mesh.bounds_min.y == doctest::Approx(3.0F));
+    CHECK(mesh.bounds_min.z == doctest::Approx(-4.5F));
+    CHECK(mesh.bounds_max.x == doctest::Approx(8.0F));
+    CHECK(mesh.bounds_max.y == doctest::Approx(19.0F));
+    CHECK(mesh.bounds_max.z == doctest::Approx(2.25F));
   }
 
   TEST_CASE("Skin parents skip joint-only meshes") {
@@ -581,6 +695,23 @@ TEST_SUITE("Core::Omikron::Model3DO") {
     CHECK(groups->at(0).vertices.at(0).position.at(0) == doctest::Approx(100.0F));
   }
 
+  TEST_CASE("Static geometry keeps vertex normals distinct from face normals") {
+    Buffer file{make_header(1, 1, 1, 1, 0)};
+    append_material(file);
+    append_vertex(file);
+    file.u16(0).u16(0).u16(0).zeros(6).i32(0).f32(0.6F).f32(-0.8F).f32(0.0F);
+    append_mesh(file, 0, 1, -1, 1, 1, 0, 0.0F);
+
+    const auto model{App::Omikron::Model3DO::load(file.data())};
+    REQUIRE(model.has_value());
+    const auto groups{App::Omikron::Model3DO::build_static_geometry(model.value())};
+    REQUIRE(groups.has_value());
+    REQUIRE_EQ(groups->front().vertices.size(), std::size_t{3});
+    CHECK(groups->front().vertices.front().normal.at(0) == doctest::Approx(0.0F));
+    CHECK(groups->front().vertices.front().normal.at(1) == doctest::Approx(0.0F));
+    CHECK(groups->front().vertices.front().normal.at(2) == doctest::Approx(1.0F));
+  }
+
   TEST_CASE("Rectangles are split into two triangles") {
     Buffer file{make_header(1, 1, 4, 0, 1)};
 
@@ -608,13 +739,20 @@ TEST_SUITE("Core::Omikron::Model3DO") {
         .u8(6)
         .u8(7)
         .i32(0)
-        .i32(0)
-        .i32(0)
-        .i32(0);
+        .f32(0.25F)
+        .f32(0.5F)
+        .f32(-0.75F);
     append_mesh(file, 0, 1, -1, 4, 0, 1, 0.0F);
 
     const auto model{App::Omikron::Model3DO::load(file.data())};
     REQUIRE(model.has_value());
+
+    const auto& rectangle{model->polygons.at(0).rectangles.at(0)};
+    CHECK_EQ(rectangle.material_id, 0);
+    CHECK_EQ(rectangle.uv.at(7), 7U);
+    CHECK(rectangle.face_normal.x == doctest::Approx(0.25F));
+    CHECK(rectangle.face_normal.y == doctest::Approx(0.5F));
+    CHECK(rectangle.face_normal.z == doctest::Approx(-0.75F));
 
     const auto groups{App::Omikron::Model3DO::build_static_geometry(model.value())};
     REQUIRE(groups.has_value());

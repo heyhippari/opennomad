@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -95,9 +96,19 @@ enum class BlendMode : std::uint8_t {
 /// Native Runtime XYZ vector. 3DO values are preserved exactly as serialized.
 using Vec3 = Runtime::Vec3;
 
+/// Authored model-local character/body collision sphere.
+struct CollisionSphere {
+  static constexpr std::size_t k_serialized_size{0x10};
+
+  Vec3 center{};
+  float radius{0.0F};
+};
+
 /// Parsed .3DO file header. Section offsets and counts remain serialized even
 /// when a section also has a typed decoded representation below.
 struct Header {
+  static constexpr std::size_t k_collision_sphere_capacity{5};
+
   std::array<char, 4> signature{};
   std::uint32_t version_major{0};
   /// Offset of Serialized3DORootV4 from the beginning of the OD3X core.
@@ -147,7 +158,14 @@ struct Header {
   std::uint32_t light_count{0};
   std::uint32_t lights_unknown1{0};
   std::uint32_t lights_unknown2{0};
-  std::array<std::byte, 84> unknown4{};
+  std::uint32_t collision_sphere_count{0};
+  std::array<CollisionSphere, k_collision_sphere_capacity> collision_sphere_slots{};
+
+  /// Active authored spheres, bounded to the five physical serialized slots.
+  [[nodiscard]] std::span<const CollisionSphere> collision_spheres() const {
+    return std::span{collision_sphere_slots}.first(
+        std::min<std::size_t>(collision_sphere_count, collision_sphere_slots.size()));
+  }
 };
 
 /// One texture/material slot; the pixel data itself lives in the .3DT sidecar.
@@ -199,10 +217,10 @@ struct MeshDescriptor {
   float unknown08{0.0F};
   float unknown09{0.0F};
   float unknown10{0.0F};
-  /// Runtime object/lighting bounding-sphere radius (+0x58).
+  /// Runtime object-level bounding-sphere radius used by spatial/collision broadphase (+0x58).
   float bounding_radius{0.0F};
-  Vec3 box_extent_neg{};
-  Vec3 box_extent_pos{};
+  Vec3 bounds_min{};
+  Vec3 bounds_max{};
   float unknown18{0.0F};
   float unknown19{0.0F};
   float unknown20{0.0F};
@@ -227,6 +245,7 @@ struct RawVertex {
 /// Corner reference of a triangle. When parented is set, the index refers to
 /// the skin parent's vertex block instead of the mesh's own block.
 struct TriangleVertexRef {
+  std::uint16_t raw{0};
   std::uint16_t index{0};
   bool parented{false};
 };
@@ -237,7 +256,7 @@ struct Triangle {
   std::array<TriangleVertexRef, 3> vertices{};
   std::array<std::uint8_t, 6> uv{};
   std::int32_t material_id{-1};
-  std::array<std::int32_t, 3> unknown_ints{};  ///< s2, s3, s4.
+  Vec3 face_normal{};
 };
 
 /// Quad face; split into two triangles when rendering.
@@ -245,7 +264,7 @@ struct Rectangle {
   std::array<std::uint16_t, 4> vertices{};
   std::array<std::uint8_t, 8> uv{};
   std::int32_t material_id{-1};
-  std::array<std::int32_t, 3> unknown_ints{};
+  Vec3 face_normal{};
 };
 
 /// All polygons of one mesh block.

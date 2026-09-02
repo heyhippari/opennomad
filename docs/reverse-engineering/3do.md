@@ -1,7 +1,7 @@
 # Omikron `.3DO` model format (version 4)
 
 > **Status:** work-in-progress reverse-engineering documentation for OpenNomad  
-> **Last updated:** 2026-08-22
+> **Last updated:** 2026-09-02
 >
 > This document describes the version-4 `.3DO` model/resource format used by the
 > Windows retail release of *Omikron: The Nomad Soul*. It deliberately separates:
@@ -266,7 +266,8 @@ unknown regions.
 | `0xE8` | 4 | `u32` | serialized aggregate/authoring light count | Serialized field confirmed; exact role unresolved |
 | `0xEC` | 4 | `u32` | non-explicit / mesh-light count | Strongly reconstructed |
 | `0xF0` | 4 | `u32` | explicit light-record count processed by Runtime | Confirmed behavior |
-| `0xF4..0x147` | `0x54` | bytes | unknown | Unknown |
+| `0xF4` | 4 | `u32` | authored collision-sphere count | Confirmed — Runtime |
+| `0xF8..0x147` | `0x50` | `CollisionSphereV4[5]` | authored character/body collision-sphere slots | Confirmed — Runtime |
 
 ## 5.1 Root object is explicit
 
@@ -349,6 +350,44 @@ record stream in the parser.
 
 `+0xE8` should still be preserved from serialized data because its authoring or
 aggregate meaning may matter later.
+
+## 5.4 Authored collision spheres
+
+The root tail contains a count followed by five physical records. This keeps
+the root size at exactly `0x148` bytes:
+
+| Sphere offset | Size | Type | Meaning |
+|---:|---:|---|---|
+| `0x00` | 4 | `f32` | model-local center X |
+| `0x04` | 4 | `f32` | model-local center Y |
+| `0x08` | 4 | `f32` | model-local center Z |
+| `0x0C` | 4 | `f32` | radius |
+
+`CollisionSphereV4` is therefore `0x10` bytes, with a serialized capacity of
+five. Centers and radii remain in Runtime-native inches. Loading does not flip
+Y, swap axes, convert units, or transform spheres into world space. A count of
+zero is valid and common for generic/non-character resources.
+
+**Confirmed — Runtime:** `0x00444310` and `0x00444360` walk the records at
+`root+0xF8` with a `0x10` stride and select the smallest and largest radius.
+`0x004443B0` ranks them by `centerY + radius`, which is the bottom-most point in
+Runtime's native `+Y = downward` convention, and also identifies the secondary
+lowest sphere. Actor construction around `0x0041AC2E..0x0041ACE7` derives total
+vertical extents as:
+
+```text
+min(centerY - radius)
+max(centerY + radius)
+```
+
+The collision callback around `0x0049A0E0` transforms each authored center and
+copies the radius. The ordinary physical collision path at `0x00469580`
+consumes these records as actor body collision spheres.
+
+**OpenNomad hardening:** successful parsing rejects a count greater than five.
+No equivalent retail Runtime loader validation has been observed; Runtime
+appears to trust cooked data. OpenNomad does not impose extra radius or
+nonzero-count restrictions.
 
 ---
 
@@ -512,9 +551,9 @@ the New Game intro.
 | `0x0A` | 1 | `u8` | U2 |
 | `0x0B` | 1 | `u8` | V2 |
 | `0x0C` | 4 | `s32` | material index |
-| `0x10` | 4 | `s32` | unknown |
-| `0x14` | 4 | `s32` | unknown |
-| `0x18` | 4 | `s32` | unknown |
+| `0x10` | 4 | `f32` | model-local face normal X |
+| `0x14` | 4 | `f32` | model-local face normal Y |
+| `0x18` | 4 | `f32` | model-local face normal Z |
 
 ## 9.1 Encoded triangle vertex references
 
@@ -529,6 +568,7 @@ OpenNomad currently represents this as:
 
 ```cpp
 struct TriangleVertexRef {
+    std::uint16_t raw;    // complete serialized word
     std::uint16_t index;  // raw & 0x03FF
     bool parented;        // raw & 0x8000
 };
@@ -548,10 +588,24 @@ are still unresolved.
 Do not reinterpret those bits as part of the vertex index simply because the
 record is 16-bit, and do not assign them flags without further evidence.
 
-A forensic parser may wish to preserve the original raw `u16` alongside the
-decoded fields.
+OpenNomad preserves the original raw `u16` alongside the decoded fields. This
+is a modern lossless representation choice that prevents unresolved bits from
+being discarded before later collision-parity work.
 
-## 9.2 Meaning of `parented`
+## 9.2 Authored triangle face normal
+
+**Confirmed — Runtime:** the static polygon collision path at `0x00498B10`
+copies `triangle+0x10/+0x14/+0x18` as three floats before calling `0x00498E00`.
+That routine uses them as a vector in a vertex-normal dot product, derives the
+plane constant from a polygon vertex, and separately tests the Y component for
+floor qualification.
+
+The vector is the model-local polygon plane/collision normal. It is distinct
+from each `RawVertex::normal`, which remains presentation/lighting data.
+Runtime consumes the authored value directly, so OpenNomad preserves it without
+normalizing or transforming it during parsing.
+
+## 9.3 Meaning of `parented`
 
 For a normal triangle corner:
 
@@ -600,9 +654,9 @@ Serialized layout:
 | `0x0E` | 1 | `u8` | U3 |
 | `0x0F` | 1 | `u8` | V3 |
 | `0x10` | 4 | `s32` | material index |
-| `0x14` | 4 | `s32` | unknown |
-| `0x18` | 4 | `s32` | unknown |
-| `0x1C` | 4 | `s32` | unknown |
+| `0x14` | 4 | `f32` | model-local face normal X |
+| `0x18` | 4 | `f32` | model-local face normal Y |
+| `0x1C` | 4 | `f32` | model-local face normal Z |
 
 ## 10.1 Static-quad interpretation
 
@@ -617,6 +671,11 @@ OpenNomad triangulates:
 
 No parent/alternate-owner encoding equivalent to triangle bit `0x8000` has been
 established for rectangles.
+
+The static collision path at `0x00498B10` copies the three floats at
+`+0x14/+0x18/+0x1C` into the same `0x00498E00` polygon-plane calculation used
+for triangles. The same local-coordinate and no-loader-normalization semantics
+apply.
 
 ## 10.2 Sprite-frame interpretation
 
@@ -655,6 +714,9 @@ height = abs(point1.y - point0.y)
 
 The sprite path therefore uses 3DO vertices as a compact way to encode frame
 dimensions/corners.
+
+Sprite consumers do not require or interpret the face normal. A zero normal is
+valid for a synthetic sprite-frame record.
 
 This explains why treating every `0x20` rectangle record exclusively as static
 world geometry produced incorrect sprite-frame behavior.
@@ -749,9 +811,9 @@ hierarchy.
 | `0x4C` | 4 | `f32` | unknown | Unknown |
 | `0x50` | 4 | `f32` | unknown | Unknown |
 | `0x54` | 4 | `f32` | unknown | Unknown |
-| `0x58` | 4 | `f32` | unknown | Unknown |
-| `0x5C` | 12 | `float3` | negative/min bounding extent | Strongly plausible |
-| `0x68` | 12 | `float3` | positive/max bounding extent | Strongly plausible |
+| `0x58` | 4 | `f32` | object-level bounding-sphere radius | Confirmed — Runtime |
+| `0x5C` | 12 | `float3` | local-space bounds minimum | Confirmed — Runtime |
+| `0x68` | 12 | `float3` | local-space bounds maximum | Confirmed — Runtime |
 | `0x74` | 4 | `f32` | unknown | Unknown |
 | `0x78` | 4 | `f32` | unknown | Unknown |
 | `0x7C` | 4 | `f32` | unknown | Unknown |
@@ -765,6 +827,43 @@ root + 0xE0
 
 The old OpenNomad `Header` type may still contain compatibility aliases such as
 `mesh_count`. Those aliases are **not additional serialized fields**.
+
+Runtime ordinary collision code around `0x00469796` places the `+0x58` radius
+in object/broadphase query state. This is not the root-authored multi-sphere
+body collider. Helper `0x00437D60` copies the two vectors at `+0x5C` and
+`+0x68`; collision code around `0x00444460` consumes them for local object
+box/segment clipping and transformed broadphase operations. “Minimum” and
+“maximum” describe ordering, not the sign of a coordinate.
+
+## 12.1 Collision data uses the model substrate
+
+Runtime's static polygon collision path consumes the same underlying model
+information used by other 3DO consumers:
+
+```text
+3DO runtime object
+-> serialized mesh descriptor
+-> raw/global vertices
+-> triangles and rectangles
+-> authored face normals
+-> runtime object transform
+```
+
+There is no evidence that this path requires a separate collision-mesh asset.
+OpenNomad therefore keeps collision metadata in `Model3DOData`; later query code
+can combine immutable model data with mutable runtime-object transforms without
+deriving geometry from render `MaterialGroup`s.
+
+The following flag behavior is confirmed, while original source-level names
+remain unknown:
+
+```text
+flags & 0x00000041 != 0  -> skipped by the relevant support/static collision path
+flags & 0x00080000 != 0  -> transformed/moving-object collision path
+```
+
+Ordinary horizontal actor collision also observes `0x20000000`; its exact role
+belongs to later actor-collision work and is not implemented by this milestone.
 
 ---
 
@@ -1673,7 +1772,14 @@ hierarchical offset in the recovered runtime transform model.
 ### Triangle parent references
 
 Bit `0x8000` and the low `0x03FF` index are part of the currently working
-parented/skinned triangle reference model. Bits `10..14` remain unknown.
+parented/skinned triangle reference model. The complete raw word is retained;
+bits `10..14` remain unknown.
+
+### Authored collision data
+
+The root tail is a count plus five authored body collision spheres. Triangle
+and rectangle tails are local face normals, while object `+0x58/+0x5C/+0x68`
+provide the object-level broadphase radius and local min/max bounds.
 
 ### Rectangle dual use
 
