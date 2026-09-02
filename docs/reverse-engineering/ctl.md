@@ -496,8 +496,8 @@ while (phase >= destination_effective_end)
   (**Confirmed — Runtime** ownership; **OpenNomad-only** C++ representation).
 - Phase 4.2B composes candidate Y with gravity and resolves static support,
   grounding, latched fall state, and physical CTL fall/landing reactions.
-  Horizontal collision and automatic
-  movement-heading behavior remain deferred.
+  Phase 4.2C.1 resolves ordinary horizontal collision, and C.2 gradually
+  corrects principal yaw toward collision-resolved movement.
 
 ### 4.7a Physical-stage move selection - Confirmed - Runtime
 
@@ -541,7 +541,14 @@ Unknown names log once and remain nonfatal. Recovered subset:
 | `MDRUN`   | `0x0046C0C0` | `run_snapshot = restart_count`; no movement |
 | `MDSTOPR` | `0x0046C0E0` | `run_snapshot > 30` selects move 164; resets run snapshot |
 | `RSTAVNT` | `0x0046C120` | adventure mode = 1, principal orientation X = 0 (**yaw preserved**), input profile 0 (reseeds no-input history) |
-| `MDROT000`| `0x0046C170` | sets the transient suppress-automatic-movement-heading flag; does **not** rotate |
+| `MDROT000`| `0x0046C170` | sets the one-tick automatic collision-heading suppression flag; does **not** rotate |
+
+`MDROT000` is fully implemented for ordinary collision steering. The callback
+sets the actor transient before physical resolution. C.1 collision, sliding,
+and depenetration remain unchanged; C.2 observes the transient and skips only
+its yaw correction; B support and vertical response still execute. The
+physical commit or rollback boundary clears the transient, so a following tick
+without another callback may steer normally.
 
 `MDJP` dispatches through `0x0046B710 -> 0x0047D2E0`. Successful native jump
 start initializes its repeat timer and authored vertical adventure term, then

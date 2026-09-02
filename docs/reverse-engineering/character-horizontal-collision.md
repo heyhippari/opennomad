@@ -1,6 +1,6 @@
 # Character horizontal collision
 
-> **Status:** Phase 4.2C.1 ordinary mode-1 horizontal collision implemented
+> **Status:** Phase 4.2C.2 automatic collision heading implemented
 > **Last updated:** 2026-09-02
 > **Runtime.exe SHA-256:** `55f7120bfea7891b048c64e3682f3259cdbf2719a43fa24e42254b753c95d2ef`
 
@@ -97,7 +97,7 @@ This removes only the component entering the obstacle and retains tangent motion
 
 ## Result semantics and ordering
 
-`forward_collision` is true only when a normal forward hit curtails requested movement. Pure starting-skin depenetration remains false, as does a lookahead-only observation beyond the endpoint. Depenetration has a separate diagnostic flag. This distinction is a required future input to Phase 4.2C.2 automatic heading.
+`forward_collision` is true only when a normal forward hit curtails requested movement. Pure starting-skin depenetration remains false, as does a lookahead-only observation beyond the endpoint. Depenetration has a separate diagnostic flag. C.2 uses this exact return semantic and never re-queries collision geometry.
 
 One ordinary tick now runs:
 
@@ -106,13 +106,56 @@ CTL/root-motion producers
 -> gravity and saved complete desired XYZ
 -> reset candidate to accepted
 -> resolve desired X/0/Z through the mode-1 cylinder solver
+-> apply automatic collision-heading correction
 -> B support query at resolved X/Z
 -> B vertical/fall response using the original saved desired Y
 -> commit or B-series rollback
 ```
 
-Actor-owned diagnostics preserve intended and resolved X/Z, body dimensions, collision scale, forward/depenetration state, iteration counts, and last contact data.
+Actor-owned diagnostics preserve intended and resolved X/Z, body dimensions, collision scale, forward/depenetration state, iteration counts, last contact data, automatic-heading suppression, calculated headings/delta, and yaw before/after.
+
+## Automatic movement heading after mode-1 collision
+
+**Confirmed - Runtime:** after a real mode-1 forward collision, `0x004672D0` applies the following guard chain in order:
+
+```text
+mode-1 return != 0
+actor dispatcher state != 3
+actor+0x51D == 0
+0x006A52CC == 0
+fall stage == 0
+0x0053AE1C == 0
+actor+0x508 bit 0 (MDROT000) clear
+abs(intendedX) > 0.0001
+abs(resolvedX) > 0.0001
+```
+
+The X comparisons are strict and deliberately have no corresponding Z threshold. OpenNomad implements the real-forward-collision, pre-B fall-stage, MDROT, intended-X, and resolved-X guards. Its ordinary service is structurally the native state-1 path, so no fake dispatcher-state field is needed; native state 3 remains documented for future generic dispatch parity.
+
+The remaining native guards have no proven OpenNomad producer and are intentionally deferred. Actor `+0x51D` is conservatively identified as a spatial-service heading-suppression/contact latch: `0x00467770` clears it, qualifying native spatial/event checks may set it, and the following physical tick consumes it. Generic OpenNomad zone or proxy overlap is not assumed equivalent. Global `0x006A52CC` is a jump-choreography guard associated with MDJUMP/MDJP paths. Global `0x0053AE1C` is a special movement-mode/global motion guard, with observed related code around `0x00466210`, `0x00465EED`, `0x00465F36`, `0x00465FC2`, `0x004661C4`, `0x0046AF1A`, and `0x0046B367`; its source-level semantics remain unresolved.
+
+The heading calculation uses only C.1's original intended and final resolved X/Z:
+
+```text
+resolvedHeading = atan2(resolvedZ, resolvedX) * 180 / pi
+intendedHeading = atan2(intendedZ, intendedX) * 180 / pi
+delta = resolvedHeading - intendedHeading
+if delta < -180: delta += 360
+if delta > 180: delta -= 360
+yaw += delta * 0.125
+```
+
+The delta comparisons are strict, so `-180` and `+180` retain their signs. Yaw then uses its own native one-step wrap:
+
+```text
+if yaw > 360: yaw -= 360
+if yaw < 0: yaw += 360
+```
+
+These comparisons are also strict: yaw exactly `360` remains `360`. This differs from CTL's signed `std::remainder` wrapping. OpenNomad updates `principal_orientation_degrees.y` through `set_principal_orientation()`, preserving X/Z and synchronizing the transform matrix.
+
+`MDROT000` sets a one-tick suppression transient. C.1 collision, sliding, and depenetration still run; only C.2 yaw correction is skipped, B support/vertical processing still runs, and commit or rollback clears the transient. C.2 precedes B, so it observes the fall stage entering support processing. A later B position rollback restores translation but intentionally does not restore the corrected yaw.
 
 ## Deferred behavior
 
-Phase C.1 does not implement automatic heading, `MDROT000` steering suppression, mode 4, D8/E0 horizontal physical velocity, conveyors, moving-platform attachment, support class 2, ceiling collision, actor-vs-actor collision, jump, or adventure event dispatch. Runtime's normal mode-1 forward collision side effect that clears D8/E0 remains deferred until C.3 introduces meaningful producers and consumers.
+Phase C.2 does not implement mode 4, D8/E0 horizontal physical velocity, conveyors, moving-platform attachment, support class 2, ceiling collision, actor-vs-actor collision, jump choreography, the native spatial-service latch, the special-movement guard, or adventure event dispatch. Runtime's normal mode-1 forward-collision side effect that clears D8/E0 remains deferred until C.3 introduces meaningful producers and consumers.

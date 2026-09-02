@@ -25,6 +25,15 @@ struct PhysicalSupportState {
   bool small_step_snapped_this_tick{false};
 };
 
+enum class AutomaticHeadingSuppressionReason : std::uint8_t {
+  k_none,
+  k_no_forward_collision,
+  k_falling,
+  k_mdrot,
+  k_intended_x_threshold,
+  k_resolved_x_threshold,
+};
+
 struct HorizontalCollisionState {
   App::Runtime::Vec3 intended_displacement{};
   App::Runtime::Vec3 resolved_displacement{};
@@ -42,6 +51,15 @@ struct HorizontalCollisionState {
   App::Runtime::Vec3 contact_point{};
   App::Runtime::Vec3 response_normal{};
   float contact_distance{0.0F};
+  bool automatic_heading_applied{false};
+  bool mdrot_suppression_active{false};
+  AutomaticHeadingSuppressionReason automatic_heading_suppression{
+      AutomaticHeadingSuppressionReason::k_none};
+  float intended_heading_degrees{0.0F};
+  float resolved_heading_degrees{0.0F};
+  float heading_delta_degrees{0.0F};
+  float yaw_before_degrees{0.0F};
+  float yaw_after_degrees{0.0F};
 };
 
 struct PhysicalMotionEnvironment {
@@ -87,6 +105,8 @@ class PhysicalMotionService {
   static constexpr float K_FALL_STAGE_1_DISTANCE{59.0551186F};
   static constexpr float K_FALL_STAGE_3_DISTANCE{118.110237F};
   static constexpr float K_FALL_STAGE_4_DISTANCE{196.850388F};
+  static constexpr float K_AUTOMATIC_HEADING_X_THRESHOLD{0.0001F};
+  static constexpr float K_AUTOMATIC_HEADING_CORRECTION_FACTOR{0.125F};
 
   static void synchronize(RuntimeCharacter& character);
   static void synchronize_if_needed(RuntimeCharacter& character);
@@ -107,6 +127,11 @@ class PhysicalMotionService {
   [[nodiscard]] static std::uint8_t fall_stage_for_gap(float positive_gap);
   [[nodiscard]] static std::uint8_t resolve_fall_stage(
       std::uint8_t current_stage, float positive_gap);
+  [[nodiscard]] static float normalize_automatic_heading_delta(float delta_degrees);
+  [[nodiscard]] static float automatic_heading_correction(
+      float intended_heading_degrees, float resolved_heading_degrees);
+  [[nodiscard]] static float wrap_automatic_heading_yaw(float yaw_degrees);
+  static void apply_automatic_collision_heading(RuntimeCharacter& character);
 };
 
 }  // namespace App::Character

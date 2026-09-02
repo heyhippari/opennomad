@@ -2,6 +2,7 @@
 
 #include <doctest/doctest.h>
 
+#include <cmath>
 #include <initializer_list>
 #include <memory>
 #include <numbers>
@@ -31,6 +32,21 @@ struct PhysicalFixture {
     decor.vertices = {{.position = {.x = -1000.0F, .y = floor_y, .z = -1000.0F}},
         {.position = {.x = 1000.0F, .y = floor_y, .z = -1000.0F}},
         {.position = {.x = 0.0F, .y = floor_y, .z = 1000.0F}}};
+    decor.runtime_objects.push_back(App::Omikron::Model3DOData::RuntimeObjectState{});
+  }
+
+  void add_wall() {
+    const std::uint32_t vertex_base{static_cast<std::uint32_t>(decor.vertices.size())};
+    decor.meshes.push_back(
+        App::Omikron::MeshDescriptor{.vertex_count = 4, .vertex_base = vertex_base});
+    decor.polygons.push_back(
+        App::Omikron::MeshPolygons{.rectangles = {App::Omikron::Rectangle{
+                                       .vertices = {0, 1, 2, 3}, .face_normal = {.x = -1.0F}}}});
+    decor.vertices.insert(decor.vertices.end(),
+        {{.position = {.x = 10.0F, .y = -20.0F, .z = -100.0F}},
+            {.position = {.x = 10.0F, .y = -20.0F, .z = 100.0F}},
+            {.position = {.x = 10.0F, .y = 20.0F, .z = 100.0F}},
+            {.position = {.x = 10.0F, .y = 20.0F, .z = -100.0F}}});
     decor.runtime_objects.push_back(App::Omikron::Model3DOData::RuntimeObjectState{});
   }
 
@@ -170,6 +186,100 @@ TEST_SUITE("Core::Character::PhysicalMotionService") {
     CHECK_EQ(Service::resolve_vertical_displacement(-5.0F, 1.0F), 0.0F);
     CHECK_EQ(Service::resolve_vertical_displacement(-5.0F, -2.0F), -5.0F);
     CHECK_EQ(Service::resolve_vertical_displacement(-5.0F, -10.0F), -10.0F);
+  }
+
+  TEST_CASE("automatic heading math preserves native shortest-turn and wrapping boundaries") {
+    using Service = App::Character::PhysicalMotionService;
+
+    CHECK_EQ(Service::normalize_automatic_heading_delta(180.0F), 180.0F);
+    CHECK_EQ(Service::normalize_automatic_heading_delta(-180.0F), -180.0F);
+    CHECK_EQ(Service::normalize_automatic_heading_delta(-340.0F), 20.0F);
+    CHECK_EQ(Service::normalize_automatic_heading_delta(340.0F), -20.0F);
+    CHECK_EQ(Service::automatic_heading_correction(0.0F, 90.0F), 11.25F);
+    CHECK_EQ(Service::automatic_heading_correction(0.0F, -90.0F), -11.25F);
+    CHECK_EQ(Service::automatic_heading_correction(170.0F, -170.0F), 2.5F);
+    CHECK_EQ(Service::automatic_heading_correction(-170.0F, 170.0F), -2.5F);
+    CHECK_EQ(Service::automatic_heading_correction(0.0F, 180.0F), 22.5F);
+    CHECK_EQ(Service::automatic_heading_correction(0.0F, -180.0F), -22.5F);
+    CHECK_EQ(Service::wrap_automatic_heading_yaw(365.0F), 5.0F);
+    CHECK_EQ(Service::wrap_automatic_heading_yaw(-5.0F), 355.0F);
+    CHECK_EQ(Service::wrap_automatic_heading_yaw(360.0F), 360.0F);
+    CHECK_EQ(Service::wrap_automatic_heading_yaw(0.0F), 0.0F);
+  }
+
+  TEST_CASE("automatic heading guards preserve native precedence and X-only thresholds") {
+    using Reason = App::Character::AutomaticHeadingSuppressionReason;
+    using Service = App::Character::PhysicalMotionService;
+
+    App::Character::RuntimeCharacter character;
+    auto& motion{character.physical_motion};
+    auto& horizontal{motion.horizontal_collision};
+    horizontal.intended_displacement = {.x = 1.0F};
+    horizontal.resolved_displacement = {.x = 1.0F, .z = 1.0F};
+
+    Service::apply_automatic_collision_heading(character);
+    CHECK_EQ(horizontal.automatic_heading_suppression, Reason::k_no_forward_collision);
+    CHECK_FALSE(horizontal.automatic_heading_applied);
+
+    horizontal.forward_collision = true;
+    horizontal.depenetrated = true;
+    motion.fall_stage = 2U;
+    character.suppress_automatic_movement_heading = true;
+    Service::apply_automatic_collision_heading(character);
+    CHECK_EQ(horizontal.automatic_heading_suppression, Reason::k_falling);
+
+    motion.fall_stage = 0U;
+    Service::apply_automatic_collision_heading(character);
+    CHECK_EQ(horizontal.automatic_heading_suppression, Reason::k_mdrot);
+    CHECK(horizontal.mdrot_suppression_active);
+
+    character.suppress_automatic_movement_heading = false;
+    horizontal.intended_displacement = {.z = 100.0F};
+    Service::apply_automatic_collision_heading(character);
+    CHECK_EQ(horizontal.automatic_heading_suppression, Reason::k_intended_x_threshold);
+
+    horizontal.intended_displacement = {.x = 0.0001F, .z = 100.0F};
+    Service::apply_automatic_collision_heading(character);
+    CHECK_EQ(horizontal.automatic_heading_suppression, Reason::k_intended_x_threshold);
+
+    horizontal.intended_displacement.x = -0.000099F;
+    Service::apply_automatic_collision_heading(character);
+    CHECK_EQ(horizontal.automatic_heading_suppression, Reason::k_intended_x_threshold);
+
+    horizontal.intended_displacement.x = 0.000101F;
+    horizontal.resolved_displacement.x = -0.0001F;
+    Service::apply_automatic_collision_heading(character);
+    CHECK_EQ(horizontal.automatic_heading_suppression, Reason::k_resolved_x_threshold);
+
+    horizontal.resolved_displacement.x = -0.000099F;
+    Service::apply_automatic_collision_heading(character);
+    CHECK_EQ(horizontal.automatic_heading_suppression, Reason::k_resolved_x_threshold);
+
+    horizontal.resolved_displacement.x = -0.000101F;
+    Service::apply_automatic_collision_heading(character);
+    CHECK(horizontal.automatic_heading_applied);
+  }
+
+  TEST_CASE("automatic heading updates only principal yaw and synchronizes its matrix") {
+    App::Character::RuntimeCharacter character;
+    character.controller_enabled = false;
+    character.set_principal_orientation({.x = 15.0F, .y = 355.0F, .z = 25.0F});
+    auto& horizontal{character.physical_motion.horizontal_collision};
+    horizontal.forward_collision = true;
+    horizontal.intended_displacement = {.x = 1.0F};
+    horizontal.resolved_displacement = {.x = std::cos(80.0F * std::numbers::pi_v<float> / 180.0F),
+        .z = std::sin(80.0F * std::numbers::pi_v<float> / 180.0F)};
+
+    App::Character::PhysicalMotionService::apply_automatic_collision_heading(character);
+
+    CHECK_EQ(character.principal_orientation_degrees.x, 15.0F);
+    CHECK(character.principal_orientation_degrees.y == doctest::Approx(5.0F));
+    CHECK_EQ(character.principal_orientation_degrees.z, 25.0F);
+    const auto expected{character.principal_orientation()};
+    for (std::size_t index{0}; index < expected.values.size(); ++index) {
+      CHECK(character.transform.matrix.values.at(index) ==
+            doctest::Approx(expected.values.at(index)));
+    }
   }
 
   TEST_CASE("gravity composes with authored candidate Y once") {
@@ -625,20 +735,10 @@ TEST_SUITE("Core::Character::PhysicalMotionService") {
         .center = {.y = 10.0F}, .radius = 2.0F};
     fixture.decor.vertices.at(1).position.x = 10.0F;
     fixture.decor.vertices.at(2).position.x = 10.0F;
-    fixture.decor.meshes.push_back(
-        App::Omikron::MeshDescriptor{.vertex_count = 4, .vertex_base = 3});
-    fixture.decor.polygons.push_back(
-        App::Omikron::MeshPolygons{.rectangles = {App::Omikron::Rectangle{
-                                       .vertices = {0, 1, 2, 3}, .face_normal = {.x = -1.0F}}}});
-    fixture.decor.vertices.insert(fixture.decor.vertices.end(),
-        {{.position = {.x = 10.0F, .y = -20.0F, .z = -20.0F}},
-            {.position = {.x = 10.0F, .y = -20.0F, .z = 20.0F}},
-            {.position = {.x = 10.0F, .y = 20.0F, .z = 20.0F}},
-            {.position = {.x = 10.0F, .y = 20.0F, .z = -20.0F}}});
-    fixture.decor.runtime_objects.push_back(App::Omikron::Model3DOData::RuntimeObjectState{});
+    fixture.add_wall();
     App::Character::PhysicalMotionService::synchronize(fixture.character);
     fixture.character.physical_motion.gravity_velocity_delta_per_tick = 0.0F;
-    fixture.character.physical_motion.candidate_translation = {.x = 20.0F, .y = -1.0F};
+    fixture.character.physical_motion.candidate_translation = {.x = 20.0F, .y = -1.0F, .z = 20.0F};
 
     App::Character::PhysicalMotionService::resolve_tick(
         fixture.character, fixture.environment(true));
@@ -648,6 +748,12 @@ TEST_SUITE("Core::Character::PhysicalMotionService") {
     CHECK(motion.horizontal_collision.forward_collision);
     CHECK(motion.horizontal_collision.intended_displacement.x == doctest::Approx(20.0F));
     CHECK(motion.horizontal_collision.resolved_displacement.x == doctest::Approx(7.0F));
+    CHECK(motion.horizontal_collision.resolved_displacement.z == doctest::Approx(20.0F));
+    CHECK(motion.horizontal_collision.automatic_heading_applied);
+    CHECK(motion.horizontal_collision.heading_delta_degrees ==
+          doctest::Approx(std::atan2(20.0F, 7.0F) * 180.0F / std::numbers::pi_v<float> - 45.0F));
+    CHECK(fixture.character.principal_orientation_degrees.y ==
+          doctest::Approx(motion.horizontal_collision.heading_delta_degrees * 0.125F));
     CHECK(motion.horizontal_collision.body_radius == doctest::Approx(2.0F));
     CHECK(motion.horizontal_collision.body_top == doctest::Approx(-12.0F));
     CHECK(motion.horizontal_collision.body_bottom ==
@@ -656,6 +762,127 @@ TEST_SUITE("Core::Character::PhysicalMotionService") {
     CHECK(motion.support.valid);
     CHECK(motion.accepted_translation.x == doctest::Approx(7.0F));
     CHECK(motion.accepted_translation.y == doctest::Approx(-1.0F));
+    CHECK(motion.accepted_translation.z == doctest::Approx(20.0F));
+  }
+
+  TEST_CASE("starting-overlap depenetration alone does not steer") {
+    PhysicalFixture fixture{12.0F};
+    fixture.resource->model.header.collision_sphere_count = 2;
+    fixture.resource->model.header.collision_sphere_slots.at(0) = {
+        .center = {.y = -10.0F}, .radius = 2.0F};
+    fixture.resource->model.header.collision_sphere_slots.at(1) = {
+        .center = {.y = 10.0F}, .radius = 2.0F};
+    fixture.add_wall();
+    fixture.character.transform.translation.x = 7.5F;
+    App::Character::PhysicalMotionService::synchronize(fixture.character);
+    fixture.character.physical_motion.gravity_velocity_delta_per_tick = 0.0F;
+    fixture.character.physical_motion.candidate_translation.x = 5.5F;
+
+    App::Character::PhysicalMotionService::resolve_tick(fixture.character, fixture.environment());
+
+    const auto& horizontal{fixture.character.physical_motion.horizontal_collision};
+    CHECK(horizontal.depenetrated);
+    CHECK_FALSE(horizontal.forward_collision);
+    CHECK_FALSE(horizontal.automatic_heading_applied);
+    CHECK_EQ(fixture.character.principal_orientation_degrees.y, 0.0F);
+  }
+
+  TEST_CASE("automatic heading observes fall stage before support starts a fall") {
+    PhysicalFixture fixture{105.0F};
+    fixture.resource->model.header.collision_sphere_count = 2;
+    fixture.resource->model.header.collision_sphere_slots.at(0) = {
+        .center = {.y = -10.0F}, .radius = 2.0F};
+    fixture.resource->model.header.collision_sphere_slots.at(1) = {
+        .center = {.y = 10.0F}, .radius = 2.0F};
+    fixture.add_wall();
+    App::Character::PhysicalMotionService::synchronize(fixture.character);
+    fixture.character.physical_motion.gravity_velocity_delta_per_tick = 0.0F;
+    fixture.character.physical_motion.candidate_translation = {.x = 20.0F, .z = 20.0F};
+
+    App::Character::PhysicalMotionService::resolve_tick(
+        fixture.character, fixture.environment(true));
+
+    CHECK(fixture.character.physical_motion.horizontal_collision.automatic_heading_applied);
+    CHECK_NE(fixture.character.physical_motion.fall_stage, 0U);
+    CHECK_NE(fixture.character.principal_orientation_degrees.y, 0.0F);
+  }
+
+  TEST_CASE("MDROT suppresses only steering for one tick and rollback preserves later yaw") {
+    PhysicalFixture fixture;
+    fixture.resource->model.header.collision_sphere_count = 2;
+    fixture.resource->model.header.collision_sphere_slots.at(0) = {
+        .center = {.y = -10.0F}, .radius = 2.0F};
+    fixture.resource->model.header.collision_sphere_slots.at(1) = {
+        .center = {.y = 10.0F}, .radius = 2.0F};
+    fixture.decor = {};
+    fixture.add_wall();
+    App::Character::PhysicalMotionService::synchronize(fixture.character);
+    fixture.character.physical_motion.gravity_velocity_delta_per_tick = 0.0F;
+    fixture.character.physical_motion.candidate_translation = {.x = 20.0F, .z = 20.0F};
+    fixture.character.suppress_automatic_movement_heading = true;
+
+    App::Character::PhysicalMotionService::resolve_tick(fixture.character, fixture.environment());
+
+    auto& motion{fixture.character.physical_motion};
+    CHECK(motion.horizontal_collision.forward_collision);
+    CHECK(motion.horizontal_collision.mdrot_suppression_active);
+    CHECK_FALSE(motion.horizontal_collision.automatic_heading_applied);
+    CHECK_EQ(motion.candidate_translation.x, 0.0F);
+    CHECK_EQ(motion.accepted_translation.x, 0.0F);
+    CHECK_EQ(fixture.character.transform.translation.x, 0.0F);
+    CHECK_EQ(fixture.character.principal_orientation_degrees.y, 0.0F);
+    CHECK_FALSE(fixture.character.suppress_automatic_movement_heading);
+    const auto suppressed_resolved{motion.horizontal_collision.resolved_displacement};
+
+    motion.candidate_translation = {.x = 20.0F, .z = 20.0F};
+    App::Character::PhysicalMotionService::resolve_tick(fixture.character, fixture.environment());
+
+    CHECK(motion.horizontal_collision.forward_collision);
+    CHECK(motion.horizontal_collision.automatic_heading_applied);
+    CHECK_EQ(motion.horizontal_collision.resolved_displacement.x,
+        doctest::Approx(suppressed_resolved.x));
+    CHECK_EQ(motion.horizontal_collision.resolved_displacement.z,
+        doctest::Approx(suppressed_resolved.z));
+    CHECK_EQ(motion.horizontal_collision.resolved_displacement.x, doctest::Approx(7.0F));
+    CHECK_EQ(motion.horizontal_collision.resolved_displacement.z, doctest::Approx(20.0F));
+    CHECK_EQ(motion.candidate_translation.x, 0.0F);
+    CHECK_EQ(motion.accepted_translation.x, 0.0F);
+    CHECK_EQ(fixture.character.transform.translation.x, 0.0F);
+    CHECK_NE(fixture.character.principal_orientation_degrees.y, 0.0F);
+    CHECK_FALSE(fixture.character.suppress_automatic_movement_heading);
+    const float first_correction{fixture.character.principal_orientation_degrees.y};
+
+    motion.candidate_translation = {.x = 20.0F, .z = 20.0F};
+    App::Character::PhysicalMotionService::resolve_tick(fixture.character, fixture.environment());
+
+    CHECK(motion.horizontal_collision.automatic_heading_applied);
+    CHECK(fixture.character.principal_orientation_degrees.y ==
+          doctest::Approx(first_correction * 2.0F));
+    CHECK_EQ(motion.accepted_translation.x, 0.0F);
+  }
+
+  TEST_CASE("MDROT clears after a successful collision and support commit") {
+    PhysicalFixture fixture{12.0F};
+    fixture.resource->model.header.collision_sphere_count = 2;
+    fixture.resource->model.header.collision_sphere_slots.at(0) = {
+        .center = {.y = -10.0F}, .radius = 2.0F};
+    fixture.resource->model.header.collision_sphere_slots.at(1) = {
+        .center = {.y = 10.0F}, .radius = 2.0F};
+    fixture.add_wall();
+    App::Character::PhysicalMotionService::synchronize(fixture.character);
+    fixture.character.physical_motion.gravity_velocity_delta_per_tick = 0.0F;
+    fixture.character.physical_motion.candidate_translation = {.x = 20.0F, .z = 20.0F};
+    fixture.character.suppress_automatic_movement_heading = true;
+
+    App::Character::PhysicalMotionService::resolve_tick(fixture.character, fixture.environment());
+
+    CHECK(fixture.character.physical_motion.horizontal_collision.forward_collision);
+    CHECK_FALSE(fixture.character.physical_motion.horizontal_collision.automatic_heading_applied);
+    CHECK(fixture.character.physical_motion.support.valid);
+    CHECK(fixture.character.physical_motion.accepted_translation.x == doctest::Approx(7.0F));
+    CHECK(fixture.character.physical_motion.accepted_translation.z == doctest::Approx(20.0F));
+    CHECK_EQ(fixture.character.principal_orientation_degrees.y, 0.0F);
+    CHECK_FALSE(fixture.character.suppress_automatic_movement_heading);
   }
 
   TEST_CASE("collision scale is configurable and invalid horizontal bodies resolve as identity") {

@@ -201,6 +201,88 @@ std::uint8_t PhysicalMotionService::resolve_fall_stage(
   return fall_stage_for_gap(positive_gap);
 }
 
+float PhysicalMotionService::normalize_automatic_heading_delta(float delta_degrees) {
+  if (delta_degrees < -180.0F) {
+    delta_degrees += 360.0F;
+  }
+  if (delta_degrees > 180.0F) {
+    delta_degrees -= 360.0F;
+  }
+  return delta_degrees;
+}
+
+float PhysicalMotionService::automatic_heading_correction(
+    const float intended_heading_degrees, const float resolved_heading_degrees) {
+  return normalize_automatic_heading_delta(resolved_heading_degrees - intended_heading_degrees) *
+         K_AUTOMATIC_HEADING_CORRECTION_FACTOR;
+}
+
+float PhysicalMotionService::wrap_automatic_heading_yaw(float yaw_degrees) {
+  if (yaw_degrees > 360.0F) {
+    yaw_degrees -= 360.0F;
+  }
+  if (yaw_degrees < 0.0F) {
+    yaw_degrees += 360.0F;
+  }
+  return yaw_degrees;
+}
+
+void PhysicalMotionService::apply_automatic_collision_heading(RuntimeCharacter& character) {
+  PhysicalMotionState& motion{character.physical_motion};
+  HorizontalCollisionState& horizontal{motion.horizontal_collision};
+  horizontal.automatic_heading_applied = false;
+  horizontal.automatic_heading_suppression = AutomaticHeadingSuppressionReason::k_none;
+  horizontal.intended_heading_degrees = 0.0F;
+  horizontal.resolved_heading_degrees = 0.0F;
+  horizontal.heading_delta_degrees = 0.0F;
+  horizontal.yaw_before_degrees = 0.0F;
+  horizontal.yaw_after_degrees = 0.0F;
+  horizontal.mdrot_suppression_active = character.suppress_automatic_movement_heading;
+
+  if (!horizontal.forward_collision) {
+    horizontal.automatic_heading_suppression =
+        AutomaticHeadingSuppressionReason::k_no_forward_collision;
+    return;
+  }
+  if (motion.fall_stage != 0U) {
+    horizontal.automatic_heading_suppression = AutomaticHeadingSuppressionReason::k_falling;
+    return;
+  }
+  if (character.suppress_automatic_movement_heading) {
+    horizontal.automatic_heading_suppression = AutomaticHeadingSuppressionReason::k_mdrot;
+    return;
+  }
+  if (std::abs(horizontal.intended_displacement.x) <= K_AUTOMATIC_HEADING_X_THRESHOLD) {
+    horizontal.automatic_heading_suppression =
+        AutomaticHeadingSuppressionReason::k_intended_x_threshold;
+    return;
+  }
+  if (std::abs(horizontal.resolved_displacement.x) <= K_AUTOMATIC_HEADING_X_THRESHOLD) {
+    horizontal.automatic_heading_suppression =
+        AutomaticHeadingSuppressionReason::k_resolved_x_threshold;
+    return;
+  }
+
+  horizontal.resolved_heading_degrees =
+      std::atan2(horizontal.resolved_displacement.z, horizontal.resolved_displacement.x) * 180.0F /
+      std::numbers::pi_v<float>;
+  horizontal.intended_heading_degrees =
+      std::atan2(horizontal.intended_displacement.z, horizontal.intended_displacement.x) * 180.0F /
+      std::numbers::pi_v<float>;
+  horizontal.heading_delta_degrees = normalize_automatic_heading_delta(
+      horizontal.resolved_heading_degrees - horizontal.intended_heading_degrees);
+  horizontal.yaw_before_degrees = character.principal_orientation_degrees.y;
+  horizontal.yaw_after_degrees =
+      wrap_automatic_heading_yaw(horizontal.yaw_before_degrees +
+                                 automatic_heading_correction(horizontal.intended_heading_degrees,
+                                     horizontal.resolved_heading_degrees));
+
+  App::Runtime::Vec3 orientation{character.principal_orientation_degrees};
+  orientation.y = horizontal.yaw_after_degrees;
+  character.set_principal_orientation(orientation);
+  horizontal.automatic_heading_applied = true;
+}
+
 void PhysicalMotionService::resolve_tick(
     RuntimeCharacter& character, const PhysicalMotionEnvironment& environment) {
   PhysicalMotionState& motion{character.physical_motion};
@@ -265,6 +347,7 @@ void PhysicalMotionService::resolve_tick(
   }
   motion.candidate_translation.x += horizontal_result.resolved_displacement.x;
   motion.candidate_translation.z += horizontal_result.resolved_displacement.z;
+  apply_automatic_collision_heading(character);
 
   if (!largest.has_value() || !second_bottom.has_value() || !extents.has_value()) {
     if (!motion.missing_body_warning_emitted) {

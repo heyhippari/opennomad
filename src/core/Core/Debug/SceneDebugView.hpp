@@ -158,6 +158,15 @@ struct RuntimeCharacterDebugState {
   std::array<float, 3> horizontal_contact_point{};
   std::array<float, 3> horizontal_response_normal{};
   float horizontal_contact_distance{0.0F};
+  bool automatic_heading_applied{false};
+  bool mdrot_suppression_active{false};
+  Character::AutomaticHeadingSuppressionReason automatic_heading_suppression{
+      Character::AutomaticHeadingSuppressionReason::k_none};
+  float intended_heading_degrees{0.0F};
+  float resolved_heading_degrees{0.0F};
+  float heading_delta_degrees{0.0F};
+  float yaw_before_degrees{0.0F};
+  float yaw_after_degrees{0.0F};
   bool physical_support_valid{false};
   std::optional<std::size_t> physical_support_object_index;
   std::string physical_support_object_name;

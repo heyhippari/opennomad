@@ -63,6 +63,26 @@ std::string known_mesh_flags(const std::uint32_t flags) {
   return result.empty() ? std::string{"<none>"} : result;
 }
 
+constexpr const char* automatic_heading_suppression_name(
+    const Character::AutomaticHeadingSuppressionReason reason) {
+  using Reason = Character::AutomaticHeadingSuppressionReason;
+  switch (reason) {
+    case Reason::k_none:
+      return "none";
+    case Reason::k_no_forward_collision:
+      return "no forward collision";
+    case Reason::k_falling:
+      return "falling";
+    case Reason::k_mdrot:
+      return "MDROT000";
+    case Reason::k_intended_x_threshold:
+      return "intended X threshold";
+    case Reason::k_resolved_x_threshold:
+      return "resolved X threshold";
+  }
+  return "unknown";
+}
+
 }  // namespace
 
 void DebugUI::show_world_inspector() {
@@ -446,6 +466,22 @@ void DebugUI::show_world_inspector() {
           character.horizontal_collision_passes,
           character.horizontal_depenetration_iterations,
           character.horizontal_depenetration_limit_reached ? " (safety cap)" : "");
+      ImGui::Text(
+          "Automatic heading applied: %s", character.automatic_heading_applied ? "yes" : "no");
+      ImGui::Text("Automatic heading suppression: %s",
+          automatic_heading_suppression_name(character.automatic_heading_suppression));
+      ImGui::Text("MDROT steering suppression active this tick: %s",
+          character.mdrot_suppression_active ? "yes" : "no");
+      if (character.automatic_heading_applied) {
+        ImGui::Text("Movement headings intended/resolved: %.3f / %.3f deg",
+            static_cast<double>(character.intended_heading_degrees),
+            static_cast<double>(character.resolved_heading_degrees));
+        ImGui::Text(
+            "Heading delta: %.3f deg", static_cast<double>(character.heading_delta_degrees));
+        ImGui::Text("Yaw before/after: %.3f / %.3f deg",
+            static_cast<double>(character.yaw_before_degrees),
+            static_cast<double>(character.yaw_after_degrees));
+      }
       if (character.horizontal_object_index.has_value()) {
         ImGui::Text("Last collision object: %zu, distance: %.3f in",
             character.horizontal_object_index.value(),

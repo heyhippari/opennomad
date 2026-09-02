@@ -642,6 +642,14 @@ std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state
       debug_character.horizontal_response_normal = {
           horizontal.response_normal.x, horizontal.response_normal.y, horizontal.response_normal.z};
       debug_character.horizontal_contact_distance = horizontal.contact_distance;
+      debug_character.automatic_heading_applied = horizontal.automatic_heading_applied;
+      debug_character.mdrot_suppression_active = horizontal.mdrot_suppression_active;
+      debug_character.automatic_heading_suppression = horizontal.automatic_heading_suppression;
+      debug_character.intended_heading_degrees = horizontal.intended_heading_degrees;
+      debug_character.resolved_heading_degrees = horizontal.resolved_heading_degrees;
+      debug_character.heading_delta_degrees = horizontal.heading_delta_degrees;
+      debug_character.yaw_before_degrees = horizontal.yaw_before_degrees;
+      debug_character.yaw_after_degrees = horizontal.yaw_after_degrees;
       debug_character.physical_support_valid = physical.support.valid;
       debug_character.physical_support_object_index = physical.support.object_index;
       debug_character.physical_support_point = {

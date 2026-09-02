@@ -1,6 +1,6 @@
 # Character physical motion
 
-> **Status:** Phase 4.2C.1 ordinary horizontal collision complete
+> **Status:** Phase 4.2C.2 automatic collision heading complete
 > **Last updated:** 2026-09-02
 
 This document separates recovered retail actor semantics from OpenNomad's modern C++ representation. Runtime did not contain a C++ abstraction named `PhysicalMotionService`.
@@ -53,7 +53,7 @@ synchronize or defensively re-anchor from the live transform
 -> drain that tick's deferred CTL callbacks
 -> gravity integration
 -> ordinary mode-1 horizontal finite-cylinder collision and wall sliding
--> automatic collision heading (Phase C.2, deferred)
+-> C.2 collision-induced heading correction
 -> owning-world static support query
 -> vertical displacement, grounding, and fall-state resolution
 -> accepted-position publication or complete rollback
@@ -67,7 +67,7 @@ Authoritative address placement and materialization with `apply_transform=true` 
 
 Structured ownership is gated before ordinary time accumulation. No CTL ticks, physical ticks, generations, or catch-up debt accrue while it is active. The first later ordinary tick re-anchors before CTL can produce new movement.
 
-`MDROT000` remains visible after CTL callback dispatch and through entry to physical resolution. Phase 4.2A then clears it at the physical boundary; automatic movement-heading calculation is not implemented yet.
+`MDROT000` remains visible after CTL callback dispatch, through C.1 collision, and into C.2. It suppresses only collision-induced yaw for that physical tick; commit or rollback clears it at the physical boundary.
 
 ## OpenNomad Phase 4.2B data and vertical service
 
@@ -110,17 +110,20 @@ Missing moves and absent or disabled controllers do not change physical results.
 
 Phase C.1 implements ordinary horizontal collision around `0x00469580`, including continuous transformed-world triangle/quad feature collision, native skin/lookahead/depenetration, and iterative wall sliding. See [`character-horizontal-collision.md`](character-horizontal-collision.md) for the recovered formulas, constants, filters, and result semantics. The B-series support behavior remains documented in [`character-support-motion.md`](character-support-motion.md).
 
+Phase C.2 consumes C.1's original intended and final resolved X/Z immediately before B support. A qualifying forward collision rotates principal yaw by one eighth of the shortest resolved-minus-intended heading difference. It uses the fall stage entering B, works independently of CTL presence or enablement, and preserves corrected yaw if later B processing rolls position back.
+
 Still deferred:
 
-- Phase C.2 automatic movement-heading rewriting and `MDROT000`'s actual steering suppression effect;
 - Phase C.3 mode-4 steep-slope horizontal response and extended/general collision consumers;
-- transformed/moving and class-2 support response;
-- moving platforms and conveyors;
+- D8/E0 horizontal physical velocity, moving/conveyor support, and class-2 support;
+- moving-platform association;
 - generic actor/object collision;
 - exact swept ceiling collision through the general collision pipeline.
 
 Adventure fall/landing event dispatch through `0x00414DE0` and the native jump
-callback choreography remain deferred to their owning systems; they are not
+callback choreography remain deferred to their owning systems. The native
+spatial-service heading latch, jump guard, and special movement/global motion
+guard likewise remain deferred until their legitimate producers exist; they are not
 substituted with physical-service event IDs or a partial jump mode.
 
 See [`3do.md`](3do.md) for the authored collision substrate and [`ctl.md`](ctl.md)
