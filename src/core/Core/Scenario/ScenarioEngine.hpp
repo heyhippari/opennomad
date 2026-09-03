@@ -53,8 +53,8 @@ class ScenarioEngine {
   /// music sink (opcode 0x67).
   void set_audio_system(Audio::AudioSystem* audio);
 
-  /// Per-frame scenario scheduler update: advances the active AREA script
-  /// and then ticks the gameplay-mode runtime and every LoadedActive world
+  /// Per-frame scenario scheduler update: advances resident AREA scripts
+  /// and then ticks the gameplay-mode runtime and every resident world
   /// runtime with the real application delta in seconds. No-op until a new
   /// session is initialized.
   [[nodiscard]] std::expected<void, std::string> update(float delta_seconds);
@@ -124,6 +124,9 @@ class ScenarioEngine {
   }
   [[nodiscard]] bool area_transition_pending() const {
     return m_startup.area_transition_pending();
+  }
+  [[nodiscard]] AreaTransitionState area_transition_state() const {
+    return m_startup.area_transition_state();
   }
   [[nodiscard]] const Script::AreaScriptRuntime* area_script() const {
     return m_startup.area_script();

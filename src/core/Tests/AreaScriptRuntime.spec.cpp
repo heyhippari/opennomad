@@ -50,8 +50,10 @@ using App::Script::AreaSceneAttachRequest;
 using App::Script::AreaScriptRuntime;
 using App::Script::AreaScriptState;
 using App::Script::AreaScxScriptRequest;
+using App::Script::AreaTransitionDisposition;
 using App::Script::AreaTransitionHandle;
 using App::Script::AreaTransitionRequest;
+using App::Script::AreaTransitionResult;
 using App::Script::AreaWaitKind;
 using App::Script::AreaZoneActivationRequest;
 
@@ -778,6 +780,26 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     REQUIRE(captured.has_value());
     CHECK_EQ(captured->address_id, 654);
     CHECK(runtime.wait_info().kind == AreaWaitKind::k_none);
+  }
+
+  TEST_CASE("0x48 detaches an AREA SCENE without waiting") {
+    Buffer bytes;
+    bytes.u8(0x48).u16(222).u8(0x03);
+    AreaScriptRuntime runtime{bytes.data()};
+    std::optional<App::Script::AreaSceneDetachRequest> request;
+    runtime.set_area_scene_detach_sink(
+        [&request](
+            const App::Script::AreaSceneDetachRequest& value) -> std::expected<void, std::string> {
+          request = value;
+          return {};
+        });
+    runtime.queue_event(1);
+    runtime.activate();
+
+    CHECK(runtime.run() == AreaScriptState::k_ready);
+    REQUIRE(request.has_value());
+    CHECK_EQ(request->area_id, 222);
+    CHECK_EQ(runtime.instruction_pointer(), 4U);
   }
 
   TEST_CASE("0x38 selects the current character once and continues through EndEvent") {
@@ -1592,9 +1614,10 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     AreaScriptRuntime runtime{bytes.data()};
     std::vector<AreaTransitionRequest> requests;
     runtime.set_area_transition_sink([&requests](const AreaTransitionRequest& request)
-                                         -> std::expected<AreaTransitionHandle, std::string> {
+                                         -> std::expected<AreaTransitionResult, std::string> {
       requests.push_back(request);
-      return AreaTransitionHandle{.generation = 42};
+      return AreaTransitionResult{.disposition = AreaTransitionDisposition::k_accepted_waiting,
+          .handle = AreaTransitionHandle{.generation = 42}};
     });
     runtime.queue_event(1);
     runtime.activate();
@@ -1602,8 +1625,8 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     REQUIRE(runtime.run() == AreaScriptState::k_waiting);
     REQUIRE_EQ(requests.size(), 1U);
     CHECK_EQ(requests.front().target_area_id, 222);
-    CHECK_EQ(requests.front().operand_b, -1);
-    CHECK_EQ(requests.front().operand_c, -1);
+    CHECK_EQ(requests.front().pre_crossing_script_id, -1);
+    CHECK_EQ(requests.front().post_crossing_script_id, -1);
     CHECK_EQ(runtime.instruction_pointer(), 7U);
     CHECK_EQ(runtime.runtime_state(), 10U);
     CHECK_EQ(runtime.wait_state(), 10U);
@@ -1644,27 +1667,34 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
           std::string::npos);
   }
 
-  TEST_CASE("0x2F propagates coordinator rejection without executing its successor") {
+  TEST_CASE("0x2F busy rewinds, yields in state 9, and retries on the next service") {
     Buffer bytes;
     bytes.u8(0x2F).u16(222).u16(0xFFFF).u16(0xFFFF).u8(0x03);
     AreaScriptRuntime runtime{bytes.data()};
     std::size_t calls{0};
     runtime.set_area_transition_sink(
-        [&calls](const AreaTransitionRequest&) -> std::expected<AreaTransitionHandle, std::string> {
+        [&calls](const AreaTransitionRequest&) -> std::expected<AreaTransitionResult, std::string> {
           ++calls;
-          return std::expected<AreaTransitionHandle, std::string>{
-              std::unexpect, "coordinator is busy"};
+          if (calls == 1U) {
+            return AreaTransitionResult{
+                .disposition = AreaTransitionDisposition::k_busy_retry, .handle = std::nullopt};
+          }
+          return AreaTransitionResult{
+              .disposition = AreaTransitionDisposition::k_immediate_continue,
+              .handle = std::nullopt};
         });
     runtime.queue_event(1);
     runtime.activate();
 
-    CHECK(runtime.run() == AreaScriptState::k_failed);
+    CHECK(runtime.run() == AreaScriptState::k_waiting);
     CHECK_EQ(calls, 1U);
     CHECK_EQ(runtime.instruction_pointer(), 0U);
-    CHECK(runtime.pause_info().reason_text.find("failed to begin AREA transition to 222") !=
-          std::string::npos);
-    CHECK(runtime.pause_info().reason_text.find("coordinator is busy") != std::string::npos);
-    CHECK(runtime.trace().empty());
+    CHECK_EQ(runtime.runtime_state(), 9U);
+    CHECK(runtime.wait_info().kind == AreaWaitKind::k_area_transition_retry);
+
+    CHECK(runtime.run() == AreaScriptState::k_ready);
+    CHECK_EQ(calls, 2U);
+    CHECK_EQ(runtime.instruction_pointer(), 8U);
   }
 
   TEST_CASE("0x2F rejects unresolved transition variants and parameter references") {

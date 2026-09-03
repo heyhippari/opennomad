@@ -425,7 +425,7 @@ TEST_SUITE("Core::Scenario::ScenarioManager") {
     CHECK_EQ(manager.world_contexts().size(), 2U);
     CHECK(manager.gameplay_mode_scx() != nullptr);
     CHECK_EQ(manager.loaded_scenario_count(), 2U);
-    CHECK(manager.world_contexts()[0].residency == App::WorldSceneResidencyState::LoadedActive);
+    CHECK(manager.world_contexts()[0].residency == App::WorldSceneResidencyState::ResidentAttached);
     CHECK_EQ(manager.world_contexts()[0].scene_id, 0U);
     CHECK(manager.world_contexts()[1].residency == App::WorldSceneResidencyState::Free);
   }
@@ -477,7 +477,7 @@ TEST_SUITE("Core::Scenario::ScenarioManager") {
     REQUIRE(manager.set_gameplay_mode(App::GameplayMode::FirstPersonShooting).has_value());
     CHECK(manager.current_gameplay_mode() == App::GameplayMode::FirstPersonShooting);
     CHECK_EQ(manager.scenario_inventory().at(0).scenario_path, "SCPTDATA/shoot2.scx");
-    CHECK(manager.world_contexts()[0].residency == App::WorldSceneResidencyState::LoadedActive);
+    CHECK(manager.world_contexts()[0].residency == App::WorldSceneResidencyState::ResidentAttached);
     CHECK_EQ(manager.world_contexts()[0].scenario_path, "SCPTDATA/GRID.SCX");
     CHECK(manager.world_contexts()[1].residency == App::WorldSceneResidencyState::Free);
   }
@@ -519,7 +519,7 @@ TEST_SUITE("Core::Scenario::ScenarioManager") {
     CHECK(manager.find_world_context(1) == nullptr);  // A was recycled.
   }
 
-  TEST_CASE("A LoadedActive context is never evicted") {
+  TEST_CASE("A ResidentAttached context is never evicted") {
     const TempDirectory temp;
     write_boot_fixtures(temp);
     write_bytes(temp.root() / "SCPTDATA" / "B.SCX", make_script_scx(1));
@@ -532,11 +532,11 @@ TEST_SUITE("Core::Scenario::ScenarioManager") {
     REQUIRE(manager.load_world_context(3, std::nullopt, "SCPTDATA/C.SCX").has_value());
 
     CHECK_EQ(manager.world_contexts()[0].scene_id, 0U);
-    CHECK(manager.world_contexts()[0].residency == App::WorldSceneResidencyState::LoadedActive);
+    CHECK(manager.world_contexts()[0].residency == App::WorldSceneResidencyState::ResidentAttached);
     CHECK_EQ(manager.world_contexts()[1].scene_id, 3U);  // B (inactive) was recycled.
   }
 
-  TEST_CASE("Both contexts LoadedActive causes a clean capacity failure") {
+  TEST_CASE("Both contexts ResidentAttached causes a clean capacity failure") {
     const TempDirectory temp;
     write_boot_fixtures(temp);
     write_bytes(temp.root() / "SCPTDATA" / "B.SCX", make_script_scx(1));
@@ -550,12 +550,12 @@ TEST_SUITE("Core::Scenario::ScenarioManager") {
 
     auto third{manager.load_world_context(3, std::nullopt, "SCPTDATA/C.SCX")};
     REQUIRE_FALSE(third.has_value());
-    CHECK(third.error().find("LoadedActive") != std::string::npos);
+    CHECK(third.error().find("ResidentAttached") != std::string::npos);
 
     CHECK_EQ(manager.world_contexts()[0].scene_id, 0U);
     CHECK_EQ(manager.world_contexts()[1].scene_id, 2U);
-    CHECK(manager.world_contexts()[0].residency == App::WorldSceneResidencyState::LoadedActive);
-    CHECK(manager.world_contexts()[1].residency == App::WorldSceneResidencyState::LoadedActive);
+    CHECK(manager.world_contexts()[0].residency == App::WorldSceneResidencyState::ResidentAttached);
+    CHECK(manager.world_contexts()[1].residency == App::WorldSceneResidencyState::ResidentAttached);
   }
 
   TEST_CASE("Deactivation preserves loaded state and reactivation does not reparse") {
@@ -571,11 +571,11 @@ TEST_SUITE("Core::Scenario::ScenarioManager") {
     REQUIRE(before != nullptr);
 
     REQUIRE(manager.deactivate_world_context(0).has_value());
-    CHECK(manager.world_contexts()[0].residency == App::WorldSceneResidencyState::LoadedInactive);
+    CHECK(manager.world_contexts()[0].residency == App::WorldSceneResidencyState::ResidentDetached);
     CHECK(manager.world_context_scx(0) == before);  // Same parsed data, no reparse.
 
     REQUIRE(manager.activate_world_context(0).has_value());
-    CHECK(manager.world_contexts()[0].residency == App::WorldSceneResidencyState::LoadedActive);
+    CHECK(manager.world_contexts()[0].residency == App::WorldSceneResidencyState::ResidentAttached);
     CHECK(manager.world_context_scx(0) == before);
     CHECK_EQ(manager.world_contexts()[0].generation, generation_before);
   }
@@ -694,7 +694,7 @@ TEST_SUITE("Core::Scenario::ScenarioManager") {
     auto result{manager.load_world_context(5, std::nullopt, "SCPTDATA/Bad.SCX")};
     REQUIRE_FALSE(result.has_value());
 
-    CHECK(manager.world_contexts()[0].residency == App::WorldSceneResidencyState::LoadedActive);
+    CHECK(manager.world_contexts()[0].residency == App::WorldSceneResidencyState::ResidentAttached);
     CHECK_EQ(manager.world_contexts()[0].scenario_path, "SCPTDATA/GRID.SCX");
     CHECK(manager.world_contexts()[1].residency == App::WorldSceneResidencyState::Free);
     CHECK(manager.gameplay_mode_scx() != nullptr);
@@ -715,7 +715,7 @@ TEST_SUITE("Core::Scenario::ScenarioManager") {
     CHECK(manager.current_gameplay_mode() == App::GameplayMode::Adventure);
     CHECK_EQ(manager.scenario_inventory().at(0).scenario_path, "SCPTDATA/aventure.scx");
     CHECK(manager.gameplay_mode_scx() != nullptr);
-    CHECK(manager.world_contexts()[0].residency == App::WorldSceneResidencyState::LoadedActive);
+    CHECK(manager.world_contexts()[0].residency == App::WorldSceneResidencyState::ResidentAttached);
   }
 
   TEST_CASE("SCPTDATA/GRID.SCX resolves an on-disk Grid.SCX fixture") {
@@ -802,7 +802,7 @@ TEST_SUITE("Core::Scenario::ScenarioManager") {
 
     CHECK(manager.gameplay_runtime() != gameplay_before);
     CHECK(manager.world_runtime(0) == world_before);  // World context untouched.
-    CHECK(manager.world_contexts()[0].residency == App::WorldSceneResidencyState::LoadedActive);
+    CHECK(manager.world_contexts()[0].residency == App::WorldSceneResidencyState::ResidentAttached);
   }
 
   TEST_CASE("World unload destroys the world runtime and advances the generation") {
@@ -824,7 +824,7 @@ TEST_SUITE("Core::Scenario::ScenarioManager") {
     CHECK_EQ(manager.world_contexts()[0].generation, generation_before + 1U);
   }
 
-  TEST_CASE("Recycling a LoadedInactive slot destroys the old runtime and creates a new one") {
+  TEST_CASE("Recycling a ResidentDetached slot destroys the old runtime and creates a new one") {
     const TempDirectory temp;
     write_bytes(temp.root() / "SCPTDATA" / "A.SCX", make_script_scx(1));
     write_bytes(temp.root() / "SCPTDATA" / "B.SCX", make_script_scx(1));
@@ -885,7 +885,7 @@ TEST_SUITE("Core::Scenario::ScenarioManager") {
     CHECK(active.identity.role == App::ScenarioRole::WorldScene);
     CHECK_EQ(active.identity.slot.value_or(99U), 0U);
     CHECK_EQ(active.identity.scene_id, 0U);
-    CHECK(active.residency == App::WorldSceneResidencyState::LoadedActive);
+    CHECK(active.residency == App::WorldSceneResidencyState::ResidentAttached);
 
     const auto free_slot{App::Debug::DebugRuntimeContext::resolve(
         App::Debug::DebugRuntimeTarget::k_world_slot_1, &manager)};
@@ -924,6 +924,22 @@ TEST_SUITE("Core::Scenario::ScenarioManager") {
     CHECK(context.refresh(&manager));
     CHECK(context.resolved().identity.generation > before_recycle_generation);
     CHECK_EQ(context.selection_epoch(), before_recycle_epoch + 1U);
+  }
+
+  TEST_CASE("A resident world without SCX still owns generic world runtime services") {
+    App::ScenarioManager manager;
+    auto loaded{manager.load_world_context(42U, std::nullopt, std::nullopt)};
+    REQUIRE(loaded.has_value());
+    REQUIRE(loaded.value()->runtime != nullptr);
+    CHECK_FALSE(loaded.value()->scx_data.has_value());
+    CHECK(loaded.value()->runtime->script_runtime() == nullptr);
+    CHECK(loaded.value()->runtime->initialized());
+    CHECK_EQ(loaded.value()->residency, App::WorldSceneResidencyState::ResidentDetached);
+
+    REQUIRE(manager.activate_world_context(42U).has_value());
+    CHECK_EQ(loaded.value()->residency, App::WorldSceneResidencyState::ResidentAttached);
+    REQUIRE(manager.deactivate_world_context(42U).has_value());
+    CHECK_EQ(loaded.value()->residency, App::WorldSceneResidencyState::ResidentDetached);
   }
 }
 

@@ -59,6 +59,7 @@ std::expected<void, std::string> ScenarioManager::reset_for_new_session() {
   APP_PROFILE_FUNCTION();
 
   m_controlled_character.reset();
+  m_current_world_scene_id.reset();
   m_dialog_camera_generation.reset();
   m_game_state.reset();
   // Tear down both world contexts directly rather than through the
@@ -196,14 +197,14 @@ std::expected<void, std::string> ScenarioManager::set_gameplay_mode(const Gamepl
 std::expected<WorldSceneContext*, std::string> ScenarioManager::load_world_context(
     const std::uint32_t scene_id,
     std::optional<std::string> decor_path,
-    const std::string& scenario_path) {
+    std::optional<std::string> scenario_path) {
   APP_PROFILE_FUNCTION();
 
   WorldSceneContext* target{allocate_world_context_slot()};
   if (target == nullptr) {
     return std::expected<WorldSceneContext*, std::string>{std::unexpect,
         fmt::format("Cannot allocate world context slot for scene {}: no free or recyclable "
-                    "entry (both are LoadedActive)",
+                    "entry (both are ResidentAttached)",
             scene_id)};
   }
 
@@ -218,7 +219,7 @@ std::expected<WorldSceneContext*, std::string> ScenarioManager::load_world_conte
       "load begin: role=world_scene cache_index={} scene_id={} path={}",
       cache_index,
       scene_id,
-      scenario_path);
+      scenario_path.value_or("<world-only>"));
 
   // Optional decor (level) model first: the recovered AREA dependency loader
   // parses the decor before the scenario SCX. Best-effort and non-fatal — a
@@ -243,39 +244,40 @@ std::expected<WorldSceneContext*, std::string> ScenarioManager::load_world_conte
 
   // Load and parse into temporary ownership BEFORE mutating the target so a
   // failed load leaves every currently resident context intact.
-  auto loaded{load_scenario(scenario_path)};
-  if (!loaded) {
-    target->last_error = loaded.error();
-    App::Log::error(LogCategory::Scenario,
-        "load failed: role=world_scene cache_index={} scene_id={}: {}",
-        cache_index,
-        scene_id,
-        loaded.error());
-    return std::expected<WorldSceneContext*, std::string>{std::unexpect, std::move(loaded).error()};
-  }
-
-  // Build the replacement runtime from the freshly parsed package before
-  // touching the target so a runtime-construction failure leaves every
-  // resident context intact.
-  auto runtime{prepare_runtime(scenario_path, loaded.value())};
-  if (!runtime) {
-    target->last_error = runtime.error();
-    App::Log::error(LogCategory::Scenario,
-        "load failed: role=world_scene cache_index={} scene_id={}: {}",
-        cache_index,
-        scene_id,
-        runtime.error());
-    return std::expected<WorldSceneContext*, std::string>{
-        std::unexpect, std::move(runtime).error()};
+  std::optional<LoadedScenario> loaded;
+  std::unique_ptr<ScenarioRuntime> runtime;
+  if (scenario_path.has_value()) {
+    auto scenario{load_scenario(*scenario_path)};
+    if (!scenario) {
+      target->last_error = scenario.error();
+      return std::expected<WorldSceneContext*, std::string>{
+          std::unexpect, std::move(scenario).error()};
+    }
+    loaded.emplace(std::move(scenario).value());
+    auto prepared{prepare_runtime(*scenario_path, *loaded)};
+    if (!prepared) {
+      target->last_error = prepared.error();
+      return std::expected<WorldSceneContext*, std::string>{
+          std::unexpect, std::move(prepared).error()};
+    }
+    runtime = std::move(prepared).value();
+  } else {
+    runtime = std::make_unique<ScenarioRuntime>();
+    runtime->set_body_locator([this](const Character::BodyIdentity body_identity) {
+      const auto located{find_character_body(body_identity)};
+      return located.has_value() ? located->character : nullptr;
+    });
+    runtime->initialize_world_only(fmt::format("world-{}", scene_id), m_audio_system);
   }
 
   // The replacement is ready: tear down the recycled entry (if any) and
   // atomically install the new paired model/SCX/runtime state.
-  LoadedScenario package{std::move(loaded).value()};
-  const std::size_t script_count{package.scx_data.scripts.size()};
-  const std::size_t sound_count{package.scx_data.sounds.size()};
-  const std::size_t sprite_count{package.scx_data.sprites.size()};
-  const std::size_t model_count{package.scx_data.models.size()};
+  const std::size_t script_count{loaded ? loaded->scx_data.scripts.size() : 0U};
+  const std::size_t sound_count{loaded ? loaded->scx_data.sounds.size() : 0U};
+  const std::size_t sprite_count{loaded ? loaded->scx_data.sprites.size() : 0U};
+  const std::size_t model_count{loaded ? loaded->scx_data.models.size() : 0U};
+  const std::string scenario_name{
+      scenario_path ? scenario_basename(*scenario_path) : "<world-only>"};
 
   if (previous != WorldSceneResidencyState::Free) {
     teardown_world_context(*target);
@@ -286,14 +288,14 @@ std::expected<WorldSceneContext*, std::string> ScenarioManager::load_world_conte
       std::move(resolved_decor_path),
       std::move(decor_model),
       scenario_path,
-      std::move(package),
-      std::move(runtime).value(),
-      WorldSceneResidencyState::LoadedInactive);
+      std::move(loaded),
+      std::move(runtime),
+      WorldSceneResidencyState::ResidentDetached);
 
   App::Log::debug(LogCategory::Scenario,
       "world context {} \"{}\" loaded — scripts={} sounds={} sprites={} models={}",
       scene_id,
-      scenario_basename(scenario_path),
+      scenario_name,
       script_count,
       sound_count,
       sprite_count,
@@ -310,11 +312,14 @@ std::expected<void, std::string> ScenarioManager::activate_world_context(
         fmt::format("Cannot activate world context {}: not found or free", scene_id)};
   }
 
-  if (context->residency == WorldSceneResidencyState::LoadedActive) {
-    return {};  // Already active.
+  if (context->residency == WorldSceneResidencyState::ResidentAttached) {
+    return {};
   }
 
-  context->residency = WorldSceneResidencyState::LoadedActive;
+  context->residency = WorldSceneResidencyState::ResidentAttached;
+  if (!m_current_world_scene_id.has_value()) {
+    m_current_world_scene_id = scene_id;
+  }
 
   App::Log::info(LogCategory::Scenario,
       "world context {} \"{}\" active — generation={}",
@@ -332,11 +337,13 @@ std::expected<void, std::string> ScenarioManager::deactivate_world_context(
         fmt::format("Cannot deactivate world context {}: not found or free", scene_id)};
   }
 
-  if (context->residency == WorldSceneResidencyState::LoadedInactive) {
-    return {};  // Already inactive.
+  if (context->residency == WorldSceneResidencyState::ResidentDetached) {
+    return {};
   }
-
-  context->residency = WorldSceneResidencyState::LoadedInactive;
+  context->residency = WorldSceneResidencyState::ResidentDetached;
+  if (m_current_world_scene_id == scene_id) {
+    m_current_world_scene_id.reset();
+  }
 
   App::Log::info(LogCategory::Scenario,
       "world context {} \"{}\" deactivated — generation={}",
@@ -353,38 +360,39 @@ std::expected<void, std::string> ScenarioManager::switch_active_world_context(
         std::unexpect, "Cannot switch world residency to the same scene identity"};
   }
 
-  WorldSceneContext* source{find_world_context(source_scene_id)};
-  WorldSceneContext* target{find_world_context(target_scene_id)};
-  if (source == nullptr || source->residency != WorldSceneResidencyState::LoadedActive) {
+  const WorldSceneContext* source{find_world_context(source_scene_id)};
+  const WorldSceneContext* target{find_world_context(target_scene_id)};
+  if (source == nullptr || source->residency == WorldSceneResidencyState::Free ||
+      m_current_world_scene_id != source_scene_id) {
     return std::expected<void, std::string>{std::unexpect,
         fmt::format(
-            "Cannot switch world residency: source context {} is not active", source_scene_id)};
+            "Cannot switch current world: source context {} is not current", source_scene_id)};
   }
-  if (target == nullptr || target->residency != WorldSceneResidencyState::LoadedInactive) {
+  if (target == nullptr || target->residency != WorldSceneResidencyState::ResidentAttached) {
     return std::expected<void, std::string>{std::unexpect,
-        fmt::format("Cannot switch world residency: target context {} is not prepared inactive",
-            target_scene_id)};
+        fmt::format(
+            "Cannot switch current world: target context {} is not attached", target_scene_id)};
   }
 
-  for (const WorldSceneContext& context : m_world_contexts) {
-    if (&context != source && context.residency == WorldSceneResidencyState::LoadedActive) {
-      return std::expected<void, std::string>{std::unexpect,
-          fmt::format(
-              "Cannot switch world residency: unexpected active context {}", context.scene_id)};
-    }
-  }
-
-  // Both preconditions are validated before either state changes. The loaded
-  // packages remain owned by their original context entries.
-  source->residency = WorldSceneResidencyState::LoadedInactive;
-  target->residency = WorldSceneResidencyState::LoadedActive;
+  m_current_world_scene_id = target_scene_id;
 
   App::Log::info(LogCategory::Scenario,
-      "world residency switched — source={} '{}' inactive, target={} '{}' active",
+      "current world switched — source={} '{}', target={} '{}'",
       source_scene_id,
       scenario_basename(source->scenario_path),
       target_scene_id,
       scenario_basename(target->scenario_path));
+  return {};
+}
+
+std::expected<void, std::string> ScenarioManager::set_current_world_context(
+    const std::uint32_t scene_id) {
+  const WorldSceneContext* target{find_world_context(scene_id)};
+  if (target == nullptr || target->residency != WorldSceneResidencyState::ResidentAttached) {
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format("Cannot select current world context {}: not resident and attached", scene_id)};
+  }
+  m_current_world_scene_id = scene_id;
   return {};
 }
 
@@ -396,10 +404,14 @@ std::expected<void, std::string> ScenarioManager::unload_world_context(
         std::unexpect, fmt::format("Cannot unload world context {}: not found", scene_id)};
   }
 
-  if (context->residency == WorldSceneResidencyState::LoadedActive) {
+  if (context->residency == WorldSceneResidencyState::ResidentAttached) {
     return std::expected<void, std::string>{std::unexpect,
         fmt::format(
-            "Cannot unload world context {}: still LoadedActive (deactivate first)", scene_id)};
+            "Cannot unload world context {}: still ResidentAttached (deactivate first)", scene_id)};
+  }
+  if (m_current_world_scene_id == scene_id) {
+    return std::expected<void, std::string>{
+        std::unexpect, fmt::format("Cannot unload current world context {}", scene_id)};
   }
 
   if (context->residency == WorldSceneResidencyState::Free) {
@@ -546,10 +558,10 @@ ScenarioRuntime* ScenarioManager::world_runtime(const std::uint32_t scene_id) co
   return context == nullptr ? nullptr : context->runtime.get();
 }
 
-std::vector<ScenarioRuntime*> ScenarioManager::active_world_runtimes() const {
+std::vector<ScenarioRuntime*> ScenarioManager::resident_world_runtimes() const {
   std::vector<ScenarioRuntime*> runtimes;
   for (const WorldSceneContext& context : m_world_contexts) {
-    if (context.residency == WorldSceneResidencyState::LoadedActive && context.runtime != nullptr) {
+    if (context.residency != WorldSceneResidencyState::Free && context.runtime != nullptr) {
       runtimes.push_back(context.runtime.get());
     }
   }
@@ -557,21 +569,41 @@ std::vector<ScenarioRuntime*> ScenarioManager::active_world_runtimes() const {
 }
 
 WorldSceneContext* ScenarioManager::active_world_context() {
-  for (WorldSceneContext& context : m_world_contexts) {
-    if (context.residency == WorldSceneResidencyState::LoadedActive) {
-      return &context;
-    }
-  }
-  return nullptr;
+  return current_world_context();
 }
 
 const WorldSceneContext* ScenarioManager::active_world_context() const {
-  for (const WorldSceneContext& context : m_world_contexts) {
-    if (context.residency == WorldSceneResidencyState::LoadedActive) {
-      return &context;
+  return current_world_context();
+}
+
+WorldSceneContext* ScenarioManager::current_world_context() {
+  return m_current_world_scene_id.has_value() ? find_world_context(*m_current_world_scene_id)
+                                              : nullptr;
+}
+
+const WorldSceneContext* ScenarioManager::current_world_context() const {
+  return m_current_world_scene_id.has_value() ? find_world_context(*m_current_world_scene_id)
+                                              : nullptr;
+}
+
+std::vector<WorldSceneContext*> ScenarioManager::attached_world_contexts() {
+  std::vector<WorldSceneContext*> contexts;
+  for (WorldSceneContext& context : m_world_contexts) {
+    if (context.residency == WorldSceneResidencyState::ResidentAttached) {
+      contexts.push_back(&context);
     }
   }
-  return nullptr;
+  return contexts;
+}
+
+std::vector<const WorldSceneContext*> ScenarioManager::attached_world_contexts() const {
+  std::vector<const WorldSceneContext*> contexts;
+  for (const WorldSceneContext& context : m_world_contexts) {
+    if (context.residency == WorldSceneResidencyState::ResidentAttached) {
+      contexts.push_back(&context);
+    }
+  }
+  return contexts;
 }
 
 const Omikron::ScxData* ScenarioManager::world_context_scx(const std::uint32_t scene_id) const {
@@ -637,6 +669,13 @@ std::vector<LoadedScenarioView> ScenarioManager::scenario_inventory() const {
     view.resolved_decor_path = ctx.resolved_decor_path;
     view.file_size = ctx.file_size_bytes;
     view.loaded = (ctx.residency != WorldSceneResidencyState::Free);
+    view.decor_attached = ctx.residency == WorldSceneResidencyState::ResidentAttached;
+    view.current = m_current_world_scene_id == ctx.scene_id;
+    view.scx_present = ctx.scx_data.has_value();
+    view.structured_runtime_present =
+        ctx.runtime != nullptr && ctx.runtime->script_runtime() != nullptr;
+    view.controlled_body_owner = m_controlled_character.has_value() &&
+                                 m_controlled_character->world_scene_id == ctx.scene_id;
     view.last_error = ctx.last_error;
     if (ctx.scx_data) {
       view.file_version = ctx.scx_data->header.version;
@@ -1004,21 +1043,30 @@ void ScenarioManager::install_world_context(WorldSceneContext& context,
     std::optional<std::string> decor_path,
     std::string resolved_decor_path,
     std::optional<Omikron::Model3DOData> decor_model,
-    const std::string& scenario_path,
-    LoadedScenario loaded,
+    const std::optional<std::string>& scenario_path,
+    std::optional<LoadedScenario> loaded,
     std::unique_ptr<ScenarioRuntime> runtime,
     const WorldSceneResidencyState residency) {
   context.scene_id = scene_id;
   context.decor_path = std::move(decor_path);
   context.resolved_decor_path = std::move(resolved_decor_path);
   context.decor_model = std::move(decor_model);
-  context.scenario_path = scenario_path;
-  context.resolved_scenario_path = std::move(loaded.resolved_path);
-  context.scx_file_buffer = std::move(loaded.file_buffer);
-  context.scx_data = std::move(loaded.scx_data);
-  context.resolved_sfx_path = std::move(loaded.resolved_sfx_path);
-  context.sfx_file_buffer = std::move(loaded.sfx_file_buffer);
-  context.sfx_data = std::move(loaded.sfx_data);
+  context.scenario_path = scenario_path.value_or(std::string{});
+  if (loaded.has_value()) {
+    context.resolved_scenario_path = std::move(loaded->resolved_path);
+    context.scx_file_buffer = std::move(loaded->file_buffer);
+    context.scx_data = std::move(loaded->scx_data);
+    context.resolved_sfx_path = std::move(loaded->resolved_sfx_path);
+    context.sfx_file_buffer = std::move(loaded->sfx_file_buffer);
+    context.sfx_data = std::move(loaded->sfx_data);
+  } else {
+    context.resolved_scenario_path.clear();
+    context.scx_file_buffer.clear();
+    context.scx_data.reset();
+    context.resolved_sfx_path.clear();
+    context.sfx_file_buffer.clear();
+    context.sfx_data.reset();
+  }
   context.runtime = std::move(runtime);
   if (context.runtime != nullptr) {
     context.runtime->bind_decor_model(
@@ -1059,16 +1107,16 @@ WorldSceneContext* ScenarioManager::allocate_world_context_slot() {
     }
   }
 
-  // Otherwise, prefer the first LoadedInactive entry.
+  // Otherwise, prefer the first ResidentDetached entry.
   for (WorldSceneContext& ctx : m_world_contexts) {
-    if (ctx.residency == WorldSceneResidencyState::LoadedInactive &&
+    if (ctx.residency == WorldSceneResidencyState::ResidentDetached &&
         (!m_controlled_character.has_value() ||
             m_controlled_character->world_scene_id != ctx.scene_id)) {
       return &ctx;
     }
   }
 
-  // Both are LoadedActive; allocation fails.
+  // Neither resident slot is safely recyclable.
   return nullptr;
 }
 

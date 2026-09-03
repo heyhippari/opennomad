@@ -498,6 +498,9 @@ void DebugUI::show_world_inspector() {
         ImGui::Text("Last collision object: %zu, distance: %.3f in",
             character.horizontal_object_index.value(),
             static_cast<double>(character.horizontal_contact_distance));
+        ImGui::Text("Collision source: world %u, resident slot %zu",
+            character.horizontal_source_world_scene_id.value_or(0U),
+            character.horizontal_source_resident_slot.value_or(0U));
         ImGui::Text("Contact XYZ: %.3f, %.3f, %.3f in",
             static_cast<double>(character.horizontal_contact_point.at(0)),
             static_cast<double>(character.horizontal_contact_point.at(1)),
@@ -524,6 +527,9 @@ void DebugUI::show_world_inspector() {
               character.ceiling_object_index.value_or(0U),
               static_cast<double>(character.ceiling_hit_distance),
               static_cast<double>(character.ceiling_limit));
+          ImGui::Text("Ceiling source: world %u, resident slot %zu",
+              character.ceiling_source_world_scene_id.value_or(0U),
+              character.ceiling_source_resident_slot.value_or(0U));
           ImGui::Text("Ceiling contact XYZ: %.3f, %.3f, %.3f in",
               static_cast<double>(character.ceiling_contact_point.at(0)),
               static_cast<double>(character.ceiling_contact_point.at(1)),
@@ -546,6 +552,9 @@ void DebugUI::show_world_inspector() {
             character.physical_support_object_name.empty()
                 ? "<unnamed>"
                 : character.physical_support_object_name.c_str());
+        ImGui::Text("Support source: world %u, resident slot %zu",
+            character.physical_support_source_world_scene_id.value_or(0U),
+            character.physical_support_source_resident_slot.value_or(0U));
         ImGui::Text("Support point XYZ: %.3f, %.3f, %.3f in",
             static_cast<double>(character.physical_support_point.at(0)),
             static_cast<double>(character.physical_support_point.at(1)),
@@ -562,6 +571,11 @@ void DebugUI::show_world_inspector() {
             character.physical_alternate_support_object_index.value_or(0U),
             static_cast<double>(character.physical_alternate_support_clearance),
             static_cast<double>(character.physical_alternate_gap));
+        if (character.physical_alternate_support_object_index.has_value()) {
+          ImGui::Text("Alternate source: world %u, resident slot %zu",
+              character.physical_alternate_source_world_scene_id.value_or(0U),
+              character.physical_alternate_source_resident_slot.value_or(0U));
+        }
         ImGui::Text("History previous/primary/alternate: %.3f / %.3f / %.3f in",
             static_cast<double>(character.physical_previous_primary_relative_y),
             static_cast<double>(character.physical_primary_relative_y),

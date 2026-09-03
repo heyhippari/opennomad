@@ -47,7 +47,7 @@ Most implementation lives under `src/core/Core/`:
 | `Startup/` | Ordered startup phases, trace events, and media policy. |
 | `Input/` | Semantic actions, device bindings, held state, and per-frame input resolution. |
 | `Debug/` | ImGui inspectors, metrics, in-app logging, startup traces, and profiling. |
-| `WorldScene.*`, `WorldRenderer.*`, `WorldCamera.*` | Stable runtime presentation of the active world, scripted camera, effects, interfaces, and GPU resources. |
+| `WorldScene.*`, `WorldRenderer.*`, `WorldCamera.*` | Stable presentation of all attached resident worlds, with current-world camera/debug state, effects, interfaces, and GPU resources. |
 | `ModelViewerScene.*` | Development-only free-flight renderer for inspecting standalone and embedded model resources. |
 | `RuntimeMath.*`, `RuntimePresentation.*` | Runtime-native math and the single Runtime-to-OpenGL presentation boundary. |
 | `Resources.hpp`, `Platform/*/Resources.cpp` | Packaged-resource and game-data path resolution. |
@@ -58,12 +58,12 @@ OpenNomad separates recovered state from presentation responsibilities:
 
 - `ScenarioManager` owns one gameplay-mode SCX slot and two world-context slots. Each loaded slot owns parsed data,
   backing bytes, its mutable `ScenarioRuntime`, and—for a world context—decoded decor resources.
-- `ScenarioEngine` is the sole scheduler. It advances AREA/event execution, the gameplay-mode runtime, and active world
-  runtimes in the recovered order.
-- `WorldScene` is installed after startup and remains the normal presentation scene. It observes the active context but
-  does not own or execute a runtime.
-- `WorldRenderer` owns GPU resources for exactly one observed world-context generation. Replacing or recycling a
-  context causes the presentation cache to be rebuilt.
+- `ScenarioEngine` is the sole scheduler. It advances resident AREA/event execution, the gameplay-mode runtime, and all
+  resident world runtimes in the recovered order.
+- `WorldScene` is installed after startup and remains the normal presentation scene. It observes all attached contexts,
+  while camera/debug ownership follows the current context; it does not own or execute a runtime.
+- Each `WorldRenderer` owns GPU resources for one attached world-context generation. Detach destroys that renderer;
+  reattachment of the same generation rebuilds it, and slot reuse cannot retain stale presentation resources.
 - `InterfaceManager` owns resident I2D interface instances and focus. `InterfacePresenter`, composed by `WorldScene`,
   only forwards update and render calls; an interface is not a `Scene`.
 - `AudioSystem` is updated by `Application`; neither `WorldScene` nor the scenario runtime owns the device.

@@ -524,6 +524,16 @@ std::expected<void, std::string> ScenarioRuntime::initialize(const Omikron::ScxD
   return {};
 }
 
+void ScenarioRuntime::initialize_world_only(
+    const std::string_view world_name, Audio::AudioSystem* const audio) {
+  m_scenario_name = std::string{world_name};
+  m_audio = audio;
+  m_script_runtime.reset();
+  m_sfx_runtime.reset();
+  m_sfx_data.reset();
+  m_initialized = true;
+}
+
 Script::ScriptRuntime* ScenarioRuntime::script_runtime() {
   return m_script_runtime.get();
 }

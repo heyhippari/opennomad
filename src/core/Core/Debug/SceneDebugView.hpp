@@ -157,6 +157,8 @@ struct RuntimeCharacterDebugState {
   std::uint32_t horizontal_collision_passes{0};
   std::uint32_t horizontal_depenetration_iterations{0};
   std::optional<std::size_t> horizontal_object_index;
+  std::optional<std::uint32_t> horizontal_source_world_scene_id;
+  std::optional<std::size_t> horizontal_source_resident_slot;
   std::array<float, 3> horizontal_contact_point{};
   std::array<float, 3> horizontal_response_normal{};
   float horizontal_contact_distance{0.0F};
@@ -169,6 +171,8 @@ struct RuntimeCharacterDebugState {
   float ceiling_sphere_radius{0.0F};
   float ceiling_clearance_adjustment{0.0F};
   std::optional<std::size_t> ceiling_object_index;
+  std::optional<std::uint32_t> ceiling_source_world_scene_id;
+  std::optional<std::size_t> ceiling_source_resident_slot;
   std::array<float, 3> ceiling_contact_point{};
   std::array<float, 3> ceiling_contact_normal{};
   float ceiling_hit_distance{0.0F};
@@ -187,12 +191,16 @@ struct RuntimeCharacterDebugState {
   bool physical_support_valid{false};
   std::optional<Character::SupportClass> physical_support_class;
   std::optional<std::size_t> physical_support_object_index;
+  std::optional<std::uint32_t> physical_support_source_world_scene_id;
+  std::optional<std::size_t> physical_support_source_resident_slot;
   std::string physical_support_object_name;
   std::array<float, 3> physical_support_point{};
   std::array<float, 3> physical_support_normal{};
   float physical_support_clearance{0.0F};
   float physical_support_gap{0.0F};
   std::optional<std::size_t> physical_alternate_support_object_index;
+  std::optional<std::uint32_t> physical_alternate_source_world_scene_id;
+  std::optional<std::size_t> physical_alternate_source_resident_slot;
   float physical_alternate_support_clearance{0.0F};
   float physical_previous_primary_relative_y{0.0F};
   float physical_primary_relative_y{0.0F};

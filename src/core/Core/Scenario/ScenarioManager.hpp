@@ -54,19 +54,15 @@ enum class ScenarioRole : std::uint8_t {
   WorldScene,
 };
 
-/// World-scene residency state. A context may be free, loaded but inactive
-/// (detached and recyclable), or loaded and active (attached and eviction-
-/// resistant).
+/// World-scene residency and physical-attachment state. Current AREA ownership
+/// is tracked independently by ScenarioManager.
 enum class WorldSceneResidencyState : std::uint8_t {
   /// No loaded scenario or world model; available for allocation.
   Free,
-  /// Loaded scenario and optional world model, but detached/inactive. The
-  /// context is recyclable if a newer load requires space.
-  LoadedInactive,
-  /// Loaded scenario and optional world model, attached and active. The
-  /// context is non-evictable; new loads must find a free or recyclable
-  /// entry or fail cleanly.
-  LoadedActive,
+  /// Loaded world package whose decor is physically detached.
+  ResidentDetached,
+  /// Loaded world package whose decor is physically attached.
+  ResidentAttached,
 };
 
 /// Durable session-level identity of the body currently controlled by compact
@@ -216,6 +212,11 @@ struct LoadedScenarioView {
   std::size_t active_sfx_particles{0};
   std::size_t sfx_attached_sprites{0};
   bool loaded{false};
+  bool decor_attached{false};
+  bool current{false};
+  bool scx_present{false};
+  bool structured_runtime_present{false};
+  bool controlled_body_owner{false};
   std::string last_error;
 };
 
@@ -253,35 +254,30 @@ class ScenarioManager {
 
   /// Loads a scenario and optional decor into a world context. If a free
   /// entry exists, uses it; otherwise attempts to recycle the lowest-index
-  /// LoadedInactive entry. Fails cleanly and leaves all contexts intact if:
-  /// - no free or recyclable entry is available (both are LoadedActive);
+  /// ResidentDetached entry. Fails cleanly and leaves all contexts intact if:
+  /// - no free or recyclable entry is available;
   /// - the scenario fails to parse.
-  /// Returns the context, which is left in LoadedInactive state until
-  /// explicitly activated.
+  /// Returns the context resident and detached.
   [[nodiscard]] std::expected<WorldSceneContext*, std::string> load_world_context(
       std::uint32_t scene_id,
       std::optional<std::string> decor_path,
-      const std::string& scenario_path);
+      std::optional<std::string> scenario_path);
 
-  /// Transitions a world context from LoadedInactive to LoadedActive,
-  /// attaching its world model and preparing it for script activation.
-  /// No-op if already active. Fails if the context is Free.
+  /// Physically attaches a resident world's decor. No-op if already attached.
   [[nodiscard]] std::expected<void, std::string> activate_world_context(std::uint32_t scene_id);
 
-  /// Transitions a world context from LoadedActive to LoadedInactive,
-  /// detaching its world model. No-op if already inactive. Fails if the
-  /// context is Free. Does not destroy the loaded scenario.
+  /// Physically detaches a resident world's decor without unloading it.
   [[nodiscard]] std::expected<void, std::string> deactivate_world_context(std::uint32_t scene_id);
 
-  /// Atomically switches presentation residency from one prepared world to
-  /// another. Both contexts remain loaded; source becomes inactive and target
-  /// becomes the sole active world.
+  /// Changes current AREA ownership without changing either attachment state.
   [[nodiscard]] std::expected<void, std::string> switch_active_world_context(
       std::uint32_t source_scene_id, std::uint32_t target_scene_id);
 
+  [[nodiscard]] std::expected<void, std::string> set_current_world_context(std::uint32_t scene_id);
+
   /// Completely unloads a world context, freeing its scenario, world model,
   /// audio voices and sprite instances. Transitions to Free. Fails if the
-  /// context is LoadedActive (use deactivate first).
+  /// context is ResidentAttached (use deactivate first).
   [[nodiscard]] std::expected<void, std::string> unload_world_context(std::uint32_t scene_id);
 
   /// Current controlled body for this game session, if compact IAM has
@@ -327,10 +323,16 @@ class ScenarioManager {
   [[nodiscard]] WorldSceneContext* find_world_context(std::uint32_t scene_id);
   [[nodiscard]] const WorldSceneContext* find_world_context(std::uint32_t scene_id) const;
 
-  /// The currently attached (LoadedActive) world context, or nullptr when no
-  /// context is active. This is the presentation target of WorldScene.
+  /// Current AREA world context. Compatibility name retained for callers that
+  /// mean current-world presentation rather than physical attachment.
   [[nodiscard]] WorldSceneContext* active_world_context();
   [[nodiscard]] const WorldSceneContext* active_world_context() const;
+  [[nodiscard]] WorldSceneContext* current_world_context();
+  [[nodiscard]] const WorldSceneContext* current_world_context() const;
+
+  /// Resident worlds whose decors are physically attached, in slot order.
+  [[nodiscard]] std::vector<WorldSceneContext*> attached_world_contexts();
+  [[nodiscard]] std::vector<const WorldSceneContext*> attached_world_contexts() const;
 
   /// Snapshot of all world context entries (for inspection).
   [[nodiscard]] std::span<const WorldSceneContext, 2> world_contexts() const;
@@ -370,9 +372,8 @@ class ScenarioManager {
   /// gameplay-mode runtime.
   [[nodiscard]] ScenarioRuntime* world_runtime(std::uint32_t scene_id) const;
 
-  /// Mutable scenario runtimes of every LoadedActive world context, for the
-  /// per-frame scheduler. LoadedInactive and Free contexts contribute none.
-  [[nodiscard]] std::vector<ScenarioRuntime*> active_world_runtimes() const;
+  /// Mutable scenario runtimes of every resident world, attached or detached.
+  [[nodiscard]] std::vector<ScenarioRuntime*> resident_world_runtimes() const;
 
   // --- Audio subsystem integration (future) ---------------------------------
 
@@ -449,6 +450,7 @@ class ScenarioManager {
 
   GameplayModeSlot m_gameplay_mode_slot;
   std::array<WorldSceneContext, WorldSceneContext::k_capacity> m_world_contexts;
+  std::optional<std::uint32_t> m_current_world_scene_id;
   std::optional<ControlledCharacterRef> m_controlled_character;
   /// Frame-scoped CTL profile slot bits (0 until the application feeds them).
   std::uint32_t m_ctl_input_mask{0};
@@ -501,8 +503,8 @@ class ScenarioManager {
       std::optional<std::string> decor_path,
       std::string resolved_decor_path,
       std::optional<Omikron::Model3DOData> decor_model,
-      const std::string& scenario_path,
-      LoadedScenario loaded,
+      const std::optional<std::string>& scenario_path,
+      std::optional<LoadedScenario> loaded,
       std::unique_ptr<ScenarioRuntime> runtime,
       WorldSceneResidencyState residency);
 
@@ -511,9 +513,9 @@ class ScenarioManager {
 
   /// Returns the best target context for allocation:
   /// 1. The first Free entry (by index).
-  /// 2. If none, the first LoadedInactive entry that does not own the
+  /// 2. If none, the first ResidentDetached entry that does not own the
   ///    controlled body (by index).
-  /// 3. If none (both are LoadedActive), nullptr.
+  /// 3. If none (both are ResidentAttached), nullptr.
   [[nodiscard]] WorldSceneContext* allocate_world_context_slot();
 };
 

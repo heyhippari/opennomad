@@ -101,6 +101,9 @@ class ScenarioRuntime final : public Script::ScriptWorld, private Sfx::Host {
       bool activate_startup_scripts,
       const Omikron::SfxData* sfx = nullptr);
 
+  /// Initializes generic world ownership without manufacturing SCX data.
+  void initialize_world_only(std::string_view world_name, Audio::AudioSystem* audio);
+
   [[nodiscard]] bool initialized() const {
     return m_initialized;
   }

@@ -3203,22 +3203,20 @@ Handler:
 0x00402D20
 ```
 
-consumes exactly six operand bytes: three Runtime Scalar16 values. Operand 0 is
-an `AREAS` ID; operands 1 and 2 select transition variants whose generic names
-remain unresolved. The confirmed startup instruction is:
+consumes exactly six operand bytes: three Runtime Scalar16 values named
+`targetArea`, `preCrossingScriptId`, and `postCrossingScriptId`. `(-1,-1)` is
+the seamless form. The confirmed startup instruction is:
 
 ```text
 +0x10D  2F DE 00 FF FF FF FF
-         target AREA 222, operand_b -1, operand_c -1
+         target AREA 222, pre -1, post -1
 ```
 
 Accepted execution advances the instruction pointer by all seven bytes and
 blocks the calling AREA context in recovered Runtime state 10. A session-level
-native coordinator prepares the destination using the alternate resident AREA
-slot, but leaves it `LoadedInactive` while the source remains the active
-presentation world. The context resumes from its post-instruction IP after
-preparation; later `0x47` attaches SCENE data and commits presentation
-ownership.
+native coordinator prepares and attaches the destination using the alternate
+resident AREA slot while the source remains attached and current. The exact
+requesting compact context resumes from its post-instruction IP after preparation.
 
 OpenNomad implements this as:
 
@@ -3226,7 +3224,7 @@ OpenNomad implements this as:
 BeginAreaTransition request
   -> generation-tagged ScenarioStartupController coordinator
   -> alternate RuntimeAreaSlot and WorldSceneContext preparation
-  -> source stays LoadedActive and destination is LoadedInactive
+    -> source and destination are resident-attached; source remains current
   -> exact handle completes AreaWaitKind::k_area_transition
   -> old AREA context resumes in Runtime state 1
 ```
@@ -3234,8 +3232,14 @@ BeginAreaTransition request
 The current loader performs resource preparation synchronously when the
 coordinator is serviced on the next scenario tick; the accepted request and
 state-10 boundary are nevertheless persistent and externally observable.
-Unsupported non-`-1` operand variants and unresolved Scalar16 parameter
-references fail explicitly rather than being guessed.
+Coordinator contention rewinds the full seven-byte instruction, yields in native
+compact state 9, and decodes the same instruction on the next service. Accepted
+requests wait in state 10. State 8 consumes another seamless request immediately
+until `0x30` resets the coordinator. Native coordinator states are: 0 idle, 1
+rich loading, 2 rich abandoned loading, 3 seamless loading, 4 seamless release
+pending, 5 rich pre running, 6 rich departed first, 7 rich pre finished first,
+8 seamless attached, and 9 rich post running. Phase 1 implements 0/3/4/8; rich
+states remain reserved.
 
 ---
 
@@ -3246,11 +3250,12 @@ AREA transition:
 
 | Opcode | Operands | Operation |
 | --- | --- | --- |
-| `0x30` | Scalar16 AREA ID | `ReleaseArea`: release the requested inactive resident AREA after resetting any attached SCENE context/state; a world that owns the selected body cannot be unloaded. |
-| `0x47` | Scalar16 AREA ID, Scalar16 SCENE ID | `AttachAreaScene`: replace/attach the SCENE, move a selected source-world body into the destination without reloading it, queue the independent compact event 1, then commit the prepared destination active. |
+| `0x30` | Scalar16 AREA ID | `ReleaseArea`: `-1` selects the non-current resident and detaches its decor without unloading its AREA/SCX/runtime. |
+| `0x47` | Scalar16 AREA ID, Scalar16 SCENE ID | `AttachAreaScene`: replace/attach only the AREA's optional SCENE and queue its independent compact event 1. |
+| `0x48` | Scalar16 AREA ID | `DetachAreaScene`: remove the attached SCENE and mapping while preserving the resident AREA and decor. |
 | `0x49` | Scalar16 address ID | `PlaceCurrentCharacterAtAddress`: resolve the address across both resident AREA table-5 collections and move the selected body in its exact owning world. |
 
-`0x47`, `0x49`, and `0x30` do not enter a VM wait state. SCENE uses the same
+`0x47`, `0x48`, `0x49`, and `0x30` do not enter a VM wait state. SCENE uses the same
 interpreter and service bridges as AREA, but its compact context is independent:
 an unsupported SCENE opcode pauses that SCENE context without stopping its
 parent AREA context.

@@ -127,6 +127,19 @@ struct OrdinarySpatialSampleResult {
   std::size_t qualifying_zone_count{0};
 };
 
+enum class AreaTransitionState : std::uint8_t {
+  k_idle = 0,
+  k_rich_loading = 1,
+  k_rich_abandoned_loading = 2,
+  k_seamless_loading = 3,
+  k_seamless_release_pending = 4,
+  k_rich_pre_running = 5,
+  k_rich_departed_first = 6,
+  k_rich_pre_finished_first = 7,
+  k_seamless_attached = 8,
+  k_rich_post_running = 9,
+};
+
 /// Session-owned spatial trigger proxy for the durable current character.
 /// Runtime updates this independently from scripted presentation transforms.
 struct CurrentCharacterStructuredOwner {
@@ -303,6 +316,9 @@ class ScenarioStartupController {
   [[nodiscard]] bool area_transition_pending() const {
     return m_area_transition.has_value();
   }
+  [[nodiscard]] AreaTransitionState area_transition_state() const {
+    return m_area_transition_state;
+  }
   /// Primary compact context for the currently presented resident AREA.
   [[nodiscard]] const Script::AreaScriptRuntime* area_script() const;
   /// Primary compact context owned by one resident AREA slot. This diagnostic
@@ -350,8 +366,14 @@ class ScenarioStartupController {
   /// Accepts one 0x2F transition on behalf of the exact resident AREA context
   /// that executed it. The source owner must remain stable while the alternate
   /// resident slot is prepared.
-  [[nodiscard]] std::expected<Script::AreaTransitionHandle, std::string> begin_area_transition(
-      std::size_t owner_slot, const Script::AreaTransitionRequest& request);
+  [[nodiscard]] std::expected<Script::AreaTransitionResult, std::string> begin_area_transition(
+      std::size_t owner_slot,
+      Script::CompactContextHandle requester,
+      const Script::AreaTransitionRequest& request);
+  [[nodiscard]] Script::CompactContextHandle register_compact_context(
+      Script::AreaScriptRuntime& runtime);
+  [[nodiscard]] Script::AreaScriptRuntime* resolve_compact_context(
+      Script::CompactContextHandle handle);
   /// Creates and activates the primary compact context owned by a resident AREA.
   /// Runtime registers event 1 when the AREA is loaded, before any later 0x47
   /// presentation handoff makes that resident slot active.
@@ -362,6 +384,10 @@ class ScenarioStartupController {
   [[nodiscard]] std::expected<void, std::string> service_area_transition();
   [[nodiscard]] std::expected<void, std::string> attach_area_scene(
       const Script::AreaSceneAttachRequest& request);
+  [[nodiscard]] std::expected<void, std::string> detach_area_scene(
+      const Script::AreaSceneDetachRequest& request);
+  [[nodiscard]] std::expected<void, std::string> detach_area_scene_from_slot(
+      std::size_t slot_index);
   [[nodiscard]] std::expected<void, std::string> release_area(
       const Script::AreaReleaseRequest& request);
   [[nodiscard]] std::expected<void, std::string> place_current_character_at_address(
@@ -479,6 +505,7 @@ class ScenarioStartupController {
     Script::AreaTransitionRequest request;
     std::size_t source_slot{0};
     std::size_t destination_slot{0};
+    Script::CompactContextHandle requester;
     std::string error;
   };
 
@@ -519,8 +546,10 @@ class ScenarioStartupController {
   std::array<bool, 2> m_area_event_started_recorded{};
   std::array<bool, 2> m_area_waiting_recorded{};
   std::optional<PendingAreaTransition> m_area_transition;
+  AreaTransitionState m_area_transition_state{AreaTransitionState::k_idle};
   std::uint64_t m_next_area_script_sequence{1};
   std::uint64_t m_next_area_transition_generation{1};
+  std::uint64_t m_next_compact_context_generation{1};
   std::uint64_t m_next_camera_operation_generation{1};
   std::vector<ActiveZoneRef> m_active_zones;
   std::vector<std::unique_ptr<ZoneContactContext>> m_zone_contacts;

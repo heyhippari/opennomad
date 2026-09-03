@@ -1606,8 +1606,10 @@ Observed call:
     call 0x0044CC50
 ```
 
-At that point the argument points into the active world/context structure at
-its embedded ScriptList/SCX runtime state.
+Each resident world with SCX owns an embedded ScriptList/runtime. Engine-frame
+service advances every resident world ScriptList regardless of decor attachment
+or current AREA ownership; detached residents therefore keep running structured
+scripts. A valid SCX-less world has no ScriptList and contributes a safe no-op.
 
 This proves structured scripts are serviced as part of recurring engine-frame
 processing.
@@ -1626,8 +1628,9 @@ The engine-frame code works through the fixed world/context storage around:
 
 already documented in `runtime-globals.md`.
 
-The ScriptList passed to `0x0044CC50` sits inside/alongside the active
-world/scenario context state.
+The ScriptList passed to `0x0044CC50` sits inside/alongside one resident
+world/scenario context state. Current AREA and physical attachment are separate
+properties and do not gate ScriptList scheduling.
 
 This matches the SCX architecture:
 

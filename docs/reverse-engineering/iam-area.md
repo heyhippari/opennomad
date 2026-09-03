@@ -3523,14 +3523,26 @@ The following authored operations complete the handoff:
 ```
 
 Opcode `0x2F` does not activate scene 55, position the player at address 654,
-release AREA 118, or skip any of those subsequent instructions. Successful
-`0x47` is the presentation commit: source becomes `LoadedInactive`, the
-destination becomes `LoadedActive`, and the source remains resident until its
-explicit `0x30` release. If compact IAM has selected a current body with `0x38`,
-`0x47` first transfers that single live body to the destination world. Address
+release AREA 118, or skip any of those subsequent instructions. The seamless
+`(-1,-1)` form loads and physically attaches the destination decor while the
+source remains attached and current. Current AREA and controlled-body ownership
+change only when ordinary physical support establishes the destination decor as
+the actor's accepted owner (native event 9 equivalent). `0x47` only replaces the
+optional SCENE attached to a resident AREA; it is not an AREA handoff. Address
 lookup for `0x49` still scans both resident AREA table-5 collections, then
 applies the resolved address only to the selected body's recorded owner world;
 it never guesses a current character when no `0x38` selection exists.
+
+Residency, decor attachment, and current AREA are independent. Two resident
+decors may be attached simultaneously, and a detached non-current resident keeps
+its AREA package and structured ScriptList alive. `0x30(-1)` selects that
+non-current resident and detaches its decor without unloading it. Opcode `0x48
+DetachAreaScene(areaId)` destroys only the attached SCENE compact/runtime
+materialization, writes AREA-to-SCENE mapping `-1`, and leaves the AREA resident.
+
+An empty AREA SCX name is valid. Retail AREA 142 (`AIMPASAS`) is the canonical
+case: its decor, compact zones, objects, characters, collision, and rendering are
+available without creating fake `ScxData`, `ScriptRuntime`, or SFX state.
 
 The native consumer confirms table-5 XYZ uses the ordinary AREA positional
 normalization. Address Y denotes the body/floor contact coordinate, and

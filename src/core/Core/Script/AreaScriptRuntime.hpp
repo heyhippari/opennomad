@@ -60,12 +60,10 @@ struct AreaCharacterScriptRequest {
 };
 
 /// Native two-slot AREA transition requested by compact opcode 0x2F.
-/// operand_b/operand_c are preserved neutrally until their variants are
-/// recovered; the confirmed startup path uses -1 for both.
 struct AreaTransitionRequest {
   std::int16_t target_area_id{0};
-  std::int16_t operand_b{0};
-  std::int16_t operand_c{0};
+  std::int16_t pre_crossing_script_id{0};
+  std::int16_t post_crossing_script_id{0};
 };
 
 /// Nonblocking release request emitted by opcode 0x30.
@@ -77,6 +75,11 @@ struct AreaReleaseRequest {
 struct AreaSceneAttachRequest {
   std::int16_t area_id{0};
   std::int16_t scene_id{0};
+};
+
+/// Nonblocking attached-SCENE teardown requested by opcode 0x48.
+struct AreaSceneDetachRequest {
+  std::int16_t area_id{0};
 };
 
 /// Nonblocking named-address placement request emitted by opcode 0x49.
@@ -154,6 +157,23 @@ struct AreaTransitionHandle {
   bool operator==(const AreaTransitionHandle&) const = default;
 };
 
+struct CompactContextHandle {
+  std::uint64_t generation{0};
+
+  bool operator==(const CompactContextHandle&) const = default;
+};
+
+enum class AreaTransitionDisposition : std::uint8_t {
+  k_accepted_waiting,
+  k_immediate_continue,
+  k_busy_retry,
+};
+
+struct AreaTransitionResult {
+  AreaTransitionDisposition disposition{AreaTransitionDisposition::k_busy_retry};
+  std::optional<AreaTransitionHandle> handle;
+};
+
 /// Stable identity of one presentation-owned mode-12 camera operation.
 struct AreaCameraOperationHandle {
   std::uint64_t generation{0};
@@ -170,6 +190,7 @@ enum class AreaWaitKind : std::uint8_t {
   k_character_script,
   k_camera,
   k_area_transition,
+  k_area_transition_retry,
 };
 
 /// Typed wait state for the currently suspended AREA context.
@@ -321,13 +342,15 @@ class AreaScriptRuntime {
 
   /// Bridge from opcode 0x2F to the session-level two-slot AREA coordinator.
   using AreaTransitionSink =
-      std::function<std::expected<AreaTransitionHandle, std::string>(const AreaTransitionRequest&)>;
+      std::function<std::expected<AreaTransitionResult, std::string>(const AreaTransitionRequest&)>;
 
   /// Session lifecycle bridges for the nonblocking AREA handoff opcodes.
   using AreaReleaseSink =
       std::function<std::expected<void, std::string>(const AreaReleaseRequest&)>;
   using AreaSceneAttachSink =
       std::function<std::expected<void, std::string>(const AreaSceneAttachRequest&)>;
+  using AreaSceneDetachSink =
+      std::function<std::expected<void, std::string>(const AreaSceneDetachRequest&)>;
   using AreaAddressPlacementSink =
       std::function<std::expected<void, std::string>(const AreaAddressPlacementRequest&)>;
   using AddressFlagSink =
@@ -410,6 +433,13 @@ class AreaScriptRuntime {
   /// or the per-call instruction budget is exhausted. Returns the new state.
   [[nodiscard]] AreaScriptState run(float real_delta_seconds = 0.0F);
 
+  void set_compact_context_handle(CompactContextHandle handle) {
+    m_compact_context_handle = handle;
+  }
+  [[nodiscard]] std::optional<CompactContextHandle> compact_context_handle() const {
+    return m_compact_context_handle;
+  }
+
   /// Wires the interface-open sink (opcode 0x46).
   void set_interface_sink(InterfaceSink sink);
 
@@ -434,9 +464,10 @@ class AreaScriptRuntime {
   /// Wires AREA opcode 0x2F to native AREA-transition coordination.
   void set_area_transition_sink(AreaTransitionSink sink);
 
-  /// Wires 0x30, 0x47 and 0x49 to session-owned residency operations.
+  /// Wires nonblocking session-owned residency operations.
   void set_area_release_sink(AreaReleaseSink sink);
   void set_area_scene_attach_sink(AreaSceneAttachSink sink);
+  void set_area_scene_detach_sink(AreaSceneDetachSink sink);
   void set_area_address_placement_sink(AreaAddressPlacementSink sink);
   /// Wires persistent ADDRESS mutations from opcodes 0x57/0x58.
   void set_address_flag_sink(AddressFlagSink sink);
@@ -726,8 +757,10 @@ class AreaScriptRuntime {
   ObjectPlacementStateSink m_object_placement_state_sink;
   ObjectActivationSink m_object_activation_sink;
   AreaTransitionSink m_area_transition_sink;
+  std::optional<CompactContextHandle> m_compact_context_handle;
   AreaReleaseSink m_area_release_sink;
   AreaSceneAttachSink m_area_scene_attach_sink;
+  AreaSceneDetachSink m_area_scene_detach_sink;
   AreaAddressPlacementSink m_area_address_placement_sink;
   AddressFlagSink m_address_flag_sink;
   ZoneActivationSink m_zone_activation_sink;

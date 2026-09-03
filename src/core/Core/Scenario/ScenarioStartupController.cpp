@@ -180,17 +180,16 @@ std::expected<PreparedAreaWorld, std::string> prepare_area_world(ScenarioManager
     const std::int32_t area_id,
     const Omikron::IamAreaRecord& area_record) {
   const std::string scx_name{area_record.scenario_scx_name()};
-  if (scx_name.empty()) {
-    return std::expected<PreparedAreaWorld, std::string>{
-        std::unexpect, fmt::format("IAM/AREA record {} has no scenario SCX name", area_id)};
-  }
 
   const std::string model_name{area_record.model3do_name()};
   std::optional<std::string> decor_path;
   if (!model_name.empty()) {
     decor_path = dependency_path(K_DECOR_DIRECTORY, model_name, K_3DO_EXTENSION);
   }
-  const std::string scenario_path{dependency_path(K_SCPTDATA_DIRECTORY, scx_name, K_SCX_EXTENSION)};
+  const std::optional<std::string> scenario_path{
+      scx_name.empty() ? std::nullopt
+                       : std::optional<std::string>{
+                             dependency_path(K_SCPTDATA_DIRECTORY, scx_name, K_SCX_EXTENSION)}};
 
   auto world{manager.load_world_context(world_scene_id, decor_path, scenario_path)};
   if (!world) {
@@ -222,7 +221,7 @@ std::expected<PreparedAreaWorld, std::string> prepare_area_world(ScenarioManager
 
   return PreparedAreaWorld{.context = world.value(),
       .decor_path = std::move(decor_path),
-      .scenario_path = scenario_path,
+      .scenario_path = scenario_path.value_or(std::string{}),
       .sky_name = area_record.sky_3do_name()};
 }
 
@@ -300,6 +299,7 @@ void ScenarioStartupController::reset_session() {
   }
   m_active_area_slot = 0;
   m_area_transition.reset();
+  m_area_transition_state = AreaTransitionState::k_idle;
   m_next_area_script_sequence = 1;
   m_next_area_transition_generation = 1;
   m_next_camera_operation_generation = 1;
@@ -542,12 +542,7 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
   m_area_script_sequences.at(area_script_owner_slot) = m_next_area_script_sequence++;
   m_area_event_started_recorded.at(area_script_owner_slot) = false;
   m_area_waiting_recorded.at(area_script_owner_slot) = false;
-  bind_compact_state_services(area_script, area_script_owner_slot, false);
-
-  area_script.set_area_transition_sink(
-      [this, area_script_owner_slot](const Script::AreaTransitionRequest& request) {
-        return begin_area_transition(area_script_owner_slot, request);
-      });
+  bind_scene_compact_services(area_script, area_script_owner_slot, false);
 
   area_script.set_area_release_sink([this](const Script::AreaReleaseRequest& request) {
     return release_area(request);
@@ -733,23 +728,30 @@ std::expected<void, std::string> ScenarioStartupController::initialize(ScenarioM
   return initialize_new_session(manager);
 }
 
-std::expected<Script::AreaTransitionHandle, std::string>
-ScenarioStartupController::begin_area_transition(
-    const std::size_t owner_slot, const Script::AreaTransitionRequest& request) {
+std::expected<Script::AreaTransitionResult, std::string>
+ScenarioStartupController::begin_area_transition(const std::size_t owner_slot,
+    const Script::CompactContextHandle requester,
+    const Script::AreaTransitionRequest& request) {
   if (m_manager == nullptr || !m_area_archive.has_value()) {
-    return std::expected<Script::AreaTransitionHandle, std::string>{
+    return std::expected<Script::AreaTransitionResult, std::string>{
         std::unexpect, "AREA transition coordinator is not initialized"};
   }
   if (owner_slot >= m_area_slots.size() || !m_area_slots.at(owner_slot).primary.has_value()) {
-    return std::expected<Script::AreaTransitionHandle, std::string>{
+    return std::expected<Script::AreaTransitionResult, std::string>{
         std::unexpect, "AREA transition source is not resident"};
   }
-  if (m_area_transition.has_value()) {
-    return std::expected<Script::AreaTransitionHandle, std::string>{
-        std::unexpect, "AREA transition coordinator is busy"};
+  if (m_area_transition_state == AreaTransitionState::k_seamless_attached &&
+      request.pre_crossing_script_id == -1 && request.post_crossing_script_id == -1) {
+    return Script::AreaTransitionResult{
+        .disposition = Script::AreaTransitionDisposition::k_immediate_continue,
+        .handle = std::nullopt};
+  }
+  if (m_area_transition_state != AreaTransitionState::k_idle || m_area_transition.has_value()) {
+    return Script::AreaTransitionResult{
+        .disposition = Script::AreaTransitionDisposition::k_busy_retry, .handle = std::nullopt};
   }
   if (request.target_area_id < 0) {
-    return std::expected<Script::AreaTransitionHandle, std::string>{
+    return std::expected<Script::AreaTransitionResult, std::string>{
         std::unexpect, fmt::format("target AREA ID {} is negative", request.target_area_id)};
   }
 
@@ -759,7 +761,9 @@ ScenarioStartupController::begin_area_transition(
       .request = request,
       .source_slot = owner_slot,
       .destination_slot = destination_slot,
+      .requester = requester,
       .error = {}});
+  m_area_transition_state = AreaTransitionState::k_seamless_loading;
   record("AreaTransition.Accepted",
       fmt::format("generation={} sourceSlot={} destinationSlot={} target={}",
           handle.generation,
@@ -771,7 +775,8 @@ ScenarioStartupController::begin_area_transition(
       request.target_area_id,
       owner_slot,
       handle.generation);
-  return handle;
+  return Script::AreaTransitionResult{
+      .disposition = Script::AreaTransitionDisposition::k_accepted_waiting, .handle = handle};
 }
 
 std::expected<std::size_t, std::string> ScenarioStartupController::launch_scx_script(
@@ -994,9 +999,6 @@ std::expected<void, std::string> ScenarioStartupController::install_primary_area
   }
   m_area_script_sequences.at(owner_slot) = m_next_area_script_sequence++;
   bind_scene_compact_services(script, owner_slot, false);
-  script.set_area_transition_sink([this, owner_slot](const Script::AreaTransitionRequest& request) {
-    return begin_area_transition(owner_slot, request);
-  });
   script.set_character_activation_sink(
       [this, owner_slot](const Script::AreaCharacterActivationRequest& request) {
         return activate_primary_character(owner_slot, request);
@@ -1071,16 +1073,23 @@ std::expected<void, std::string> ScenarioStartupController::service_area_transit
   if (transition.source_slot >= m_area_slots.size()) {
     return fail_transition("requesting resident AREA context has an invalid owner slot");
   }
-  std::optional<Script::AreaScriptRuntime>& source_script{
-      m_area_scripts.at(transition.source_slot)};
-  if (!source_script.has_value()) {
-    return fail_transition("requesting resident AREA context no longer exists");
+  Script::AreaScriptRuntime* const requester{resolve_compact_context(transition.requester)};
+  if (requester == nullptr) {
+    const std::string error{
+        fmt::format("AREA transition to {} failed: requesting compact context "
+                    "no longer exists",
+            transition.request.target_area_id)};
+    m_area_transition.reset();
+    m_area_transition_state = AreaTransitionState::k_idle;
+    m_last_error = error;
+    App::Log::error(LogCategory::Scenario, "{}", error);
+    return std::expected<void, std::string>{std::unexpect, error};
   }
   if (transition.source_slot != m_active_area_slot) {
     return fail_transition("active resident AREA slot changed before commit");
   }
 
-  Script::AreaScriptRuntime& area_script{source_script.value()};
+  Script::AreaScriptRuntime& area_script{*requester};
   if (area_script.state() != Script::AreaScriptState::k_waiting ||
       area_script.wait_info().kind != Script::AreaWaitKind::k_area_transition ||
       !area_script.wait_info().area_transition_handle.has_value() ||
@@ -1088,6 +1097,41 @@ std::expected<void, std::string> ScenarioStartupController::service_area_transit
     return fail_transition("requesting AREA context is not waiting on the accepted generation");
   }
 
+  RuntimeAreaSlot& destination_slot{m_area_slots.at(transition.destination_slot)};
+  if (destination_slot.primary.has_value() &&
+      destination_slot.primary_area_id == transition.request.target_area_id) {
+    if (auto attached{m_manager->activate_world_context(destination_slot.world_scene_id)};
+        !attached) {
+      return fail_transition(fmt::format("cached destination decor attach: {}", attached.error()));
+    }
+    const Script::AreaTransitionHandle completed_handle{transition.handle};
+    if (auto completed{area_script.complete_area_transition(completed_handle)}; !completed) {
+      return fail_transition(completed.error());
+    }
+    m_area_transition.reset();
+    m_area_transition_state = AreaTransitionState::k_seamless_attached;
+    return {};
+  }
+
+  if (destination_slot.primary.has_value()) {
+    std::erase_if(
+        m_zone_contacts, [&transition](const std::unique_ptr<ZoneContactContext>& contact) {
+          return contact != nullptr && contact->resident_slot == transition.destination_slot;
+        });
+    destination_slot.scene_script.reset();
+    m_area_scripts.at(transition.destination_slot).reset();
+    m_character_references.remove_area(
+        transition.destination_slot, destination_slot.primary_area_id);
+    destination_slot.scene.reset();
+    destination_slot.primary.reset();
+    destination_slot.scene_id = -1;
+    destination_slot.primary_area_id = -1;
+    destination_slot.secondary_area_id = -1;
+  }
+
+  if (!m_area_archive.has_value()) {
+    return fail_transition("AREA archive became unavailable during destination preparation");
+  }
   auto record_span{
       m_area_archive->read_record(static_cast<std::uint32_t>(transition.request.target_area_id))};
   if (!record_span) {
@@ -1099,13 +1143,16 @@ std::expected<void, std::string> ScenarioStartupController::service_area_transit
   }
 
   Omikron::IamAreaRecord destination_record{std::move(parsed_record).value()};
-  RuntimeAreaSlot& destination_slot{m_area_slots.at(transition.destination_slot)};
   auto prepared{prepare_area_world(*m_manager,
       destination_slot.world_scene_id,
       transition.request.target_area_id,
       destination_record)};
   if (!prepared) {
     return fail_transition(prepared.error());
+  }
+  if (auto attached{m_manager->activate_world_context(destination_slot.world_scene_id)};
+      !attached) {
+    return fail_transition(fmt::format("destination decor attach: {}", attached.error()));
   }
 
   record("AreaTransition.TargetPrepared",
@@ -1166,6 +1213,7 @@ std::expected<void, std::string> ScenarioStartupController::service_area_transit
       transition.source_slot,
       transition.destination_slot);
   m_area_transition.reset();
+  m_area_transition_state = AreaTransitionState::k_seamless_attached;
   return {};
 }
 
@@ -1505,12 +1553,20 @@ std::expected<void, std::string> ScenarioStartupController::set_character_value(
 void ScenarioStartupController::bind_scene_compact_services(Script::AreaScriptRuntime& runtime,
     const std::size_t owner_slot,
     const bool prefer_scene_definition) {
+  const Script::CompactContextHandle token{register_compact_context(runtime)};
   bind_compact_state_services(runtime, owner_slot, prefer_scene_definition);
+  runtime.set_area_transition_sink(
+      [this, owner_slot, token](const Script::AreaTransitionRequest& request) {
+        return begin_area_transition(owner_slot, token, request);
+      });
   runtime.set_area_release_sink([this](const Script::AreaReleaseRequest& request) {
     return release_area(request);
   });
   runtime.set_area_scene_attach_sink([this](const Script::AreaSceneAttachRequest& request) {
     return attach_area_scene(request);
+  });
+  runtime.set_area_scene_detach_sink([this](const Script::AreaSceneDetachRequest& request) {
+    return detach_area_scene(request);
   });
   runtime.set_area_address_placement_sink(
       [this](const Script::AreaAddressPlacementRequest& request) {
@@ -1595,6 +1651,39 @@ void ScenarioStartupController::bind_scene_compact_services(Script::AreaScriptRu
       });
 }
 
+Script::CompactContextHandle ScenarioStartupController::register_compact_context(
+    Script::AreaScriptRuntime& runtime) {
+  if (runtime.compact_context_handle().has_value()) {
+    return *runtime.compact_context_handle();
+  }
+  const Script::CompactContextHandle handle{.generation = m_next_compact_context_generation++};
+  runtime.set_compact_context_handle(handle);
+  return handle;
+}
+
+Script::AreaScriptRuntime* ScenarioStartupController::resolve_compact_context(
+    const Script::CompactContextHandle handle) {
+  const auto matches = [handle](Script::AreaScriptRuntime& runtime) {
+    return runtime.compact_context_handle() == handle;
+  };
+  for (std::optional<Script::AreaScriptRuntime>& runtime : m_area_scripts) {
+    if (runtime.has_value() && matches(*runtime)) {
+      return &*runtime;
+    }
+  }
+  for (RuntimeAreaSlot& slot : m_area_slots) {
+    if (slot.scene_script.has_value() && matches(*slot.scene_script)) {
+      return &*slot.scene_script;
+    }
+  }
+  for (const std::unique_ptr<ZoneContactContext>& contact : m_zone_contacts) {
+    if (contact != nullptr && contact->script != nullptr && matches(*contact->script)) {
+      return contact->script.get();
+    }
+  }
+  return nullptr;
+}
+
 std::expected<void, std::string> ScenarioStartupController::attach_area_scene(
     const Script::AreaSceneAttachRequest& request) {
   if (m_manager == nullptr) {
@@ -1661,50 +1750,16 @@ std::expected<void, std::string> ScenarioStartupController::attach_area_scene(
   }
 
   if (slot.scene.has_value()) {
-    // The compact context must release its borrowed byte span before the owned
-    // scene record is replaced, then only SCENE-owned entities are removed.
-    slot.scene_script.reset();
-    std::optional<Character::BodyIdentity> preserved_body_identity;
-    if (const auto current{m_manager->controlled_character()};
-        current.has_value() && current->world_scene_id == slot.world_scene_id) {
-      preserved_body_identity = current->body_identity;
+    if (auto detached{detach_area_scene_from_slot(slot_index.value())}; !detached) {
+      return detached;
     }
-    scenario_runtime->character_runtime().dematerialize_scene_characters(
-        slot.primary_area_id, slot.scene_id, preserved_body_identity);
-    scenario_runtime->object_placement_runtime().dematerialize_scene_objects(
-        slot.primary_area_id, slot.scene_id);
-    m_character_references.remove_scene(slot_index.value(), slot.scene_id);
-    slot.scene.reset();
-    slot.scene_id = -1;
   }
 
   slot.scene.emplace(std::move(parsed_scene).value());
   slot.scene_id = request.scene_id;
   m_character_references.install_scene(
       slot_index.value(), slot.primary_area_id, slot.scene_id, *slot.scene);
-  const std::size_t source_slot{m_active_area_slot};
-  const std::uint32_t source_world_scene_id{m_area_slots.at(source_slot).world_scene_id};
-  bool current_transferred{false};
-  bool world_switched{false};
   ScopeExit rollback_scene_attach{[&] {
-    if (world_switched) {
-      if (auto restored{
-              m_manager->switch_active_world_context(slot.world_scene_id, source_world_scene_id)};
-          !restored) {
-        App::Log::error(LogCategory::Scenario, "SCENE world rollback failed: {}", restored.error());
-      }
-      m_active_area_slot = source_slot;
-    }
-    if (current_transferred) {
-      if (auto restored{
-              m_manager->transfer_controlled_character(slot.world_scene_id, source_world_scene_id)};
-          !restored) {
-        App::Log::error(LogCategory::Scenario, "SCENE body rollback failed: {}", restored.error());
-      }
-      if (m_current_character_trigger_proxy.has_value()) {
-        m_current_character_trigger_proxy->owner.world_scene_id = source_world_scene_id;
-      }
-    }
     slot.scene_script.reset();
     m_character_references.remove_scene(slot_index.value(), request.scene_id);
     std::optional<Character::BodyIdentity> preserved_body_identity;
@@ -1720,42 +1775,14 @@ std::expected<void, std::string> ScenarioStartupController::attach_area_scene(
     slot.scene_id = -1;
   }};
   const std::optional<ControlledCharacterRef> current{m_manager->controlled_character()};
-  const bool transfer_current{source_slot != slot_index.value() && current.has_value() &&
-                              current->world_scene_id == source_world_scene_id};
-  if (transfer_current) {
-    if (auto transferred{
-            m_manager->transfer_controlled_character(source_world_scene_id, slot.world_scene_id)};
-        !transferred) {
-      return transferred;
-    }
-    current_transferred = true;
-    if (m_current_character_trigger_proxy.has_value() && current.has_value() &&
-        m_current_character_trigger_proxy->owner.body_identity == current->body_identity) {
-      m_current_character_trigger_proxy->owner.world_scene_id = slot.world_scene_id;
-    }
-  }
   const std::optional<Character::BodyIdentity> preserved_body_identity{
-      transfer_current && current.has_value()
+      current.has_value() && current->world_scene_id == slot.world_scene_id
           ? std::optional<Character::BodyIdentity>{current->body_identity}
           : std::nullopt};
   auto materialized{scenario_runtime->character_runtime().preload_scene_characters(
       slot.primary_area_id, slot.scene_id, *slot.scene, preserved_body_identity)};
   if (!materialized) {
     const std::string preload_error{std::move(materialized).error()};
-    if (transfer_current) {
-      if (auto returned{
-              m_manager->transfer_controlled_character(slot.world_scene_id, source_world_scene_id)};
-          !returned) {
-        return std::expected<void, std::string>{std::unexpect,
-            fmt::format("SCENE character preload failed: {}; current-character rollback failed: {}",
-                preload_error,
-                returned.error())};
-      }
-      current_transferred = false;
-      if (m_current_character_trigger_proxy.has_value()) {
-        m_current_character_trigger_proxy->owner.world_scene_id = source_world_scene_id;
-      }
-    }
     return std::expected<void, std::string>{std::unexpect, preload_error};
   }
   for (std::size_t index{0}; index < materialized->size(); ++index) {
@@ -1774,21 +1801,6 @@ std::expected<void, std::string> ScenarioStartupController::attach_area_scene(
               slot.primary_area_id, slot.scene_id, *slot.scene, *game_state)};
       !materialized_objects) {
     const std::string materialize_error{std::move(materialized_objects).error()};
-    if (transfer_current) {
-      if (auto returned{
-              m_manager->transfer_controlled_character(slot.world_scene_id, source_world_scene_id)};
-          !returned) {
-        return std::expected<void, std::string>{std::unexpect,
-            fmt::format(
-                "SCENE object materialization failed: {}; current-character rollback failed: {}",
-                materialize_error,
-                returned.error())};
-      }
-      current_transferred = false;
-      if (m_current_character_trigger_proxy.has_value()) {
-        m_current_character_trigger_proxy->owner.world_scene_id = source_world_scene_id;
-      }
-    }
     return std::expected<void, std::string>{std::unexpect, materialize_error};
   }
   if (slot.scene->primary_event_offset() != 0U) {
@@ -1806,35 +1818,9 @@ std::expected<void, std::string> ScenarioStartupController::attach_area_scene(
     App::Log::info(LogCategory::Script, "SCENE {} event 1 queued", request.scene_id);
   }
 
-  if (source_slot != slot_index.value()) {
-    if (auto switched{
-            m_manager->switch_active_world_context(source_world_scene_id, slot.world_scene_id)};
-        !switched) {
-      const std::string switch_error{std::move(switched).error()};
-      if (transfer_current) {
-        if (auto returned{m_manager->transfer_controlled_character(
-                slot.world_scene_id, source_world_scene_id)};
-            !returned) {
-          return std::expected<void, std::string>{std::unexpect,
-              fmt::format(
-                  "world residency switch failed: {}; current-character rollback failed: {}",
-                  switch_error,
-                  returned.error())};
-        }
-        current_transferred = false;
-        if (m_current_character_trigger_proxy.has_value()) {
-          m_current_character_trigger_proxy->owner.world_scene_id = source_world_scene_id;
-        }
-      }
-      return std::expected<void, std::string>{std::unexpect, switch_error};
-    }
-    world_switched = true;
-    m_active_area_slot = slot_index.value();
-  }
   if (auto mapped{game_state->set_area_mapping(request.area_id, request.scene_id)}; !mapped) {
     return mapped;
   }
-  game_state->set_current_area(request.area_id);
   if (auto refreshed{refresh_active_zones()}; !refreshed) {
     return refreshed;
   }
@@ -1851,12 +1837,59 @@ std::expected<void, std::string> ScenarioStartupController::attach_area_scene(
   return {};
 }
 
+std::expected<void, std::string> ScenarioStartupController::detach_area_scene_from_slot(
+    const std::size_t slot_index) {
+  if (m_manager == nullptr || slot_index >= m_area_slots.size()) {
+    return std::expected<void, std::string>{std::unexpect, "invalid resident AREA slot"};
+  }
+  RuntimeAreaSlot& slot{m_area_slots.at(slot_index)};
+  if (!slot.scene.has_value()) {
+    return {};
+  }
+  if (ScenarioRuntime* runtime{m_manager->world_runtime(slot.world_scene_id)}; runtime != nullptr) {
+    std::optional<Character::BodyIdentity> preserved;
+    if (const auto current{m_manager->controlled_character()};
+        current.has_value() && current->world_scene_id == slot.world_scene_id) {
+      preserved = current->body_identity;
+    }
+    slot.scene_script.reset();
+    runtime->character_runtime().dematerialize_scene_characters(
+        slot.primary_area_id, slot.scene_id, preserved);
+    runtime->object_placement_runtime().dematerialize_scene_objects(
+        slot.primary_area_id, slot.scene_id);
+  }
+  m_character_references.remove_scene(slot_index, slot.scene_id);
+  slot.scene_script.reset();
+  slot.scene.reset();
+  slot.scene_id = -1;
+  return {};
+}
+
+std::expected<void, std::string> ScenarioStartupController::detach_area_scene(
+    const Script::AreaSceneDetachRequest& request) {
+  const auto slot_index{resident_area_slot(request.area_id)};
+  if (!slot_index.has_value()) {
+    return {};
+  }
+  if (auto detached{detach_area_scene_from_slot(*slot_index)}; !detached) {
+    return detached;
+  }
+  if (GameState* const game_state{m_manager->game_state()}; game_state != nullptr) {
+    if (auto mapped{game_state->set_area_mapping(request.area_id, -1)}; !mapped) {
+      return mapped;
+    }
+  }
+  return refresh_active_zones();
+}
+
 std::expected<void, std::string> ScenarioStartupController::release_area(
     const Script::AreaReleaseRequest& request) {
   if (m_manager == nullptr) {
     return std::expected<void, std::string>{std::unexpect, "scenario manager is not available"};
   }
-  const auto slot_index{resident_area_slot(request.area_id)};
+  const auto slot_index{request.area_id == -1
+                            ? std::optional<std::size_t>{m_active_area_slot == 0U ? 1U : 0U}
+                            : resident_area_slot(request.area_id)};
   if (!slot_index.has_value()) {
     return std::expected<void, std::string>{
         std::unexpect, fmt::format("AREA {} is not resident for release", request.area_id)};
@@ -1873,37 +1906,17 @@ std::expected<void, std::string> ScenarioStartupController::release_area(
             request.area_id,
             current->character_id)};
   }
-  if (ScenarioRuntime* runtime{m_manager->world_runtime(slot.world_scene_id)};
-      runtime != nullptr && slot.scene.has_value()) {
-    slot.scene_script.reset();
-    runtime->character_runtime().dematerialize_scene_characters(
-        slot.primary_area_id, slot.scene_id);
-    runtime->object_placement_runtime().dematerialize_scene_objects(
-        slot.primary_area_id, slot.scene_id);
+  const AreaTransitionState previous_state{m_area_transition_state};
+  m_area_transition_state = AreaTransitionState::k_seamless_release_pending;
+  if (auto detached{m_manager->deactivate_world_context(slot.world_scene_id)}; !detached) {
+    m_area_transition_state = previous_state;
+    return detached;
   }
-  slot.scene_script.reset();
-  slot.scene.reset();
-  slot.scene_id = -1;
-  m_character_references.remove_area(slot_index.value(), request.area_id);
-  if (auto unloaded{m_manager->unload_world_context(slot.world_scene_id)}; !unloaded) {
-    return unloaded;
-  }
-  slot.primary.reset();
-  slot.primary_area_id = -1;
-  slot.secondary_area_id = -1;
-  if (auto refreshed{refresh_active_zones()}; !refreshed) {
-    return refreshed;
-  }
-  GameState* const game_state{m_manager->game_state()};
-  if (game_state == nullptr) {
-    return std::expected<void, std::string>{std::unexpect, "session game state is not initialized"};
-  }
-  if (auto unmapped{game_state->set_area_mapping(request.area_id, -1)}; !unmapped) {
-    return unmapped;
-  }
+  m_area_transition.reset();
+  m_area_transition_state = AreaTransitionState::k_idle;
   App::Log::info(LogCategory::Scenario,
-      "AREA {} released from resident slot {}",
-      request.area_id,
+      "AREA {} decor detached in resident slot {}",
+      slot.primary_area_id,
       slot_index.value());
   return {};
 }
@@ -2208,12 +2221,12 @@ std::expected<bool, std::string> ScenarioStartupController::service_current_char
   if (m_manager == nullptr) {
     return false;
   }
-  const std::optional<ControlledCharacterRef> current{m_manager->controlled_character()};
+  std::optional<ControlledCharacterRef> current{m_manager->controlled_character()};
   if (!current.has_value()) {
     return false;
   }
-  ScenarioRuntime* const runtime{m_manager->world_runtime(current->world_scene_id)};
-  Character::RuntimeCharacter* const character{
+  ScenarioRuntime* runtime{m_manager->world_runtime(current->world_scene_id)};
+  Character::RuntimeCharacter* character{
       runtime == nullptr ? nullptr
                          : runtime->character_runtime().find_body(current->body_identity)};
   if (character == nullptr || !character->active || !character->area_present) {
@@ -2280,10 +2293,79 @@ std::expected<bool, std::string> ScenarioStartupController::service_current_char
     if (character->ctl_controller.has_value() && character->controller_enabled) {
       character->ctl_controller->service_tick(m_manager->ctl_input_mask(), *character);
     }
+    std::array<Character::PhysicalDecorSource, 2> sources{};
+    std::size_t source_count{0};
+    for (const WorldSceneContext* context : m_manager->attached_world_contexts()) {
+      if (context == nullptr || context->runtime == nullptr ||
+          context->runtime->decor_model() == nullptr) {
+        continue;
+      }
+      auto* const resident{
+          std::ranges::find(m_area_slots, context->scene_id, &RuntimeAreaSlot::world_scene_id)};
+      if (resident == m_area_slots.end()) {
+        continue;
+      }
+      sources.at(source_count++) = Character::PhysicalDecorSource{
+          .world_scene_id = context->scene_id,
+          .resident_slot = static_cast<std::size_t>(std::distance(m_area_slots.begin(), resident)),
+          .decor_model = context->runtime->decor_model(),
+          .decor_runtime_objects = context->runtime->decor_runtime_objects()};
+    }
     Character::PhysicalMotionService::resolve_tick(*character,
-        {.decor_model = runtime->decor_model(),
-            .decor_runtime_objects = runtime->decor_runtime_objects(),
+        {.decor_sources =
+                std::span<const Character::PhysicalDecorSource>{sources}.first(source_count),
             .suppress_small_support_snap = false});
+
+    const std::optional<std::uint32_t> accepted_world{
+        character->physical_motion.support.source_world_scene_id};
+    if (character->physical_motion.support.valid && accepted_world.has_value() &&
+        accepted_world.value() != current->world_scene_id) {
+      auto* const destination{std::ranges::find(
+          m_area_slots, accepted_world.value(), &RuntimeAreaSlot::world_scene_id)};
+      const WorldSceneContext* const destination_context{
+          m_manager->find_world_context(accepted_world.value())};
+      if (destination != m_area_slots.end() && destination_context != nullptr &&
+          destination_context->residency == WorldSceneResidencyState::ResidentAttached) {
+        const std::size_t destination_slot{
+            static_cast<std::size_t>(std::distance(m_area_slots.begin(), destination))};
+        const std::uint32_t source_world{current->world_scene_id};
+        if (auto selected{m_manager->set_current_world_context(accepted_world.value())};
+            !selected) {
+          return std::expected<bool, std::string>{std::unexpect, selected.error()};
+        }
+        if (auto transferred{
+                m_manager->transfer_controlled_character(source_world, accepted_world.value())};
+            !transferred) {
+          return std::expected<bool, std::string>{std::unexpect, transferred.error()};
+        }
+        m_active_area_slot = destination_slot;
+        if (GameState* const game_state{m_manager->game_state()}; game_state != nullptr) {
+          game_state->set_current_area(static_cast<std::int16_t>(destination->primary_area_id));
+        }
+        current = m_manager->controlled_character();
+        runtime = m_manager->world_runtime(accepted_world.value());
+        character = runtime == nullptr
+                        ? nullptr
+                        : runtime->character_runtime().find_body(current->body_identity);
+        if (character == nullptr) {
+          return std::expected<bool, std::string>{
+              std::unexpect, "controlled body vanished during AREA handoff"};
+        }
+        character->area_id = destination->primary_area_id;
+        character->scene_id.reset();
+        if (m_current_character_trigger_proxy.has_value()) {
+          m_current_character_trigger_proxy->owner = *current;
+        }
+        if (auto refreshed{refresh_active_zones()}; !refreshed) {
+          return std::expected<bool, std::string>{std::unexpect, refreshed.error()};
+        }
+        App::Log::debug(LogCategory::Scenario,
+            "CurrentAreaPhysicalHandoff — sourceWorld={} targetWorld={} targetArea={}",
+            source_world,
+            accepted_world.value(),
+            destination->primary_area_id);
+      }
+    }
 
     if (character->ctl_controller.has_value() && character->controller_enabled) {
       for (const Character::CtlController::SoundMarkerEvent& event :

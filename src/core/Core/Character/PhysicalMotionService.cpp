@@ -6,6 +6,7 @@
 #include <numbers>
 #include <optional>
 #include <string_view>
+#include <vector>
 
 #include "Core/Character/CharacterRuntime.hpp"
 #include "Core/Character/HorizontalCollisionQuery.hpp"
@@ -24,6 +25,42 @@ constexpr std::uint32_t K_MOVER_POSITIVE_X{0x10U};
 constexpr std::uint32_t K_MOVER_NEGATIVE_X{0x20U};
 constexpr std::uint32_t K_MOVER_POSITIVE_Z{0x40U};
 constexpr std::uint32_t K_MOVER_NEGATIVE_Z{0x80U};
+
+struct SourcedHorizontalResult {
+  HorizontalResolveResult result;
+  const PhysicalDecorSource* source{nullptr};
+};
+
+[[nodiscard]] SourcedHorizontalResult resolve_horizontal(
+    const std::span<const PhysicalDecorSource> sources,
+    const App::Runtime::Vec3 start,
+    const App::Runtime::Vec3 displacement,
+    const HorizontalCollisionBody body) {
+  SourcedHorizontalResult best;
+  best.result.resolved_displacement = displacement;
+  float best_distance{std::numeric_limits<float>::max()};
+  for (const PhysicalDecorSource& source : sources) {
+    if (source.decor_model == nullptr) {
+      continue;
+    }
+    HorizontalResolveResult candidate{HorizontalCollisionQuery::resolve(
+        *source.decor_model, source.decor_runtime_objects, start, displacement, body)};
+    if (!candidate.last_hit.has_value()) {
+      continue;
+    }
+    if (candidate.last_hit->travel_distance < best_distance) {
+      best_distance = candidate.last_hit->travel_distance;
+      best.result = std::move(candidate);
+      best.source = &source;
+    }
+  }
+  return best;
+}
+
+struct SourcedSupportHit {
+  StaticSupportHit hit;
+  const PhysicalDecorSource* source{nullptr};
+};
 
 [[nodiscard]] bool is_serious_fall_stage(const std::uint8_t stage) {
   return stage == 1U || stage == 3U || stage == 4U;
@@ -96,7 +133,7 @@ void apply_support_mover_terms(PhysicalMotionState& motion, const std::uint32_t 
 }
 
 void run_support_mode4(PhysicalMotionState& motion,
-    const PhysicalMotionEnvironment& environment,
+    const std::span<const PhysicalDecorSource> sources,
     const HorizontalCollisionState& horizontal_state) {
   SupportMode4ResponseState& response{motion.support_mode4_response};
   response.attempted = true;
@@ -105,23 +142,27 @@ void run_support_mode4(PhysicalMotionState& motion,
       .y = 0.0F,
       .z = motion.candidate_translation.z - motion.accepted_translation.z};
   motion.candidate_translation = motion.accepted_translation;
-  HorizontalResolveResult result;
-  result.resolved_displacement = response.input_displacement;
-  if (horizontal_state.body_valid && environment.decor_model != nullptr) {
-    result = HorizontalCollisionQuery::resolve(*environment.decor_model,
-        environment.decor_runtime_objects,
+  SourcedHorizontalResult sourced;
+  sourced.result.resolved_displacement = response.input_displacement;
+  if (horizontal_state.body_valid) {
+    sourced = resolve_horizontal(sources,
         motion.accepted_translation,
         response.input_displacement,
         {.radius = horizontal_state.body_radius,
             .top_y = horizontal_state.body_top,
             .bottom_y = horizontal_state.body_bottom});
   }
+  const HorizontalResolveResult& result{sourced.result};
   response.resolved_displacement = result.resolved_displacement;
   response.forward_collision = result.forward_collision;
   response.depenetrated = result.depenetrated;
   response.collision_passes = result.collision_passes;
   if (result.last_hit.has_value()) {
     response.object_index = result.last_hit->object_index;
+    if (sourced.source != nullptr) {
+      response.source_world_scene_id = sourced.source->world_scene_id;
+      response.source_resident_slot = sourced.source->resident_slot;
+    }
     response.response_normal = result.last_hit->world_normal;
   }
   motion.candidate_translation.x += result.resolved_displacement.x;
@@ -394,6 +435,15 @@ void PhysicalMotionService::apply_automatic_collision_heading(RuntimeCharacter& 
 
 void PhysicalMotionService::resolve_tick(
     RuntimeCharacter& character, const PhysicalMotionEnvironment& environment) {
+  std::vector<PhysicalDecorSource> compatibility_sources;
+  std::span<const PhysicalDecorSource> sources{environment.decor_sources};
+  if (sources.empty() && environment.decor_model != nullptr) {
+    compatibility_sources.push_back(PhysicalDecorSource{.world_scene_id = 0,
+        .resident_slot = 0,
+        .decor_model = environment.decor_model,
+        .decor_runtime_objects = environment.decor_runtime_objects});
+    sources = compatibility_sources;
+  }
   PhysicalMotionState& motion{character.physical_motion};
   motion.horizontal_collision = {};
   motion.support_mode4_response = {};
@@ -434,17 +484,17 @@ void PhysicalMotionService::resolve_tick(
         horizontal_state.body_bottom >= horizontal_state.body_top;
   }
 
-  HorizontalResolveResult horizontal_result;
-  horizontal_result.resolved_displacement = horizontal_state.intended_displacement;
-  if (horizontal_state.body_valid && environment.decor_model != nullptr) {
-    horizontal_result = HorizontalCollisionQuery::resolve(*environment.decor_model,
-        environment.decor_runtime_objects,
+  SourcedHorizontalResult sourced_horizontal;
+  sourced_horizontal.result.resolved_displacement = horizontal_state.intended_displacement;
+  if (horizontal_state.body_valid) {
+    sourced_horizontal = resolve_horizontal(sources,
         motion.accepted_translation,
         horizontal_state.intended_displacement,
         {.radius = horizontal_state.body_radius,
             .top_y = horizontal_state.body_top,
             .bottom_y = horizontal_state.body_bottom});
   }
+  const HorizontalResolveResult& horizontal_result{sourced_horizontal.result};
   horizontal_state.resolved_displacement = horizontal_result.resolved_displacement;
   horizontal_state.forward_collision = horizontal_result.forward_collision;
   horizontal_state.depenetrated = horizontal_result.depenetrated;
@@ -453,6 +503,10 @@ void PhysicalMotionService::resolve_tick(
   horizontal_state.depenetration_iterations = horizontal_result.depenetration_iterations;
   if (horizontal_result.last_hit.has_value()) {
     horizontal_state.object_index = horizontal_result.last_hit->object_index;
+    if (sourced_horizontal.source != nullptr) {
+      horizontal_state.source_world_scene_id = sourced_horizontal.source->world_scene_id;
+      horizontal_state.source_resident_slot = sourced_horizontal.source->resident_slot;
+    }
     horizontal_state.contact_point = horizontal_result.last_hit->world_point;
     horizontal_state.response_normal = {.x = horizontal_result.last_hit->world_normal.x,
         .y = 0.0F,
@@ -487,20 +541,36 @@ void PhysicalMotionService::resolve_tick(
           .y = motion.accepted_translation.y + anchor_offset.y,
           .z = motion.candidate_translation.z + anchor_offset.z},
       .radius = spheres.subspan(largest.value(), 1U).front().radius};
-  const auto query_result{
-      environment.decor_model == nullptr
-          ? std::optional<SupportQueryResult>{}
-          : StaticSupportQuery::find_candidates(
-                *environment.decor_model, environment.decor_runtime_objects, query)};
-  if (!query_result.has_value()) {
+  std::vector<SourcedSupportHit> support_candidates;
+  for (const PhysicalDecorSource& source : sources) {
+    if (source.decor_model == nullptr) {
+      continue;
+    }
+    const auto result{StaticSupportQuery::find_candidates(
+        *source.decor_model, source.decor_runtime_objects, query)};
+    if (!result.has_value()) {
+      continue;
+    }
+    support_candidates.push_back(SourcedSupportHit{.hit = result->primary, .source = &source});
+    if (result->alternate.has_value()) {
+      support_candidates.push_back(SourcedSupportHit{.hit = *result->alternate, .source = &source});
+    }
+  }
+  std::ranges::sort(support_candidates, {}, [](const SourcedSupportHit& candidate) {
+    return candidate.hit.clearance;
+  });
+  if (support_candidates.empty()) {
     rollback(character);
     return;
   }
-  const StaticSupportHit& hit{query_result->primary};
+  const SourcedSupportHit& primary_support{support_candidates.front()};
+  const StaticSupportHit& hit{primary_support.hit};
 
   motion.support.valid = true;
   motion.support.support_class = hit.support_class;
   motion.support.object_index = hit.object_index;
+  motion.support.source_world_scene_id = primary_support.source->world_scene_id;
+  motion.support.source_resident_slot = primary_support.source->resident_slot;
   motion.support.point = hit.world_point;
   motion.support.normal = hit.world_normal;
   motion.support.clearance = hit.clearance;
@@ -512,14 +582,18 @@ void PhysicalMotionService::resolve_tick(
       hit.clearance,
       anchor_offset.y,
       query.radius);
-  if (query_result->alternate.has_value()) {
-    motion.support.alternate_object_index = query_result->alternate->object_index;
-    motion.support.alternate_clearance = query_result->alternate->clearance;
+  if (support_candidates.size() > 1U) {
+    const SourcedSupportHit& alternate{support_candidates.at(1)};
+    motion.support.alternate_object_index = alternate.hit.object_index;
+    motion.support.alternate_world_scene_id = alternate.source->world_scene_id;
+    motion.support.alternate_resident_slot = alternate.source->resident_slot;
+    motion.support.alternate_clearance = alternate.hit.clearance;
     motion.support.alternate_relative_y = alternate_relative_y(
-        query_result->alternate->clearance, motion.support.primary_relative_y, hit.clearance);
+        alternate.hit.clearance, motion.support.primary_relative_y, hit.clearance);
   }
   motion.support_history.primary_relative_y = motion.support.primary_relative_y;
-  const Omikron::MeshDescriptor& support_mesh{environment.decor_model->meshes.at(hit.object_index)};
+  const Omikron::Model3DOData& support_model{*primary_support.source->decor_model};
+  const Omikron::MeshDescriptor& support_mesh{support_model.meshes.at(hit.object_index)};
   motion.support.mover_flags = support_mesh.mover_flags;
   if ((support_mesh.flags & K_SPECIAL_SUPPORT_MASK) != 0U) {
     motion.support.special_deferred = true;
@@ -529,7 +603,7 @@ void PhysicalMotionService::resolve_tick(
 
   const float old_gap{motion.support.primary_relative_y - extents->bottom};
   const std::optional<float> alternate_gap_before{
-      query_result->alternate.has_value()
+      support_candidates.size() > 1U
           ? std::optional{motion.support.alternate_relative_y - extents->bottom}
           : std::nullopt};
   motion.maximum_support_gap = std::max(motion.maximum_support_gap, old_gap);
@@ -546,16 +620,30 @@ void PhysicalMotionService::resolve_tick(
     ceiling.body_top = extents->top;
     ceiling.sphere_radius = spheres.subspan(largest.value(), 1U).front().radius;
     ceiling.clearance_adjustment = K_CEILING_CLEARANCE_ADJUSTMENT;
-    const auto ceiling_hit{SweptSphereQuery::find(*environment.decor_model,
-        environment.decor_runtime_objects,
-        {.start = motion.candidate_translation,
-            .direction = {.x = 0.0F, .y = -1.0F, .z = 0.0F},
-            .max_distance = std::numeric_limits<float>::max(),
-            .radius = ceiling.sphere_radius},
-        K_CEILING_EXCLUDED_OBJECT_FLAGS)};
+    std::optional<SweptSphereHit> ceiling_hit;
+    const PhysicalDecorSource* ceiling_source{nullptr};
+    for (const PhysicalDecorSource& source : sources) {
+      if (source.decor_model == nullptr) {
+        continue;
+      }
+      const auto candidate{SweptSphereQuery::find(*source.decor_model,
+          source.decor_runtime_objects,
+          {.start = motion.candidate_translation,
+              .direction = {.x = 0.0F, .y = -1.0F, .z = 0.0F},
+              .max_distance = std::numeric_limits<float>::max(),
+              .radius = ceiling.sphere_radius},
+          K_CEILING_EXCLUDED_OBJECT_FLAGS)};
+      if (candidate.has_value() &&
+          (!ceiling_hit.has_value() || candidate->travel_distance < ceiling_hit->travel_distance)) {
+        ceiling_hit = candidate;
+        ceiling_source = &source;
+      }
+    }
     if (ceiling_hit.has_value()) {
       ceiling.hit = true;
       ceiling.object_index = ceiling_hit->object_index;
+      ceiling.source_world_scene_id = ceiling_source->world_scene_id;
+      ceiling.source_resident_slot = ceiling_source->resident_slot;
       ceiling.contact_point = ceiling_hit->world_point;
       ceiling.contact_normal = ceiling_hit->world_normal;
       ceiling.hit_distance = ceiling_hit->travel_distance;
@@ -605,7 +693,7 @@ void PhysicalMotionService::resolve_tick(
     if (history_mode4 || steep_slope) {
       motion.support_mode4_response.triggered_by_history = history_mode4;
       motion.support_mode4_response.triggered_by_steep_slope = steep_slope;
-      run_support_mode4(motion, environment, horizontal_state);
+      run_support_mode4(motion, sources, horizontal_state);
     }
     if (motion.support.walkable) {
       motion.support.grounded = true;
@@ -619,20 +707,22 @@ void PhysicalMotionService::resolve_tick(
       class2.primary_support_point = hit.world_point;
       if (class2.eligible) {
         class2.secondary_query_attempted = true;
-        const auto secondary{SecondarySupportQuery::find(*environment.decor_model,
-            environment.decor_runtime_objects,
+        const auto secondary{SecondarySupportQuery::find(support_model,
+            primary_support.source->decor_runtime_objects,
             motion.candidate_translation)};
         if (secondary.has_value()) {
           class2.secondary_hit = true;
           class2.secondary_object_index = secondary->object_index;
+          class2.source_world_scene_id = primary_support.source->world_scene_id;
+          class2.source_resident_slot = primary_support.source->resident_slot;
           class2.secondary_normal = secondary->world_normal;
           class2.secondary_distance = secondary->distance;
           class2.secondary_gap = secondary->distance - extents->bottom;
           class2.triggered_by_gap = class2.secondary_gap > K_CLASS2_SECONDARY_GAP_THRESHOLD;
           class2.triggered_by_slope = !support_is_walkable(secondary->world_normal);
           class2.triggered_by_special_flag =
-              (environment.decor_model->meshes.at(secondary->object_index).flags &
-                  K_SPECIAL_SUPPORT_MASK) != 0U;
+              (support_model.meshes.at(secondary->object_index).flags & K_SPECIAL_SUPPORT_MASK) !=
+              0U;
           if (class2.triggered_by_gap || class2.triggered_by_slope ||
               class2.triggered_by_special_flag) {
             motion.horizontal_physical_x_per_tick =

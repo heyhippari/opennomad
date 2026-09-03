@@ -69,15 +69,16 @@ Selecting **New Game**, the Kay'l portal/arrival sequence, the subsequent transi
 
 ## Later AREA handoff correction
 
-The later compact-VM handoff is split into residency and presentation.
-`0x2F` prepares the alternate AREA slot (AREA bytes, decor, SCX, and world
-context) but leaves the destination `LoadedInactive` and source active. `0x47`
-attaches IAM/SCENE, materializes only SCENE-local entities, queues the
-independent SCENE compact event, updates the AREA-to-SCENE mapping, and commits
-the prepared destination as active. `0x49` resolves its named address across
-both resident AREA slots and applies it only to an already-established
-controlled character. `0x30` finally releases the requested inactive source
-AREA and any attached SCENE.
+The later compact-VM handoff separates residency, physical decor attachment,
+and current AREA ownership. Seamless `0x2F(target,-1,-1)` prepares and attaches
+the alternate AREA while the source remains attached and current. `0x47`
+attaches IAM/SCENE, materializes only SCENE-local entities, queues its independent
+compact event, and updates the AREA-to-SCENE mapping; it does not switch AREA
+ownership. Ordinary physical support performs the event-9-equivalent current
+AREA/body handoff. `0x49` resolves its named address across both resident AREA
+slots and applies it only to an already-established controlled character.
+`0x30(-1)` detaches the non-current decor while preserving AREA residency;
+`0x48(area)` removes only that AREA's attached SCENE.
 
 See [`iam-scene.md`](iam-scene.md) for the record format and replacement lifecycle.
 

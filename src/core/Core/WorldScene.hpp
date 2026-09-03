@@ -6,6 +6,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "Core/Debug/SceneDebugView.hpp"
 #include "Core/Interface/DialogTextLayout.hpp"
@@ -81,7 +82,13 @@ class WorldScene final : public Scene, public Debug::SceneDebugView {
 
   ScenarioManager* m_scenarios{nullptr};
   Interface::InterfacePresenter m_interfaces;
-  std::unique_ptr<WorldRenderer> m_world_renderer;
+  struct AttachedWorldRenderer {
+    std::uint32_t scene_id{0};
+    std::uint32_t generation{0};
+    std::unique_ptr<WorldRenderer> renderer;
+  };
+  std::vector<AttachedWorldRenderer> m_attached_world_renderers;
+  WorldRenderer* m_world_renderer{nullptr};
   std::unique_ptr<WorldFadeRenderer> m_fade_renderer;
   std::unique_ptr<WorldLetterboxRenderer> m_letterbox_renderer;
   std::unique_ptr<WorldColorPipeline> m_color_pipeline;

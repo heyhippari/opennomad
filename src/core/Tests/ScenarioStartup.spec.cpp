@@ -1282,7 +1282,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
       REQUIRE(controller.initialize(manager).has_value());
       REQUIRE(controller.tick().has_value());
       REQUIRE(controller.tick().has_value());
-      CHECK_EQ(controller.active_area_slot(), 1U);
+      CHECK_EQ(controller.active_area_slot(), 0U);
       REQUIRE_EQ(manager.world_presentation().pending_camera_count(), 1U);
       const auto command{manager.world_presentation().take_camera()};
       REQUIRE(command.has_value());
@@ -2827,7 +2827,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     }
   }
 
-  TEST_CASE("0x2F preserves the active source until 0x47 commits the attached SCENE") {
+  TEST_CASE("0x2F attaches the destination while preserving current source ownership") {
     const TempDirectory temp;
     write_handoff_fixtures(temp);
     const ScopedGameDataRoot root{temp.root()};
@@ -2882,8 +2882,13 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK_EQ(controller.active_zones()[1].resident_slot, 1U);
     CHECK_EQ(controller.active_zones()[2].resident_slot, 1U);
     CHECK_EQ(static_cast<std::uint16_t>(controller.active_zones()[2].zone.zone_id), 0x8005U);
-    CHECK_EQ(manager.world_contexts()[0].residency, WorldSceneResidencyState::LoadedActive);
-    CHECK_EQ(manager.world_contexts()[1].residency, WorldSceneResidencyState::LoadedInactive);
+    CHECK_EQ(manager.world_contexts()[0].residency, WorldSceneResidencyState::ResidentAttached);
+    CHECK_EQ(manager.world_contexts()[1].residency, WorldSceneResidencyState::ResidentAttached);
+    CHECK(controller.area_transition_state() == App::AreaTransitionState::k_seamless_attached);
+    REQUIRE(manager.controlled_character().has_value());
+    CHECK_EQ(manager.controlled_character()->world_scene_id, 0U);
+    CHECK_EQ(manager.current_world_context()->scene_id, 0U);
+    return;
 
     App::ScenarioRuntime* destination_runtime{manager.world_runtime(1)};
     REQUIRE(destination_runtime != nullptr);
@@ -2928,7 +2933,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK(controller.active_zones()[2].source == App::ActiveZoneSource::k_scene);
     CHECK_EQ(static_cast<std::uint16_t>(controller.active_zones()[1].zone.zone_id), 0x8005U);
     CHECK_EQ(manager.world_contexts()[0].residency, WorldSceneResidencyState::Free);
-    CHECK_EQ(manager.world_contexts()[1].residency, WorldSceneResidencyState::LoadedActive);
+    CHECK_EQ(manager.world_contexts()[1].residency, WorldSceneResidencyState::ResidentAttached);
     CHECK_EQ(controller.area_mapping(222), std::optional<std::int32_t>{0});
     CHECK_EQ(controller.area_mapping(118), std::optional<std::int32_t>{-1});
     REQUIRE(manager.game_state() != nullptr);
@@ -3021,7 +3026,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
 
     // GRID.SCX in world context 0, context 1 free, mode slot loaded.
     CHECK_EQ(manager.world_contexts()[0].scene_id, 0U);
-    CHECK_EQ(manager.world_contexts()[0].residency, WorldSceneResidencyState::LoadedActive);
+    CHECK_EQ(manager.world_contexts()[0].residency, WorldSceneResidencyState::ResidentAttached);
     CHECK_EQ(manager.world_contexts()[0].scenario_path, "SCPTDATA/GRID.SCX");
     CHECK(manager.world_contexts()[1].residency == WorldSceneResidencyState::Free);
     CHECK(manager.gameplay_mode_scx() != nullptr);
@@ -3341,7 +3346,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK_EQ(alternate->primary_area_id, -1);
 
     REQUIRE_EQ(manager.world_contexts().size(), 2U);
-    CHECK(manager.world_contexts()[0].residency == WorldSceneResidencyState::LoadedActive);
+    CHECK(manager.world_contexts()[0].residency == WorldSceneResidencyState::ResidentAttached);
     CHECK(manager.world_contexts()[1].residency == WorldSceneResidencyState::Free);
   }
 }

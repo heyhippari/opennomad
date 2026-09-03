@@ -107,10 +107,10 @@ inline const char* residency_name(const App::WorldSceneResidencyState state) {
   switch (state) {
     case App::WorldSceneResidencyState::Free:
       return "Free";
-    case App::WorldSceneResidencyState::LoadedInactive:
-      return "LoadedInactive";
-    case App::WorldSceneResidencyState::LoadedActive:
-      return "LoadedActive";
+    case App::WorldSceneResidencyState::ResidentDetached:
+      return "ResidentDetached";
+    case App::WorldSceneResidencyState::ResidentAttached:
+      return "ResidentAttached";
   }
   return "Unknown";
 }

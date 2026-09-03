@@ -104,7 +104,7 @@ std::expected<void, std::string> ScenarioEngine::update(const float delta_second
   if (auto* runtime{m_manager.gameplay_runtime()}) {
     runtime->tick(delta_seconds);
   }
-  for (auto* runtime : m_manager.active_world_runtimes()) {
+  for (auto* runtime : m_manager.resident_world_runtimes()) {
     runtime->tick(delta_seconds);
   }
 

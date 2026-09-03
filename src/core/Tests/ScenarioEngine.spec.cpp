@@ -533,7 +533,7 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
     CHECK_EQ(engine.area_script()->wait_state(), 6U);
 
     CHECK_EQ(manager.world_contexts()[0].scene_id, 0U);
-    CHECK_EQ(manager.world_contexts()[0].residency, WorldSceneResidencyState::LoadedActive);
+    CHECK_EQ(manager.world_contexts()[0].residency, WorldSceneResidencyState::ResidentAttached);
     CHECK_EQ(manager.world_contexts()[0].scenario_path, "SCPTDATA/GRID.SCX");
     CHECK(manager.world_contexts()[1].residency == WorldSceneResidencyState::Free);
     CHECK(manager.gameplay_mode_scx() != nullptr);
@@ -708,7 +708,7 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
 
     // GRID world context 0 stays resident and active throughout.
     CHECK_EQ(manager.world_contexts()[0].scene_id, 0U);
-    CHECK_EQ(manager.world_contexts()[0].residency, WorldSceneResidencyState::LoadedActive);
+    CHECK_EQ(manager.world_contexts()[0].residency, WorldSceneResidencyState::ResidentAttached);
     CHECK_EQ(manager.world_contexts()[0].scenario_path, "SCPTDATA/GRID.SCX");
     CHECK(manager.gameplay_mode_scx() != nullptr);
   }
@@ -741,7 +741,7 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
 
     REQUIRE(engine.update(1.0F / 30.0F).has_value());
     REQUIRE(engine.update(1.0F / 30.0F).has_value());
-    CHECK_EQ(manager.world_contexts()[0].residency, WorldSceneResidencyState::LoadedActive);
+    CHECK_EQ(manager.world_contexts()[0].residency, WorldSceneResidencyState::ResidentAttached);
   }
 
   TEST_CASE("AREA-started dialog takeover gates both tick paths and resumes the advanced IP") {
@@ -822,7 +822,7 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
     REQUIRE_EQ(engine.area_script()->trace().size(), 1U);
   }
 
-  TEST_CASE("0x2F prepares the alternate AREA and following 0x47 commits its SCENE") {
+  TEST_CASE("0x2F attaches the alternate AREA and 0x47 attaches its SCENE") {
     const TempDirectory temp;
     write_transition_boot_fixtures(temp, true);
     const ScopedGameDataRoot root{temp.root()};
@@ -846,16 +846,16 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
     REQUIRE(engine.runtime_area_slot(1) != nullptr);
     CHECK_EQ(engine.runtime_area_slot(0)->primary_area_id, 118);
     CHECK_FALSE(engine.runtime_area_slot(1)->primary.has_value());
-    CHECK(manager.world_contexts()[0].residency == WorldSceneResidencyState::LoadedActive);
+    CHECK(manager.world_contexts()[0].residency == WorldSceneResidencyState::ResidentAttached);
     CHECK(manager.world_contexts()[1].residency == WorldSceneResidencyState::Free);
 
-    // The next scheduler tick prepares the destination transactionally and
-    // completes generation 1. The parent then runs its following 0x47, which
-    // attaches SCENE 55 and commits the prepared world for presentation.
+    // The next scheduler tick prepares and attaches the destination, completes
+    // generation 1, and runs the following SCENE-only 0x47.
     REQUIRE(engine.update(1.0F / 30.0F).has_value());
     CHECK_FALSE(engine.area_transition_pending());
-    CHECK_EQ(engine.active_area_slot(), 1U);
-    CHECK_EQ(engine.active_area_id(), 222);
+    CHECK(engine.area_transition_state() == App::AreaTransitionState::k_seamless_attached);
+    CHECK_EQ(engine.active_area_slot(), 0U);
+    CHECK_EQ(engine.active_area_id(), 118);
     REQUIRE(engine.runtime_area_slot(0)->primary.has_value());
     REQUIRE(engine.runtime_area_slot(1)->primary.has_value());
     CHECK_EQ(engine.runtime_area_slot(0)->primary_area_id, 118);
@@ -863,12 +863,12 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
     CHECK_EQ(engine.runtime_area_slot(1)->primary->model3do_name(), "AIMPASSE");
     CHECK_EQ(engine.runtime_area_slot(1)->primary->scenario_scx_name(), "IMPASSE");
     CHECK_EQ(engine.runtime_area_slot(1)->primary->sky_3do_name(), "ASKY");
-    CHECK(manager.world_contexts()[0].residency == WorldSceneResidencyState::LoadedInactive);
+    CHECK(manager.world_contexts()[0].residency == WorldSceneResidencyState::ResidentAttached);
     CHECK_EQ(manager.world_contexts()[0].scenario_path, "SCPTDATA/GRID.SCX");
-    CHECK(manager.world_contexts()[1].residency == WorldSceneResidencyState::LoadedActive);
+    CHECK(manager.world_contexts()[1].residency == WorldSceneResidencyState::ResidentAttached);
     CHECK_EQ(manager.world_contexts()[1].scenario_path, "SCPTDATA/IMPASSE.SCX");
     REQUIRE(manager.active_world_context() != nullptr);
-    CHECK_EQ(manager.active_world_context()->scene_id, 1U);
+    CHECK_EQ(manager.active_world_context()->scene_id, 0U);
 
     CHECK(engine.area_script()->state() == AreaScriptState::k_ready);
     REQUIRE(engine.runtime_area_slot(1)->scene_script.has_value());
@@ -982,7 +982,7 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
     REQUIRE(engine.runtime_area_slot(1) != nullptr);
     CHECK_EQ(engine.runtime_area_slot(0)->primary_area_id, 118);
     CHECK_FALSE(engine.runtime_area_slot(1)->primary.has_value());
-    CHECK(manager.world_contexts()[0].residency == WorldSceneResidencyState::LoadedActive);
+    CHECK(manager.world_contexts()[0].residency == WorldSceneResidencyState::ResidentAttached);
     CHECK_EQ(manager.world_contexts()[0].scenario_path, "SCPTDATA/GRID.SCX");
     CHECK(manager.world_contexts()[1].residency == WorldSceneResidencyState::Free);
     CHECK(engine.area_script()->state() == AreaScriptState::k_waiting);

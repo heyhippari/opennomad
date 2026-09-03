@@ -76,6 +76,7 @@ constexpr std::uint32_t K_OP_PRESENTATION_EFFECT{0x76};
 constexpr std::uint32_t K_OP_PRESENTATION_EFFECT_ALT{0x77};
 constexpr std::uint32_t K_OP_OPEN_INTERFACE{0x46};
 constexpr std::uint32_t K_OP_ATTACH_AREA_SCENE{0x47};
+constexpr std::uint32_t K_OP_DETACH_AREA_SCENE{0x48};
 constexpr std::uint32_t K_OP_PLACE_CURRENT_CHARACTER_AT_ADDRESS{0x49};
 constexpr std::uint32_t K_OP_SET_ADDRESS_FLAG{0x57};
 constexpr std::uint32_t K_OP_CLEAR_ADDRESS_FLAG{0x58};
@@ -90,6 +91,8 @@ constexpr std::uint16_t K_TRACKED_SCRIPT_WAIT_STATE{4};
 constexpr std::uint16_t K_CAMERA_WAIT_STATE{7};
 /// Runtime context state while native AREA transition coordination is active.
 constexpr std::uint16_t K_AREA_TRANSITION_WAIT_STATE{10};
+/// Runtime context state that yields and retries the same transition opcode.
+constexpr std::uint16_t K_AREA_TRANSITION_RETRY_STATE{9};
 /// Runtime Scalar16 parameter-reference marker.
 constexpr std::uint16_t K_SCALAR16_PARAMETER_REFERENCE{0x4000U};
 constexpr std::uint16_t K_SCALAR16_PARAMETER_INDEX_MASK{0x3FFFU};
@@ -141,7 +144,7 @@ constexpr std::array<AreaOperandWidth, 3> K_OPERANDS_PRESENTATION{
       static_cast<std::uint32_t>(lhs) | static_cast<std::uint32_t>(rhs));
 }
 
-constexpr std::array<AreaOpcodeInfo, 51> K_AREA_OPCODE_TABLE{
+constexpr std::array<AreaOpcodeInfo, 52> K_AREA_OPCODE_TABLE{
     AreaOpcodeInfo{.opcode = K_OP_END_EVENT,
         .name = "EndEvent",
         .support = OpcodeSupport::k_supported,
@@ -479,6 +482,13 @@ constexpr std::array<AreaOpcodeInfo, 51> K_AREA_OPCODE_TABLE{
                  "SCENE immediately, while a nonresident target is deferred until AREA load",
         .operands = K_OPERANDS_4E.data(),
         .operand_count = K_OPERANDS_4E.size()},
+    AreaOpcodeInfo{.opcode = K_OP_DETACH_AREA_SCENE,
+        .name = "DetachAreaScene",
+        .support = OpcodeSupport::k_supported,
+        .provisional = false,
+        .notes = "detaches the resident AREA's optional SCENE without releasing the AREA",
+        .operands = K_OPERANDS_I16.data(),
+        .operand_count = K_OPERANDS_I16.size()},
     AreaOpcodeInfo{.opcode = K_OP_PLACE_CURRENT_CHARACTER_AT_ADDRESS,
         .name = "PlaceCurrentCharacterAtAddress",
         .support = OpcodeSupport::k_supported,
@@ -631,6 +641,10 @@ void AreaScriptRuntime::set_area_release_sink(AreaReleaseSink sink) {
 
 void AreaScriptRuntime::set_area_scene_attach_sink(AreaSceneAttachSink sink) {
   m_area_scene_attach_sink = std::move(sink);
+}
+
+void AreaScriptRuntime::set_area_scene_detach_sink(AreaSceneDetachSink sink) {
+  m_area_scene_detach_sink = std::move(sink);
 }
 
 void AreaScriptRuntime::set_area_address_placement_sink(AreaAddressPlacementSink sink) {
@@ -870,6 +884,13 @@ AreaScriptState AreaScriptRuntime::run(const float /*real_delta_seconds*/) {
 
   if (!m_active) {
     return m_state;
+  }
+
+  if (m_state == AreaScriptState::k_waiting &&
+      m_wait.kind == AreaWaitKind::k_area_transition_retry) {
+    m_wait = AreaWaitState{};
+    m_wait_state = 0;
+    m_state = AreaScriptState::k_running;
   }
 
   // Runtime state 7 is released only by the presentation-owned completion for
@@ -1352,8 +1373,8 @@ void AreaScriptRuntime::execute_instruction() {
     case K_OP_BEGIN_AREA_TRANSITION: {
       std::array<std::int16_t, 3> resolved{};
       constexpr std::array<std::string_view, 3> k_semantics{"BeginAreaTransition target",
-          "BeginAreaTransition operand_b",
-          "BeginAreaTransition operand_c"};
+          "BeginAreaTransition pre-crossing Script",
+          "BeginAreaTransition post-crossing Script"};
       for (std::size_t index{0}; index < resolved.size(); ++index) {
         auto value{resolve_scalar16(operands.at(index), k_semantics.at(index))};
         if (!value) {
@@ -1369,16 +1390,16 @@ void AreaScriptRuntime::execute_instruction() {
       }
 
       const AreaTransitionRequest request{.target_area_id = resolved.at(0),
-          .operand_b = resolved.at(1),
-          .operand_c = resolved.at(2)};
+          .pre_crossing_script_id = resolved.at(1),
+          .post_crossing_script_id = resolved.at(2)};
       m_last_area_transition_request = request;
-      if (request.operand_b != -1 || request.operand_c != -1) {
+      if (request.pre_crossing_script_id != -1 || request.post_crossing_script_id != -1) {
         m_pause_info = AreaPauseInfo{.offset = instruction_offset,
             .opcode = opcode,
             .opcode_name = std::string{info->name},
             .reason_text = fmt::format("AREA transition variant ({}, {}) is not yet implemented",
-                request.operand_b,
-                request.operand_c),
+                request.pre_crossing_script_id,
+                request.post_crossing_script_id),
             .nearby_bytes = nearby_bytes_hex(instruction_offset)};
         m_state = AreaScriptState::k_failed;
         return;
@@ -1406,22 +1427,53 @@ void AreaScriptRuntime::execute_instruction() {
         return;
       }
 
-      m_wait_state = K_AREA_TRANSITION_WAIT_STATE;
-      m_wait = AreaWaitState{.kind = AreaWaitKind::k_area_transition,
-          .runtime_state = K_AREA_TRANSITION_WAIT_STATE,
-          .interface = std::nullopt,
-          .interface_result_variable = std::nullopt,
-          .scx_script_instance = std::nullopt,
-          .character_script = std::nullopt,
-          .character_script_instance = std::nullopt,
-          .area_transition = request,
-          .area_transition_handle = accepted.value()};
-      wait_after_instruction = true;
-      entry.effect = fmt::format(
-          "begin AREA transition to {} as generation {} and wait in "
-          "Runtime state 10",
-          request.target_area_id,
-          accepted->generation);
+      switch (accepted->disposition) {
+        case AreaTransitionDisposition::k_accepted_waiting:
+          if (!accepted->handle.has_value()) {
+            fail_instruction("AREA transition coordinator accepted without a handle");
+            return;
+          }
+          m_wait_state = K_AREA_TRANSITION_WAIT_STATE;
+          m_wait = AreaWaitState{.kind = AreaWaitKind::k_area_transition,
+              .runtime_state = K_AREA_TRANSITION_WAIT_STATE,
+              .interface = std::nullopt,
+              .interface_result_variable = std::nullopt,
+              .scx_script_instance = std::nullopt,
+              .character_script = std::nullopt,
+              .character_script_instance = std::nullopt,
+              .area_transition = request,
+              .area_transition_handle = accepted->handle,
+              .camera_operation = std::nullopt};
+          wait_after_instruction = true;
+          entry.effect = fmt::format(
+              "begin AREA transition to {} as generation {} and wait in "
+              "Runtime state 10",
+              request.target_area_id,
+              accepted->handle->generation);
+          break;
+        case AreaTransitionDisposition::k_immediate_continue:
+          entry.effect =
+              fmt::format("AREA transition to {} continues immediately", request.target_area_id);
+          break;
+        case AreaTransitionDisposition::k_busy_retry:
+          next_ip = instruction_offset;
+          m_wait_state = K_AREA_TRANSITION_RETRY_STATE;
+          m_wait = AreaWaitState{.kind = AreaWaitKind::k_area_transition_retry,
+              .runtime_state = K_AREA_TRANSITION_RETRY_STATE,
+              .interface = std::nullopt,
+              .interface_result_variable = std::nullopt,
+              .scx_script_instance = std::nullopt,
+              .character_script = std::nullopt,
+              .character_script_instance = std::nullopt,
+              .area_transition = request,
+              .area_transition_handle = std::nullopt,
+              .camera_operation = std::nullopt};
+          wait_after_instruction = true;
+          entry.effect = fmt::format("AREA transition to {} busy; retry from +{:#x}",
+              request.target_area_id,
+              instruction_offset);
+          break;
+      }
       break;
     }
     case K_OP_RELEASE_AREA: {
@@ -1457,6 +1509,25 @@ void AreaScriptRuntime::execute_instruction() {
         return;
       }
       entry.effect = fmt::format("release AREA {}", request.area_id);
+      break;
+    }
+    case K_OP_DETACH_AREA_SCENE: {
+      auto area_id{resolve_scalar16(operands.at(0), "DetachAreaScene")};
+      if (!area_id) {
+        fail_instruction(area_id.error());
+        return;
+      }
+      if (!m_area_scene_detach_sink) {
+        fail_instruction("AREA SCENE detach bridge is not wired");
+        return;
+      }
+      const AreaSceneDetachRequest request{.area_id = area_id.value()};
+      if (auto detached{m_area_scene_detach_sink(request)}; !detached) {
+        fail_instruction(fmt::format(
+            "failed to detach SCENE from AREA {}: {}", request.area_id, detached.error()));
+        return;
+      }
+      entry.effect = fmt::format("detach SCENE from AREA {}", request.area_id);
       break;
     }
     case K_OP_ADD_OBJECT_TO_PERSISTENT_COLLECTION: {

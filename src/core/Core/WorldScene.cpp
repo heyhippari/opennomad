@@ -287,7 +287,7 @@ WorldScene::WorldScene(ScenarioManager& scenarios, Interface::InterfaceManager& 
         if (m_scenarios == nullptr) {
           return std::nullopt;
         }
-        const WorldSceneContext* const context{m_scenarios->active_world_context()};
+        const WorldSceneContext* const context{m_scenarios->current_world_context()};
         ScenarioRuntime* const runtime{
             context == nullptr || context->runtime == nullptr ? nullptr : context->runtime.get()};
         const Character::RuntimeCharacter* const character{
@@ -307,7 +307,7 @@ WorldScene::WorldScene(ScenarioManager& scenarios, Interface::InterfaceManager& 
     if (m_scenarios == nullptr) {
       return std::nullopt;
     }
-    const WorldSceneContext* context{m_scenarios->active_world_context()};
+    const WorldSceneContext* context{m_scenarios->current_world_context()};
     const ScenarioRuntime* runtime{
         context == nullptr || context->runtime == nullptr ? nullptr : context->runtime.get()};
     const Omikron::CameraRecord* source{
@@ -350,7 +350,7 @@ std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state
   }
 
   const WorldSceneContext* world_context{
-      m_scenarios != nullptr ? m_scenarios->active_world_context() : nullptr};
+      m_scenarios != nullptr ? m_scenarios->current_world_context() : nullptr};
   if (world_context != nullptr && world_context->decor_model.has_value()) {
     const Omikron::Model3DOData& model{world_context->decor_model.value()};
 
@@ -522,11 +522,19 @@ std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state
           .renderable = character.renderable(),
           .ordinary_actor_service_generation = character.ordinary_actor_service_generation,
           .horizontal_object_index = std::nullopt,
+          .horizontal_source_world_scene_id = std::nullopt,
+          .horizontal_source_resident_slot = std::nullopt,
           .ceiling_object_index = std::nullopt,
+          .ceiling_source_world_scene_id = std::nullopt,
+          .ceiling_source_resident_slot = std::nullopt,
           .physical_support_class = std::nullopt,
           .physical_support_object_index = std::nullopt,
+          .physical_support_source_world_scene_id = std::nullopt,
+          .physical_support_source_resident_slot = std::nullopt,
           .physical_support_object_name = {},
           .physical_alternate_support_object_index = std::nullopt,
+          .physical_alternate_source_world_scene_id = std::nullopt,
+          .physical_alternate_source_resident_slot = std::nullopt,
           .class2_secondary_object_index = std::nullopt,
           .serialized_position = character.serialized_area_position,
           .runtime_position = {character.transform.translation.x,
@@ -643,6 +651,8 @@ std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state
       debug_character.horizontal_collision_passes = horizontal.collision_passes;
       debug_character.horizontal_depenetration_iterations = horizontal.depenetration_iterations;
       debug_character.horizontal_object_index = horizontal.object_index;
+      debug_character.horizontal_source_world_scene_id = horizontal.source_world_scene_id;
+      debug_character.horizontal_source_resident_slot = horizontal.source_resident_slot;
       debug_character.horizontal_contact_point = {
           horizontal.contact_point.x, horizontal.contact_point.y, horizontal.contact_point.z};
       debug_character.horizontal_response_normal = {
@@ -658,6 +668,8 @@ std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state
       debug_character.ceiling_sphere_radius = ceiling.sphere_radius;
       debug_character.ceiling_clearance_adjustment = ceiling.clearance_adjustment;
       debug_character.ceiling_object_index = ceiling.object_index;
+      debug_character.ceiling_source_world_scene_id = ceiling.source_world_scene_id;
+      debug_character.ceiling_source_resident_slot = ceiling.source_resident_slot;
       debug_character.ceiling_contact_point = {
           ceiling.contact_point.x, ceiling.contact_point.y, ceiling.contact_point.z};
       debug_character.ceiling_contact_normal = {
@@ -679,6 +691,9 @@ std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state
       debug_character.physical_support_valid = physical.support.valid;
       debug_character.physical_support_class = physical.support.support_class;
       debug_character.physical_support_object_index = physical.support.object_index;
+      debug_character.physical_support_source_world_scene_id =
+          physical.support.source_world_scene_id;
+      debug_character.physical_support_source_resident_slot = physical.support.source_resident_slot;
       debug_character.physical_support_point = {
           physical.support.point.x, physical.support.point.y, physical.support.point.z};
       debug_character.physical_support_normal = {
@@ -687,6 +702,10 @@ std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state
       debug_character.physical_support_gap = physical.support.gap;
       debug_character.physical_alternate_support_object_index =
           physical.support.alternate_object_index;
+      debug_character.physical_alternate_source_world_scene_id =
+          physical.support.alternate_world_scene_id;
+      debug_character.physical_alternate_source_resident_slot =
+          physical.support.alternate_resident_slot;
       debug_character.physical_alternate_support_clearance = physical.support.alternate_clearance;
       debug_character.physical_previous_primary_relative_y =
           physical.support.previous_primary_relative_y;
@@ -1093,7 +1112,38 @@ void WorldScene::update(const float delta_time, const Input::InputManager& input
 
   WorldSceneContext* context{nullptr};
   if (m_scenarios != nullptr) {
-    context = m_scenarios->active_world_context();
+    context = m_scenarios->current_world_context();
+    const std::vector<WorldSceneContext*> attached{m_scenarios->attached_world_contexts()};
+    std::erase_if(m_attached_world_renderers, [&attached](const AttachedWorldRenderer& observed) {
+      return std::ranges::none_of(attached, [&observed](const WorldSceneContext* candidate) {
+        return candidate != nullptr && candidate->scene_id == observed.scene_id &&
+               candidate->generation == observed.generation;
+      });
+    });
+    for (WorldSceneContext* attached_context : attached) {
+      const auto existing{std::ranges::find_if(
+          m_attached_world_renderers, [attached_context](const AttachedWorldRenderer& observed) {
+            return observed.scene_id == attached_context->scene_id &&
+                   observed.generation == attached_context->generation;
+          })};
+      if (existing != m_attached_world_renderers.end()) {
+        continue;
+      }
+      auto renderer{WorldRenderer::create(*attached_context)};
+      if (!renderer) {
+        App::Log::error(LogCategory::Renderer,
+            "WorldScene: failed to build attached scene {} generation {}: {}",
+            attached_context->scene_id,
+            attached_context->generation,
+            renderer.error());
+        continue;
+      }
+      renderer.value()->set_geometry_wireframe(m_geometry_wireframe_enabled);
+      m_attached_world_renderers.push_back(
+          AttachedWorldRenderer{.scene_id = attached_context->scene_id,
+              .generation = attached_context->generation,
+              .renderer = std::move(renderer).value()});
+    }
     if (context != nullptr) {
       if (!m_world_observed || context->scene_id != m_observed_scene_id ||
           context->generation != m_observed_generation) {
@@ -1104,17 +1154,15 @@ void WorldScene::update(const float delta_time, const Input::InputManager& input
 
         m_camera.reset();
         m_world_text.reset();
-        auto renderer{WorldRenderer::create(*context)};
-        if (!renderer) {
-          App::Log::error(LogCategory::Renderer,
-              "WorldScene: failed to build scene {} generation {}: {}",
-              context->scene_id,
-              context->generation,
-              renderer.error());
-          m_world_renderer.reset();
-        } else {
-          m_world_renderer = std::move(renderer).value();
-          m_world_renderer->set_geometry_wireframe(m_geometry_wireframe_enabled);
+        const auto current_renderer{std::ranges::find_if(
+            m_attached_world_renderers, [context](const AttachedWorldRenderer& observed) {
+              return observed.scene_id == context->scene_id &&
+                     observed.generation == context->generation;
+            })};
+        m_world_renderer = current_renderer == m_attached_world_renderers.end()
+                               ? nullptr
+                               : current_renderer->renderer.get();
+        if (m_world_renderer != nullptr) {
           // WorldRenderer bounds are presentation-local. Convert the centre
           // back through the involutive B basis for Runtime-native fallback state.
           m_camera.set_fallback_pose(
@@ -1127,7 +1175,7 @@ void WorldScene::update(const float delta_time, const Input::InputManager& input
         m_world_observed = true;
       }
     } else if (m_world_observed) {
-      m_world_renderer.reset();
+      m_world_renderer = nullptr;
       m_camera.reset();
       m_world_text.reset();
       m_world_observed = false;
@@ -1280,7 +1328,7 @@ void WorldScene::render() {
   // display-frame delay. Render never advances either transition clock.
   synchronize_presentation_reset();
   const WorldSceneContext* context{
-      m_scenarios != nullptr ? m_scenarios->active_world_context() : nullptr};
+      m_scenarios != nullptr ? m_scenarios->current_world_context() : nullptr};
   consume_fade_commands();
   consume_letterbox_commands();
   consume_object_presentation_commands(context);
@@ -1288,21 +1336,28 @@ void WorldScene::render() {
   // A world context may be replaced between update and render; never
   // dereference a runtime cached by the renderer. If generation no longer
   // matches, skip one world frame and rebuild on the next update.
-  const bool world_renderable{m_world_renderer != nullptr && context != nullptr &&
-                              m_world_observed && context->scene_id == m_observed_scene_id &&
-                              context->generation == m_observed_generation};
-  if (world_renderable) {
-    m_world_renderer->render(m_camera.camera(),
-        context->runtime.get(),
+  bool world_renderable{false};
+  for (const AttachedWorldRenderer& attached_renderer : m_attached_world_renderers) {
+    const WorldSceneContext* attached_context{
+        m_scenarios->find_world_context(attached_renderer.scene_id)};
+    if (attached_context == nullptr ||
+        attached_context->residency != WorldSceneResidencyState::ResidentAttached ||
+        attached_context->generation != attached_renderer.generation ||
+        attached_renderer.renderer == nullptr) {
+      continue;
+    }
+    attached_renderer.renderer->render(m_camera.camera(),
+        attached_context->runtime.get(),
         static_cast<float>(m_uv_phases.u_phase()),
         static_cast<float>(m_uv_phases.v_phase()),
         *m_color_pipeline);
+    world_renderable = true;
   }
 
   // OpenNomad-native world diagnostics are linear scene content and reuse the
   // same depth attachment as both scene ping-pong targets.
   m_color_pipeline->bind_current_scene();
-  if (world_renderable) {
+  if (world_renderable && m_world_renderer != nullptr && context != nullptr) {
     m_world_renderer->render_debug_overlay(m_camera.camera(), context->runtime.get());
   }
 

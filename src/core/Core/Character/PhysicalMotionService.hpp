@@ -17,11 +17,15 @@ struct PhysicalSupportState {
   bool valid{false};
   std::optional<SupportClass> support_class;
   std::optional<std::size_t> object_index;
+  std::optional<std::uint32_t> source_world_scene_id;
+  std::optional<std::size_t> source_resident_slot;
   App::Runtime::Vec3 point{};
   App::Runtime::Vec3 normal{};
   float clearance{0.0F};
   float gap{0.0F};
   std::optional<std::size_t> alternate_object_index;
+  std::optional<std::uint32_t> alternate_world_scene_id;
+  std::optional<std::size_t> alternate_resident_slot;
   float alternate_clearance{0.0F};
   float previous_primary_relative_y{0.0F};
   float primary_relative_y{0.0F};
@@ -48,6 +52,8 @@ struct SupportMode4ResponseState {
   bool depenetrated{false};
   std::uint32_t collision_passes{0};
   std::optional<std::size_t> object_index;
+  std::optional<std::uint32_t> source_world_scene_id;
+  std::optional<std::size_t> source_resident_slot;
   App::Runtime::Vec3 response_normal{};
   bool steep_physical_terms_seeded{false};
 };
@@ -61,6 +67,8 @@ struct Class2SupportResponseState {
   bool secondary_query_attempted{false};
   bool secondary_hit{false};
   std::optional<std::size_t> secondary_object_index;
+  std::optional<std::uint32_t> source_world_scene_id;
+  std::optional<std::size_t> source_resident_slot;
   App::Runtime::Vec3 secondary_normal{};
   float secondary_distance{0.0F};
   float secondary_gap{0.0F};
@@ -83,6 +91,8 @@ struct CeilingCollisionState {
   float sphere_radius{0.0F};
   float clearance_adjustment{0.0F};
   std::optional<std::size_t> object_index;
+  std::optional<std::uint32_t> source_world_scene_id;
+  std::optional<std::size_t> source_resident_slot;
   App::Runtime::Vec3 contact_point{};
   App::Runtime::Vec3 contact_normal{};
   float hit_distance{0.0F};
@@ -113,6 +123,8 @@ struct HorizontalCollisionState {
   std::uint32_t collision_passes{0};
   std::uint32_t depenetration_iterations{0};
   std::optional<std::size_t> object_index;
+  std::optional<std::uint32_t> source_world_scene_id;
+  std::optional<std::size_t> source_resident_slot;
   App::Runtime::Vec3 contact_point{};
   App::Runtime::Vec3 response_normal{};
   float contact_distance{0.0F};
@@ -128,7 +140,16 @@ struct HorizontalCollisionState {
   float yaw_after_degrees{0.0F};
 };
 
+struct PhysicalDecorSource {
+  std::uint32_t world_scene_id{0};
+  std::size_t resident_slot{0};
+  const Omikron::Model3DOData* decor_model{nullptr};
+  std::span<const Omikron::Model3DOData::RuntimeObjectState> decor_runtime_objects{};
+};
+
 struct PhysicalMotionEnvironment {
+  std::span<const PhysicalDecorSource> decor_sources{};
+  /// Single-decor compatibility path for focused query tests.
   const Omikron::Model3DOData* decor_model{nullptr};
   std::span<const Omikron::Model3DOData::RuntimeObjectState> decor_runtime_objects{};
   bool suppress_small_support_snap{false};

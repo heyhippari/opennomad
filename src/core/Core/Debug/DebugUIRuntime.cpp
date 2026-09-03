@@ -119,6 +119,8 @@ const char* area_wait_kind_name(const Script::AreaWaitKind kind) {
       return "Camera/timed native";
     case Script::AreaWaitKind::k_area_transition:
       return "AREA transition";
+    case Script::AreaWaitKind::k_area_transition_retry:
+      return "AREA transition retry";
   }
   return "Unknown";
 }
@@ -572,6 +574,14 @@ void DebugUI::show_scenarios() {
     ImGui::Text("Resolved path: %s",
         scenario.resolved_path.empty() ? "(unavailable)" : scenario.resolved_path.c_str());
     if (!gameplay) {
+      ImGui::Text("Resident: %s  attached: %s  current: %s  controlled body: %s",
+          scenario.loaded ? "yes" : "no",
+          scenario.decor_attached ? "yes" : "no",
+          scenario.current ? "yes" : "no",
+          scenario.controlled_body_owner ? "yes" : "no");
+      ImGui::Text("SCX present: %s  structured runtime: %s",
+          scenario.scx_present ? "yes" : "no",
+          scenario.structured_runtime_present ? "yes" : "no");
       ImGui::Text(
           "Decor path: %s", scenario.decor_path.empty() ? "(none)" : scenario.decor_path.c_str());
       ImGui::Text("Resolved decor: %s",
@@ -607,7 +617,7 @@ void DebugUI::show_scenarios() {
 
     if (!gameplay && scenario.residency != WorldSceneResidencyState::Free) {
       ImGui::SeparatorText("Debug Overrides");
-      if (scenario.residency == WorldSceneResidencyState::LoadedInactive &&
+      if (scenario.residency == WorldSceneResidencyState::ResidentDetached &&
           ImGui::Button(fmt::format("Activate##{}", scenario.identity.slot).c_str())) {
         if (auto result{manager->activate_world_context(scenario.scene_id)}; !result) {
           App::Log::error(LogCategory::Debug,
@@ -616,7 +626,7 @@ void DebugUI::show_scenarios() {
               result.error());
         }
       }
-      if (scenario.residency == WorldSceneResidencyState::LoadedActive &&
+      if (scenario.residency == WorldSceneResidencyState::ResidentAttached &&
           ImGui::Button(fmt::format("Deactivate##{}", scenario.identity.slot).c_str())) {
         if (auto result{manager->deactivate_world_context(scenario.scene_id)}; !result) {
           App::Log::error(LogCategory::Debug,
@@ -627,7 +637,7 @@ void DebugUI::show_scenarios() {
       }
       ImGui::SameLine();
       if (ImGui::Button(fmt::format("Unload##{}", scenario.identity.slot).c_str())) {
-        if (scenario.residency == WorldSceneResidencyState::LoadedActive) {
+        if (scenario.residency == WorldSceneResidencyState::ResidentAttached) {
           App::Log::warn(
               LogCategory::Debug, "deactivate context {} before unloading", scenario.scene_id);
         } else if (auto result{manager->unload_world_context(scenario.scene_id)}; !result) {
@@ -682,6 +692,9 @@ void DebugUI::show_area_vm() {
   ImGui::TextDisabled("| Retail registry capacity: %zu", registry.retail_capacity);
   ImGui::TextDisabled(
       "Actual OpenNomad contexts only; the recovered retail registry is not allocated here.");
+  ImGui::Text("AREA transition coordinator: state %u%s",
+      static_cast<unsigned int>(engine->area_transition_state()),
+      engine->area_transition_pending() ? " (pending/attached)" : " (idle)");
   if (registry.contexts.empty()) {
     m_area_vm_selected_context.reset();
     ImGui::TextUnformatted("AREA bytecode context not loaded.");
@@ -957,8 +970,8 @@ void DebugUI::show_area_vm() {
       const Script::AreaTransitionRequest& request{context.wait.area_transition.value()};
       ImGui::Text("Target AREA %d | operands (%d, %d)",
           request.target_area_id,
-          request.operand_b,
-          request.operand_c);
+          request.pre_crossing_script_id,
+          request.post_crossing_script_id);
     }
     if (context.wait.area_transition_handle.has_value()) {
       ImGui::Text("Transition generation: %llu",

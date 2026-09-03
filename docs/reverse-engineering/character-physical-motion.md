@@ -258,6 +258,21 @@ controller state, heading, or support ownership. Its attempted/hit/clamped
 record, exact inputs, object/contact, distance, and limit are transient debug
 diagnostics reset on every physical tick and authoritative re-anchor.
 
+## Multi-decor ownership and AREA event 9
+
+Ordinary movement queries every physically attached resident AREA decor as one
+candidate set. Primary/alternate support, horizontal collision, ceiling, mode-4,
+and class-2 results retain both resident world/slot identity and the source-local
+3DO object index. Results are selected by the recovered global distance/support
+rules; unrelated object indexes are never flattened together.
+
+After final accepted support resolution, the controlled actor's support world is
+compared with the current AREA world. A different still-resident, attached owner
+performs the native event-9-equivalent handoff: current AREA changes and the same
+durable body transfers world runtime ownership without teleporting or resetting
+physical/controller/presentation state. Both decors remain attached. Touching a
+neighbor wall while support remains in the source world does not hand off.
+
 Still deferred:
 
 - primary `0x20000000` special-support response semantics;
