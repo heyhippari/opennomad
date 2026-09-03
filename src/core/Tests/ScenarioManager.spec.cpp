@@ -448,7 +448,7 @@ TEST_SUITE("Core::Scenario::ScenarioManager") {
     CHECK_EQ(inventory.at(2).residency, App::WorldSceneResidencyState::Free);
   }
 
-  TEST_CASE("Unloading world context 0 leaves the gameplay mode unchanged") {
+  TEST_CASE("A detached current world remains current and cannot be unloaded") {
     const TempDirectory temp;
     write_boot_fixtures(temp);
     const ScopedGameDataRoot root{temp.root()};
@@ -458,11 +458,13 @@ TEST_SUITE("Core::Scenario::ScenarioManager") {
     const std::string mode_path{manager.scenario_inventory().at(0).resolved_path};
 
     REQUIRE(manager.deactivate_world_context(0).has_value());
-    REQUIRE(manager.unload_world_context(0).has_value());
+    CHECK(manager.world_contexts()[0].residency == App::WorldSceneResidencyState::ResidentDetached);
+    CHECK(manager.current_world_context() == &manager.world_contexts()[0]);
+    CHECK_FALSE(manager.unload_world_context(0).has_value());
 
     CHECK(manager.gameplay_mode_scx() != nullptr);
     CHECK_EQ(manager.scenario_inventory().at(0).resolved_path, mode_path);
-    CHECK(manager.world_contexts()[0].residency == App::WorldSceneResidencyState::Free);
+    CHECK(manager.world_contexts()[0].residency == App::WorldSceneResidencyState::ResidentDetached);
   }
 
   TEST_CASE("Replacing the gameplay mode leaves both world contexts unchanged") {
@@ -588,8 +590,10 @@ TEST_SUITE("Core::Scenario::ScenarioManager") {
 
     App::ScenarioManager manager;
     initialize_grid_fixture(manager);
-    REQUIRE(manager.deactivate_world_context(0).has_value());
     REQUIRE(manager.load_world_context(2, std::nullopt, "SCPTDATA/B.SCX").has_value());
+    REQUIRE(manager.activate_world_context(2).has_value());
+    REQUIRE(manager.set_current_world_context(2).has_value());
+    REQUIRE(manager.deactivate_world_context(0).has_value());
     REQUIRE(manager.unload_world_context(0).has_value());
 
     CHECK(manager.world_contexts()[0].residency == App::WorldSceneResidencyState::Free);
@@ -755,19 +759,25 @@ TEST_SUITE("Core::Scenario::ScenarioManager") {
     REQUIRE(manager.load_world_context(2, std::nullopt, "SCPTDATA/B.SCX").has_value());
     CHECK(manager.find_world_context(1) != nullptr);
     REQUIRE(manager.activate_world_context(2).has_value());
+    REQUIRE(manager.set_current_world_context(2).has_value());
+    REQUIRE(manager.deactivate_world_context(1).has_value());
+    REQUIRE(manager.unload_world_context(1).has_value());
     REQUIRE(manager.deactivate_world_context(2).has_value());
-    // Both contexts are now inactive; loading C recycles the lowest-index
-    // inactive entry (context 0), evicting scene 1.
+    // Scene 2 is detached and current, so C claims the free context 0.
     REQUIRE(manager.load_world_context(3, std::nullopt, "SCPTDATA/C.SCX").has_value());
     CHECK(manager.find_world_context(1) == nullptr);
     REQUIRE(manager.activate_world_context(3).has_value());
+    REQUIRE(manager.set_current_world_context(3).has_value());
     REQUIRE(manager.deactivate_world_context(3).has_value());
+    REQUIRE(manager.activate_world_context(2).has_value());
+    REQUIRE(manager.set_current_world_context(2).has_value());
     REQUIRE(manager.unload_world_context(3).has_value());
-    REQUIRE(manager.unload_world_context(2).has_value());
+    REQUIRE(manager.deactivate_world_context(2).has_value());
 
     CHECK(manager.world_contexts()[0].residency == App::WorldSceneResidencyState::Free);
-    CHECK(manager.world_contexts()[1].residency == App::WorldSceneResidencyState::Free);
-    CHECK_EQ(manager.loaded_scenario_count(), 0U);
+    CHECK(manager.world_contexts()[1].residency == App::WorldSceneResidencyState::ResidentDetached);
+    CHECK(manager.current_world_context() == &manager.world_contexts()[1]);
+    CHECK_EQ(manager.loaded_scenario_count(), 1U);
   }
 
   TEST_CASE("Fixture installs a gameplay runtime and one world runtime, context 1 has none") {
@@ -816,6 +826,9 @@ TEST_SUITE("Core::Scenario::ScenarioManager") {
     REQUIRE(manager.world_runtime(0) != nullptr);
     const std::uint32_t generation_before{manager.world_contexts()[0].generation};
 
+    REQUIRE(manager.load_world_context(2, std::nullopt, std::nullopt).has_value());
+    REQUIRE(manager.activate_world_context(2).has_value());
+    REQUIRE(manager.set_current_world_context(2).has_value());
     REQUIRE(manager.deactivate_world_context(0).has_value());
     REQUIRE(manager.unload_world_context(0).has_value());
 
@@ -911,6 +924,7 @@ TEST_SUITE("Core::Scenario::ScenarioManager") {
 
     REQUIRE(manager.deactivate_world_context(0).has_value());
     REQUIRE(manager.activate_world_context(2).has_value());
+    REQUIRE(manager.set_current_world_context(2).has_value());
     CHECK(context.refresh(&manager));
     CHECK_EQ(context.resolved().identity.slot.value_or(99U), 1U);
     CHECK_EQ(context.selection_epoch(), slot_zero_epoch + 1U);
@@ -924,6 +938,25 @@ TEST_SUITE("Core::Scenario::ScenarioManager") {
     CHECK(context.refresh(&manager));
     CHECK(context.resolved().identity.generation > before_recycle_generation);
     CHECK_EQ(context.selection_epoch(), before_recycle_epoch + 1U);
+  }
+
+  TEST_CASE("Allocator never recycles a detached current world") {
+    const TempDirectory temp;
+    write_bytes(temp.root() / "SCPTDATA" / "A.SCX", make_script_scx(1));
+    write_bytes(temp.root() / "SCPTDATA" / "B.SCX", make_script_scx(1));
+    write_bytes(temp.root() / "SCPTDATA" / "C.SCX", make_script_scx(1));
+    const ScopedGameDataRoot root{temp.root()};
+
+    App::ScenarioManager manager;
+    REQUIRE(manager.load_world_context(1, std::nullopt, "SCPTDATA/A.SCX").has_value());
+    REQUIRE(manager.activate_world_context(1).has_value());
+    REQUIRE(manager.load_world_context(2, std::nullopt, "SCPTDATA/B.SCX").has_value());
+    REQUIRE(manager.deactivate_world_context(1).has_value());
+
+    REQUIRE(manager.load_world_context(3, std::nullopt, "SCPTDATA/C.SCX").has_value());
+    CHECK_EQ(manager.world_contexts()[0].scene_id, 1U);
+    CHECK_EQ(manager.world_contexts()[1].scene_id, 3U);
+    CHECK(manager.current_world_context() == &manager.world_contexts()[0]);
   }
 
   TEST_CASE("A resident world without SCX still owns generic world runtime services") {

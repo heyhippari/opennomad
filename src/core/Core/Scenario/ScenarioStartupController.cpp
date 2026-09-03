@@ -1887,29 +1887,32 @@ std::expected<void, std::string> ScenarioStartupController::release_area(
   if (m_manager == nullptr) {
     return std::expected<void, std::string>{std::unexpect, "scenario manager is not available"};
   }
+
+  if (m_area_transition_state == AreaTransitionState::k_seamless_loading) {
+    m_area_transition_state = AreaTransitionState::k_seamless_release_pending;
+    return {};
+  }
+  if (m_area_transition_state != AreaTransitionState::k_seamless_attached) {
+    return {};
+  }
+
   const auto slot_index{request.area_id == -1
                             ? std::optional<std::size_t>{m_active_area_slot == 0U ? 1U : 0U}
                             : resident_area_slot(request.area_id)};
   if (!slot_index.has_value()) {
-    return std::expected<void, std::string>{
-        std::unexpect, fmt::format("AREA {} is not resident for release", request.area_id)};
-  }
-  if (slot_index.value() == m_active_area_slot) {
-    return std::expected<void, std::string>{std::unexpect,
-        fmt::format("AREA {} is currently active and cannot be released", request.area_id)};
+    m_area_transition.reset();
+    m_area_transition_state = AreaTransitionState::k_idle;
+    return {};
   }
   RuntimeAreaSlot& slot{m_area_slots.at(slot_index.value())};
-  if (const auto current{m_manager->controlled_character()};
-      current.has_value() && current->world_scene_id == slot.world_scene_id) {
-    return std::expected<void, std::string>{std::unexpect,
-        fmt::format("AREA {} cannot be released because it owns current controlled character {}",
-            request.area_id,
-            current->character_id)};
+  if (!slot.primary.has_value()) {
+    m_area_transition.reset();
+    m_area_transition_state = AreaTransitionState::k_idle;
+    return {};
   }
-  const AreaTransitionState previous_state{m_area_transition_state};
   m_area_transition_state = AreaTransitionState::k_seamless_release_pending;
   if (auto detached{m_manager->deactivate_world_context(slot.world_scene_id)}; !detached) {
-    m_area_transition_state = previous_state;
+    m_area_transition_state = AreaTransitionState::k_seamless_attached;
     return detached;
   }
   m_area_transition.reset();

@@ -3495,12 +3495,12 @@ ScenarioStartupController::RuntimeAreaSlot[2]
 ScenarioManager::WorldSceneContext[2]
 ```
 
-The coordinator preserves the active source while parsing the destination
-record and preparing its authored decor/SCX dependencies. Preparation leaves
-the destination `LoadedInactive` and source `LoadedActive`; it does not change
-presentation ownership. The old AREA bytecode context then resumes from the IP
-already following `0x2F`; the destination's primary event is not substituted
-for that handoff.
+The coordinator preserves the current source while parsing the destination
+record and preparing its authored decor/SCX dependencies. Seamless preparation
+leaves both resident decors physically attached and does not change current AREA
+ownership. The old AREA bytecode context then resumes from the IP already
+following `0x2F`; the destination's primary event is not substituted for that
+handoff.
 
 The concrete New Game transition is:
 
@@ -3516,9 +3516,9 @@ AREA 118 Introduction Kay'l
 The following authored operations complete the handoff:
 
 ```text
-+0x114  0x47 (222, 55)  attach/replace the resident AREA's SCENE and commit it active
++0x114  0x47 (222, 55)  attach/replace the resident AREA's SCENE
 +0x119  0x49 (654)      place the already-established controlled character at a resident AREA address
-+0x11C  0x30 (118)      release the requested inactive source AREA
++0x11C  0x30 (118)      physically detach explicit AREA 118
 +0x11F  0x03 EndEvent
 ```
 
@@ -3534,9 +3534,14 @@ applies the resolved address only to the selected body's recorded owner world;
 it never guesses a current character when no `0x38` selection exists.
 
 Residency, decor attachment, and current AREA are independent. Two resident
-decors may be attached simultaneously, and a detached non-current resident keeps
-its AREA package and structured ScriptList alive. `0x30(-1)` selects that
-non-current resident and detaches its decor without unloading it. Opcode `0x48
+decors may be attached simultaneously, and any detached resident keeps its AREA
+package and structured ScriptList alive. For `0x30(areaId)`, literal `-1`
+resolves the non-current resident AREA ID; any explicit ID is used unchanged and
+may name the logically current AREA. Detachment removes only its decor from the
+shared physical scene: it does not change current AREA identity, move or destroy
+the controlled body, or unload SCX/runtime state. An explicit nonresident ID is
+a successful no-op. AREA 118's sequence above is the canonical explicit-current
+case. AREA 142 (`AIMPASAS`) zone 2329 is the canonical `0x30(-1)` case. Opcode `0x48
 DetachAreaScene(areaId)` destroys only the attached SCENE compact/runtime
 materialization, writes AREA-to-SCENE mapping `-1`, and leaves the AREA resident.
 

@@ -3241,16 +3241,22 @@ pending, 5 rich pre running, 6 rich departed first, 7 rich pre finished first,
 8 seamless attached, and 9 rich post running. Phase 1 implements 0/3/4/8; rich
 states remain reserved.
 
+Mode-1 release handling preserves the native state distinction. In state 3,
+`0x30` advances the coordinator to state 4 without detaching immediately. In
+state 8, it resolves and detaches the requested decor, then resets the
+transaction to state 0. Other coordinator states treat the nonblocking request
+as a harmless no-op.
+
 ---
 
 # 109. AREA/SCENE handoff opcodes
 
-The compact VM supports three nonblocking operations used after the prepared
+The compact VM supports four nonblocking operations used after the prepared
 AREA transition:
 
 | Opcode | Operands | Operation |
 | --- | --- | --- |
-| `0x30` | Scalar16 AREA ID | `ReleaseArea`: `-1` selects the non-current resident and detaches its decor without unloading its AREA/SCX/runtime. |
+| `0x30` | Scalar16 AREA ID | `ReleaseArea`: `-1` resolves the non-current resident; an explicit ID detaches that AREA even when logically current. Detachment preserves current identity, controlled-body ownership, AREA/SCX/runtime residency, and treats an absent explicit ID as success. |
 | `0x47` | Scalar16 AREA ID, Scalar16 SCENE ID | `AttachAreaScene`: replace/attach only the AREA's optional SCENE and queue its independent compact event 1. |
 | `0x48` | Scalar16 AREA ID | `DetachAreaScene`: remove the attached SCENE and mapping while preserving the resident AREA and decor. |
 | `0x49` | Scalar16 address ID | `PlaceCurrentCharacterAtAddress`: resolve the address across both resident AREA table-5 collections and move the selected body in its exact owning world. |

@@ -77,7 +77,10 @@ compact event, and updates the AREA-to-SCENE mapping; it does not switch AREA
 ownership. Ordinary physical support performs the event-9-equivalent current
 AREA/body handoff. `0x49` resolves its named address across both resident AREA
 slots and applies it only to an already-established controlled character.
-`0x30(-1)` detaches the non-current decor while preserving AREA residency;
+`0x30(-1)` detaches the non-current decor, while an explicit operand detaches
+that exact AREA even when it remains logically current and owns the body. Both
+forms preserve AREA residency and current identity; an absent explicit AREA is
+a no-op. AREA 118 uses the explicit form and AREA 142 zone 2329 uses `-1`.
 `0x48(area)` removes only that AREA's attached SCENE.
 
 See [`iam-scene.md`](iam-scene.md) for the record format and replacement lifecycle.

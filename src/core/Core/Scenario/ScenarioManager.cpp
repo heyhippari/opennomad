@@ -341,9 +341,6 @@ std::expected<void, std::string> ScenarioManager::deactivate_world_context(
     return {};
   }
   context->residency = WorldSceneResidencyState::ResidentDetached;
-  if (m_current_world_scene_id == scene_id) {
-    m_current_world_scene_id.reset();
-  }
 
   App::Log::info(LogCategory::Scenario,
       "world context {} \"{}\" deactivated — generation={}",
@@ -1110,6 +1107,7 @@ WorldSceneContext* ScenarioManager::allocate_world_context_slot() {
   // Otherwise, prefer the first ResidentDetached entry.
   for (WorldSceneContext& ctx : m_world_contexts) {
     if (ctx.residency == WorldSceneResidencyState::ResidentDetached &&
+        m_current_world_scene_id != ctx.scene_id &&
         (!m_controlled_character.has_value() ||
             m_controlled_character->world_scene_id != ctx.scene_id)) {
       return &ctx;
