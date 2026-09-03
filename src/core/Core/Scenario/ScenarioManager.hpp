@@ -65,6 +65,14 @@ enum class WorldSceneResidencyState : std::uint8_t {
   ResidentAttached,
 };
 
+/// Stable identity of one generation in Runtime's attached-decor chain.
+struct WorldContextIdentity {
+  std::uint32_t scene_id{0};
+  std::uint32_t generation{0};
+
+  bool operator==(const WorldContextIdentity&) const = default;
+};
+
 /// Durable session-level identity of the body currently controlled by compact
 /// IAM. The character ID is authored data; the world scene ID identifies the
 /// owning runtime instance rather than an AREA-slot array position.
@@ -330,9 +338,16 @@ class ScenarioManager {
   [[nodiscard]] WorldSceneContext* current_world_context();
   [[nodiscard]] const WorldSceneContext* current_world_context() const;
 
-  /// Resident worlds whose decors are physically attached, in slot order.
+  /// Resident worlds whose decors are physically attached, in native chain order.
   [[nodiscard]] std::vector<WorldSceneContext*> attached_world_contexts();
   [[nodiscard]] std::vector<const WorldSceneContext*> attached_world_contexts() const;
+
+  /// Head of Runtime's physically attached decor chain (0x0093076C).
+  [[nodiscard]] WorldSceneContext* attached_world_head_context();
+  [[nodiscard]] const WorldSceneContext* attached_world_head_context() const;
+
+  /// Reverses Runtime's attached-decor chain during the event-9 AREA handoff.
+  void reverse_attached_world_order();
 
   /// Snapshot of all world context entries (for inspection).
   [[nodiscard]] std::span<const WorldSceneContext, 2> world_contexts() const;
@@ -451,6 +466,7 @@ class ScenarioManager {
   GameplayModeSlot m_gameplay_mode_slot;
   std::array<WorldSceneContext, WorldSceneContext::k_capacity> m_world_contexts;
   std::optional<std::uint32_t> m_current_world_scene_id;
+  std::vector<WorldContextIdentity> m_attached_world_order;
   std::optional<ControlledCharacterRef> m_controlled_character;
   /// Frame-scoped CTL profile slot bits (0 until the application feeds them).
   std::uint32_t m_ctl_input_mask{0};

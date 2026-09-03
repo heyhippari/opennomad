@@ -60,6 +60,7 @@ std::expected<void, std::string> ScenarioManager::reset_for_new_session() {
 
   m_controlled_character.reset();
   m_current_world_scene_id.reset();
+  m_attached_world_order.clear();
   m_dialog_camera_generation.reset();
   m_game_state.reset();
   // Tear down both world contexts directly rather than through the
@@ -317,6 +318,8 @@ std::expected<void, std::string> ScenarioManager::activate_world_context(
   }
 
   context->residency = WorldSceneResidencyState::ResidentAttached;
+  m_attached_world_order.push_back(
+      WorldContextIdentity{.scene_id = context->scene_id, .generation = context->generation});
   if (!m_current_world_scene_id.has_value()) {
     m_current_world_scene_id = scene_id;
   }
@@ -341,6 +344,8 @@ std::expected<void, std::string> ScenarioManager::deactivate_world_context(
     return {};
   }
   context->residency = WorldSceneResidencyState::ResidentDetached;
+  std::erase(m_attached_world_order,
+      WorldContextIdentity{.scene_id = context->scene_id, .generation = context->generation});
 
   App::Log::info(LogCategory::Scenario,
       "world context {} \"{}\" deactivated — generation={}",
@@ -585,9 +590,12 @@ const WorldSceneContext* ScenarioManager::current_world_context() const {
 
 std::vector<WorldSceneContext*> ScenarioManager::attached_world_contexts() {
   std::vector<WorldSceneContext*> contexts;
-  for (WorldSceneContext& context : m_world_contexts) {
-    if (context.residency == WorldSceneResidencyState::ResidentAttached) {
-      contexts.push_back(&context);
+  for (const WorldContextIdentity& identity : m_attached_world_order) {
+    const auto context{
+        std::ranges::find(m_world_contexts, identity.scene_id, &WorldSceneContext::scene_id)};
+    if (context != m_world_contexts.end() && context->generation == identity.generation &&
+        context->residency == WorldSceneResidencyState::ResidentAttached) {
+      contexts.push_back(&*context);
     }
   }
   return contexts;
@@ -595,12 +603,28 @@ std::vector<WorldSceneContext*> ScenarioManager::attached_world_contexts() {
 
 std::vector<const WorldSceneContext*> ScenarioManager::attached_world_contexts() const {
   std::vector<const WorldSceneContext*> contexts;
-  for (const WorldSceneContext& context : m_world_contexts) {
-    if (context.residency == WorldSceneResidencyState::ResidentAttached) {
-      contexts.push_back(&context);
+  for (const WorldContextIdentity& identity : m_attached_world_order) {
+    const WorldSceneContext* context{find_world_context(identity.scene_id)};
+    if (context != nullptr && context->generation == identity.generation &&
+        context->residency == WorldSceneResidencyState::ResidentAttached) {
+      contexts.push_back(context);
     }
   }
   return contexts;
+}
+
+WorldSceneContext* ScenarioManager::attached_world_head_context() {
+  const std::vector<WorldSceneContext*> attached{attached_world_contexts()};
+  return attached.empty() ? nullptr : attached.front();
+}
+
+const WorldSceneContext* ScenarioManager::attached_world_head_context() const {
+  const std::vector<const WorldSceneContext*> attached{attached_world_contexts()};
+  return attached.empty() ? nullptr : attached.front();
+}
+
+void ScenarioManager::reverse_attached_world_order() {
+  std::ranges::reverse(m_attached_world_order);
 }
 
 const Omikron::ScxData* ScenarioManager::world_context_scx(const std::uint32_t scene_id) const {
@@ -1077,6 +1101,8 @@ void ScenarioManager::install_world_context(WorldSceneContext& context,
 
 // NOLINTNEXTLINE(readability-convert-member-functions-to-static) — slot-teardown responsibilities
 void ScenarioManager::teardown_world_context(WorldSceneContext& context) {
+  std::erase(m_attached_world_order,
+      WorldContextIdentity{.scene_id = context.scene_id, .generation = context.generation});
   m_dialog_performance.stop_for_world_change();
   // Destroy the context-owned runtime and decor before releasing its SCX
   // backing bytes, so no runtime object outlives its slot's data.

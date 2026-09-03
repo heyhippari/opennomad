@@ -283,11 +283,17 @@ WorldScene::WorldScene(ScenarioManager& scenarios, Interface::InterfaceManager& 
     : m_scenarios(&scenarios),
       m_interfaces(interfaces) {
   m_camera.set_attachment_pose_provider(
-      [this](const std::int16_t character_id) -> std::optional<WorldCameraAttachmentPose> {
+      [this](const std::uint32_t scene_id,
+          const std::uint32_t generation,
+          const std::int16_t character_id) -> std::optional<WorldCameraAttachmentPose> {
         if (m_scenarios == nullptr) {
           return std::nullopt;
         }
-        const WorldSceneContext* const context{m_scenarios->current_world_context()};
+        const WorldSceneContext* const context{m_scenarios->find_world_context(scene_id)};
+        if (context == nullptr || context->residency == WorldSceneResidencyState::Free ||
+            context->generation != generation) {
+          return std::nullopt;
+        }
         ScenarioRuntime* const runtime{
             context == nullptr || context->runtime == nullptr ? nullptr : context->runtime.get()};
         const Character::RuntimeCharacter* const character{
@@ -301,13 +307,13 @@ WorldScene::WorldScene(ScenarioManager& scenarios, Interface::InterfaceManager& 
 
   // Runtime publishes the scene's currently selected named 3DO camera through
   // global 0x009103D4 after structured script execution. Controller mode 13
-  // consumes that live record continuously. Resolve it from the exact active
-  // world rather than from the controlled-character owner.
+  // consumes that live record continuously. The native publisher is the head
+  // of the attached-decor chain, independently of logical current AREA.
   m_camera.set_controller_pose_provider([this]() -> std::optional<WorldCameraPose> {
     if (m_scenarios == nullptr) {
       return std::nullopt;
     }
-    const WorldSceneContext* context{m_scenarios->current_world_context()};
+    const WorldSceneContext* context{m_scenarios->attached_world_head_context()};
     const ScenarioRuntime* runtime{
         context == nullptr || context->runtime == nullptr ? nullptr : context->runtime.get()};
     const Omikron::CameraRecord* source{
@@ -324,10 +330,54 @@ WorldScene::WorldScene(ScenarioManager& scenarios, Interface::InterfaceManager& 
 
 WorldScene::~WorldScene() = default;
 
+WorldRenderer* WorldScene::current_world_renderer() {
+  const WorldSceneContext* const context{
+      m_scenarios == nullptr ? nullptr : m_scenarios->current_world_context()};
+  if (context == nullptr) {
+    return nullptr;
+  }
+  const auto renderer{std::ranges::find_if(
+      m_attached_world_renderers, [context](const AttachedWorldRenderer& candidate) {
+        return candidate.scene_id == context->scene_id &&
+               candidate.generation == context->generation;
+      })};
+  return renderer == m_attached_world_renderers.end() ? nullptr : renderer->renderer.get();
+}
+
+const WorldRenderer* WorldScene::current_world_renderer() const {
+  const WorldSceneContext* const context{
+      m_scenarios == nullptr ? nullptr : m_scenarios->current_world_context()};
+  if (context == nullptr) {
+    return nullptr;
+  }
+  const auto renderer{std::ranges::find_if(
+      m_attached_world_renderers, [context](const AttachedWorldRenderer& candidate) {
+        return candidate.scene_id == context->scene_id &&
+               candidate.generation == context->generation;
+      })};
+  return renderer == m_attached_world_renderers.end() ? nullptr : renderer->renderer.get();
+}
+
+WorldRenderer* WorldScene::attached_world_head_renderer() {
+  const WorldSceneContext* const context{
+      m_scenarios == nullptr ? nullptr : m_scenarios->attached_world_head_context()};
+  if (context == nullptr) {
+    return nullptr;
+  }
+  const auto renderer{std::ranges::find_if(
+      m_attached_world_renderers, [context](const AttachedWorldRenderer& candidate) {
+        return candidate.scene_id == context->scene_id &&
+               candidate.generation == context->generation;
+      })};
+  return renderer == m_attached_world_renderers.end() ? nullptr : renderer->renderer.get();
+}
+
 std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state() const {
   Debug::WorldRenderDebugState state;
 
-  state.renderer_ready = m_world_renderer != nullptr;
+  const WorldRenderer* const world_renderer{current_world_renderer()};
+
+  state.renderer_ready = world_renderer != nullptr;
   if (m_color_pipeline != nullptr) {
     state.color_pipeline_ready = m_color_pipeline->width() > 0;
     state.current_scene_a = m_color_pipeline->current_scene_is_a();
@@ -338,15 +388,15 @@ std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state
   }
   state.uv_phase_u = static_cast<float>(m_uv_phases.u_phase());
   state.uv_phase_v = static_cast<float>(m_uv_phases.v_phase());
-  if (m_world_renderer != nullptr) {
-    state.group_count = m_world_renderer->group_count();
-    state.material_count = m_world_renderer->material_count();
-    state.mirror_group_count = m_world_renderer->mirror_group_count();
-    state.uv_scroll_u_group_count = m_world_renderer->uv_scroll_u_group_count();
-    state.uv_scroll_v_group_count = m_world_renderer->uv_scroll_v_group_count();
-    state.environment_group_count = m_world_renderer->environment_group_count();
-    state.bounds_center = m_world_renderer->bounds().center;
-    state.bounds_radius = m_world_renderer->bounds().radius;
+  if (world_renderer != nullptr) {
+    state.group_count = world_renderer->group_count();
+    state.material_count = world_renderer->material_count();
+    state.mirror_group_count = world_renderer->mirror_group_count();
+    state.uv_scroll_u_group_count = world_renderer->uv_scroll_u_group_count();
+    state.uv_scroll_v_group_count = world_renderer->uv_scroll_v_group_count();
+    state.environment_group_count = world_renderer->environment_group_count();
+    state.bounds_center = world_renderer->bounds().center;
+    state.bounds_radius = world_renderer->bounds().radius;
   }
 
   const WorldSceneContext* world_context{
@@ -911,10 +961,11 @@ std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state
 }
 
 std::optional<Debug::SpriteRenderDebugState> WorldScene::sprite_render_debug_state() const {
-  if (m_world_renderer == nullptr) {
+  const WorldRenderer* const world_renderer{current_world_renderer()};
+  if (world_renderer == nullptr) {
     return std::nullopt;
   }
-  return m_world_renderer->sprite_render_debug_state();
+  return world_renderer->sprite_render_debug_state();
 }
 
 std::optional<std::array<float, 3>> WorldScene::sprite_debug_focus_position() const {
@@ -926,16 +977,17 @@ std::optional<std::array<float, 3>> WorldScene::sprite_debug_focus_position() co
 }
 
 bool WorldScene::sprite_grayscale_supported() const {
-  return m_world_renderer != nullptr;
+  return current_world_renderer() != nullptr;
 }
 
 bool WorldScene::sprite_grayscale_enabled() const {
-  return m_world_renderer != nullptr && m_world_renderer->sprite_grayscale();
+  const WorldRenderer* const world_renderer{current_world_renderer()};
+  return world_renderer != nullptr && world_renderer->sprite_grayscale();
 }
 
 void WorldScene::set_sprite_grayscale_enabled(const bool enabled) {
-  if (m_world_renderer != nullptr) {
-    m_world_renderer->set_sprite_grayscale(enabled);
+  if (WorldRenderer* const world_renderer{current_world_renderer()}; world_renderer != nullptr) {
+    world_renderer->set_sprite_grayscale(enabled);
   }
 }
 
@@ -945,8 +997,8 @@ bool WorldScene::geometry_wireframe_enabled() const {
 
 void WorldScene::set_geometry_wireframe_enabled(const bool enabled) {
   m_geometry_wireframe_enabled = enabled;
-  if (m_world_renderer != nullptr) {
-    m_world_renderer->set_geometry_wireframe(enabled);
+  for (AttachedWorldRenderer& attached : m_attached_world_renderers) {
+    attached.renderer->set_geometry_wireframe(enabled);
   }
 }
 
@@ -1144,6 +1196,25 @@ void WorldScene::update(const float delta_time, const Input::InputManager& input
               .generation = attached_context->generation,
               .renderer = std::move(renderer).value()});
     }
+    std::ranges::sort(m_attached_world_renderers,
+        [&attached](const AttachedWorldRenderer& left, const AttachedWorldRenderer& right) {
+          const auto rank = [&attached](const AttachedWorldRenderer& renderer) {
+            return std::ranges::find_if(attached, [&renderer](const WorldSceneContext* candidate) {
+              return candidate->scene_id == renderer.scene_id &&
+                     candidate->generation == renderer.generation;
+            });
+          };
+          return rank(left) < rank(right);
+        });
+    if (!m_camera.has_pose()) {
+      const WorldRenderer* const head_renderer{attached_world_head_renderer()};
+      if (head_renderer != nullptr) {
+        // WorldRenderer bounds are presentation-local. Convert the centre
+        // back through the involutive B basis for Runtime-native fallback state.
+        m_camera.set_fallback_pose(Runtime::Presentation::to_gl(head_renderer->bounds().center),
+            head_renderer->bounds().radius);
+      }
+    }
     if (context != nullptr) {
       if (!m_world_observed || context->scene_id != m_observed_scene_id ||
           context->generation != m_observed_generation) {
@@ -1152,42 +1223,97 @@ void WorldScene::update(const float delta_time, const Input::InputManager& input
             context->scene_id,
             context->generation);
 
-        m_camera.reset();
         m_world_text.reset();
-        const auto current_renderer{std::ranges::find_if(
-            m_attached_world_renderers, [context](const AttachedWorldRenderer& observed) {
-              return observed.scene_id == context->scene_id &&
-                     observed.generation == context->generation;
-            })};
-        m_world_renderer = current_renderer == m_attached_world_renderers.end()
-                               ? nullptr
-                               : current_renderer->renderer.get();
-        if (m_world_renderer != nullptr) {
-          // WorldRenderer bounds are presentation-local. Convert the centre
-          // back through the involutive B basis for Runtime-native fallback state.
-          m_camera.set_fallback_pose(
-              Runtime::Presentation::to_gl(m_world_renderer->bounds().center),
-              m_world_renderer->bounds().radius);
-        }
 
         m_observed_scene_id = context->scene_id;
         m_observed_generation = context->generation;
         m_world_observed = true;
       }
     } else if (m_world_observed) {
-      m_world_renderer = nullptr;
-      m_camera.reset();
       m_world_text.reset();
       m_world_observed = false;
     }
   }
 
-  // Camera commands remain scoped to the exact active world generation.
+  consume_camera_commands();
+
+  consume_fade_commands();
+  consume_letterbox_commands();
+  consume_object_presentation_commands(context);
+  m_fade.update(delta_time);
+  m_letterbox.update(delta_time);
+  m_world_text.update(delta_time);
+  m_uv_phases.update(delta_time);
+
+  m_camera.update(delta_time);
+  if (std::optional<WorldCameraOperationCompletion> completed{m_camera.take_completed_operation()};
+      completed.has_value() && m_scenarios != nullptr) {
+    if (completed->source_area_id == 222 &&
+        (completed->camera_id == 4291U || completed->camera_id == 4292U)) {
+      App::Log::info(
+          LogCategory::Scenario, "AREA 222 sequence: {} completed", completed->camera_id);
+    }
+    m_scenarios->world_presentation().enqueue_camera_completion(completed.value());
+  }
+
+  // Runtime's structured camera is frame-published: ownership of controller
+  // mode 13 logically releases to mode 0 (automatic player camera; the actual
+  // follow mathematics are Phase 4.3) only when no structured script
+  // republished a camera this frame AND the legacy [Preferences]
+  // autocameraplayer gate is enabled AND a current player character exists.
+  // The renderer keeps the last valid pose as a presentation fallback inside
+  // release_structured_controller.
+  if (m_camera.active_controller_mode() == 13U) {
+    const WorldSceneContext* const publisher{
+        m_scenarios == nullptr ? nullptr : m_scenarios->attached_world_head_context()};
+    const ScenarioRuntime* const runtime{
+        publisher == nullptr || publisher->runtime == nullptr ? nullptr : publisher->runtime.get()};
+    const bool structured_published{
+        runtime != nullptr && runtime->selected_structured_camera() != nullptr};
+    const bool player_character_exists{
+        m_scenarios != nullptr && m_scenarios->controlled_character().has_value()};
+    if (m_camera.should_release_structured_controller(
+            structured_published, player_character_exists)) {
+      m_camera.release_structured_controller();
+      App::Log::debug(LogCategory::Renderer,
+          "structured camera source ended — camera controller released to mode 0");
+    }
+  }
+
+  // The world camera is also the listener for scenario-owned spatial audio.
+  if (context != nullptr && context->runtime != nullptr && m_camera.has_pose()) {
+    Audio::AudioSystem* audio{context->runtime->audio_system()};
+    if (audio != nullptr) {
+      const WorldCameraPose& pose{m_camera.pose()};
+      const Runtime::Matrix3& view{m_camera.runtime_view().world_to_camera.matrix};
+      Audio::AudioListenerState listener;
+      // The software spatializer is metre-based (speed of sound is m/s), so
+      // inches convert exactly here at the audio boundary. Orientation stays
+      // in Runtime's native basis; matrix column 2 is forward and -column 1 is up.
+      listener.position = Audio::Vec3{Runtime::inches_to_metres(pose.eye.x),
+          Runtime::inches_to_metres(pose.eye.y),
+          Runtime::inches_to_metres(pose.eye.z)};
+      listener.velocity = Audio::Vec3{0.0F, 0.0F, 0.0F};
+      listener.forward = Audio::Vec3{view.at(0, 2), view.at(1, 2), view.at(2, 2)};
+      listener.up = Audio::Vec3{-view.at(0, 1), -view.at(1, 1), -view.at(2, 1)};
+      audio->set_listener(listener);
+    }
+  }
+
+  if (update_dialog_input(delta_time, input)) {
+    m_interfaces.update_without_input(delta_time);
+  } else {
+    m_interfaces.update(delta_time, input);
+  }
+}
+
+void WorldScene::consume_camera_commands() {
   if (m_scenarios != nullptr) {
     while (std::optional<WorldCameraCommand> command{
         m_scenarios->world_presentation().take_camera()}) {
-      if (context == nullptr || command->scene_id != context->scene_id ||
-          command->scene_generation != context->generation) {
+      const WorldSceneContext* const owner{m_scenarios->find_world_context(command->scene_id)};
+      if (owner == nullptr || owner->residency == WorldSceneResidencyState::Free ||
+          owner->generation != command->scene_generation) {
         if (command->kind == WorldCameraCommandKind::k_controller_mode) {
           App::Log::debug(LogCategory::Renderer,
               "WorldScene: discarded stale camera controller {} for scene={} generation={}",
@@ -1233,73 +1359,6 @@ void WorldScene::update(const float delta_time, const Input::InputManager& input
           command->attachment_participants.participant_b_character_id);
     }
   }
-
-  consume_fade_commands();
-  consume_letterbox_commands();
-  consume_object_presentation_commands(context);
-  m_fade.update(delta_time);
-  m_letterbox.update(delta_time);
-  m_world_text.update(delta_time);
-  m_uv_phases.update(delta_time);
-
-  m_camera.update(delta_time);
-  if (std::optional<WorldCameraOperationCompletion> completed{m_camera.take_completed_operation()};
-      completed.has_value() && m_scenarios != nullptr) {
-    if (completed->source_area_id == 222 &&
-        (completed->camera_id == 4291U || completed->camera_id == 4292U)) {
-      App::Log::info(
-          LogCategory::Scenario, "AREA 222 sequence: {} completed", completed->camera_id);
-    }
-    m_scenarios->world_presentation().enqueue_camera_completion(completed.value());
-  }
-
-  // Runtime's structured camera is frame-published: ownership of controller
-  // mode 13 logically releases to mode 0 (automatic player camera; the actual
-  // follow mathematics are Phase 4.3) only when no structured script
-  // republished a camera this frame AND the legacy [Preferences]
-  // autocameraplayer gate is enabled AND a current player character exists.
-  // The renderer keeps the last valid pose as a presentation fallback inside
-  // release_structured_controller.
-  if (m_camera.active_controller_mode() == 13U) {
-    const ScenarioRuntime* const runtime{
-        context == nullptr || context->runtime == nullptr ? nullptr : context->runtime.get()};
-    const bool structured_published{
-        runtime != nullptr && runtime->selected_structured_camera() != nullptr};
-    const bool player_character_exists{
-        m_scenarios != nullptr && m_scenarios->controlled_character().has_value()};
-    if (m_camera.should_release_structured_controller(
-            structured_published, player_character_exists)) {
-      m_camera.release_structured_controller();
-      App::Log::debug(LogCategory::Renderer,
-          "structured camera source ended — camera controller released to mode 0");
-    }
-  }
-
-  // The world camera is also the listener for scenario-owned spatial audio.
-  if (context != nullptr && context->runtime != nullptr && m_camera.has_pose()) {
-    Audio::AudioSystem* audio{context->runtime->audio_system()};
-    if (audio != nullptr) {
-      const WorldCameraPose& pose{m_camera.pose()};
-      const Runtime::Matrix3& view{m_camera.runtime_view().world_to_camera.matrix};
-      Audio::AudioListenerState listener;
-      // The software spatializer is metre-based (speed of sound is m/s), so
-      // inches convert exactly here at the audio boundary. Orientation stays
-      // in Runtime's native basis; matrix column 2 is forward and -column 1 is up.
-      listener.position = Audio::Vec3{Runtime::inches_to_metres(pose.eye.x),
-          Runtime::inches_to_metres(pose.eye.y),
-          Runtime::inches_to_metres(pose.eye.z)};
-      listener.velocity = Audio::Vec3{0.0F, 0.0F, 0.0F};
-      listener.forward = Audio::Vec3{view.at(0, 2), view.at(1, 2), view.at(2, 2)};
-      listener.up = Audio::Vec3{-view.at(0, 1), -view.at(1, 1), -view.at(2, 1)};
-      audio->set_listener(listener);
-    }
-  }
-
-  if (update_dialog_input(delta_time, input)) {
-    m_interfaces.update_without_input(delta_time);
-  } else {
-    m_interfaces.update(delta_time, input);
-  }
 }
 
 void WorldScene::render() {
@@ -1329,6 +1388,7 @@ void WorldScene::render() {
   synchronize_presentation_reset();
   const WorldSceneContext* context{
       m_scenarios != nullptr ? m_scenarios->current_world_context() : nullptr};
+  consume_camera_commands();
   consume_fade_commands();
   consume_letterbox_commands();
   consume_object_presentation_commands(context);
@@ -1357,8 +1417,9 @@ void WorldScene::render() {
   // OpenNomad-native world diagnostics are linear scene content and reuse the
   // same depth attachment as both scene ping-pong targets.
   m_color_pipeline->bind_current_scene();
-  if (world_renderable && m_world_renderer != nullptr && context != nullptr) {
-    m_world_renderer->render_debug_overlay(m_camera.camera(), context->runtime.get());
+  WorldRenderer* const world_renderer{current_world_renderer()};
+  if (world_renderable && world_renderer != nullptr && context != nullptr) {
+    world_renderer->render_debug_overlay(m_camera.camera(), context->runtime.get());
   }
 
   // Explicit SDR clamp and OETF. Presentation overlays below intentionally

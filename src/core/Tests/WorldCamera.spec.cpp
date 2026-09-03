@@ -22,7 +22,8 @@ using AttachmentMap = std::unordered_map<std::int16_t, App::WorldCameraAttachmen
 
 void set_attachment_provider(WorldCameraSystem& camera, const AttachmentMap& attachments) {
   camera.set_attachment_pose_provider(
-      [&attachments](
+      [&attachments](const std::uint32_t,
+          const std::uint32_t,
           const std::int16_t character_id) -> std::optional<App::WorldCameraAttachmentPose> {
         const auto found{attachments.find(character_id)};
         if (found == attachments.end()) {
@@ -321,6 +322,29 @@ TEST_SUITE("Core::WorldCameraSystem") {
     camera.apply_command(command);
     CHECK(camera.pose().eye.x == doctest::Approx(command.runtime_eye.x));
     CHECK(camera.pose().target.y == doctest::Approx(command.runtime_target.y));
+  }
+
+  TEST_CASE("Attachment resolution retains the camera owner generation") {
+    WorldCameraSystem camera;
+    std::uint32_t observed_scene{0};
+    std::uint32_t observed_generation{0};
+    camera.set_attachment_pose_provider(
+        [&](const std::uint32_t scene_id,
+            const std::uint32_t generation,
+            const std::int16_t) -> std::optional<App::WorldCameraAttachmentPose> {
+          observed_scene = scene_id;
+          observed_generation = generation;
+          return App::WorldCameraAttachmentPose{};
+        });
+    WorldCameraCommand command{attached_camera(0, {0, 0, 0}, {0, 0, 0})};
+    command.scene_id = 222U;
+    command.scene_generation = 17U;
+
+    camera.apply_command(command);
+    camera.update(1.0F / 60.0F);
+
+    CHECK_EQ(observed_scene, 222U);
+    CHECK_EQ(observed_generation, 17U);
   }
 
   TEST_CASE("Selector six uses the A-B midpoint and recovered relationship yaw") {

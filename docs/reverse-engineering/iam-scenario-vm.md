@@ -2355,7 +2355,12 @@ Tracked variants enter compact state 4 only after this camera operation.
 
 The controller-13 update itself is now traced further at `0x00417D10`. While mode 13 is active, Runtime reads the live source pointer at `0x009103D4` and, when non-null, continuously copies source `+0x14..+0x30` into the active camera's eye, target, roll, and FOV fields. Mode 13 is therefore a live camera follow/copy controller, not a request to freeze the current pose.
 
-OpenNomad does not yet model the `0x009103D4` source object. Until that source is recovered, a mode-13 command must preserve the currently evaluated IAM camera and interpolation while recording the recovered controller mode and duration; clearing the live camera state fabricates behavior Runtime does not have.
+The publisher is the head of Runtime's attached-decor chain at `0x0093076C`,
+not necessarily the logically current AREA or controlled-body owner. OpenNomad
+models `0x009103D4` through that head's frame-selected structured camera. An
+event-9 chain reversal changes the publisher in native order; changing logical
+current identity alone does not clear the global camera, its interpolation, or
+its tracked completion.
 
 ---
 

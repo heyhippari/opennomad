@@ -26,15 +26,15 @@ struct WorldCameraPose {
 /// forcing visible camera motion to 30 Hz.
 class WorldCameraSystem {
  public:
-  using AttachmentPoseProvider =
-      std::function<std::optional<WorldCameraAttachmentPose>(std::int16_t character_id)>;
+  using AttachmentPoseProvider = std::function<std::optional<WorldCameraAttachmentPose>(
+      std::uint32_t scene_id, std::uint32_t generation, std::int16_t character_id)>;
   using ControllerPoseProvider = std::function<std::optional<WorldCameraPose>()>;
   WorldCameraSystem() = default;
 
   void set_aspect_ratio(float aspect_ratio);
   void set_clip_distance_metres(float distance);
-  /// Supplies one requested live character attachment pose without coupling
-  /// this presentation class to ScenarioManager or a gameplay runtime.
+  /// Supplies one requested live character attachment pose from the command's
+  /// owning resident world generation.
   void set_attachment_pose_provider(AttachmentPoseProvider provider);
   /// Supplies Runtime's live controller source (global 0x009103D4 equivalent).
   /// Controller mode 13 copies this pose every presentation update.

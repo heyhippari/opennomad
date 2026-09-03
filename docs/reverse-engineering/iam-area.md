@@ -3545,6 +3545,21 @@ case. AREA 142 (`AIMPASAS`) zone 2329 is the canonical `0x30(-1)` case. Opcode `
 DetachAreaScene(areaId)` destroys only the attached SCENE compact/runtime
 materialization, writes AREA-to-SCENE mapping `-1`, and leaves the AREA resident.
 
+Physical attachment also has an order independent of resident-slot and current
+AREA order. Global `0x0093076C` is the attached-decor chain head and decor
+`+0x17C` is its next link. `0x00419AF0 -> 0x00441170` appends an attached decor;
+`0x00419A90 -> 0x00441200` removes one without unloading its AREA; and the
+event-9 path calls `0x00419B50 -> 0x004412A0` to reverse the chain before the
+logical current/body-owner handoff. OpenNomad retains generation-tagged chain
+identities so recycled resident slots cannot become stale links.
+
+This chain head, not logical current AREA, publishes the selected structured
+camera to global `0x009103D4`. Compact numeric camera commands remain global
+presentation submissions: their AREA scene/generation identifies a live
+resident owner for provenance and stale-command rejection, but does not require
+that owner to be attached or logically current. Current AREA changes therefore
+must not reset an active camera interpolation, controller, or tracked completion.
+
 An empty AREA SCX name is valid. Retail AREA 142 (`AIMPASAS`) is the canonical
 case: its decor, compact zones, objects, characters, collision, and rendering are
 available without creating fake `ScxData`, `ScriptRuntime`, or SFX state.

@@ -275,7 +275,7 @@ Runtime::Vec3 WorldCameraSystem::resolve_attachment_point(const WorldCameraComma
     return absolute_fallback;
   }
   const std::optional<WorldCameraAttachmentPose> participant_a{
-      m_attachment_pose_provider(participant_a_id)};
+      m_attachment_pose_provider(command.scene_id, command.scene_generation, participant_a_id)};
   if (!participant_a.has_value()) {
     return absolute_fallback;
   }
@@ -296,7 +296,7 @@ Runtime::Vec3 WorldCameraSystem::resolve_attachment_point(const WorldCameraComma
     return absolute_fallback;
   }
   const std::optional<WorldCameraAttachmentPose> participant_b{
-      m_attachment_pose_provider(participant_b_id)};
+      m_attachment_pose_provider(command.scene_id, command.scene_generation, participant_b_id)};
   if (!participant_b.has_value()) {
     return absolute_fallback;
   }

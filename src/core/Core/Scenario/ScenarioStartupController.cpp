@@ -2332,6 +2332,7 @@ std::expected<bool, std::string> ScenarioStartupController::service_current_char
         const std::size_t destination_slot{
             static_cast<std::size_t>(std::distance(m_area_slots.begin(), destination))};
         const std::uint32_t source_world{current->world_scene_id};
+        m_manager->reverse_attached_world_order();
         if (auto selected{m_manager->set_current_world_context(accepted_world.value())};
             !selected) {
           return std::expected<bool, std::string>{std::unexpect, selected.error()};

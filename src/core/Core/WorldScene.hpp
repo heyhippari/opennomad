@@ -70,8 +70,10 @@ class WorldScene final : public Scene, public Debug::SceneDebugView {
   WorldScene(ScenarioManager& scenarios, Interface::InterfaceManager& interfaces);
 
   void synchronize_presentation_reset();
-  [[nodiscard]] WorldSceneContext* synchronize_world_context();
-  void consume_camera_commands(const WorldSceneContext* context);
+  void consume_camera_commands();
+  [[nodiscard]] WorldRenderer* current_world_renderer();
+  [[nodiscard]] const WorldRenderer* current_world_renderer() const;
+  [[nodiscard]] WorldRenderer* attached_world_head_renderer();
   void consume_fade_commands();
   void consume_letterbox_commands();
   void consume_object_presentation_commands(const WorldSceneContext* context);
@@ -88,7 +90,6 @@ class WorldScene final : public Scene, public Debug::SceneDebugView {
     std::unique_ptr<WorldRenderer> renderer;
   };
   std::vector<AttachedWorldRenderer> m_attached_world_renderers;
-  WorldRenderer* m_world_renderer{nullptr};
   std::unique_ptr<WorldFadeRenderer> m_fade_renderer;
   std::unique_ptr<WorldLetterboxRenderer> m_letterbox_renderer;
   std::unique_ptr<WorldColorPipeline> m_color_pipeline;

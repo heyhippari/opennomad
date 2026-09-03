@@ -2829,6 +2829,8 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK(controller.area_transition_state() == App::AreaTransitionState::k_idle);
     CHECK_EQ(manager.world_contexts()[0].residency, WorldSceneResidencyState::ResidentDetached);
     CHECK_EQ(manager.world_contexts()[1].residency, WorldSceneResidencyState::ResidentAttached);
+    REQUIRE(manager.attached_world_head_context() != nullptr);
+    CHECK_EQ(manager.attached_world_head_context()->scene_id, 1U);
     CHECK_EQ(controller.active_area_slot(), 0U);
     REQUIRE(manager.current_world_context() != nullptr);
     CHECK_EQ(manager.current_world_context()->scene_id, 0U);
@@ -2873,6 +2875,8 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK_EQ(transferred->physical_motion.support.source_world_scene_id,
         std::optional<std::uint32_t>{1U});
     CHECK_EQ(manager.world_contexts()[0].residency, WorldSceneResidencyState::ResidentDetached);
+    REQUIRE(manager.attached_world_head_context() != nullptr);
+    CHECK_EQ(manager.attached_world_head_context()->scene_id, 1U);
   }
 
   TEST_CASE("explicit nonresident AREA release is a successful no-op") {

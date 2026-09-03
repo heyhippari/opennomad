@@ -1441,10 +1441,14 @@ After the pool are several repeatedly used/reset globals:
 0x00930744
 0x0093074C
 0x00930754
-0x0093076C
+0x0093076C  attached-decor linked-list head
 ```
 
-Treat this as an entity/world control cluster until fields can be named from decisive writers.
+`0x0093076C` is confirmed by the attach/remove/reverse helpers. Each attached
+decor links to the next through `+0x17C`; `0x00441170` appends, `0x00441200`
+removes, and `0x004412A0` reverses the chain during AREA event 9. The remaining
+fields should still be treated as an entity/world control cluster until decisive
+writers identify them.
 
 ---
 

@@ -273,6 +273,11 @@ durable body transfers world runtime ownership without teleporting or resetting
 physical/controller/presentation state. Both decors remain attached. Touching a
 neighbor wall while support remains in the source world does not hand off.
 
+Before changing current AREA, event 9 reverses the attached-decor chain through
+`0x00419B50 -> 0x004412A0`. This makes the accepted destination the chain head
+and therefore the structured-camera publisher without treating camera ownership
+as current-AREA ownership.
+
 Still deferred:
 
 - primary `0x20000000` special-support response semantics;

@@ -560,6 +560,67 @@ TEST_SUITE("Core::Scenario::ScenarioManager") {
     CHECK(manager.world_contexts()[1].residency == App::WorldSceneResidencyState::ResidentAttached);
   }
 
+  TEST_CASE("Attached world contexts preserve native append and detach order") {
+    const TempDirectory temp;
+    write_bytes(temp.root() / "SCPTDATA" / "A.SCX", make_script_scx(1));
+    write_bytes(temp.root() / "SCPTDATA" / "B.SCX", make_script_scx(1));
+    const ScopedGameDataRoot root{temp.root()};
+
+    App::ScenarioManager manager;
+    REQUIRE(manager.load_world_context(1, std::nullopt, "SCPTDATA/A.SCX").has_value());
+    REQUIRE(manager.load_world_context(2, std::nullopt, "SCPTDATA/B.SCX").has_value());
+    REQUIRE(manager.activate_world_context(1).has_value());
+    REQUIRE(manager.activate_world_context(1).has_value());
+    REQUIRE(manager.activate_world_context(2).has_value());
+
+    REQUIRE_EQ(manager.attached_world_contexts().size(), 2U);
+    CHECK_EQ(manager.attached_world_contexts().at(0)->scene_id, 1U);
+    CHECK_EQ(manager.attached_world_contexts().at(1)->scene_id, 2U);
+    REQUIRE(manager.attached_world_head_context() != nullptr);
+    CHECK_EQ(manager.attached_world_head_context()->scene_id, 1U);
+
+    SUBCASE("detaching the head preserves the tail") {
+      REQUIRE(manager.deactivate_world_context(1).has_value());
+      REQUIRE_EQ(manager.attached_world_contexts().size(), 1U);
+      CHECK_EQ(manager.attached_world_head_context()->scene_id, 2U);
+    }
+
+    SUBCASE("detaching the tail preserves the head") {
+      REQUIRE(manager.deactivate_world_context(2).has_value());
+      REQUIRE_EQ(manager.attached_world_contexts().size(), 1U);
+      CHECK_EQ(manager.attached_world_head_context()->scene_id, 1U);
+    }
+  }
+
+  TEST_CASE("Event-9 reversal and backtracking follow the native decor chain") {
+    const TempDirectory temp;
+    write_bytes(temp.root() / "SCPTDATA" / "A.SCX", make_script_scx(1));
+    write_bytes(temp.root() / "SCPTDATA" / "B.SCX", make_script_scx(1));
+    const ScopedGameDataRoot root{temp.root()};
+
+    App::ScenarioManager manager;
+    REQUIRE(manager.load_world_context(1, std::nullopt, "SCPTDATA/A.SCX").has_value());
+    REQUIRE(manager.load_world_context(2, std::nullopt, "SCPTDATA/B.SCX").has_value());
+    REQUIRE(manager.activate_world_context(1).has_value());
+    REQUIRE(manager.activate_world_context(2).has_value());
+    CHECK_EQ(manager.attached_world_head_context()->scene_id, 1U);
+
+    manager.reverse_attached_world_order();
+    REQUIRE(manager.set_current_world_context(2).has_value());
+    CHECK_EQ(manager.current_world_context()->scene_id, 2U);
+    CHECK_EQ(manager.attached_world_contexts().at(0)->scene_id, 2U);
+    CHECK_EQ(manager.attached_world_contexts().at(1)->scene_id, 1U);
+    CHECK_EQ(manager.attached_world_head_context()->scene_id, 2U);
+
+    REQUIRE(manager.deactivate_world_context(1).has_value());
+    REQUIRE(manager.activate_world_context(1).has_value());
+    CHECK_EQ(manager.attached_world_contexts().at(0)->scene_id, 2U);
+    CHECK_EQ(manager.attached_world_contexts().at(1)->scene_id, 1U);
+    manager.reverse_attached_world_order();
+    REQUIRE(manager.set_current_world_context(1).has_value());
+    CHECK_EQ(manager.attached_world_head_context()->scene_id, 1U);
+  }
+
   TEST_CASE("Deactivation preserves loaded state and reactivation does not reparse") {
     const TempDirectory temp;
     write_boot_fixtures(temp);
