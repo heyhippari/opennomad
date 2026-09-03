@@ -2313,7 +2313,7 @@ std::expected<bool, std::string> ScenarioStartupController::service_current_char
               reconciled->qualifying_zone_count,
               character->spatial_heading_suppression_latch));
     }
-    App::Log::info(LogCategory::Scenario,
+    App::Log::debug(LogCategory::Scenario,
         "CurrentActorServiced — character={} world={} generation={} xyz=({:.3f},{:.3f},{:.3f}) "
         "radius={:.3f}",
         current->character_id,
@@ -2396,7 +2396,7 @@ bool ScenarioStartupController::publish_current_character_ordinary_spatial_sampl
   proxy.contact_ready = true;
   proxy.synchronization_suspended = false;
   proxy.suspension_reason.clear();
-  App::Log::info(LogCategory::Scenario,
+  App::Log::debug(LogCategory::Scenario,
       "TriggerProxySynchronized — character={} world={} generation={} xyz=({:.3f},{:.3f},{:.3f}) "
       "radius={:.3f}",
       proxy.owner.character_id,
@@ -3735,7 +3735,7 @@ ScenarioStartupController::reconcile_zone_contacts_from_fresh_spatial_sample() {
                          zone_contains_runtime_xz(active_zone.zone, proxy->position)};
       const bool heading{proxy != nullptr && proxy->registered && proxy->contact_ready &&
                          active_zone.zone.accepts_heading_degrees(proxy->heading_degrees)};
-      App::Log::info(LogCategory::Scenario,
+      App::Log::debug(LogCategory::Scenario,
           "ZoneQualification — source={} ownerSlot={} area={} scene={} zone={} qualifies={} "
           "current={} active={} areaPresent={} controller={} actor=({:.3f},{:.3f},{:.3f}) "
           "proxyRegistered={} contactReady={} proxy=({:.3f},{:.3f},{:.3f}) radius={:.3f} "

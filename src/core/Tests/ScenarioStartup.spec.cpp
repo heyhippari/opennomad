@@ -317,16 +317,17 @@ void install_stub_ctl_loader(App::ScenarioRuntime& runtime) {
       });
 }
 
-void install_collision_body_model_loader(App::ScenarioRuntime& runtime) {
+void install_collision_body_model_loader(
+    App::ScenarioRuntime& runtime, const float radius = 10.0F) {
   runtime.character_runtime().set_model_loader(
-      [](const std::string_view name)
+      [radius](const std::string_view name)
           -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
         auto resource{std::make_shared<App::Character::ModelResource>()};
         resource->name = name;
         resource->groups.push_back(App::Omikron::MaterialGroup{});
         resource->model.header.collision_sphere_count = 1U;
         resource->model.header.collision_sphere_slots.at(0) =
-            App::Omikron::CollisionSphere{.radius = 10.0F};
+            App::Omikron::CollisionSphere{.radius = radius};
         return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
       });
 }
@@ -351,6 +352,48 @@ App::Omikron::Model3DOData make_collision_decor(const float wall_x, const float 
           {.position = {.x = wall_x, .y = 100.0F, .z = 100.0F}},
           {.position = {.x = wall_x, .y = 200.0F, .z = 100.0F}},
           {.position = {.x = wall_x, .y = 200.0F, .z = -100.0F}}});
+  decor.runtime_objects.push_back(App::Omikron::Model3DOData::RuntimeObjectState{});
+  return decor;
+}
+
+void add_collision_ceiling(App::Omikron::Model3DOData& decor, const float ceiling_y) {
+  const std::uint32_t vertex_base{static_cast<std::uint32_t>(decor.vertices.size())};
+  decor.meshes.push_back(
+      App::Omikron::MeshDescriptor{.vertex_count = 4, .vertex_base = vertex_base});
+  decor.polygons.push_back(
+      App::Omikron::MeshPolygons{.rectangles = {App::Omikron::Rectangle{
+                                     .vertices = {0, 1, 2, 3}, .face_normal = {.y = 1.0F}}}});
+  decor.vertices.insert(decor.vertices.end(),
+      {{.position = {.x = -1000.0F, .y = ceiling_y, .z = -1000.0F}},
+          {.position = {.x = -1000.0F, .y = ceiling_y, .z = 1000.0F}},
+          {.position = {.x = 1000.0F, .y = ceiling_y, .z = 1000.0F}},
+          {.position = {.x = 1000.0F, .y = ceiling_y, .z = -1000.0F}}});
+  decor.runtime_objects.push_back(App::Omikron::Model3DOData::RuntimeObjectState{});
+}
+
+App::Omikron::Model3DOData make_class2_attachment_decor() {
+  App::Omikron::Model3DOData decor;
+  decor.meshes.push_back(
+      App::Omikron::MeshDescriptor{.flags = 0x00080000U, .vertex_count = 4, .vertex_base = 0});
+  decor.polygons.push_back(
+      App::Omikron::MeshPolygons{.rectangles = {App::Omikron::Rectangle{
+                                     .vertices = {0, 1, 2, 3}, .face_normal = {.y = -1.0F}}}});
+  decor.vertices = {{.position = {.x = 80.0F, .y = 60.0F, .z = 32.0F}},
+      {.position = {.x = 104.0F, .y = 60.0F, .z = 32.0F}},
+      {.position = {.x = 104.0F, .y = 60.0F, .z = 56.0F}},
+      {.position = {.x = 80.0F, .y = 60.0F, .z = 56.0F}}};
+  decor.runtime_objects.push_back(App::Omikron::Model3DOData::RuntimeObjectState{});
+
+  const std::uint32_t vertex_base{static_cast<std::uint32_t>(decor.vertices.size())};
+  decor.meshes.push_back(
+      App::Omikron::MeshDescriptor{.vertex_count = 3, .vertex_base = vertex_base});
+  decor.polygons.push_back(App::Omikron::MeshPolygons{
+      .triangles = {App::Omikron::Triangle{
+          .vertices = {{{.index = 0}, {.index = 1}, {.index = 2}}}, .face_normal = {.y = -1.0F}}}});
+  decor.vertices.insert(decor.vertices.end(),
+      {{.position = {.x = -1000.0F, .y = 100.0F, .z = -1000.0F}},
+          {.position = {.x = 1000.0F, .y = 100.0F, .z = -1000.0F}},
+          {.position = {.x = 0.0F, .y = 100.0F, .z = 1000.0F}}});
   decor.runtime_objects.push_back(App::Omikron::Model3DOData::RuntimeObjectState{});
   return decor;
 }
@@ -2175,6 +2218,9 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(controller.tick().has_value());
     REQUIRE(controller.tick(1.0F / 30.0F).has_value());
     REQUIRE_EQ(controller.zone_contact_count(), 1U);
+    App::Character::RuntimeCharacter* character{runtime->character_runtime().find(136)};
+    REQUIRE(character != nullptr);
+    CHECK(character->spatial_heading_suppression_latch);
     const std::uint64_t generation{controller.current_character_trigger_proxy()->generation};
     REQUIRE(controller.tick(1.0F / 30.0F).has_value());
     CHECK(controller.structured_character_owner_active());
@@ -2187,6 +2233,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK(controller.zone_contact(0)->heartbeat_state ==
           App::ZoneContactHeartbeatState::k_departure_pending);
     CHECK_EQ(controller.active_zone_contact_registration_count(), 0U);
+    CHECK(character->spatial_heading_suppression_latch);
   }
 
   TEST_CASE("zone capacity counts registrations instead of retained departure contexts") {
@@ -2307,6 +2354,175 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK_EQ(controller.current_character_trigger_proxy()->position.z,
         character->transform.translation.z);
     CHECK_EQ(controller.zone_contact_count(), 1U);
+  }
+
+  TEST_CASE("collision heading feeds spatial qualification and the next collision guard") {
+    constexpr std::int16_t k_zone_id{26};
+    constexpr std::int16_t k_corrected_heading_units{48};
+    constexpr std::int16_t k_heading_span_units{12};
+    const TempDirectory temp;
+    write_zone_contact_fixtures(temp,
+        false,
+        k_zone_id,
+        false,
+        false,
+        500U,
+        k_corrected_heading_units,
+        k_heading_span_units);
+    const ScopedGameDataRoot root{temp.root()};
+
+    App::ScenarioManager manager;
+    App::ScenarioStartupController controller;
+    REQUIRE(controller.initialize(manager).has_value());
+    App::ScenarioRuntime* runtime{manager.world_runtime(0)};
+    REQUIRE(runtime != nullptr);
+    install_collision_body_model_loader(*runtime);
+    install_stub_ctl_loader(*runtime);
+
+    REQUIRE(controller.tick().has_value());
+    App::Character::RuntimeCharacter* character{runtime->character_runtime().find(136)};
+    REQUIRE(character != nullptr);
+    character->controller_enabled = false;
+    character->transform.translation = {.x = 0.0F, .y = 152.0F, .z = -10.0F};
+    character->set_principal_orientation({});
+    App::Character::PhysicalMotionService::synchronize(*character);
+    character->physical_motion.candidate_translation = {.x = 20.0F, .y = 152.0F, .z = 10.0F};
+    App::Omikron::Model3DOData decor{make_collision_decor(15.0F, 162.0F)};
+    runtime->bind_decor_model(&decor);
+
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+    const auto& first_collision{character->physical_motion.horizontal_collision};
+    CHECK(first_collision.forward_collision);
+    CHECK(first_collision.automatic_heading_applied);
+    CHECK(character->principal_orientation_degrees.y ==
+          doctest::Approx(first_collision.yaw_after_degrees));
+    REQUIRE(controller.current_character_trigger_proxy().has_value());
+    CHECK(controller.current_character_trigger_proxy()->heading_degrees ==
+          doctest::Approx(first_collision.yaw_after_degrees));
+    CHECK_EQ(controller.zone_contact_count(), 1U);
+    CHECK(character->spatial_heading_suppression_latch);
+
+    character->set_principal_orientation({.y = 90.0F});
+    character->physical_motion.candidate_translation.x += 20.0F;
+    character->physical_motion.candidate_translation.z += 20.0F;
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+    const auto& second_collision{character->physical_motion.horizontal_collision};
+    CHECK(second_collision.forward_collision);
+    CHECK_FALSE(second_collision.automatic_heading_applied);
+    CHECK_EQ(second_collision.automatic_heading_suppression,
+        App::Character::AutomaticHeadingSuppressionReason::k_spatial_heading_latch);
+    CHECK_EQ(controller.current_character_trigger_proxy()->heading_degrees, 90.0F);
+    CHECK_FALSE(character->spatial_heading_suppression_latch);
+    CHECK_EQ(controller.active_zone_contact_registration_count(), 1U);
+  }
+
+  TEST_CASE("mover next-tick displacement reaches each ordinary spatial sample") {
+    const TempDirectory temp;
+    write_zone_contact_fixtures(temp, false, 27, false, false, 500U);
+    const ScopedGameDataRoot root{temp.root()};
+
+    App::ScenarioManager manager;
+    App::ScenarioStartupController controller;
+    REQUIRE(controller.initialize(manager).has_value());
+    App::ScenarioRuntime* runtime{manager.world_runtime(0)};
+    REQUIRE(runtime != nullptr);
+    install_collision_body_model_loader(*runtime);
+    install_stub_ctl_loader(*runtime);
+    REQUIRE(controller.tick().has_value());
+
+    App::Character::RuntimeCharacter* character{runtime->character_runtime().find(136)};
+    REQUIRE(character != nullptr);
+    character->controller_enabled = false;
+    character->transform.translation = {.x = 120.0F, .y = 152.0F, .z = 80.0F};
+    App::Character::PhysicalMotionService::synchronize(*character);
+    App::Omikron::Model3DOData decor{make_collision_decor(1000.0F, 162.0F)};
+    decor.meshes.front().mover_flags = 0x10U;
+    runtime->bind_decor_model(&decor);
+
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+    CHECK(character->physical_motion.support.mover_applied_this_tick);
+    CHECK_EQ(character->physical_motion.horizontal_physical_x_per_tick, 2.0F);
+    CHECK_EQ(controller.current_character_trigger_proxy()->position.x, 120.0F);
+
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+    CHECK_EQ(character->physical_motion.horizontal_collision.intended_displacement.x, 2.0F);
+    CHECK_EQ(character->transform.translation.x, 122.0F);
+    CHECK_EQ(controller.current_character_trigger_proxy()->position.x,
+        character->transform.translation.x);
+  }
+
+  TEST_CASE("class-two attachment movement reaches the next ordinary spatial sample") {
+    const TempDirectory temp;
+    write_zone_contact_fixtures(temp, false, 28, false, false, 500U);
+    const ScopedGameDataRoot root{temp.root()};
+
+    App::ScenarioManager manager;
+    App::ScenarioStartupController controller;
+    REQUIRE(controller.initialize(manager).has_value());
+    App::ScenarioRuntime* runtime{manager.world_runtime(0)};
+    REQUIRE(runtime != nullptr);
+    install_collision_body_model_loader(*runtime, 60.0F);
+    install_stub_ctl_loader(*runtime);
+    REQUIRE(controller.tick().has_value());
+
+    App::Character::RuntimeCharacter* character{runtime->character_runtime().find(136)};
+    REQUIRE(character != nullptr);
+    character->controller_enabled = false;
+    character->transform.translation = {.x = 120.0F, .y = 7.3881507F, .z = 80.0F};
+    App::Character::PhysicalMotionService::synchronize(*character);
+    character->physical_motion.gravity_velocity_delta_per_tick = 0.0F;
+    character->physical_motion.vertical_velocity = 100.0F;
+    App::Omikron::Model3DOData decor{make_class2_attachment_decor()};
+    runtime->bind_decor_model(&decor);
+
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+    CHECK(character->physical_motion.class2_support_response.attachment_applied);
+    CHECK(character->physical_motion.horizontal_physical_x_per_tick == doctest::Approx(2.0F));
+    CHECK(character->physical_motion.horizontal_physical_z_per_tick == doctest::Approx(3.0F));
+
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+    CHECK(character->physical_motion.horizontal_collision.intended_displacement.x ==
+          doctest::Approx(2.0F));
+    CHECK(character->physical_motion.horizontal_collision.intended_displacement.z ==
+          doctest::Approx(3.0F));
+    CHECK_EQ(controller.current_character_trigger_proxy()->position.x,
+        character->transform.translation.x);
+    CHECK_EQ(controller.current_character_trigger_proxy()->position.z,
+        character->transform.translation.z);
+  }
+
+  TEST_CASE("ceiling-clamped live Y reaches the ordinary spatial sample") {
+    const TempDirectory temp;
+    write_zone_contact_fixtures(temp, false, 29, false, false, 500U);
+    const ScopedGameDataRoot root{temp.root()};
+
+    App::ScenarioManager manager;
+    App::ScenarioStartupController controller;
+    REQUIRE(controller.initialize(manager).has_value());
+    App::ScenarioRuntime* runtime{manager.world_runtime(0)};
+    REQUIRE(runtime != nullptr);
+    install_collision_body_model_loader(*runtime);
+    install_stub_ctl_loader(*runtime);
+    REQUIRE(controller.tick().has_value());
+
+    App::Character::RuntimeCharacter* character{runtime->character_runtime().find(136)};
+    REQUIRE(character != nullptr);
+    character->controller_enabled = false;
+    character->transform.translation = {.x = 120.0F, .y = 152.0F, .z = 80.0F};
+    App::Character::PhysicalMotionService::synchronize(*character);
+    character->physical_motion.gravity_velocity_delta_per_tick = 0.0F;
+    character->physical_motion.vertical_velocity = -300.0F;
+    App::Omikron::Model3DOData decor{make_collision_decor(1000.0F, 162.0F)};
+    add_collision_ceiling(decor, 122.0F);
+    runtime->bind_decor_model(&decor);
+
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+    CHECK(character->physical_motion.ceiling_collision.hit);
+    CHECK(character->physical_motion.ceiling_collision.clamped);
+    CHECK_EQ(controller.current_character_trigger_proxy()->position.y,
+        character->transform.translation.y);
+    CHECK(character->transform.translation.y ==
+          doctest::Approx(character->physical_motion.accepted_translation.y));
   }
 
   TEST_CASE("zone qualification observes complete no-support rollback") {

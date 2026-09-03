@@ -1,7 +1,9 @@
 # Character physical motion
 
-> **Status:** Phase 4.2D.1-D.3 spatial sampling, heartbeat lifecycle, and heading feedback implemented
+> **Status:** Phase 4.2A-D ordinary actor physical and spatial/contact integration implemented
 > **Last updated:** 2026-09-03
+
+**Phase 4.2 is complete for the recovered ordinary non-special actor physical and spatial/contact path.** Higher-level adventure responses and special Runtime branches remain explicitly deferred below; this is not a claim that all character physics is complete.
 
 This document separates recovered retail actor semantics from OpenNomad's modern C++ representation. Runtime did not contain a C++ abstraction named `PhysicalMotionService`.
 
@@ -98,6 +100,42 @@ not clear it. The post-physical sample then replaces it with
 into the next substep. A frame with no due step, structured ownership,
 placement, physical reanchor, transfer, and D.2 contact aging all preserve the
 current value.
+
+The complete OpenNomad ordinary/compact boundary is therefore:
+
+```text
+ordinary fixed step
+	synchronize/reanchor if needed
+	-> CTL and callbacks
+	-> physical movement composition
+	-> C.1 horizontal collision
+	-> C.2 previous-spatial-latch heading response
+	-> C.3 support / mode4 / movers / class2 / ceiling
+	-> commit or rollback
+	-> accepted-position marker handling
+	-> D.1 live spatial sample
+	-> D.2 positive heartbeat production
+	-> D.3 replace the next-tick heading latch
+
+next compact phase
+	D.2 heartbeat lifecycle aging
+	-> zone compact event VM execution
+```
+
+D.2 registration lifetime and D.3 actor feedback intentionally diverge. For
+example, an ordinary pass can qualify a zone and set the D.3 latch true; a
+structured owner then prevents further ordinary samples while D.2 ages and
+releases that contact registration. The actor latch remains true. The first
+later ordinary collision consumes that preserved value, and only its
+post-physical D.1 pass recomputes the latch. Conversely, a fresh heading miss
+clears D.3 immediately while the D.2 registration remains alive until compact
+lifecycle aging.
+
+The recovered capacity of 16 applies to active spatial registrations, not to
+live retained compact contexts. Event 3 releases its registration immediately;
+OpenNomad may retain the departure compact context while its queued, active, or
+waiting work drains. A rapid re-entry can therefore coexist with the older
+departure context without merging them or consuming more than one active slot.
 
 Fresh qualification runs after CTL callbacks, all C.1/C.2/C.3 resolution, and
 accepted-position sound-marker publication. A positive result is a native
@@ -224,9 +262,14 @@ Still deferred:
 
 - primary `0x20000000` special-support response semantics;
 - SCENE/person support association and moving-platform person integration;
-- generic actor/object collision;
-- native `0x08000000` adventure/gameplay support transition.
-- interaction-gated event 2 and native spatial event 8 dispatch.
+- remaining actor/person general collision;
+- native `0x08000000` adventure/gameplay support transition;
+- interaction-gated zone event 2, native contact states 4/5, and the
+	`0x004E6C90` interaction gate;
+- native central spatial event 8 and wider adventure/game-state handling;
+- native jump choreography and the `0x006A52CC` producer;
+- the `0x0053AE1C` special/global-motion guard;
+- higher-level fall/support adventure event dispatch.
 
 Adventure fall/landing event dispatch through `0x00414DE0` and the native jump
 callback choreography remain deferred to their owning systems. The native
