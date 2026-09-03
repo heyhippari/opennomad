@@ -665,6 +665,10 @@ std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state
       debug_character.ceiling_hit_distance = ceiling.hit_distance;
       debug_character.ceiling_limit = ceiling.ceiling_limit;
       debug_character.automatic_heading_applied = horizontal.automatic_heading_applied;
+      debug_character.spatial_heading_suppression_latch =
+          character.spatial_heading_suppression_latch;
+      debug_character.spatial_heading_suppression_active =
+          horizontal.spatial_heading_suppression_active;
       debug_character.mdrot_suppression_active = horizontal.mdrot_suppression_active;
       debug_character.automatic_heading_suppression = horizontal.automatic_heading_suppression;
       debug_character.intended_heading_degrees = horizontal.intended_heading_degrees;

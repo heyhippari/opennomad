@@ -2026,10 +2026,12 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(controller.tick().has_value());
     App::Character::RuntimeCharacter* character{runtime->character_runtime().find(136)};
     REQUIRE(character != nullptr);
+    CHECK_FALSE(character->spatial_heading_suppression_latch);
     CHECK_FALSE(character->controller_enabled);
     CHECK_EQ(controller.zone_contact_count(), 0U);
     character->transform.translation =
         App::Runtime::area_position_to_inches(std::array<std::int32_t, 3>{50, 999, 50});
+    character->spatial_heading_suppression_latch = true;
 
     const std::uint64_t generation_before{character->ordinary_actor_service_generation};
     const App::Runtime::Vec3 proxy_position_before{
@@ -2041,12 +2043,14 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK_EQ(controller.current_character_trigger_proxy()->position.y, proxy_position_before.y);
     CHECK_EQ(controller.current_character_trigger_proxy()->position.z, proxy_position_before.z);
     CHECK_EQ(controller.zone_contact_count(), 0U);
+    CHECK(character->spatial_heading_suppression_latch);
 
     REQUIRE(controller.tick(1.0F / 60.0F).has_value());
     CHECK_EQ(character->ordinary_actor_service_generation, generation_before + 1U);
     CHECK_EQ(controller.current_character_trigger_proxy()->generation,
         character->ordinary_actor_service_generation);
     CHECK_EQ(controller.zone_contact_count(), 1U);
+    CHECK(character->spatial_heading_suppression_latch);
     const App::ZoneContactContext* contact{controller.zone_contact(0)};
     REQUIRE(contact != nullptr);
     REQUIRE(contact->script != nullptr);
@@ -2067,6 +2071,8 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     }));
     CHECK_EQ(character->current_move_id(), std::optional<std::int16_t>{100});
     CHECK(character->controller_enabled);
+    CHECK_FALSE(character->spatial_heading_suppression_latch);
+    CHECK_EQ(controller.active_zone_contact_registration_count(), 1U);
   }
 
   TEST_CASE(
@@ -2374,6 +2380,15 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(controller.current_character_trigger_proxy().has_value());
     CHECK_EQ(controller.current_character_trigger_proxy()->heading_degrees, 90.0F);
     CHECK_EQ(controller.zone_contact_count(), 1U);
+    CHECK(character->spatial_heading_suppression_latch);
+
+    character->set_principal_orientation(App::Runtime::Vec3{});
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+    CHECK_FALSE(character->spatial_heading_suppression_latch);
+    CHECK_EQ(controller.active_zone_contact_registration_count(), 1U);
+    REQUIRE(controller.zone_contact(0) != nullptr);
+    CHECK(controller.zone_contact(0)->heartbeat_state ==
+          App::ZoneContactHeartbeatState::k_awaiting_refresh);
   }
 
   TEST_CASE("fire-and-forget current-character script freezes proxy and CTL service") {

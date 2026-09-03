@@ -92,6 +92,7 @@ struct CeilingCollisionState {
 enum class AutomaticHeadingSuppressionReason : std::uint8_t {
   k_none,
   k_no_forward_collision,
+  k_spatial_heading_latch,
   k_falling,
   k_mdrot,
   k_intended_x_threshold,
@@ -116,6 +117,7 @@ struct HorizontalCollisionState {
   App::Runtime::Vec3 response_normal{};
   float contact_distance{0.0F};
   bool automatic_heading_applied{false};
+  bool spatial_heading_suppression_active{false};
   bool mdrot_suppression_active{false};
   AutomaticHeadingSuppressionReason automatic_heading_suppression{
       AutomaticHeadingSuppressionReason::k_none};

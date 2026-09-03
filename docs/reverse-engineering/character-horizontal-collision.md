@@ -130,9 +130,11 @@ abs(intendedX) > 0.0001
 abs(resolvedX) > 0.0001
 ```
 
-The X comparisons are strict and deliberately have no corresponding Z threshold. OpenNomad implements the real-forward-collision, pre-B fall-stage, MDROT, intended-X, and resolved-X guards. Its ordinary service is structurally the native state-1 path, so no fake dispatcher-state field is needed; native state 3 remains documented for future generic dispatch parity.
+The X comparisons are strict and deliberately have no corresponding Z threshold. OpenNomad implements the real-forward-collision, actor `+0x51D`, pre-B fall-stage, MDROT, intended-X, and resolved-X guards. Its ordinary service is structurally the native state-1 path, so no fake dispatcher-state field is needed; native state 3 remains documented for future generic dispatch parity.
 
-The remaining native guards have no proven OpenNomad producer and are intentionally deferred. Actor `+0x51D` is conservatively identified as a spatial-service heading-suppression/contact latch: `0x00467770` clears it, qualifying native spatial/event checks may set it, and the following physical tick consumes it. Generic OpenNomad zone or proxy overlap is not assumed equivalent. Global `0x006A52CC` is a jump-choreography guard associated with MDJUMP/MDJP paths. Global `0x0053AE1C` is a special movement-mode/global motion guard, with observed related code around `0x00466210`, `0x00465EED`, `0x00465F36`, `0x00465FC2`, `0x004661C4`, `0x0046AF1A`, and `0x0046B367`; its source-level semantics remain unresolved.
+Actor construction clears `+0x51D` at `0x0041ABA9`. Ordinary C.2 reads it at `0x0046745D`; the following ordinary spatial service clears it at `0x0046779A` and sets it at `0x0046791E` when at least one record passes containment and heading qualification. OpenNomad therefore treats the latch as the previous completed ordinary spatial-pass result. A genuine forward collision observes it before fall and MDROT suppression, without clearing it; the later successful spatial sample replaces it from its final heading-qualified aggregate. Broadphase or polygon containment alone is insufficient, and D.2 registration lifetime is independent.
+
+The remaining native guards have no proven OpenNomad producer and are intentionally deferred. Global `0x006A52CC` is a jump-choreography guard associated with MDJUMP/MDJP paths. Global `0x0053AE1C` is a special movement-mode/global motion guard, with observed related code around `0x00466210`, `0x00465EED`, `0x00465F36`, `0x00465FC2`, `0x004661C4`, `0x0046AF1A`, and `0x0046B367`; its source-level semantics remain unresolved.
 
 The heading calculation uses only C.1's original intended and final resolved X/Z:
 

@@ -3007,7 +3007,9 @@ lifecycle is:
 
 Native states 4 and 5 belong to the deferred interaction path. They are not
 departure states and are outside Phase 4.2D.2. Compact event 2, event 8, and
-the `+0x51D` interaction path likewise remain deferred.
+their interaction path remain deferred. Actor `+0x51D` is separately recovered
+as the previous ordinary spatial-pass heading-qualified latch used by physical
+C.2; it is not a D.2 registration state or compact event-2 flag.
 
 OpenNomad retains a fourth semantic state, `departure_pending`, after producing
 event 3. It is not a native state: it keeps the safe C++ compact context alive

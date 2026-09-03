@@ -467,16 +467,29 @@ TEST_SUITE("Core::Character::PhysicalMotionService") {
     horizontal.intended_displacement = {.x = 1.0F};
     horizontal.resolved_displacement = {.x = 1.0F, .z = 1.0F};
 
+    CHECK_FALSE(character.spatial_heading_suppression_latch);
+    character.spatial_heading_suppression_latch = true;
     Service::apply_automatic_collision_heading(character);
     CHECK_EQ(horizontal.automatic_heading_suppression, Reason::k_no_forward_collision);
     CHECK_FALSE(horizontal.automatic_heading_applied);
+    CHECK(horizontal.spatial_heading_suppression_active);
+    CHECK(character.spatial_heading_suppression_latch);
 
     horizontal.forward_collision = true;
     horizontal.depenetrated = true;
     motion.fall_stage = 2U;
     character.suppress_automatic_movement_heading = true;
     Service::apply_automatic_collision_heading(character);
+    CHECK_EQ(horizontal.automatic_heading_suppression, Reason::k_spatial_heading_latch);
+    CHECK_FALSE(horizontal.automatic_heading_applied);
+    CHECK(horizontal.spatial_heading_suppression_active);
+    CHECK(horizontal.mdrot_suppression_active);
+    CHECK(character.spatial_heading_suppression_latch);
+
+    character.spatial_heading_suppression_latch = false;
+    Service::apply_automatic_collision_heading(character);
     CHECK_EQ(horizontal.automatic_heading_suppression, Reason::k_falling);
+    CHECK_FALSE(horizontal.spatial_heading_suppression_active);
 
     motion.fall_stage = 0U;
     Service::apply_automatic_collision_heading(character);
@@ -508,6 +521,17 @@ TEST_SUITE("Core::Character::PhysicalMotionService") {
     horizontal.resolved_displacement.x = -0.000101F;
     Service::apply_automatic_collision_heading(character);
     CHECK(horizontal.automatic_heading_applied);
+  }
+
+  TEST_CASE("physical synchronization preserves the actor spatial heading latch") {
+    App::Character::RuntimeCharacter character;
+    character.transform.translation = {.x = 1.0F, .y = 2.0F, .z = 3.0F};
+    character.spatial_heading_suppression_latch = true;
+
+    App::Character::PhysicalMotionService::synchronize(character);
+
+    CHECK(character.physical_motion.initialized);
+    CHECK(character.spatial_heading_suppression_latch);
   }
 
   TEST_CASE("automatic heading updates only principal yaw and synchronizes its matrix") {

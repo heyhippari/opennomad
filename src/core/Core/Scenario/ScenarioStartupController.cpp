@@ -2300,15 +2300,18 @@ std::expected<bool, std::string> ScenarioStartupController::service_current_char
       if (!reconciled) {
         return std::expected<bool, std::string>{std::unexpect, reconciled.error()};
       }
+      character->spatial_heading_suppression_latch = reconciled->qualifying_zone_count != 0U;
       m_zone_contact_lifecycle_pass_pending = true;
       record("CurrentActor.OrdinarySpatialSample",
-          fmt::format("generation={} xyz=({:.3f},{:.3f},{:.3f}) heading={:.3f} qualifyingZones={}",
+          fmt::format("generation={} xyz=({:.3f},{:.3f},{:.3f}) heading={:.3f} qualifyingZones={} "
+                      "spatialHeadingLatch={}",
               character->ordinary_actor_service_generation,
               character->transform.translation.x,
               character->transform.translation.y,
               character->transform.translation.z,
               character->principal_orientation_degrees.y,
-              reconciled->qualifying_zone_count));
+              reconciled->qualifying_zone_count,
+              character->spatial_heading_suppression_latch));
     }
     App::Log::info(LogCategory::Scenario,
         "CurrentActorServiced — character={} world={} generation={} xyz=({:.3f},{:.3f},{:.3f}) "

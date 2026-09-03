@@ -174,6 +174,8 @@ struct RuntimeCharacterDebugState {
   float ceiling_hit_distance{0.0F};
   float ceiling_limit{0.0F};
   bool automatic_heading_applied{false};
+  bool spatial_heading_suppression_latch{false};
+  bool spatial_heading_suppression_active{false};
   bool mdrot_suppression_active{false};
   Character::AutomaticHeadingSuppressionReason automatic_heading_suppression{
       Character::AutomaticHeadingSuppressionReason::k_none};

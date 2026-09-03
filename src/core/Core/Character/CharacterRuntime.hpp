@@ -171,6 +171,12 @@ struct RuntimeCharacter {
   std::int32_t adventure_mode{0};
   /// Transient MDROT000 flag observed and cleared by the next physical tick.
   bool suppress_automatic_movement_heading{false};
+  /// Runtime actor +0x51D equivalent. This is the result of the most recent
+  /// completed ordinary spatial-service pass: true when at least one record
+  /// passed containment and heading qualification. The next ordinary C.2 pass
+  /// consumes it; spatial service replaces it. Structured ownership, physical
+  /// reanchor, placement, and contact aging preserve it.
+  bool spatial_heading_suppression_latch{false};
 
   std::string definition_name;
   std::string model_resource_name;

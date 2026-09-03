@@ -534,6 +534,10 @@ resolution and tick N+1. Compact zone VMs are not executed within this loop.
 Callbacks remain deferred relative to transition evaluation and are never
 invoked recursively inside evaluator code.
 
+Phase 4.2D.3 adds the actor-owned feedback edge across those sequences: C.2
+observes the previous completed sample's heading-qualified latch, and the fresh
+post-physical sample replaces it for the next ordinary physical pass.
+
 This fixed-step accumulator is OpenNomad's modern mapping. Retail Runtime uses
 variable simulation delta and performs one CTL-to-physical-to-spatial sequence
 per ordinary actor dispatcher invocation; this document does not claim that

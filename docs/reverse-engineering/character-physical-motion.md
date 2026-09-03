@@ -1,6 +1,6 @@
 # Character physical motion
 
-> **Status:** Phase 4.2D.1 fresh ordinary spatial sampling implemented
+> **Status:** Phase 4.2D.1-D.3 spatial sampling, heartbeat lifecycle, and heading feedback implemented
 > **Last updated:** 2026-09-03
 
 This document separates recovered retail actor semantics from OpenNomad's modern C++ representation. Runtime did not contain a C++ abstraction named `PhysicalMotionService`.
@@ -69,6 +69,7 @@ synchronize or defensively re-anchor from the live transform
 -> advance ordinary actor service generation
 -> publish one fresh ordinary spatial sample from the live actor transform
 -> qualify active zone/contact records from that sample
+-> replace the actor-owned spatial-heading latch from the final qualified count
 ```
 
 This is the **OpenNomad fixed-step mapping of Runtime actor ordering**. Retail
@@ -88,6 +89,15 @@ trigger proxy copies those values and the model `bounds_radius`; there is no
 second physical/contact position representation. Zone qualification retains
 the existing proxy broadphase, exact X/Z polygon containment, and heading
 window.
+
+C.2 reads the actor-owned spatial-heading latch produced by the previous
+successful ordinary spatial pass. After a genuine forward collision, a set
+latch suppresses automatic heading before the fall and MDROT guards. C.2 does
+not clear it. The post-physical sample then replaces it with
+`qualifying_zone_count != 0`, so catch-up substeps feed their result directly
+into the next substep. A frame with no due step, structured ownership,
+placement, physical reanchor, transfer, and D.2 contact aging all preserve the
+current value.
 
 Fresh qualification runs after CTL callbacks, all C.1/C.2/C.3 resolution, and
 accepted-position sound-marker publication. A positive result is a native
@@ -216,15 +226,13 @@ Still deferred:
 - SCENE/person support association and moving-platform person integration;
 - generic actor/object collision;
 - native `0x08000000` adventure/gameplay support transition.
-- Phase 4.2D.2 contact heartbeat and aging states;
-- Phase 4.2D.3 actor `+0x51D` spatial-heading suppression latch and its C.2 guard;
 - interaction-gated event 2 and native spatial event 8 dispatch.
 
 Adventure fall/landing event dispatch through `0x00414DE0` and the native jump
 callback choreography remain deferred to their owning systems. The native
-spatial-service heading latch, jump guard, and special movement/global motion
-guard likewise remain deferred until their legitimate producers exist; they are not
-substituted with physical-service event IDs or a partial jump mode.
+jump guard and special movement/global motion guard likewise remain deferred
+until their legitimate producers exist; they are not substituted with
+physical-service event IDs or a partial jump mode.
 
 See [`3do.md`](3do.md) for the authored collision substrate and [`ctl.md`](ctl.md)
 for CTL motion production and the deferred native jump dependency.

@@ -2367,6 +2367,14 @@ advances native-style contact states before running zone VMs. Structured owner
 dispatch schedules the same pass as a missed heartbeat without publishing the
 structured actor's transform through the ordinary trigger proxy.
 
+Phase 4.2D.3 closes the previous-pass feedback edge. C.2 reads the actor-owned
+spatial-heading latch before fall and MDROT suppression; the successful
+post-physical spatial service then replaces that latch from its final
+containment-and-heading-qualified count. In OpenNomad catch-up, each substep's
+sample therefore feeds the next substep. This does not imply a retail fixed-step
+accumulator: Runtime performs the same physical-then-spatial feedback across
+successive ordinary dispatcher invocations.
+
 ---
 
 # 89. Why interpolation belongs above simulation timing

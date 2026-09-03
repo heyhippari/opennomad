@@ -323,6 +323,7 @@ TEST_SUITE("Core::Character::Runtime") {
     REQUIRE(source.ensure_area_character(118, area, 310).has_value());
     App::Character::RuntimeCharacter* character{source.find(310)};
     REQUIRE(character != nullptr);
+    CHECK_FALSE(character->spatial_heading_suppression_latch);
     const App::Character::BodyIdentity body_identity{character->body_identity};
     const std::shared_ptr<const App::Character::ModelResource> source_resource{
         character->model_resource};
@@ -342,6 +343,7 @@ TEST_SUITE("Core::Character::Runtime") {
         .support = {.valid = true, .object_index = 4U, .gap = 25.0F},
         .initialized = true};
     character->pose_revision = 17U;
+    character->spatial_heading_suppression_latch = true;
     REQUIRE(source.set_body_presentation_enabled(body_identity, false).has_value());
     CHECK_FALSE(character->renderable());
 
@@ -352,6 +354,7 @@ TEST_SUITE("Core::Character::Runtime") {
     REQUIRE(character != nullptr);
     CHECK_EQ(character->transform.translation.x, 11.0F);
     CHECK_EQ(character->pose_revision, 17U);
+    CHECK(character->spatial_heading_suppression_latch);
     CHECK_FALSE(character->presentation_enabled);
 
     REQUIRE(source.transfer_body_to(target, body_identity).has_value());
@@ -379,6 +382,7 @@ TEST_SUITE("Core::Character::Runtime") {
     CHECK_EQ(character->physical_motion.support.object_index, 4U);
     CHECK_EQ(character->physical_motion.support.gap, 25.0F);
     CHECK_EQ(character->pose_revision, 17U);
+    CHECK(character->spatial_heading_suppression_latch);
     CHECK_FALSE(character->presentation_enabled);
     CHECK_FALSE(character->renderable());
     CHECK_EQ(source_loads, 1U);
@@ -389,6 +393,7 @@ TEST_SUITE("Core::Character::Runtime") {
     character = target.find(310);
     REQUIRE(character != nullptr);
     CHECK(character->renderable());
+    CHECK(character->spatial_heading_suppression_latch);
   }
 
   TEST_CASE("SCENE-only characters use SCENE definitions and cleanly dematerialize") {

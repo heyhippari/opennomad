@@ -71,6 +71,8 @@ constexpr const char* automatic_heading_suppression_name(
       return "none";
     case Reason::k_no_forward_collision:
       return "no forward collision";
+    case Reason::k_spatial_heading_latch:
+      return "previous spatial heading latch";
     case Reason::k_falling:
       return "falling";
     case Reason::k_mdrot:
@@ -477,6 +479,9 @@ void DebugUI::show_world_inspector() {
           "Automatic heading applied: %s", character.automatic_heading_applied ? "yes" : "no");
       ImGui::Text("Automatic heading suppression: %s",
           automatic_heading_suppression_name(character.automatic_heading_suppression));
+      ImGui::Text("Previous spatial heading latch: %s | C.2 latch active: %s",
+          character.spatial_heading_suppression_latch ? "true" : "false",
+          character.spatial_heading_suppression_active ? "yes" : "no");
       ImGui::Text("MDROT steering suppression active this tick: %s",
           character.mdrot_suppression_active ? "yes" : "no");
       if (character.automatic_heading_applied) {

@@ -340,11 +340,17 @@ void PhysicalMotionService::apply_automatic_collision_heading(RuntimeCharacter& 
   horizontal.heading_delta_degrees = 0.0F;
   horizontal.yaw_before_degrees = 0.0F;
   horizontal.yaw_after_degrees = 0.0F;
+  horizontal.spatial_heading_suppression_active = character.spatial_heading_suppression_latch;
   horizontal.mdrot_suppression_active = character.suppress_automatic_movement_heading;
 
   if (!horizontal.forward_collision) {
     horizontal.automatic_heading_suppression =
         AutomaticHeadingSuppressionReason::k_no_forward_collision;
+    return;
+  }
+  if (character.spatial_heading_suppression_latch) {
+    horizontal.automatic_heading_suppression =
+        AutomaticHeadingSuppressionReason::k_spatial_heading_latch;
     return;
   }
   if (motion.fall_stage != 0U) {
