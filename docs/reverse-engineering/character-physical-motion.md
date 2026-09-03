@@ -1,7 +1,7 @@
 # Character physical motion
 
-> **Status:** Phase 4.2C.3C exact upward swept-sphere collision complete
-> **Last updated:** 2026-09-02
+> **Status:** Phase 4.2D.1 fresh ordinary spatial sampling implemented
+> **Last updated:** 2026-09-03
 
 This document separates recovered retail actor semantics from OpenNomad's modern C++ representation. Runtime did not contain a C++ abstraction named `PhysicalMotionService`.
 
@@ -39,6 +39,11 @@ CTL/controller update
 -> ordinary spatial/contact service
 ```
 
+At entry, `0x00467770` reads candidate/live actor XYZ from
+`+0xF4/+0xF8/+0xFC`. The preceding `0x004672D0` resolver has already copied
+candidate to accepted on success or restored accepted to candidate on failure,
+so spatial/contact service observes the post-physical position.
+
 State 4 structured character/body-script ownership bypasses this ordinary state-1 path. Completion hands ownership back without retroactively running a missed physical update in that call.
 
 ## OpenNomad ordinary physical architecture
@@ -62,7 +67,42 @@ synchronize or defensively re-anchor from the live transform
 -> accepted-position publication or complete rollback
 -> play CTL markers at the accepted actor position
 -> advance ordinary actor service generation
+-> publish one fresh ordinary spatial sample from the live actor transform
+-> qualify active zone/contact records from that sample
 ```
+
+This is the **OpenNomad fixed-step mapping of Runtime actor ordering**. Retail
+Runtime uses variable simulation delta, where `1.0` is one nominal 30 Hz unit,
+and performs one physical-to-spatial sequence per relevant actor dispatcher
+invocation. Retail does not appear to run OpenNomad's accumulator loop. For a
+slow OpenNomad application update, every due modern fixed actor step is instead
+completed through its own fresh spatial sample; intermediate samples are not
+collapsed into the final catch-up position.
+
+The canonical ordinary spatial position is
+`RuntimeCharacter::transform.translation` after the complete physical
+commit/rollback boundary. Its heading is
+`RuntimeCharacter::principal_orientation_degrees.y` at the same boundary, so a
+C.2 yaw correction can coexist with a later positional rollback. The existing
+trigger proxy copies those values and the model `bounds_radius`; there is no
+second physical/contact position representation. Zone qualification retains
+the existing proxy broadphase, exact X/Z polygon containment, and heading
+window.
+
+Fresh qualification runs after CTL callbacks, all C.1/C.2/C.3 resolution, and
+accepted-position sound-marker publication. It may create contacts, queue entry
+event 1, update overlap, or queue departure event 3, but never runs a compact
+VM. AREA, SCENE, and contact compact execution remains in the later normal
+`begin_tick()` phase. Event 2 is not a generic overlap/stay event and is not
+produced by D.1.
+
+Each successfully published sample consumes exactly the actor's newly advanced
+`ordinary_actor_service_generation`. No due fixed step means no generation,
+proxy publication, or stale spatial requalification. Registration and
+authoritative placement likewise do not manufacture a generation. Structured
+state-4 ownership remains gated before accumulator growth and produces no
+ordinary spatial sample or catch-up debt; the first later ordinary step
+reanchors and resumes the complete pipeline.
 
 CTL root motion and one-shot/continuous movement auxiliaries update only the actor-owned candidate. The physical stage adds actor-owned horizontal physical X/Z terms directly to that authored movement, adds `vertical_velocity / 30` to Y, and only then captures the complete desired displacement. A real mode-1 forward collision clears the X/Z terms after C.2 steering and before support response; pure depenetration does not.
 
@@ -173,6 +213,9 @@ Still deferred:
 - SCENE/person support association and moving-platform person integration;
 - generic actor/object collision;
 - native `0x08000000` adventure/gameplay support transition.
+- Phase 4.2D.2 contact heartbeat and aging states;
+- Phase 4.2D.3 actor `+0x51D` spatial-heading suppression latch and its C.2 guard;
+- interaction-gated event 2 and native spatial event 8 dispatch.
 
 Adventure fall/landing event dispatch through `0x00414DE0` and the native jump
 callback choreography remain deferred to their owning systems. The native

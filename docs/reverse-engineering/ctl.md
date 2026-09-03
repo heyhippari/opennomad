@@ -525,12 +525,19 @@ nonfatal and does not alter physical resolution.
 ## 4.8 Callbacks — Runtime 0x0045D0E0 queue — Confirmed — Runtime
 
 Callbacks are queued at state activation (and by the transient helper pass)
-and drained **after each logical 30 Hz CTL tick** before that tick's physical
-resolution. The actor-owned ordinary-service accumulator orchestrates `CTL
-tick -> callbacks -> physical resolution -> ordinary spatial/contact service`
-for every due tick, so a callback produced during tick N takes effect before
-physical resolution and tick N+1. Callbacks remain deferred relative to
-transition evaluation and are never invoked recursively inside evaluator code.
+and drained after each OpenNomad logical 30 Hz CTL tick before that tick's
+physical resolution. Phase 4.2D.1 now completes every due actor-owned fixed
+step as `CTL tick -> callbacks -> complete physical resolution -> accepted-
+position marker publication -> fresh ordinary spatial/contact sample`. A
+callback produced during tick N therefore takes effect before physical
+resolution and tick N+1. Compact zone VMs are not executed within this loop.
+Callbacks remain deferred relative to transition evaluation and are never
+invoked recursively inside evaluator code.
+
+This fixed-step accumulator is OpenNomad's modern mapping. Retail Runtime uses
+variable simulation delta and performs one CTL-to-physical-to-spatial sequence
+per ordinary actor dispatcher invocation; this document does not claim that
+retail runs multiple nominal 30 Hz actor substeps during one slow frame.
 Unknown names log once and remain nonfatal. Recovered subset:
 
 | Name | Address | Behavior |

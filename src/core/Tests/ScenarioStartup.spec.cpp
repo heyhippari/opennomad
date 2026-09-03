@@ -8,6 +8,7 @@
 
 #include <SDL3/SDL_stdinc.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -32,6 +33,7 @@
 #include "Core/Scenario/ScenarioStartupController.hpp"
 #include "Core/Script/AreaScriptRuntime.hpp"
 #include "Core/Script/ScriptRuntime.hpp"
+#include "Core/Startup/StartupTraceRecorder.hpp"
 #include "IamStartTestData.hpp"
 #include "OmikronTestBuffer.hpp"
 
@@ -313,6 +315,44 @@ void install_stub_ctl_loader(App::ScenarioRuntime& runtime) {
         }
         return std::make_shared<const App::Omikron::CtlControlSet>(std::move(parsed).value());
       });
+}
+
+void install_collision_body_model_loader(App::ScenarioRuntime& runtime) {
+  runtime.character_runtime().set_model_loader(
+      [](const std::string_view name)
+          -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
+        auto resource{std::make_shared<App::Character::ModelResource>()};
+        resource->name = name;
+        resource->groups.push_back(App::Omikron::MaterialGroup{});
+        resource->model.header.collision_sphere_count = 1U;
+        resource->model.header.collision_sphere_slots.at(0) =
+            App::Omikron::CollisionSphere{.radius = 10.0F};
+        return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
+      });
+}
+
+App::Omikron::Model3DOData make_collision_decor(const float wall_x, const float floor_y) {
+  App::Omikron::Model3DOData decor;
+  decor.meshes.push_back(App::Omikron::MeshDescriptor{.vertex_count = 3});
+  decor.polygons.push_back(App::Omikron::MeshPolygons{
+      .triangles = {App::Omikron::Triangle{
+          .vertices = {{{.index = 0}, {.index = 1}, {.index = 2}}}, .face_normal = {.y = -1.0F}}}});
+  decor.vertices = {{.position = {.x = -1000.0F, .y = floor_y, .z = -1000.0F}},
+      {.position = {.x = 1000.0F, .y = floor_y, .z = -1000.0F}},
+      {.position = {.x = 0.0F, .y = floor_y, .z = 1000.0F}}};
+  decor.runtime_objects.push_back(App::Omikron::Model3DOData::RuntimeObjectState{});
+
+  decor.meshes.push_back(App::Omikron::MeshDescriptor{.vertex_count = 4, .vertex_base = 3});
+  decor.polygons.push_back(
+      App::Omikron::MeshPolygons{.rectangles = {App::Omikron::Rectangle{
+                                     .vertices = {0, 1, 2, 3}, .face_normal = {.x = -1.0F}}}});
+  decor.vertices.insert(decor.vertices.end(),
+      {{.position = {.x = wall_x, .y = 100.0F, .z = -100.0F}},
+          {.position = {.x = wall_x, .y = 100.0F, .z = 100.0F}},
+          {.position = {.x = wall_x, .y = 200.0F, .z = 100.0F}},
+          {.position = {.x = wall_x, .y = 200.0F, .z = -100.0F}}});
+  decor.runtime_objects.push_back(App::Omikron::Model3DOData::RuntimeObjectState{});
+  return decor;
 }
 
 /// Synthetic AREA contact fixture. The top-level context selects a current
@@ -1862,6 +1902,8 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
 
     App::ScenarioManager manager;
     App::ScenarioStartupController controller;
+    App::Startup::StartupTraceRecorder recorder;
+    controller.set_trace_recorder(&recorder);
     REQUIRE(controller.initialize(manager).has_value());
     App::ScenarioRuntime* runtime{manager.world_runtime(0)};
     REQUIRE(runtime != nullptr);
@@ -1886,8 +1928,24 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     character->transform.translation.x += 200.0F;
     REQUIRE(controller.tick(1.0F / 60.0F).has_value());
     CHECK_EQ(character->ordinary_actor_service_generation, 0U);
+    CHECK_EQ(std::ranges::count_if(recorder.events(),
+                 [](const auto& event) {
+                   return event.name == "CurrentActor.OrdinarySpatialSample";
+                 }),
+        0);
     REQUIRE(controller.tick(1.0F / 60.0F).has_value());
     CHECK_EQ(character->ordinary_actor_service_generation, 1U);
+    REQUIRE(controller.current_character_trigger_proxy().has_value());
+    CHECK_EQ(controller.current_character_trigger_proxy()->generation,
+        character->ordinary_actor_service_generation);
+    CHECK_EQ(controller.current_character_trigger_proxy()->position.x,
+        character->transform.translation.x);
+    CHECK_EQ(controller.current_character_trigger_proxy()->position.y,
+        character->transform.translation.y);
+    CHECK_EQ(controller.current_character_trigger_proxy()->position.z,
+        character->transform.translation.z);
+    CHECK_EQ(controller.current_character_trigger_proxy()->heading_degrees,
+        character->principal_orientation_degrees.y);
     CHECK_EQ(character->physical_motion.accepted_translation.x, character->transform.translation.x);
     CHECK(character->physical_motion.vertical_velocity ==
           doctest::Approx(
@@ -1912,6 +1970,18 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK(character->physical_motion.initialized);
     CHECK_EQ(
         controller.current_character_trigger_proxy()->last_consumed_actor_spatial_generation, 4U);
+
+    std::vector<std::string_view> spatial_samples;
+    for (const App::Startup::StartupTraceEvent& event : recorder.events()) {
+      if (event.name == "CurrentActor.OrdinarySpatialSample") {
+        spatial_samples.emplace_back(event.detail);
+      }
+    }
+    REQUIRE_EQ(spatial_samples.size(), 4U);
+    CHECK_EQ(spatial_samples.at(0).find("generation=1 "), 0U);
+    CHECK_EQ(spatial_samples.at(1).find("generation=2 "), 0U);
+    CHECK_EQ(spatial_samples.at(2).find("generation=3 "), 0U);
+    CHECK_EQ(spatial_samples.at(3).find("generation=4 "), 0U);
   }
 
   TEST_CASE("ordinary proxy synchronization may create contact while controller is disabled") {
@@ -1943,11 +2013,146 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     character->transform.translation =
         App::Runtime::area_position_to_inches(std::array<std::int32_t, 3>{50, 999, 50});
 
-    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+    const std::uint64_t generation_before{character->ordinary_actor_service_generation};
+    const App::Runtime::Vec3 proxy_position_before{
+        controller.current_character_trigger_proxy()->position};
+    REQUIRE(controller.tick(1.0F / 60.0F).has_value());
+    CHECK_EQ(character->ordinary_actor_service_generation, generation_before);
+    CHECK_EQ(controller.current_character_trigger_proxy()->generation, generation_before);
+    CHECK_EQ(controller.current_character_trigger_proxy()->position.x, proxy_position_before.x);
+    CHECK_EQ(controller.current_character_trigger_proxy()->position.y, proxy_position_before.y);
+    CHECK_EQ(controller.current_character_trigger_proxy()->position.z, proxy_position_before.z);
+    CHECK_EQ(controller.zone_contact_count(), 0U);
+
+    REQUIRE(controller.tick(1.0F / 60.0F).has_value());
+    CHECK_EQ(character->ordinary_actor_service_generation, generation_before + 1U);
+    CHECK_EQ(controller.current_character_trigger_proxy()->generation,
+        character->ordinary_actor_service_generation);
     CHECK_EQ(controller.zone_contact_count(), 1U);
+    const App::ZoneContactContext* contact{controller.zone_contact(0)};
+    REQUIRE(contact != nullptr);
+    REQUIRE(contact->script != nullptr);
+    CHECK_FALSE(contact->script->active_event().has_value());
+    REQUIRE_EQ(contact->script->queued_events().size(), 1U);
+    CHECK_EQ(contact->script->queued_events().front(), 1U);
+    CHECK_EQ(character->current_move_id(), std::optional<std::int16_t>{7});
+    CHECK_FALSE(character->controller_enabled);
     REQUIRE(controller.tick(1.0F / 30.0F).has_value());
     CHECK_EQ(character->current_move_id(), std::optional<std::int16_t>{100});
     CHECK(character->controller_enabled);
+  }
+
+  TEST_CASE("zone qualification rejects a raw candidate blocked outside by collision") {
+    constexpr std::int16_t k_zone_id{20};
+    const TempDirectory temp;
+    write_zone_contact_fixtures(temp, false, k_zone_id, false, false, 500U);
+    const ScopedGameDataRoot root{temp.root()};
+
+    App::ScenarioManager manager;
+    App::ScenarioStartupController controller;
+    REQUIRE(controller.initialize(manager).has_value());
+    App::ScenarioRuntime* runtime{manager.world_runtime(0)};
+    REQUIRE(runtime != nullptr);
+    install_collision_body_model_loader(*runtime);
+    install_stub_ctl_loader(*runtime);
+
+    REQUIRE(controller.tick().has_value());
+    App::Character::RuntimeCharacter* character{runtime->character_runtime().find(136)};
+    REQUIRE(character != nullptr);
+    character->controller_enabled = false;
+    character->transform.translation = {.x = -15.0F, .y = 152.0F, .z = 6.0F};
+    App::Character::PhysicalMotionService::synchronize(*character);
+    character->physical_motion.candidate_translation = {.x = 6.0F, .y = 152.0F, .z = 6.0F};
+    App::Omikron::Model3DOData decor{make_collision_decor(0.0F, 162.0F)};
+    runtime->bind_decor_model(&decor);
+    REQUIRE_EQ(runtime->decor_model(), &decor);
+    REQUIRE_EQ(runtime->decor_runtime_objects().size(), 2U);
+
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+    CHECK(character->physical_motion.horizontal_collision.body_valid);
+    CHECK_EQ(character->physical_motion.horizontal_collision.body_radius, 10.0F);
+    CHECK(character->physical_motion.horizontal_collision.forward_collision);
+    CHECK(character->transform.translation.x == doctest::Approx(-11.0F));
+    REQUIRE(controller.current_character_trigger_proxy().has_value());
+    CHECK_EQ(controller.current_character_trigger_proxy()->position.x,
+        character->transform.translation.x);
+    CHECK_EQ(controller.zone_contact_count(), 0U);
+  }
+
+  TEST_CASE("zone qualification accepts the final wall-slide transform") {
+    constexpr std::int16_t k_zone_id{21};
+    const TempDirectory temp;
+    write_zone_contact_fixtures(temp, false, k_zone_id, false, false, 500U);
+    const ScopedGameDataRoot root{temp.root()};
+
+    App::ScenarioManager manager;
+    App::ScenarioStartupController controller;
+    REQUIRE(controller.initialize(manager).has_value());
+    App::ScenarioRuntime* runtime{manager.world_runtime(0)};
+    REQUIRE(runtime != nullptr);
+    install_collision_body_model_loader(*runtime);
+    install_stub_ctl_loader(*runtime);
+
+    REQUIRE(controller.tick().has_value());
+    App::Character::RuntimeCharacter* character{runtime->character_runtime().find(136)};
+    REQUIRE(character != nullptr);
+    character->controller_enabled = false;
+    character->transform.translation = {.x = 0.0F, .y = 152.0F, .z = -10.0F};
+    App::Character::PhysicalMotionService::synchronize(*character);
+    character->physical_motion.candidate_translation = {.x = 20.0F, .y = 152.0F, .z = 10.0F};
+    App::Omikron::Model3DOData decor{make_collision_decor(15.0F, 162.0F)};
+    runtime->bind_decor_model(&decor);
+    REQUIRE_EQ(runtime->decor_model(), &decor);
+    REQUIRE_EQ(runtime->decor_runtime_objects().size(), 2U);
+
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+    CHECK(character->physical_motion.horizontal_collision.body_valid);
+    CHECK_EQ(character->physical_motion.horizontal_collision.body_radius, 10.0F);
+    CHECK(character->physical_motion.horizontal_collision.forward_collision);
+    CHECK(character->transform.translation.x == doctest::Approx(4.0F));
+    CHECK(character->transform.translation.z == doctest::Approx(10.0F));
+    REQUIRE(controller.current_character_trigger_proxy().has_value());
+    CHECK_EQ(controller.current_character_trigger_proxy()->position.x,
+        character->transform.translation.x);
+    CHECK_EQ(controller.current_character_trigger_proxy()->position.z,
+        character->transform.translation.z);
+    CHECK_EQ(controller.zone_contact_count(), 1U);
+  }
+
+  TEST_CASE("zone qualification observes complete no-support rollback") {
+    constexpr std::int16_t k_zone_id{22};
+    const TempDirectory temp;
+    write_zone_contact_fixtures(temp, false, k_zone_id, false, false, 500U);
+    const ScopedGameDataRoot root{temp.root()};
+
+    App::ScenarioManager manager;
+    App::ScenarioStartupController controller;
+    REQUIRE(controller.initialize(manager).has_value());
+    App::ScenarioRuntime* runtime{manager.world_runtime(0)};
+    REQUIRE(runtime != nullptr);
+    install_collision_body_model_loader(*runtime);
+    install_stub_ctl_loader(*runtime);
+
+    REQUIRE(controller.tick().has_value());
+    App::Character::RuntimeCharacter* character{runtime->character_runtime().find(136)};
+    REQUIRE(character != nullptr);
+    character->controller_enabled = false;
+    character->transform.translation = {.x = 75.0F, .y = 152.0F, .z = 75.0F};
+    App::Character::PhysicalMotionService::synchronize(*character);
+    character->physical_motion.candidate_translation = {.x = 6.0F, .y = 152.0F, .z = 6.0F};
+
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+    CHECK_EQ(character->transform.translation.x, 75.0F);
+    CHECK_EQ(character->transform.translation.y, 152.0F);
+    CHECK_EQ(character->transform.translation.z, 75.0F);
+    REQUIRE(controller.current_character_trigger_proxy().has_value());
+    CHECK_EQ(controller.current_character_trigger_proxy()->position.x,
+        character->transform.translation.x);
+    CHECK_EQ(controller.current_character_trigger_proxy()->position.y,
+        character->transform.translation.y);
+    CHECK_EQ(controller.current_character_trigger_proxy()->position.z,
+        character->transform.translation.z);
+    CHECK_EQ(controller.zone_contact_count(), 0U);
   }
 
   TEST_CASE("proxy qualification uses live degree heading instead of placement yaw") {

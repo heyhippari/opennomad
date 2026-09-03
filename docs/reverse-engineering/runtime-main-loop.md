@@ -2353,6 +2353,12 @@ Thus a 60 FPS renderer can produce approximately:
 while scenario/script systems still interpret one unit as one nominal 30 Hz
 tick.
 
+Retail's ordinary actor dispatcher likewise performs one variable-delta
+physical-to-spatial sequence per invocation. OpenNomad separately maps ordinary
+actor behavior onto a nominal 30 Hz accumulator; Phase 4.2D.1 completes each
+due OpenNomad actor step through a fresh post-physical spatial sample. This is
+an OpenNomad scheduling choice, not evidence of a retail catch-up loop.
+
 ---
 
 # 89. Why interpolation belongs above simulation timing

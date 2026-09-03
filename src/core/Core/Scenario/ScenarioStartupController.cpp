@@ -2202,20 +2202,21 @@ std::expected<void, std::string> ScenarioStartupController::set_current_characte
   return {};
 }
 
-void ScenarioStartupController::service_current_character_actor(const float delta_seconds) {
+std::expected<void, std::string> ScenarioStartupController::service_current_character_actor(
+    const float delta_seconds) {
   if (m_manager == nullptr) {
-    return;
+    return {};
   }
   const std::optional<ControlledCharacterRef> current{m_manager->controlled_character()};
   if (!current.has_value()) {
-    return;
+    return {};
   }
   ScenarioRuntime* const runtime{m_manager->world_runtime(current->world_scene_id)};
   Character::RuntimeCharacter* const character{
       runtime == nullptr ? nullptr
                          : runtime->character_runtime().find_body(current->body_identity)};
   if (character == nullptr || !character->active || !character->area_present) {
-    return;
+    return {};
   }
 
   if (m_current_character_structured_owner.has_value()) {
@@ -2249,7 +2250,7 @@ void ScenarioStartupController::service_current_character_actor(const float delt
               current->world_scene_id,
               owner.script_instance_id);
           m_current_character_structured_owner.reset();
-          return;
+          return {};
         }
         App::Log::debug(LogCategory::Scenario,
             "CurrentActorServiceSuppressed — character={} world={} scriptInstance={} "
@@ -2257,7 +2258,7 @@ void ScenarioStartupController::service_current_character_actor(const float delt
             current->character_id,
             current->world_scene_id,
             owner.script_instance_id);
-        return;
+        return {};
       }
       App::Log::debug(LogCategory::Scenario,
           "CurrentActorStructuredHandoff — character={} world={} scriptInstance={} "
@@ -2291,6 +2292,22 @@ void ScenarioStartupController::service_current_character_actor(const float delt
     }
 
     ++character->ordinary_actor_service_generation;
+    auto spatial_sample{
+        publish_current_character_ordinary_spatial_sample(current.value(), *character)};
+    if (spatial_sample) {
+      auto reconciled{reconcile_zone_contacts_from_fresh_spatial_sample()};
+      if (!reconciled) {
+        return std::expected<void, std::string>{std::unexpect, reconciled.error()};
+      }
+      record("CurrentActor.OrdinarySpatialSample",
+          fmt::format("generation={} xyz=({:.3f},{:.3f},{:.3f}) heading={:.3f} qualifyingZones={}",
+              character->ordinary_actor_service_generation,
+              character->transform.translation.x,
+              character->transform.translation.y,
+              character->transform.translation.z,
+              character->principal_orientation_degrees.y,
+              reconciled->qualifying_zone_count));
+    }
     App::Log::info(LogCategory::Scenario,
         "CurrentActorServiced — character={} world={} generation={} xyz=({:.3f},{:.3f},{:.3f}) "
         "radius={:.3f}",
@@ -2302,6 +2319,7 @@ void ScenarioStartupController::service_current_character_actor(const float delt
         character->transform.translation.z,
         character->model_resource == nullptr ? 0.0F : character->model_resource->bounds_radius);
   }
+  return {};
 }
 
 void ScenarioStartupController::register_current_character_trigger_proxy(
@@ -2330,7 +2348,63 @@ void ScenarioStartupController::register_current_character_trigger_proxy(
       m_current_character_trigger_proxy->radius);
 }
 
-void ScenarioStartupController::service_current_character_trigger_proxy() {
+bool ScenarioStartupController::publish_current_character_ordinary_spatial_sample(
+    const ControlledCharacterRef& owner, const Character::RuntimeCharacter& character) {
+  if (!m_current_character_trigger_proxy.has_value() ||
+      !m_current_character_trigger_proxy->registered) {
+    return false;
+  }
+  CurrentCharacterTriggerProxy& proxy{m_current_character_trigger_proxy.value()};
+  if (owner != proxy.owner) {
+    proxy.registered = false;
+    proxy.synchronization_suspended = true;
+    proxy.suspension_reason = "controlled-character ownership changed";
+    return false;
+  }
+  if (!character.active || !character.area_present) {
+    proxy.synchronization_suspended = true;
+    proxy.suspension_reason = "current character is not active and AREA-present";
+    return false;
+  }
+  if (character.body_identity != proxy.owner.body_identity) {
+    proxy.registered = false;
+    proxy.synchronization_suspended = true;
+    proxy.suspension_reason = "current character body identity changed";
+    return false;
+  }
+  if (proxy.last_consumed_actor_spatial_generation >= character.ordinary_actor_service_generation) {
+    if (!proxy.contact_ready) {
+      proxy.synchronization_suspended = true;
+      proxy.suspension_reason = "ordinary actor service not yet consumed";
+      return false;
+    }
+    proxy.synchronization_suspended = false;
+    proxy.suspension_reason.clear();
+    return false;
+  }
+  proxy.position = character.transform.translation;
+  proxy.radius =
+      character.model_resource == nullptr ? 0.0F : character.model_resource->bounds_radius;
+  proxy.heading_degrees = character.principal_orientation_degrees.y;
+  proxy.last_consumed_actor_spatial_generation = character.ordinary_actor_service_generation;
+  proxy.generation = proxy.last_consumed_actor_spatial_generation;
+  proxy.contact_ready = true;
+  proxy.synchronization_suspended = false;
+  proxy.suspension_reason.clear();
+  App::Log::info(LogCategory::Scenario,
+      "TriggerProxySynchronized — character={} world={} generation={} xyz=({:.3f},{:.3f},{:.3f}) "
+      "radius={:.3f}",
+      proxy.owner.character_id,
+      proxy.owner.world_scene_id,
+      proxy.generation,
+      proxy.position.x,
+      proxy.position.y,
+      proxy.position.z,
+      proxy.radius);
+  return true;
+}
+
+void ScenarioStartupController::service_current_character_trigger_proxy_housekeeping() {
   if (m_manager == nullptr || !m_current_character_trigger_proxy.has_value() ||
       !m_current_character_trigger_proxy->registered) {
     return;
@@ -2358,36 +2432,10 @@ void ScenarioStartupController::service_current_character_trigger_proxy() {
     proxy.suspension_reason = "current character body identity changed";
     return;
   }
-  if (proxy.last_consumed_actor_spatial_generation >=
-      character->ordinary_actor_service_generation) {
-    if (!proxy.contact_ready) {
-      proxy.synchronization_suspended = true;
-      proxy.suspension_reason = "ordinary actor service not yet consumed";
-      return;
-    }
-    proxy.synchronization_suspended = false;
-    proxy.suspension_reason.clear();
-    return;
+  if (!proxy.contact_ready) {
+    proxy.synchronization_suspended = true;
+    proxy.suspension_reason = "ordinary actor service not yet consumed";
   }
-  proxy.position = character->transform.translation;
-  proxy.radius =
-      character->model_resource == nullptr ? 0.0F : character->model_resource->bounds_radius;
-  proxy.heading_degrees = character->principal_orientation_degrees.y;
-  proxy.last_consumed_actor_spatial_generation = character->ordinary_actor_service_generation;
-  proxy.generation = proxy.last_consumed_actor_spatial_generation;
-  proxy.contact_ready = true;
-  proxy.synchronization_suspended = false;
-  proxy.suspension_reason.clear();
-  App::Log::info(LogCategory::Scenario,
-      "TriggerProxySynchronized — character={} world={} generation={} xyz=({:.3f},{:.3f},{:.3f}) "
-      "radius={:.3f}",
-      proxy.owner.character_id,
-      proxy.owner.world_scene_id,
-      proxy.generation,
-      proxy.position.x,
-      proxy.position.y,
-      proxy.position.z,
-      proxy.radius);
 }
 
 std::expected<void, std::string> ScenarioStartupController::start_compact_dialog(
@@ -3581,20 +3629,9 @@ std::expected<void, std::string> ScenarioStartupController::service_zone_contact
   return {};
 }
 
-std::expected<void, std::string> ScenarioStartupController::reconcile_zone_contacts() {
-  // This is the post-actor broadphase/contact-production phase.
-  std::erase_if(m_zone_contacts, [this](const std::unique_ptr<ZoneContactContext>& contact) {
-    if (contact != nullptr && zone_contact_backing_resident(*contact)) {
-      return false;
-    }
-    if (contact != nullptr) {
-      App::Log::debug(LogCategory::Scenario,
-          "zone {} contact removed — backing record is no longer resident",
-          contact->zone.zone_id);
-    }
-    return true;
-  });
-
+std::expected<OrdinarySpatialSampleResult, std::string>
+ScenarioStartupController::reconcile_zone_contacts_from_fresh_spatial_sample() {
+  OrdinarySpatialSampleResult result;
   for (const ActiveZoneRef& active_zone : m_active_zones) {
     const bool already_reported{std::ranges::any_of(
         m_zone_contacts, [&active_zone](const std::unique_ptr<ZoneContactContext>& existing) {
@@ -3606,6 +3643,9 @@ std::expected<void, std::string> ScenarioStartupController::reconcile_zone_conta
                  existing->zone.event_offsets == active_zone.zone.event_offsets;
         })};
     const bool qualifies{zone_contact_reporting_enabled(active_zone)};
+    if (qualifies) {
+      ++result.qualifying_zone_count;
+    }
     const std::uint64_t diagnostic_identity{
         (static_cast<std::uint64_t>(active_zone.resident_slot) << 48U) |
         (static_cast<std::uint64_t>(active_zone.source) << 40U) |
@@ -3678,22 +3718,64 @@ std::expected<void, std::string> ScenarioStartupController::reconcile_zone_conta
     }
     if (!already_reported && qualifies) {
       if (auto created{create_zone_contact(active_zone)}; !created) {
-        return created;
+        return std::unexpected(created.error());
       }
       // create_zone_contact queues/activates event 1. Do not call run(); the
       // next begin_tick() services it before structured SCX / actor service.
     }
   }
 
+  for (const std::unique_ptr<ZoneContactContext>& contact : m_zone_contacts) {
+    if (contact == nullptr || contact->script == nullptr ||
+        !zone_contact_backing_resident(*contact)) {
+      continue;
+    }
+    Script::AreaScriptRuntime& script{*contact->script};
+    const bool active_zone{std::ranges::any_of(
+        m_active_zones, [contact_ptr = contact.get()](const ActiveZoneRef& active) {
+          return active.resident_slot == contact_ptr->resident_slot &&
+                 active.source == contact_ptr->source && active.area_id == contact_ptr->area_id &&
+                 active.scene_id == contact_ptr->scene_id &&
+                 active.zone.zone_id == contact_ptr->zone.zone_id &&
+                 active.zone.event_offsets == contact_ptr->zone.event_offsets;
+        })};
+    if (!active_zone) {
+      continue;
+    }
+    const bool spatial_match{zone_contact_spatially_matches(*contact)};
+    const bool overlap_lost{contact->overlapping && !spatial_match};
+    contact->overlapping = spatial_match;
+
+    if (overlap_lost && !contact->departure_queued && script.event_entries().event3.has_value()) {
+      script.queue_event(3);
+      contact->departure_queued = true;
+      App::Log::info(LogCategory::Scenario,
+          "ZoneContactTransition — zone={} state=lost queuedEvent=3",
+          contact->zone.zone_id);
+    }
+  }
+
+  if (m_current_character_trigger_proxy.has_value()) {
+    m_current_character_trigger_proxy->overlapping_zone_count =
+        static_cast<std::size_t>(std::ranges::count_if(m_zone_contacts, [](const auto& contact) {
+          return contact != nullptr && contact->overlapping;
+        }));
+  }
+  return result;
+}
+
+void ScenarioStartupController::service_zone_contact_housekeeping() {
   std::erase_if(m_zone_contacts, [this](const std::unique_ptr<ZoneContactContext>& contact) {
     if (contact == nullptr || contact->script == nullptr) {
       return true;
     }
-    Script::AreaScriptRuntime& script{*contact->script};
-    const bool backing_resident{zone_contact_backing_resident(*contact)};
-    const bool spatial_match{backing_resident && zone_contact_spatially_matches(*contact)};
-    const bool overlap_lost{contact->overlapping && !spatial_match};
-    contact->overlapping = spatial_match;
+    if (!zone_contact_backing_resident(*contact)) {
+      App::Log::debug(LogCategory::Scenario,
+          "zone {} contact removed — backing record is no longer resident",
+          contact->zone.zone_id);
+      return true;
+    }
+    const Script::AreaScriptRuntime& script{*contact->script};
     const bool active_zone{std::ranges::any_of(
         m_active_zones, [contact_ptr = contact.get()](const ActiveZoneRef& active) {
           return active.resident_slot == contact_ptr->resident_slot &&
@@ -3703,18 +3785,10 @@ std::expected<void, std::string> ScenarioStartupController::reconcile_zone_conta
                  active.zone.event_offsets == contact_ptr->zone.event_offsets;
         })};
 
-    if (overlap_lost && !contact->departure_queued && script.event_entries().event3.has_value()) {
-      script.queue_event(3);
-      contact->departure_queued = true;
-      App::Log::info(LogCategory::Scenario,
-          "ZoneContactTransition — zone={} state=lost queuedEvent=3",
-          contact->zone.zone_id);
-    }
-
     const bool pending_compact_work{script.active_event().has_value() ||
                                     !script.queued_events().empty() ||
                                     script.state() == Script::AreaScriptState::k_waiting};
-    if ((!spatial_match || !active_zone || !backing_resident) && !pending_compact_work &&
+    if ((!contact->overlapping || !active_zone) && !pending_compact_work &&
         script.state() == Script::AreaScriptState::k_ready) {
       App::Log::debug(LogCategory::Scenario, "zone {} event completed", contact->zone.zone_id);
       return true;
@@ -3728,7 +3802,6 @@ std::expected<void, std::string> ScenarioStartupController::reconcile_zone_conta
           return contact != nullptr && contact->overlapping;
         }));
   }
-  return {};
 }
 
 std::expected<void, std::string> ScenarioStartupController::tick(const float delta_seconds) {
@@ -3871,16 +3944,15 @@ std::expected<void, std::string> ScenarioStartupController::finish_tick(const fl
   }
   m_actor_phase_enabled_for_tick = false;
 
-  // This is after ScriptRuntime::tick() has advanced. Spatial zone
-  // reconciliation runs after the actor/proxy service state is finalized; newly
-  // created contact contexts are activated for the next begin_tick() rather than
-  // retroactively executing in the same finish_tick() pass.
-  service_current_character_actor(delta_seconds);
-  service_current_character_trigger_proxy();
-  if (auto zones{reconcile_zone_contacts()}; !zones) {
-    m_last_error = zones.error();
+  // This is after ScriptRuntime::tick() has advanced. Each due ordinary actor
+  // step publishes and reconciles its resolved live transform, but newly
+  // created contact contexts remain deferred until the next begin_tick().
+  if (auto serviced{service_current_character_actor(delta_seconds)}; !serviced) {
+    m_last_error = serviced.error();
     return std::expected<void, std::string>{std::unexpect, m_last_error};
   }
+  service_current_character_trigger_proxy_housekeeping();
+  service_zone_contact_housekeeping();
   return {};
 }
 

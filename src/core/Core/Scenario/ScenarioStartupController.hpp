@@ -109,6 +109,10 @@ struct ZoneQualificationDiagnostic {
   bool qualifies{false};
 };
 
+struct OrdinarySpatialSampleResult {
+  std::size_t qualifying_zone_count{0};
+};
+
 /// Session-owned spatial trigger proxy for the durable current character.
 /// Runtime updates this independently from scripted presentation transforms.
 struct CurrentCharacterStructuredOwner {
@@ -376,7 +380,8 @@ class ScenarioStartupController {
       const Script::AreaCurrentCharacterMoveRequest& request);
   [[nodiscard]] std::expected<void, std::string> set_current_character_controller(
       const Script::AreaCurrentCharacterControllerRequest& request);
-  void service_current_character_actor(float delta_seconds);
+  [[nodiscard]] std::expected<void, std::string> service_current_character_actor(
+      float delta_seconds);
   /// Starts a compact-owned dialog and enters the session-global scheduling
   /// takeover shared by AREA, SCENE, and contact contexts.
   [[nodiscard]] std::expected<void, std::string> start_compact_dialog(
@@ -429,15 +434,20 @@ class ScenarioStartupController {
   void service_scene_scripts(float delta_seconds);
   /// Compact phase: Zone contact VM execution (waits, script.run, events).
   [[nodiscard]] std::expected<void, std::string> service_zone_contact_scripts(float delta_seconds);
-  /// Post-actor phase: Zone contact qualification, creation, spatial matching, lifecycle.
-  [[nodiscard]] std::expected<void, std::string> reconcile_zone_contacts();
+  /// Fresh-sample phase: zone qualification, creation, and spatial loss production.
+  [[nodiscard]] std::expected<OrdinarySpatialSampleResult, std::string>
+  reconcile_zone_contacts_from_fresh_spatial_sample();
+  /// Non-spatial cleanup for residency, activation, and completed compact contexts.
+  void service_zone_contact_housekeeping();
   [[nodiscard]] bool zone_contact_backing_resident(const ZoneContactContext& contact) const;
   [[nodiscard]] bool zone_contact_spatially_matches(const ZoneContactContext& contact) const;
   [[nodiscard]] bool zone_contact_reporting_enabled(const ZoneContactContext& contact) const;
   [[nodiscard]] bool zone_contact_reporting_enabled(const ActiveZoneRef& active_zone) const;
   void register_current_character_trigger_proxy(
       const ControlledCharacterRef& owner, const Character::RuntimeCharacter& character);
-  void service_current_character_trigger_proxy();
+  [[nodiscard]] bool publish_current_character_ordinary_spatial_sample(
+      const ControlledCharacterRef& owner, const Character::RuntimeCharacter& character);
+  void service_current_character_trigger_proxy_housekeeping();
   [[nodiscard]] std::expected<void, std::string> create_zone_contact(
       const ActiveZoneRef& active_zone);
   [[nodiscard]] std::optional<std::size_t> resident_area_slot(std::int32_t area_id) const;
