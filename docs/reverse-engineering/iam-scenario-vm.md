@@ -2974,7 +2974,7 @@ but not the current instruction-pointer simplification.
 
 ---
 
-# 100. Zone contexts
+# 100. Zone contexts and contact heartbeats
 
 AREA and SCENE table-2 zone records supply three neutral event entrypoints to
 the context constructor. For SCENE, the serialized fields are retained as
@@ -2994,9 +2994,42 @@ zone record
       zone-owned RuntimeScenarioContext
 ```
 
-The trigger system can then queue one of events 1/2/3 as zone state changes.
+The native trigger system owns a separate 16-slot contact-registration table.
+A successful ordinary qualification is an event-7-equivalent heartbeat, not a
+direct overlap boolean and not compact event 2. The recovered ordinary
+lifecycle is:
 
-The exact gameplay condition corresponding to each event remains to be traced.
+| Native state | OpenNomad name | Next compact aging pass |
+|---|---|---|
+| 1 | `entry_pending` | queue compact event 1, then await refresh |
+| 2 | `refreshed` | await refresh |
+| 3 | `awaiting_refresh` | queue compact event 3 and release the registration |
+
+Native states 4 and 5 belong to the deferred interaction path. They are not
+departure states and are outside Phase 4.2D.2. Compact event 2, event 8, and
+the `+0x51D` interaction path likewise remain deferred.
+
+OpenNomad retains a fourth semantic state, `departure_pending`, after producing
+event 3. It is not a native state: it keeps the safe C++ compact context alive
+while active, queued, or waiting work drains, but no longer occupies one of the
+16 registration slots. A fresh heartbeat for the same zone can therefore
+create a new registration while the old departure context still exists.
+
+OpenNomad maps fixed-step actor service to the native compact-aging cadence
+with one controller-owned pending-pass bit. Every due ordinary actor step may
+register or refresh contacts and sets that bit, but multiple catch-up steps
+collapse into one aging opportunity. `begin_tick()` consumes the pending pass
+before zone compact VM service. Display frames with no due actor step do not
+age contacts. A valid structured current-character owner consumes the actor
+phase without publishing stale spatial data and schedules the same missed-
+heartbeat aging opportunity.
+
+Persistent zone deactivation removes the active producer but does not destroy
+its immutable resident backing record; the registration leaves through normal
+missed-heartbeat aging. AREA/SCENE backing removal instead destroys associated
+contexts immediately. Event-queue capacity and event-2 deduplication remain
+properties of `AreaScriptRuntime`; the contact producer adds no generic event
+deduplication.
 
 ---
 
@@ -4512,9 +4545,10 @@ Do not call it operand size until its true use is established.
 
 Recover exact lifecycle names and completion paths.
 
-## 150.4 Zone event 1/2/3 semantics
+## 150.4 Zone interaction states 4/5 and event 2
 
-Trace trigger geometry state changes and determine the exact event mapping.
+Trace the `+0x51D` interaction path, native states 4/5, compact event 2, and
+event 8 without folding them into ordinary heartbeat processing.
 
 ## 150.5 Parameter block producers
 

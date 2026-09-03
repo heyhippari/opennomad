@@ -235,6 +235,9 @@ AreaVmRegistryDebugState build_area_vm_registry_debug_state(const ScenarioEngine
               .area_id = area_id,
               .scene_id = std::nullopt,
               .zone_id = std::nullopt,
+              .zone_heartbeat_state = std::nullopt,
+              .zone_spatially_registered = std::nullopt,
+              .zone_last_heartbeat_generation = std::nullopt,
               .source_primary_event_offset = primary_event_offset,
               .source_event_entry_offsets = event_entries,
               .open_nomad_execution_base_offset = record.bytecode_pool_offset()})};
@@ -257,6 +260,9 @@ AreaVmRegistryDebugState build_area_vm_registry_debug_state(const ScenarioEngine
               .area_id = area_id,
               .scene_id = slot->scene_id,
               .zone_id = std::nullopt,
+              .zone_heartbeat_state = std::nullopt,
+              .zone_spatially_registered = std::nullopt,
+              .zone_last_heartbeat_generation = std::nullopt,
               .source_primary_event_offset = primary_event_offset,
               .source_event_entry_offsets = {primary_event_offset, std::nullopt, std::nullopt},
               .open_nomad_execution_base_offset = slot->scene->bytecode_pool_offset()})};
@@ -286,6 +292,9 @@ AreaVmRegistryDebugState build_area_vm_registry_debug_state(const ScenarioEngine
                             ? std::optional<std::int32_t>{contact->scene_id}
                             : std::nullopt,
             .zone_id = contact->zone.zone_id,
+            .zone_heartbeat_state = static_cast<std::uint8_t>(contact->heartbeat_state),
+            .zone_spatially_registered = contact->spatially_registered(),
+            .zone_last_heartbeat_generation = contact->last_heartbeat_generation,
             .source_primary_event_offset = contact->zone.event_offsets.at(0),
             .source_event_entry_offsets = {contact->zone.event_offsets.at(0),
                 contact->zone.event_offsets.at(1),

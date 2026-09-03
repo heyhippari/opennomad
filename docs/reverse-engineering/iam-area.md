@@ -1242,12 +1242,13 @@ the wrapped center ± half-span interval.
 
 The persistent ZONE bit controls whether the record is available to the
 transient contact producer; geometric overlap alone does not create a contact.
-Fresh reporting is restricted to the current controlled character while its
-body is resident and its controller is enabled. Disabling the controller while
-inside a zone therefore suppresses a new contact, while re-enabling it allows
-the next contact-production pass to report the still-matching zone. An already
-reported contact keeps its compact context while its event runs, including
-after the zone disables itself, and is released once that event becomes idle.
+Fresh reporting is restricted to an ordinary spatial sample of the current,
+resident controlled body and is independent of CTL controller enablement.
+Each positive qualification registers or refreshes one of the native 16
+contact slots. Persistent deactivation removes the producer from the active
+zone set, but an existing registration leaves through compact-phase missed-
+heartbeat aging. Its compact context may outlive the released registration
+until queued departure work drains.
 
 ---
 

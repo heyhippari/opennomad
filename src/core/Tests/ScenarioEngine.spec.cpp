@@ -480,11 +480,26 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
     CHECK_EQ(body->ordinary_actor_service_generation, 1U);
     CHECK_EQ(engine.current_character_trigger_proxy()->position.x, body->transform.translation.x);
     CHECK_EQ(engine.zone_contact_count(), 1U);
+    REQUIRE(engine.zone_contact(0) != nullptr);
+    CHECK(
+        engine.zone_contact(0)->heartbeat_state == App::ZoneContactHeartbeatState::k_entry_pending);
+    CHECK(engine.zone_contact(0)->script->queued_events().empty());
+    CHECK_EQ(engine.active_zone_contact_registration_count(), 1U);
+    CHECK(engine.zone_contact_lifecycle_pass_pending());
     REQUIRE(manager.game_state() != nullptr);
     CHECK(manager.game_state()->zone_flag(77).value_or(false));
 
     REQUIRE(engine.update(1.0F / 30.0F).has_value());
     CHECK_FALSE(manager.game_state()->zone_flag(77).value_or(true));
+    REQUIRE(engine.zone_contact(0) != nullptr);
+    CHECK(engine.zone_contact(0)->heartbeat_state ==
+          App::ZoneContactHeartbeatState::k_awaiting_refresh);
+    CHECK_EQ(engine.active_zone_contact_registration_count(), 1U);
+    CHECK(engine.zone_contact_lifecycle_pass_pending());
+
+    REQUIRE(engine.update(0.0F).has_value());
+    CHECK_EQ(engine.zone_contact_count(), 0U);
+    CHECK_EQ(engine.active_zone_contact_registration_count(), 0U);
   }
 
   TEST_CASE("[RUNTIME] mode order reaches the startup menu through AREA 118") {

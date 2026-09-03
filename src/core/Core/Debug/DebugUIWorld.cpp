@@ -127,7 +127,10 @@ void DebugUI::show_world_inspector() {
           static_cast<double>(proxy.position.z),
           static_cast<double>(proxy.radius),
           static_cast<double>(proxy.heading_degrees));
-      ImGui::Text("Proxy overlapping zone contacts: %zu", proxy.overlapping_zone_count);
+      ImGui::Text("Current qualifying zones: %zu", proxy.overlapping_zone_count);
+      ImGui::Text("Zone registrations: %zu / 16 | lifecycle pass: %s",
+          m_context.scenario_engine->active_zone_contact_registration_count(),
+          m_context.scenario_engine->zone_contact_lifecycle_pass_pending() ? "pending" : "idle");
       ImGui::Text("Proxy synchronization: %s%s%s",
           proxy.synchronization_suspended ? "frozen" : "ordinary actor update",
           proxy.suspension_reason.empty() ? "" : " - ",

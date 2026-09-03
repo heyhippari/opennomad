@@ -735,6 +735,17 @@ void DebugUI::show_area_vm() {
     if (context.source.zone_id.has_value()) {
       ImGui::Text("Zone ID: %d", context.source.zone_id.value());
     }
+    if (context.source.zone_heartbeat_state.has_value()) {
+      constexpr std::array<const char*, 4> k_heartbeat_names{
+          "entry pending", "refreshed", "awaiting refresh", "departure pending"};
+      const std::uint8_t state{context.source.zone_heartbeat_state.value()};
+      ImGui::Text("Zone heartbeat: %s | spatial registration: %s",
+          state < k_heartbeat_names.size() ? k_heartbeat_names.at(state) : "unknown",
+          context.source.zone_spatially_registered.value_or(false) ? "active" : "released");
+      ImGui::Text("Last heartbeat generation: %llu",
+          static_cast<unsigned long long>(
+              context.source.zone_last_heartbeat_generation.value_or(0U)));
+    }
     if (context.source.owner_area_slot.has_value()) {
       ImGui::Text(
           "Owner AREA slot: %u", static_cast<unsigned int>(context.source.owner_area_slot.value()));

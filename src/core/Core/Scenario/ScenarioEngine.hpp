@@ -139,6 +139,12 @@ class ScenarioEngine {
   [[nodiscard]] std::size_t zone_contact_count() const {
     return m_startup.zone_contact_count();
   }
+  [[nodiscard]] std::size_t active_zone_contact_registration_count() const {
+    return m_startup.active_zone_contact_registration_count();
+  }
+  [[nodiscard]] bool zone_contact_lifecycle_pass_pending() const {
+    return m_startup.zone_contact_lifecycle_pass_pending();
+  }
   [[nodiscard]] std::size_t character_reference_entry_count() const {
     return m_startup.character_reference_entry_count();
   }

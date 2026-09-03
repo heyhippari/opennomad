@@ -90,19 +90,22 @@ the existing proxy broadphase, exact X/Z polygon containment, and heading
 window.
 
 Fresh qualification runs after CTL callbacks, all C.1/C.2/C.3 resolution, and
-accepted-position sound-marker publication. It may create contacts, queue entry
-event 1, update overlap, or queue departure event 3, but never runs a compact
-VM. AREA, SCENE, and contact compact execution remains in the later normal
-`begin_tick()` phase. Event 2 is not a generic overlap/stay event and is not
-produced by D.1.
+accepted-position sound-marker publication. A positive result is a native
+event-7-equivalent heartbeat: it creates an `entry_pending` registration or
+refreshes an existing registration, but queues no compact event directly and
+never runs a compact VM. Every due ordinary step schedules one later lifecycle
+pass; multiple catch-up samples collapse into that single pass. `begin_tick()`
+ages states 1/2/3 and only then services contact VMs, producing event 1 on entry
+or event 3 after a missed heartbeat. Event 2 is not a generic overlap/stay event.
 
 Each successfully published sample consumes exactly the actor's newly advanced
 `ordinary_actor_service_generation`. No due fixed step means no generation,
 proxy publication, or stale spatial requalification. Registration and
 authoritative placement likewise do not manufacture a generation. Structured
 state-4 ownership remains gated before accumulator growth and produces no
-ordinary spatial sample or catch-up debt; the first later ordinary step
-reanchors and resumes the complete pipeline.
+ordinary spatial sample or catch-up debt. Its consumed actor phase schedules a
+missed-heartbeat lifecycle pass; the first later ordinary step reanchors and
+resumes the complete pipeline.
 
 CTL root motion and one-shot/continuous movement auxiliaries update only the actor-owned candidate. The physical stage adds actor-owned horizontal physical X/Z terms directly to that authored movement, adds `vertical_velocity / 30` to Y, and only then captures the complete desired displacement. A real mode-1 forward collision clears the X/Z terms after C.2 steering and before support response; pure depenetration does not.
 

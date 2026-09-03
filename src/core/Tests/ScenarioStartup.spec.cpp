@@ -368,7 +368,9 @@ std::vector<std::byte> make_zone_contact_area_archive(const bool starts_dialog =
     const std::uint32_t initial_xz = 50U,
     const std::int16_t orientation_center_units = 4090,
     const std::int16_t orientation_span_units = 0,
-    const bool launch_fire_and_forget = false) {
+    const bool launch_fire_and_forget = false,
+    const bool launch_from_zone_event = false,
+    const std::size_t zone_count = 1U) {
   Buffer top_level;
   top_level.u8(0x38).u16(136);
   if (launch_fire_and_forget) {
@@ -382,10 +384,15 @@ std::vector<std::byte> make_zone_contact_area_archive(const bool starts_dialog =
     top_level.u8(0x3F).u16(100);
     top_level.u8(0x68);
   }
-  top_level.u8(0x40).u16(static_cast<std::uint16_t>(zone_id));
+  for (std::size_t index{0}; index < zone_count; ++index) {
+    top_level.u8(0x40).u16(static_cast<std::uint16_t>(zone_id + index));
+  }
   top_level.u8(0x03);
 
   Buffer zone_event;
+  if (launch_from_zone_event) {
+    zone_event.u8(0x5A).u16(221).u16(0);
+  }
   if (starts_dialog) {
     zone_event.u8(0x3D).u16(272);
   } else {
@@ -409,8 +416,8 @@ std::vector<std::byte> make_zone_contact_area_archive(const bool starts_dialog =
   constexpr std::size_t k_record_offset{0x800};
   constexpr std::size_t k_table0_offset{0x0B4};
   constexpr std::size_t k_table2_offset{k_table0_offset + 0x14U};
-  constexpr std::size_t k_table4_offset{k_table2_offset + 0x44U};
-  constexpr std::size_t k_table5_offset{k_table4_offset + 0x114U};
+  const std::size_t k_table4_offset{k_table2_offset + (zone_count * 0x44U)};
+  const std::size_t k_table5_offset{k_table4_offset + 0x114U};
   const std::size_t k_script_offset{k_table5_offset + (place_before_activation ? 0x10U : 0U)};
   const std::size_t zone_event_offset{k_script_offset + top_level.data().size()};
   const std::size_t departure_event_offset{zone_event_offset + zone_event.data().size()};
@@ -433,29 +440,34 @@ std::vector<std::byte> make_zone_contact_area_archive(const bool starts_dialog =
   write_u16(data, k_record_offset + k_table0_offset + 0x12U, 136);
 
   write_u32(data, k_record_offset + 0x28U + (2U * 4U), k_table2_offset);
-  write_u16(data, k_record_offset + 0x48U + (2U * 2U), 1);
-  write_u32(data, k_record_offset + k_table2_offset, static_cast<std::uint32_t>(zone_event_offset));
-  write_u32(data,
-      k_record_offset + k_table2_offset + 0x08U,
-      static_cast<std::uint32_t>(departure_event_offset));
+  write_u16(data, k_record_offset + 0x48U + (2U * 2U), static_cast<std::uint16_t>(zone_count));
   // Four X/Y/Z vertices; the Y slab contains the zero-radius synthetic actor.
   constexpr std::array<std::array<std::uint32_t, 3>, 4> k_vertices = {
       {{0U, 900U, 0U}, {100U, 1100U, 0U}, {100U, 1100U, 100U}, {0U, 900U, 100U}}};
-  for (std::size_t index{0}; index < k_vertices.size(); ++index) {
-    for (std::size_t coordinate{0}; coordinate < k_vertices.at(index).size(); ++coordinate) {
-      write_u32(data,
-          k_record_offset + k_table2_offset + 0x0CU + ((index * 3U + coordinate) * 4U),
-          k_vertices.at(index).at(coordinate));
+  for (std::size_t zone_index{0}; zone_index < zone_count; ++zone_index) {
+    const std::size_t zone_offset{k_table2_offset + (zone_index * 0x44U)};
+    write_u32(data, k_record_offset + zone_offset, static_cast<std::uint32_t>(zone_event_offset));
+    write_u32(data,
+        k_record_offset + zone_offset + 0x08U,
+        static_cast<std::uint32_t>(departure_event_offset));
+    for (std::size_t index{0}; index < k_vertices.size(); ++index) {
+      for (std::size_t coordinate{0}; coordinate < k_vertices.at(index).size(); ++coordinate) {
+        write_u32(data,
+            k_record_offset + zone_offset + 0x0CU + ((index * 3U + coordinate) * 4U),
+            k_vertices.at(index).at(coordinate));
+      }
     }
+    write_u16(data,
+        k_record_offset + zone_offset + 0x3CU,
+        static_cast<std::uint16_t>(orientation_center_units));
+    write_u16(data,
+        k_record_offset + zone_offset + 0x3EU,
+        static_cast<std::uint16_t>(orientation_span_units));
+    write_u16(data,
+        k_record_offset + zone_offset + 0x40U,
+        static_cast<std::uint16_t>(zone_id + zone_index));
+    write_u16(data, k_record_offset + zone_offset + 0x42U, 0xFFFF);
   }
-  write_u16(data,
-      k_record_offset + k_table2_offset + 0x3CU,
-      static_cast<std::uint16_t>(orientation_center_units));
-  write_u16(data,
-      k_record_offset + k_table2_offset + 0x3EU,
-      static_cast<std::uint16_t>(orientation_span_units));
-  write_u16(data, k_record_offset + k_table2_offset + 0x40U, static_cast<std::uint16_t>(zone_id));
-  write_u16(data, k_record_offset + k_table2_offset + 0x42U, 0xFFFF);
 
   write_u32(data, k_record_offset + 0x28U + (4U * 4U), k_table4_offset);
   write_u16(data, k_record_offset + 0x48U + (4U * 2U), 1);
@@ -970,12 +982,15 @@ void write_zone_contact_fixtures(const TempDirectory& temp,
     const std::uint32_t initial_xz = 50U,
     const std::int16_t orientation_center_units = 4090,
     const std::int16_t orientation_span_units = 0,
-    const bool launch_fire_and_forget = false) {
+    const bool launch_fire_and_forget = false,
+    const bool launch_from_zone_event = false,
+    const bool self_disables = true,
+    const std::size_t zone_count = 1U) {
   write_bytes(temp.root() / "IAM" / "START", make_start());
   write_bytes(temp.root() / "IAM" / "GLOBAL", make_camera_namespace_global(true));
   write_bytes(temp.root() / "IAM" / "AREA",
       make_zone_contact_area_archive(false,
-          true,
+          self_disables,
           enable_controller,
           zone_id,
           controller_off_before_wait,
@@ -983,10 +998,13 @@ void write_zone_contact_fixtures(const TempDirectory& temp,
           initial_xz,
           orientation_center_units,
           orientation_span_units,
-          launch_fire_and_forget));
+          launch_fire_and_forget,
+          launch_from_zone_event,
+          zone_count));
   write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
   write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX",
-      launch_fire_and_forget ? make_kayl_arrives_scx(221) : make_minimal_scx());
+      launch_fire_and_forget || launch_from_zone_event ? make_kayl_arrives_scx(221)
+                                                       : make_minimal_scx());
 }
 
 void write_live_zone_contact_fixtures(const TempDirectory& temp) {
@@ -2033,13 +2051,179 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(contact != nullptr);
     REQUIRE(contact->script != nullptr);
     CHECK_FALSE(contact->script->active_event().has_value());
-    REQUIRE_EQ(contact->script->queued_events().size(), 1U);
-    CHECK_EQ(contact->script->queued_events().front(), 1U);
+    CHECK(contact->script->queued_events().empty());
+    CHECK(contact->heartbeat_state == App::ZoneContactHeartbeatState::k_entry_pending);
+    CHECK(contact->spatially_registered());
+    CHECK_EQ(controller.active_zone_contact_registration_count(), 1U);
+    CHECK(controller.zone_contact_lifecycle_pass_pending());
     CHECK_EQ(character->current_move_id(), std::optional<std::int16_t>{7});
     CHECK_FALSE(character->controller_enabled);
     REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+    contact = controller.zone_contact(0);
+    REQUIRE(contact != nullptr);
+    CHECK(contact->heartbeat_state == App::ZoneContactHeartbeatState::k_awaiting_refresh);
+    CHECK(std::ranges::none_of(contact->script->queued_events(), [](const std::uint16_t event) {
+      return event == 2U;
+    }));
     CHECK_EQ(character->current_move_id(), std::optional<std::int16_t>{100});
     CHECK(character->controller_enabled);
+  }
+
+  TEST_CASE(
+      "zone heartbeat ages only after ordinary service and permits re-entry during departure") {
+    constexpr std::int16_t k_zone_id{24};
+    const TempDirectory temp;
+    write_zone_contact_fixtures(
+        temp, false, k_zone_id, false, false, 500U, 4090, 0, false, false, false);
+    const ScopedGameDataRoot root{temp.root()};
+
+    App::ScenarioManager manager;
+    App::ScenarioStartupController controller;
+    REQUIRE(controller.initialize(manager).has_value());
+    App::ScenarioRuntime* runtime{manager.world_runtime(0)};
+    REQUIRE(runtime != nullptr);
+    runtime->character_runtime().set_model_loader(
+        [](const std::string_view name)
+            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
+          auto resource{std::make_shared<App::Character::ModelResource>()};
+          resource->name = name;
+          resource->groups.push_back(App::Omikron::MaterialGroup{});
+          return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
+        });
+    install_stub_ctl_loader(*runtime);
+
+    REQUIRE(controller.tick().has_value());
+    App::Character::RuntimeCharacter* character{runtime->character_runtime().find(136)};
+    REQUIRE(character != nullptr);
+    character->transform.translation =
+        App::Runtime::area_position_to_inches(std::array<std::int32_t, 3>{50, 999, 50});
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+    REQUIRE_EQ(controller.zone_contact_count(), 1U);
+    CHECK(controller.zone_contact(0)->heartbeat_state ==
+          App::ZoneContactHeartbeatState::k_entry_pending);
+
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+    REQUIRE(controller.zone_contact(0) != nullptr);
+    CHECK(
+        controller.zone_contact(0)->heartbeat_state == App::ZoneContactHeartbeatState::k_refreshed);
+    character->transform.translation.x = 1000.0F;
+
+    REQUIRE(controller.tick(1.0F / 60.0F).has_value());
+    CHECK(controller.zone_contact(0)->heartbeat_state ==
+          App::ZoneContactHeartbeatState::k_awaiting_refresh);
+    CHECK_FALSE(controller.zone_contact_lifecycle_pass_pending());
+    REQUIRE(controller.tick(1.0F / 60.0F).has_value());
+    CHECK(controller.zone_contact(0)->heartbeat_state ==
+          App::ZoneContactHeartbeatState::k_awaiting_refresh);
+    CHECK(controller.zone_contact_lifecycle_pass_pending());
+    CHECK_EQ(controller.active_zone_contact_registration_count(), 1U);
+
+    REQUIRE(controller.tick().has_value());
+    CHECK(controller.zone_contact(0)->heartbeat_state ==
+          App::ZoneContactHeartbeatState::k_departure_pending);
+    CHECK_EQ(controller.active_zone_contact_registration_count(), 0U);
+    character->transform.translation =
+        App::Runtime::area_position_to_inches(std::array<std::int32_t, 3>{50, 999, 50});
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+    REQUIRE_EQ(controller.zone_contact_count(), 2U);
+    CHECK_EQ(controller.active_zone_contact_registration_count(), 1U);
+    REQUIRE(controller.zone_contact(1) != nullptr);
+    CHECK(controller.zone_contact(1)->heartbeat_state ==
+          App::ZoneContactHeartbeatState::k_entry_pending);
+
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+    character->transform.translation.x = 1000.0F;
+    REQUIRE(controller.tick(2.0F / 30.0F).has_value());
+    CHECK(controller.zone_contact(1)->heartbeat_state ==
+          App::ZoneContactHeartbeatState::k_awaiting_refresh);
+    CHECK_EQ(controller.active_zone_contact_registration_count(), 1U);
+    CHECK(controller.zone_contact_lifecycle_pass_pending());
+    REQUIRE(controller.begin_tick(0.0F).has_value());
+    CHECK(controller.zone_contact(1)->heartbeat_state ==
+          App::ZoneContactHeartbeatState::k_departure_pending);
+    CHECK_EQ(controller.active_zone_contact_registration_count(), 0U);
+  }
+
+  TEST_CASE("structured owner phase schedules missed-heartbeat aging without stale publication") {
+    constexpr std::int16_t k_zone_id{25};
+    const TempDirectory temp;
+    write_zone_contact_fixtures(
+        temp, false, k_zone_id, false, false, 50U, 4090, 0, false, true, false);
+    const ScopedGameDataRoot root{temp.root()};
+
+    App::ScenarioManager manager;
+    App::ScenarioStartupController controller;
+    REQUIRE(controller.initialize(manager).has_value());
+    App::ScenarioRuntime* runtime{manager.world_runtime(0)};
+    REQUIRE(runtime != nullptr);
+    runtime->character_runtime().set_model_loader(
+        [](const std::string_view name)
+            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
+          auto resource{std::make_shared<App::Character::ModelResource>()};
+          resource->name = name;
+          resource->groups.push_back(App::Omikron::MaterialGroup{});
+          return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
+        });
+    install_stub_ctl_loader(*runtime);
+
+    REQUIRE(controller.tick().has_value());
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+    REQUIRE_EQ(controller.zone_contact_count(), 1U);
+    const std::uint64_t generation{controller.current_character_trigger_proxy()->generation};
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+    CHECK(controller.structured_character_owner_active());
+    CHECK_EQ(controller.current_character_trigger_proxy()->generation, generation);
+    CHECK(controller.zone_contact_lifecycle_pass_pending());
+    CHECK(controller.zone_contact(0)->heartbeat_state ==
+          App::ZoneContactHeartbeatState::k_awaiting_refresh);
+
+    REQUIRE(controller.begin_tick(1.0F / 30.0F).has_value());
+    CHECK(controller.zone_contact(0)->heartbeat_state ==
+          App::ZoneContactHeartbeatState::k_departure_pending);
+    CHECK_EQ(controller.active_zone_contact_registration_count(), 0U);
+  }
+
+  TEST_CASE("zone capacity counts registrations instead of retained departure contexts") {
+    constexpr std::int16_t k_first_zone_id{100};
+    const TempDirectory temp;
+    write_zone_contact_fixtures(
+        temp, false, k_first_zone_id, false, false, 50U, 4090, 0, false, false, false, 17U);
+    const ScopedGameDataRoot root{temp.root()};
+
+    App::ScenarioManager manager;
+    App::ScenarioStartupController controller;
+    REQUIRE(controller.initialize(manager).has_value());
+    App::ScenarioRuntime* runtime{manager.world_runtime(0)};
+    REQUIRE(runtime != nullptr);
+    runtime->character_runtime().set_model_loader(
+        [](const std::string_view name)
+            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
+          auto resource{std::make_shared<App::Character::ModelResource>()};
+          resource->name = name;
+          resource->groups.push_back(App::Omikron::MaterialGroup{});
+          return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
+        });
+    install_stub_ctl_loader(*runtime);
+
+    REQUIRE(controller.tick().has_value());
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+    CHECK_EQ(controller.zone_contact_count(), 16U);
+    CHECK_EQ(controller.active_zone_contact_registration_count(), 16U);
+
+    App::Character::RuntimeCharacter* character{runtime->character_runtime().find(136)};
+    REQUIRE(character != nullptr);
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+    character->transform.translation.x = 1000.0F;
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+    REQUIRE(controller.tick().has_value());
+    CHECK_EQ(controller.zone_contact_count(), 16U);
+    CHECK_EQ(controller.active_zone_contact_registration_count(), 0U);
+
+    character->transform.translation =
+        App::Runtime::area_position_to_inches(std::array<std::int32_t, 3>{50, 999, 50});
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+    CHECK_EQ(controller.zone_contact_count(), 32U);
+    CHECK_EQ(controller.active_zone_contact_registration_count(), 16U);
   }
 
   TEST_CASE("zone qualification rejects a raw candidate blocked outside by collision") {

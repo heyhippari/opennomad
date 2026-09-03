@@ -90,8 +90,18 @@ struct ActiveZoneRef {
   Omikron::IamZoneRecord zone;
 };
 
-/// One transient spatial-contact VM context. Its backing IAM record remains
-/// immutable; only the compact context and lifecycle flags are mutable.
+/// Semantic ordinary heartbeat states corresponding to native states 1/2/3.
+/// Departure pending is OpenNomad context retention after the spatial slot is free;
+/// it is unrelated to the deferred native interaction states 4/5.
+enum class ZoneContactHeartbeatState : std::uint8_t {
+  k_entry_pending,
+  k_refreshed,
+  k_awaiting_refresh,
+  k_departure_pending,
+};
+
+/// One transient zone compact context. Spatial registration may retire while
+/// this context remains alive to drain queued departure work.
 struct ZoneContactContext {
   std::size_t resident_slot{0};
   ActiveZoneSource source{ActiveZoneSource::k_area};
@@ -100,8 +110,12 @@ struct ZoneContactContext {
   Omikron::IamZoneRecord zone;
   std::size_t program_record_origin{0};
   std::unique_ptr<Script::AreaScriptRuntime> script;
-  bool overlapping{true};
-  bool departure_queued{false};
+  ZoneContactHeartbeatState heartbeat_state{ZoneContactHeartbeatState::k_entry_pending};
+  std::uint64_t last_heartbeat_generation{0};
+
+  [[nodiscard]] bool spatially_registered() const {
+    return heartbeat_state != ZoneContactHeartbeatState::k_departure_pending;
+  }
 };
 
 struct ZoneQualificationDiagnostic {
@@ -273,6 +287,11 @@ class ScenarioStartupController {
   [[nodiscard]] std::size_t zone_contact_count() const {
     return m_zone_contacts.size();
   }
+  /// Number of native-style spatial registrations currently occupying the 16-slot capacity.
+  [[nodiscard]] std::size_t active_zone_contact_registration_count() const;
+  [[nodiscard]] bool zone_contact_lifecycle_pass_pending() const {
+    return m_zone_contact_lifecycle_pass_pending;
+  }
   /// One live zone-owned compact context for debugger registry inspection.
   [[nodiscard]] const ZoneContactContext* zone_contact(std::size_t index) const {
     return index < m_zone_contacts.size() ? m_zone_contacts.at(index).get() : nullptr;
@@ -380,7 +399,8 @@ class ScenarioStartupController {
       const Script::AreaCurrentCharacterMoveRequest& request);
   [[nodiscard]] std::expected<void, std::string> set_current_character_controller(
       const Script::AreaCurrentCharacterControllerRequest& request);
-  [[nodiscard]] std::expected<void, std::string> service_current_character_actor(
+  /// Returns true when a valid structured-owner dispatch omitted ordinary spatial service.
+  [[nodiscard]] std::expected<bool, std::string> service_current_character_actor(
       float delta_seconds);
   /// Starts a compact-owned dialog and enters the session-global scheduling
   /// takeover shared by AREA, SCENE, and contact contexts.
@@ -434,6 +454,7 @@ class ScenarioStartupController {
   void service_scene_scripts(float delta_seconds);
   /// Compact phase: Zone contact VM execution (waits, script.run, events).
   [[nodiscard]] std::expected<void, std::string> service_zone_contact_scripts(float delta_seconds);
+  void advance_zone_contact_heartbeat_lifecycle();
   /// Fresh-sample phase: zone qualification, creation, and spatial loss production.
   [[nodiscard]] std::expected<OrdinarySpatialSampleResult, std::string>
   reconcile_zone_contacts_from_fresh_spatial_sample();
@@ -448,7 +469,8 @@ class ScenarioStartupController {
   [[nodiscard]] bool publish_current_character_ordinary_spatial_sample(
       const ControlledCharacterRef& owner, const Character::RuntimeCharacter& character);
   void service_current_character_trigger_proxy_housekeeping();
-  [[nodiscard]] std::expected<void, std::string> create_zone_contact(
+  [[nodiscard]] ZoneContactContext* find_registered_zone_contact(const ActiveZoneRef& active_zone);
+  [[nodiscard]] std::expected<ZoneContactContext*, std::string> register_or_refresh_zone_contact(
       const ActiveZoneRef& active_zone);
   [[nodiscard]] std::optional<std::size_t> resident_area_slot(std::int32_t area_id) const;
 
@@ -505,6 +527,7 @@ class ScenarioStartupController {
   std::vector<ZoneQualificationDiagnostic> m_zone_qualification_diagnostics;
   std::optional<CurrentCharacterStructuredOwner> m_current_character_structured_owner;
   std::optional<CurrentCharacterTriggerProxy> m_current_character_trigger_proxy;
+  bool m_zone_contact_lifecycle_pass_pending{false};
   CharacterReferenceRuntime m_character_references;
   std::uint64_t m_next_trigger_proxy_generation{1};
 

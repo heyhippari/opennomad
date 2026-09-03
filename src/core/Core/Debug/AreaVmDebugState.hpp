@@ -37,6 +37,9 @@ struct AreaVmContextSourceDebugState {
   std::int32_t area_id{0};
   std::optional<std::int32_t> scene_id;
   std::optional<std::int16_t> zone_id;
+  std::optional<std::uint8_t> zone_heartbeat_state;
+  std::optional<bool> zone_spatially_registered;
+  std::optional<std::uint64_t> zone_last_heartbeat_generation;
   std::optional<std::uint32_t> source_primary_event_offset;
   std::array<std::optional<std::uint32_t>, 3> source_event_entry_offsets{};
   std::size_t open_nomad_execution_base_offset{0};

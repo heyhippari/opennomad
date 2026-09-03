@@ -2359,6 +2359,14 @@ actor behavior onto a nominal 30 Hz accumulator; Phase 4.2D.1 completes each
 due OpenNomad actor step through a fresh post-physical spatial sample. This is
 an OpenNomad scheduling choice, not evidence of a retail catch-up loop.
 
+Phase 4.2D.2 keeps contact aging tied to actor dispatch rather than render time.
+Each due ordinary step may emit positive contact heartbeats and marks one
+compact lifecycle pass pending. Catch-up steps share that pending pass, while a
+display frame with no due step cannot age a contact. The next compact phase
+advances native-style contact states before running zone VMs. Structured owner
+dispatch schedules the same pass as a missed heartbeat without publishing the
+structured actor's transform through the ordinary trigger proxy.
+
 ---
 
 # 89. Why interpolation belongs above simulation timing
