@@ -832,7 +832,18 @@ void ScenarioManager::service_dialog_camera() {
   const std::optional<ControlledCharacterRef> controlled{controlled_character()};
   const std::int16_t participant_a_character_id{
       static_cast<std::int16_t>(controlled.has_value() ? controlled->character_id : -1)};
+  const Character::RuntimeCharacter* const participant_b{
+      context->runtime == nullptr
+          ? nullptr
+          : context->runtime->character_runtime().find(presentation->character_id)};
   const WorldCameraAttachmentParticipants participants{
+      .participant_a_body_identity =
+          controlled.has_value() ? std::optional<Character::BodyIdentity>{controlled->body_identity}
+                                 : std::nullopt,
+      .participant_b_body_identity =
+          participant_b == nullptr
+              ? std::nullopt
+              : std::optional<Character::BodyIdentity>{participant_b->body_identity},
       .participant_a_character_id = participant_a_character_id,
       .participant_b_character_id = presentation->character_id};
 

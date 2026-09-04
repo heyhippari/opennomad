@@ -1456,9 +1456,14 @@ ScenarioStartupController::enqueue_compact_camera(
   const std::int16_t participant_a_character_id{
       static_cast<std::int16_t>(controlled.has_value() ? controlled->character_id : -1)};
   const WorldCameraAttachmentParticipants participants{
-      .participant_a_character_id = participant_a_character_id, .participant_b_character_id = -1};
+      .participant_a_body_identity =
+          controlled.has_value() ? std::optional<Character::BodyIdentity>{controlled->body_identity}
+                                 : std::nullopt,
+      .participant_b_body_identity = std::nullopt,
+      .participant_a_character_id = participant_a_character_id,
+      .participant_b_character_id = -1};
 
-  // Preserve serialized vectors/selectors and the controlled participant ID
+  // Preserve serialized vectors/selectors and the controlled participant
   // captured by Runtime's camera controller at submission. WorldCameraSystem
   // resolves that stable identity to a live pose on every update.
   m_manager->world_presentation().enqueue_camera(WorldCameraCommand{.scene_id = context->scene_id,

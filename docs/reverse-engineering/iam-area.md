@@ -1736,9 +1736,12 @@ struct AreaCameraRecord {
 ```
 
 Runtime camera-selection handlers copy the first two position vectors and use
-the recovered roll/FOV fields. Camera controller state retains authored
-participant character IDs and resolves their live entity transforms during
-camera updates.
+the recovered roll/FOV fields. Camera controller state captures Runtime global
+actor-slot identities for its participants and resolves those same live bodies
+during camera updates. The issuing AREA/world and its generation remain command
+provenance only: an attached camera keeps following its captured actor if that
+body transfers to the other resident world. Authored character IDs are retained
+only as diagnostics and are not a fallback lookup key when a body disappears.
 
 Compact camera IDs are not resolved only against the calling AREA. Runtime's
 fixed two-resident AREA/SCENE order and session-wide fallback are documented in

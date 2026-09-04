@@ -18,14 +18,14 @@ namespace {
 using App::WorldCameraCommand;
 using App::WorldCameraSystem;
 
-using AttachmentMap = std::unordered_map<std::int16_t, App::WorldCameraAttachmentPose>;
+using AttachmentMap =
+    std::unordered_map<App::Character::BodyIdentity, App::WorldCameraAttachmentPose>;
 
 void set_attachment_provider(WorldCameraSystem& camera, const AttachmentMap& attachments) {
   camera.set_attachment_pose_provider(
-      [&attachments](const std::uint32_t,
-          const std::uint32_t,
-          const std::int16_t character_id) -> std::optional<App::WorldCameraAttachmentPose> {
-        const auto found{attachments.find(character_id)};
+      [&attachments](const App::Character::BodyIdentity body_identity)
+          -> std::optional<App::WorldCameraAttachmentPose> {
+        const auto found{attachments.find(body_identity)};
         if (found == attachments.end()) {
           return std::nullopt;
         }
@@ -36,11 +36,11 @@ void set_attachment_provider(WorldCameraSystem& camera, const AttachmentMap& att
 WorldCameraCommand attached_camera(const std::int16_t selector,
     const std::array<std::int32_t, 3>& eye,
     const std::array<std::int32_t, 3>& target,
-    const std::int16_t participant_a = 10,
-    const std::int16_t participant_b = 20) {
+    const std::optional<App::Character::BodyIdentity> participant_a = 10,
+    const std::optional<App::Character::BodyIdentity> participant_b = 20) {
   return WorldCameraCommand{.camera_id = 9,
-      .attachment_participants = {.participant_a_character_id = participant_a,
-          .participant_b_character_id = participant_b},
+      .attachment_participants = {.participant_a_body_identity = participant_a,
+          .participant_b_body_identity = participant_b},
       .serialized_eye = eye,
       .serialized_target = target,
       .runtime_eye = App::Runtime::iam_camera_vector_to_runtime(eye),
@@ -318,33 +318,38 @@ TEST_SUITE("Core::WorldCameraSystem") {
     set_attachment_provider(camera, attachments);
     const std::array<std::int32_t, 3> eye{256, 0, 0};
     const std::array<std::int32_t, 3> target{0, 256, 0};
-    const WorldCameraCommand command{attached_camera(0, eye, target, -1, 20)};
+    const WorldCameraCommand command{attached_camera(0, eye, target, std::nullopt, 20)};
     camera.apply_command(command);
     CHECK(camera.pose().eye.x == doctest::Approx(command.runtime_eye.x));
     CHECK(camera.pose().target.y == doctest::Approx(command.runtime_target.y));
   }
 
-  TEST_CASE("Attachment resolution retains the camera owner generation") {
+  TEST_CASE("Attachment resolution retains captured body identity across world transfer") {
     WorldCameraSystem camera;
-    std::uint32_t observed_scene{0};
-    std::uint32_t observed_generation{0};
-    camera.set_attachment_pose_provider(
-        [&](const std::uint32_t scene_id,
-            const std::uint32_t generation,
-            const std::int16_t) -> std::optional<App::WorldCameraAttachmentPose> {
-          observed_scene = scene_id;
-          observed_generation = generation;
-          return App::WorldCameraAttachmentPose{};
-        });
-    WorldCameraCommand command{attached_camera(0, {0, 0, 0}, {0, 0, 0})};
+    constexpr App::Character::BodyIdentity k_captured_body{1010U};
+    constexpr App::Character::BodyIdentity k_duplicate_character_id_body{2020U};
+    App::Character::BodyIdentity observed_body{0};
+    camera.set_attachment_pose_provider([&](const App::Character::BodyIdentity body_identity)
+                                            -> std::optional<App::WorldCameraAttachmentPose> {
+      observed_body = body_identity;
+      if (body_identity == k_captured_body) {
+        return App::WorldCameraAttachmentPose{.translation = {.x = 400.0F, .y = 0.0F, .z = 0.0F}};
+      }
+      if (body_identity == k_duplicate_character_id_body) {
+        return App::WorldCameraAttachmentPose{.translation = {.x = -400.0F, .y = 0.0F, .z = 0.0F}};
+      }
+      return std::nullopt;
+    });
+    WorldCameraCommand command{attached_camera(0, {0, 0, 0}, {0, 0, 0}, k_captured_body)};
     command.scene_id = 222U;
     command.scene_generation = 17U;
+    command.attachment_participants.participant_a_character_id = 10;
 
     camera.apply_command(command);
     camera.update(1.0F / 60.0F);
 
-    CHECK_EQ(observed_scene, 222U);
-    CHECK_EQ(observed_generation, 17U);
+    CHECK_EQ(observed_body, k_captured_body);
+    CHECK(camera.pose().eye.x > 300.0F);
   }
 
   TEST_CASE("Selector six uses the A-B midpoint and recovered relationship yaw") {

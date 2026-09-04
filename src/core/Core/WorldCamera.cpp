@@ -270,12 +270,13 @@ Runtime::Vec3 WorldCameraSystem::resolve_attachment_point(const WorldCameraComma
     return absolute_fallback;
   }
 
-  const std::int16_t participant_a_id{command.attachment_participants.participant_a_character_id};
-  if (participant_a_id < 0) {
+  const std::optional<Character::BodyIdentity> participant_a_identity{
+      command.attachment_participants.participant_a_body_identity};
+  if (!participant_a_identity.has_value()) {
     return absolute_fallback;
   }
   const std::optional<WorldCameraAttachmentPose> participant_a{
-      m_attachment_pose_provider(command.scene_id, command.scene_generation, participant_a_id)};
+      m_attachment_pose_provider(participant_a_identity.value())};
   if (!participant_a.has_value()) {
     return absolute_fallback;
   }
@@ -291,12 +292,13 @@ Runtime::Vec3 WorldCameraSystem::resolve_attachment_point(const WorldCameraComma
 
   // Runtime selector 6 derives one shared orientation solely from the live
   // A/B relationship. It does not compose either actor's orientation.
-  const std::int16_t participant_b_id{command.attachment_participants.participant_b_character_id};
-  if (participant_b_id < 0) {
+  const std::optional<Character::BodyIdentity> participant_b_identity{
+      command.attachment_participants.participant_b_body_identity};
+  if (!participant_b_identity.has_value()) {
     return absolute_fallback;
   }
   const std::optional<WorldCameraAttachmentPose> participant_b{
-      m_attachment_pose_provider(command.scene_id, command.scene_generation, participant_b_id)};
+      m_attachment_pose_provider(participant_b_identity.value())};
   if (!participant_b.has_value()) {
     return absolute_fallback;
   }

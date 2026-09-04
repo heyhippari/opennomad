@@ -128,12 +128,17 @@ Response-side presentation uses `+0x38/+0x3a`.
 
 ### Dialogue camera participants and selectors
 
-The pair routine receives stable authored character IDs:
+The pair routine receives authored character references:
 
 ```text
 participant A = current controlled/possessed character
 participant B = IAM/DIALOG record character_id (the interlocutor)
 ```
+
+At camera submission these references resolve once to Runtime global actor-slot
+identities. Retained camera operations subsequently follow those exact bodies
+across resident-world transfer; they do not re-resolve a canonical character ID
+and therefore cannot retarget to a different live body with the same ID.
 
 Its recovered selector-to-participant binding is the same for target and eye:
 

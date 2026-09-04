@@ -1446,6 +1446,32 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK_EQ(manager.world_presentation().pending_camera_count(), 0U);
   }
 
+  TEST_CASE("compact camera captures the controlled body identity") {
+    const TempDirectory temp;
+    write_camera_namespace_fixtures(temp, CameraNamespaceFixture{.global = true});
+    const ScopedGameDataRoot root{temp.root()};
+    App::ScenarioManager manager;
+    App::ScenarioStartupController controller;
+    REQUIRE(controller.initialize(manager).has_value());
+    App::ScenarioRuntime* const runtime{manager.world_runtime(0)};
+    REQUIRE(runtime != nullptr);
+    constexpr App::Character::BodyIdentity k_body_identity{4100U};
+    REQUIRE(runtime->character_runtime()
+            .adopt_character(App::Character::RuntimeCharacter{
+                .body_identity = k_body_identity, .character_id = 41, .active = true})
+            .has_value());
+    manager.set_controlled_character(App::ControlledCharacterRef{
+        .character_id = 41, .body_identity = k_body_identity, .world_scene_id = 0});
+
+    REQUIRE(controller.tick().has_value());
+    REQUIRE(controller.tick().has_value());
+    const auto command{manager.world_presentation().take_camera()};
+    REQUIRE(command.has_value());
+    CHECK_EQ(command->attachment_participants.participant_a_body_identity,
+        std::optional<App::Character::BodyIdentity>{k_body_identity});
+    CHECK_EQ(command->attachment_participants.participant_a_character_id, 41);
+  }
+
   TEST_CASE("tracked GLOBAL camera completion resumes the exact slot1 SCENE context") {
     const TempDirectory temp;
     write_camera_namespace_fixtures(temp,

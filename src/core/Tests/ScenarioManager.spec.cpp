@@ -367,8 +367,20 @@ TEST_SUITE("Core::Scenario::ScenarioManager") {
 
     App::ScenarioManager manager;
     initialize_grid_fixture(manager);
-    manager.set_controlled_character(
-        App::ControlledCharacterRef{.character_id = 41, .world_scene_id = 0});
+    App::ScenarioRuntime* const runtime{manager.world_runtime(0)};
+    REQUIRE(runtime != nullptr);
+    constexpr App::Character::BodyIdentity k_player_body{4100U};
+    constexpr App::Character::BodyIdentity k_dialog_body{5700U};
+    REQUIRE(runtime->character_runtime()
+            .adopt_character(App::Character::RuntimeCharacter{
+                .body_identity = k_player_body, .character_id = 41, .active = true})
+            .has_value());
+    REQUIRE(runtime->character_runtime()
+            .adopt_character(App::Character::RuntimeCharacter{
+                .body_identity = k_dialog_body, .character_id = 57, .active = true})
+            .has_value());
+    manager.set_controlled_character(App::ControlledCharacterRef{
+        .character_id = 41, .body_identity = k_player_body, .world_scene_id = 0});
     REQUIRE(manager.start_dialog(0).has_value());
     manager.service_dialog_performance(0.0F);
 
@@ -383,6 +395,10 @@ TEST_SUITE("Core::Scenario::ScenarioManager") {
     for (const App::WorldCameraCommand* command : {&line_a.value(), &line_b.value()}) {
       CHECK_EQ(command->attachment_participants.participant_a_character_id, 41);
       CHECK_EQ(command->attachment_participants.participant_b_character_id, 57);
+      CHECK_EQ(command->attachment_participants.participant_a_body_identity,
+          std::optional<App::Character::BodyIdentity>{k_player_body});
+      CHECK_EQ(command->attachment_participants.participant_b_body_identity,
+          std::optional<App::Character::BodyIdentity>{k_dialog_body});
     }
 
     REQUIRE(manager.dialog_runtime().acknowledge_line().has_value());

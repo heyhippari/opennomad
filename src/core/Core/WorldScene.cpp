@@ -283,26 +283,18 @@ WorldScene::WorldScene(ScenarioManager& scenarios, Interface::InterfaceManager& 
     : m_scenarios(&scenarios),
       m_interfaces(interfaces) {
   m_camera.set_attachment_pose_provider(
-      [this](const std::uint32_t scene_id,
-          const std::uint32_t generation,
-          const std::int16_t character_id) -> std::optional<WorldCameraAttachmentPose> {
+      [this](
+          const Character::BodyIdentity body_identity) -> std::optional<WorldCameraAttachmentPose> {
         if (m_scenarios == nullptr) {
           return std::nullopt;
         }
-        const WorldSceneContext* const context{m_scenarios->find_world_context(scene_id)};
-        if (context == nullptr || context->residency == WorldSceneResidencyState::Free ||
-            context->generation != generation) {
+        const std::optional<LocatedCharacterBody> located{
+            m_scenarios->find_character_body(body_identity)};
+        if (!located.has_value()) {
           return std::nullopt;
         }
-        ScenarioRuntime* const runtime{
-            context == nullptr || context->runtime == nullptr ? nullptr : context->runtime.get()};
-        const Character::RuntimeCharacter* const character{
-            runtime == nullptr ? nullptr : runtime->character_runtime().find(character_id)};
-        if (character == nullptr) {
-          return std::nullopt;
-        }
-        return WorldCameraAttachmentPose{.translation = character->transform.translation,
-            .principal_orientation = character->principal_orientation()};
+        return WorldCameraAttachmentPose{.translation = located->character->transform.translation,
+            .principal_orientation = located->character->principal_orientation()};
       });
 
   // Runtime publishes the scene's currently selected named 3DO camera through
@@ -1347,7 +1339,7 @@ void WorldScene::consume_camera_commands() {
       }
       App::Log::debug(LogCategory::Renderer,
           "World camera {} — duration={} flags={} roll={}deg hFov={}deg selectors=({}, {}) "
-          "participants=({}, {})",
+          "participants=({}, {}) bodies=({}, {})",
           command->camera_id,
           command->duration_units,
           command->flags,
@@ -1356,7 +1348,9 @@ void WorldScene::consume_camera_commands() {
           command->target_attachment_selector,
           command->eye_attachment_selector,
           command->attachment_participants.participant_a_character_id,
-          command->attachment_participants.participant_b_character_id);
+          command->attachment_participants.participant_b_character_id,
+          command->attachment_participants.participant_a_body_identity.value_or(0U),
+          command->attachment_participants.participant_b_body_identity.value_or(0U));
     }
   }
 }

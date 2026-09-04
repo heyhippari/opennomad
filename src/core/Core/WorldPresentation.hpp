@@ -10,6 +10,7 @@
 #include <string>
 #include <utility>
 
+#include "Core/Character/CharacterRuntime.hpp"
 #include "Core/Interface/RuntimeText.hpp"
 #include "Core/RuntimeMath.hpp"
 
@@ -56,9 +57,11 @@ struct WorldCameraAttachmentPose {
   Runtime::Matrix3 principal_orientation{};
 };
 
-/// Stable authored character IDs retained by an attached camera command.
-/// Presentation resolves these identities to live poses on every update.
+/// Stable actor identities retained by an attached camera command.
+/// Character IDs are diagnostic metadata and never participate in live lookup.
 struct WorldCameraAttachmentParticipants {
+  std::optional<Character::BodyIdentity> participant_a_body_identity;
+  std::optional<Character::BodyIdentity> participant_b_body_identity;
   std::int16_t participant_a_character_id{-1};
   std::int16_t participant_b_character_id{-1};
 };
