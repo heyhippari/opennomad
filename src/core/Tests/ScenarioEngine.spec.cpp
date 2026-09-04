@@ -320,11 +320,78 @@ std::vector<std::byte> make_minimal_3do() {
   return bytes.data();
 }
 
+std::vector<std::byte> make_minimal_character_3do() {
+  constexpr std::uint32_t k_root_offset{0x2CU};
+  constexpr std::uint32_t k_material_offset{0x174U};
+  constexpr std::uint32_t k_mesh_offset{k_material_offset + 80U};
+  constexpr std::uint32_t k_lights_offset{k_mesh_offset + 140U};
+  Buffer bytes;
+  bytes.chars("OD3X", 4)
+      .u32(4)
+      .u32(k_root_offset)
+      .u32(k_material_offset)
+      .u32(k_mesh_offset)
+      .u32(k_mesh_offset)
+      .u32(k_mesh_offset)
+      .u32(k_mesh_offset)
+      .u32(0)
+      .u32(0)
+      .u32(k_lights_offset)
+      .zeros(72)
+      .u32(0)
+      .zeros(104)
+      .u32(1)
+      .f32(1.0F)
+      .u32(0)
+      .u32(0)
+      .u32(0)
+      .u64(0)
+      .u32(1)
+      .u32(0)
+      .u32(0)
+      .u32(0)
+      .u32(1)
+      .u32(0)
+      .u32(0)
+      .u32(0)
+      .u32(0)
+      .u32(0)
+      .zeros(80)
+      .chars("MATERIAL", 20)
+      .chars("", 20)
+      .chars("", 20)
+      .u32(1)
+      .u64(0)
+      .u32(0)
+      .u16(1)
+      .u16(1)
+      .u32(0)
+      .u32(0)
+      .u32(1)
+      .u32(0)
+      .chars("ROOT", 20)
+      .f32(0.0F)
+      .f32(0.0F)
+      .f32(0.0F)
+      .i32(-1)
+      .i32(-1)
+      .i32(-1)
+      .u32(0)
+      .u32(0)
+      .u32(0)
+      .u32(0)
+      .zeros(64);
+  return bytes.data();
+}
+
 class TempDirectory {
  public:
   TempDirectory() : m_root{std::filesystem::temp_directory_path() / "opennomad-engine-test"} {
     std::filesystem::remove_all(m_root);
     std::filesystem::create_directories(m_root);
+    write_bytes(m_root / "MESHES" / "PERSOS" / "CURRENT_BO.3DO", make_minimal_character_3do());
+    write_bytes(m_root / "MESHES" / "PERSOS" / "CURRENT_BO.3DT",
+        {std::byte{0}, std::byte{0}, std::byte{0}, std::byte{0}});
   }
 
   ~TempDirectory() {

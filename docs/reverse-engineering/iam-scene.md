@@ -3,7 +3,8 @@
 SCENE table 0 has the same mutable runtime placement semantics as AREA table 0:
 `+0x00` is an actor-slot seed on disk and becomes an OpenNomad `BodyIdentity`
 binding in `CharacterReferenceRuntime`; `+0x02` becomes a mutable character
-reference. Detaching a SCENE removes only its overlay entries.
+reference. Canonical character ID is profile metadata, not live entity
+identity. Detaching a SCENE removes only its overlay entries.
 
 > **Status:** recovered serialized format and implemented OpenNomad support.  
 > **Last updated:** 2026-08-29
@@ -117,6 +118,13 @@ materializes only SCENE table-0 characters against SCENE-first table-4
 definitions, queues event 1, and sets `areaMapping[areaId] = sceneId`. A
 zero-object SCENE succeeds; nonempty scene-object materialization remains an
 explicit compatibility gap.
+
+OpenNomad's SCENE preload currently has a deliberate selected/transferred-body
+preservation path and otherwise may reuse an already-live canonical-ID match.
+That compatibility behavior is separate from AREA preload, which always
+allocates placement-owned bodies and never deduplicates by character ID. A
+future SCENE identity audit should distinguish explicit transfer bindings from
+ordinary placement allocation before claiming complete native fidelity.
 
 When the durable selected body belongs to the source world, the same `0x47`
 handoff moves its complete `RuntimeCharacter` into the prepared destination

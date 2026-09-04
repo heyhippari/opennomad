@@ -25,6 +25,10 @@ namespace App::Script {
 struct AreaCharacterActivationRequest;
 }
 
+namespace App {
+class GameState;
+}
+
 namespace App::Character {
 /// Session/process-unique logical body token. Unlike `instance_id`, this is not
 /// a vector index and survives Runtime-to-Runtime body transfer.
@@ -113,7 +117,8 @@ enum class PoseOwner : std::uint8_t {
   k_ctl_controller,
 };
 
-/// Persistent logical character materialized in one world runtime.
+/// Resident logical actor/body in one world runtime. `active` and
+/// `area_present` control presentation; an inactive body remains scriptable.
 struct RuntimeCharacter {
   /// Stable logical body identity. Never renumber on vector erase/adoption.
   BodyIdentity body_identity{0};
@@ -246,6 +251,12 @@ struct MaterializedCharacterResult {
   bool newly_created{false};
 };
 
+struct MaterializedPlacementResult {
+  std::size_t placement_index{0};
+  BodyIdentity body_identity{0};
+  bool initially_active{false};
+};
+
 /// World-owned character lifecycle and CPU resource cache.
 class Runtime {
  public:
@@ -291,6 +302,12 @@ class Runtime {
   [[nodiscard]] std::expected<MaterializedCharacterResult, std::string> ensure_area_character(
       std::int32_t area_id, const Omikron::IamAreaRecord& area, std::int16_t character_id);
 
+  /// Constructs and initializes one distinct resident body for every AREA
+  /// table-0 placement. Persistent flags control presentation, not residency.
+  [[nodiscard]] std::expected<std::vector<MaterializedPlacementResult>, std::string>
+  preload_area_characters(
+      std::int32_t area_id, const Omikron::IamAreaRecord& area, const App::GameState& game_state);
+
   /// Ensures one SCENE table-0 character exists for current-character
   /// selection, using the SCENE's matching table-4 definition on first
   /// materialization only.
@@ -322,6 +339,12 @@ class Runtime {
   /// Removes a non-current body from live AREA presentation while retaining
   /// its durable runtime record for a later authored activation.
   [[nodiscard]] std::expected<void, std::string> deactivate_body(BodyIdentity body_identity);
+
+  /// Reapplies an authored AREA/SCENE table-0 transform to an existing body.
+  [[nodiscard]] std::expected<void, std::string> apply_placement_transform(
+      BodyIdentity body_identity,
+      const std::array<std::int32_t, 3>& serialized_position,
+      std::int16_t orientation_units);
 
   /// Moves one complete logical body out of this world. The extracted value
   /// retains every mutable runtime field, its immutable shared resource, and
@@ -377,7 +400,8 @@ class Runtime {
       std::string_view definition_name,
       std::string_view model_resource,
       bool apply_transform,
-      bool activate);
+      bool activate,
+      bool reuse_existing = true);
 
   ModelLoader m_model_loader;
   CtlBankLoader m_ctl_bank_loader;

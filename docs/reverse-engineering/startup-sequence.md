@@ -71,7 +71,11 @@ Selecting **New Game**, the Kay'l portal/arrival sequence, the subsequent transi
 
 The later compact-VM handoff separates residency, physical decor attachment,
 and current AREA ownership. Seamless `0x2F(target,-1,-1)` prepares and attaches
-the alternate AREA while the source remains attached and current. `0x47`
+the alternate AREA while the source remains attached and current. Resident
+preparation loads dependencies and object placements, constructs every AREA
+table-0 character body, applies authored transforms and persistent activation,
+and binds each mutable placement to its `BodyIdentity` before primary event 1
+is queued. Compact activation is not a lazy character constructor. `0x47`
 attaches IAM/SCENE, materializes only SCENE-local entities, queues its independent
 compact event, and updates the AREA-to-SCENE mapping; it does not switch AREA
 ownership. Ordinary physical support performs the event-9-equivalent current

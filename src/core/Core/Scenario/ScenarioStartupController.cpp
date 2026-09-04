@@ -154,6 +154,7 @@ struct PreparedAreaWorld {
   std::optional<std::string> decor_path;
   std::string scenario_path;
   std::string sky_name;
+  std::vector<Character::MaterializedPlacementResult> characters;
 };
 
 /// Derives authored AREA dependencies and prepares one inactive world context.
@@ -202,10 +203,18 @@ std::expected<PreparedAreaWorld, std::string> prepare_area_world(ScenarioManager
         fmt::format("AREA {} object materialization: {}", area_id, materialized.error()));
   }
 
+  auto characters{
+      runtime->character_runtime().preload_area_characters(area_id, area_record, *game_state)};
+  if (!characters) {
+    return fail_after_world_load(
+        fmt::format("AREA {} character materialization: {}", area_id, characters.error()));
+  }
+
   return PreparedAreaWorld{.context = world.value(),
       .decor_path = std::move(decor_path),
       .scenario_path = scenario_path.value_or(std::string{}),
-      .sky_name = area_record.sky_3do_name()};
+      .sky_name = area_record.sky_3do_name(),
+      .characters = std::move(characters).value()};
 }
 
 /// Opcodes recorded as provisional bootstrap actions in the startup trace.
@@ -450,8 +459,6 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
   area_slot.primary.emplace(std::move(parsed_record).value());
   area_slot.primary_area_id = m_initial_area_id;
   area_slot.secondary_area_id = m_linked_area_id;
-  m_character_references.install_area(
-      m_active_area_slot, area_slot.primary_area_id, *area_slot.primary);
   if (auto refreshed{refresh_active_zones()}; !refreshed) {
     m_last_error = fmt::format("initial resident zone refresh: {}", refreshed.error());
     return std::expected<void, std::string>{std::unexpect, m_last_error};
@@ -473,6 +480,14 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
   if (!prepared) {
     m_last_error = prepared.error();
     App::Log::error(LogCategory::Startup, "Startup failed: {}", m_last_error);
+    return std::expected<void, std::string>{std::unexpect, m_last_error};
+  }
+  if (auto bound{bind_preloaded_area_characters(m_active_area_slot, prepared->characters)};
+      !bound) {
+    m_last_error = fmt::format("initial AREA character binding: {}", bound.error());
+    if (auto unloaded{manager.unload_world_context(area_slot.world_scene_id)}; !unloaded) {
+      m_last_error = fmt::format("{}; rollback failed: {}", m_last_error, unloaded.error());
+    }
     return std::expected<void, std::string>{std::unexpect, m_last_error};
   }
   m_initial_world_scenario_path = prepared->scenario_path;
@@ -859,7 +874,7 @@ std::expected<void, std::string> ScenarioStartupController::activate_primary_cha
     return std::expected<void, std::string>{
         std::unexpect, "primary AREA character activation owner has no parsed AREA"};
   }
-  ScenarioRuntime* const scenario_runtime{m_manager->world_runtime(slot.world_scene_id)};
+  const ScenarioRuntime* const scenario_runtime{m_manager->world_runtime(slot.world_scene_id)};
   if (scenario_runtime == nullptr) {
     return std::expected<void, std::string>{
         std::unexpect, "primary AREA character activation owner has no world runtime"};
@@ -872,55 +887,32 @@ std::expected<void, std::string> ScenarioStartupController::activate_primary_cha
   }
 
   Character::BodyIdentity body_identity{0};
+  const RuntimeCharacterReferenceEntry* target_placement{nullptr};
   const auto resolved{
       m_character_references.resolve(owner_slot, slot.primary_area_id, request.character_id)};
   if (resolved.status == CharacterReferenceResolutionStatus::k_resolved &&
       resolved.resolved.has_value()) {
     body_identity = resolved.resolved->body_identity;
-  } else if (resolved.status == CharacterReferenceResolutionStatus::k_placement_without_body) {
-    const auto area_placement{m_character_references.find_mutable_placement(
-        owner_slot, slot.primary_area_id, request.character_id)};
     const auto placement_index{
-        area_placement.has_value()
-            ? area_placement
+        resolved.resolved->source == CharacterReferenceResolutionSource::k_area_placement
+            ? m_character_references.find_mutable_placement(
+                  owner_slot, slot.primary_area_id, request.character_id)
             : m_character_references.find_mutable_scene_placement(
                   owner_slot, slot.primary_area_id, slot.scene_id, request.character_id)};
-    const RuntimeCharacterReferenceEntry* const placement{
-        placement_index.has_value() ? m_character_references.placement(placement_index.value())
-                                    : nullptr};
-    if (placement == nullptr ||
-        placement->binding_state != CharacterPlacementBindingState::k_unmaterialized) {
-      return std::expected<void, std::string>{std::unexpect,
-          fmt::format("character reference {} matched a placement without a materializable body",
-              request.character_id)};
+    target_placement = placement_index.has_value()
+                           ? m_character_references.placement(placement_index.value())
+                           : nullptr;
+  } else if (resolved.status == CharacterReferenceResolutionStatus::k_placement_without_body) {
+    if (resolved.binding_state == CharacterPlacementBindingState::k_explicitly_unbound) {
+      return {};
     }
-
-    std::expected<Character::MaterializedCharacterResult, std::string> materialized;
-    if (placement->source == CharacterReferenceSource::k_area) {
-      materialized = scenario_runtime->activate_character(slot.primary_area_id,
-          *slot.primary,
-          Script::AreaCharacterActivationRequest{.character_id = placement->serialized_character_id,
-              .apply_area_transform = request.apply_area_transform});
-    } else if (slot.scene.has_value()) {
-      materialized = scenario_runtime->character_runtime().ensure_scene_character(
-          slot.primary_area_id, slot.scene_id, *slot.scene, placement->serialized_character_id);
-    } else {
-      return std::expected<void, std::string>{
-          std::unexpect, "character reference matched a SCENE placement without an attached SCENE"};
-    }
-    if (!materialized) {
-      return std::expected<void, std::string>{std::unexpect, std::move(materialized).error()};
-    }
-    body_identity = materialized->body_identity;
-    if (auto bound{m_character_references.bind_placement_body(placement->source,
-            placement->resident_slot,
-            placement->area_id,
-            placement->scene_id,
-            placement->placement_index,
-            body_identity)};
-        !bound) {
-      return bound;
-    }
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format("AREA {} slot {} placement {} character reference {} remained unmaterialized "
+                    "after resident preparation",
+            slot.primary_area_id,
+            owner_slot,
+            resolved.placement_index.value_or(0U),
+            request.character_id)};
   } else {
     return std::expected<void, std::string>{std::unexpect,
         fmt::format("character reference {} has no live body", request.character_id)};
@@ -933,6 +925,10 @@ std::expected<void, std::string> ScenarioStartupController::activate_primary_cha
             request.character_id,
             body_identity)};
   }
+  if (target_placement == nullptr || m_manager->game_state() == nullptr) {
+    return std::expected<void, std::string>{
+        std::unexpect, "resolved character placement metadata is unavailable"};
+  }
   if (auto activated{located->runtime->character_runtime().activate_body(body_identity)};
       !activated) {
     return activated;
@@ -941,6 +937,36 @@ std::expected<void, std::string> ScenarioStartupController::activate_primary_cha
           located->runtime->character_runtime().set_body_presentation_enabled(body_identity, true)};
       !presented) {
     return presented;
+  }
+  std::uint16_t state_bit_index{0};
+  if (target_placement->source == CharacterReferenceSource::k_area) {
+    const auto placements{slot.primary->character_placements()};
+    state_bit_index = placements.at(target_placement->placement_index).state_bit_index;
+    if (request.apply_area_transform) {
+      const Omikron::IamAreaCharacterRecord& placement{
+          placements.at(target_placement->placement_index)};
+      if (auto placed{located->runtime->character_runtime().apply_placement_transform(
+              body_identity, placement.serialized_position, placement.orientation_units)};
+          !placed) {
+        return placed;
+      }
+    }
+  } else if (slot.scene.has_value()) {
+    const auto placements{slot.scene->character_placements()};
+    state_bit_index = placements.at(target_placement->placement_index).state_bit_index;
+    if (request.apply_area_transform) {
+      const Omikron::IamSceneCharacterRecord& placement{
+          placements.at(target_placement->placement_index)};
+      if (auto placed{located->runtime->character_runtime().apply_placement_transform(
+              body_identity, placement.serialized_position, placement.orientation_units)};
+          !placed) {
+        return placed;
+      }
+    }
+  }
+  if (auto persisted{m_manager->game_state()->set_character_flag(state_bit_index, true)};
+      !persisted) {
+    return persisted;
   }
   if (const Character::RuntimeCharacter* const character{located->character};
       character != nullptr) {
@@ -1037,6 +1063,61 @@ std::expected<void, std::string> ScenarioStartupController::install_primary_area
       slot.primary_area_id,
       owner_slot,
       m_area_script_sequences.at(owner_slot));
+  return {};
+}
+
+std::expected<void, std::string> ScenarioStartupController::bind_preloaded_area_characters(
+    const std::size_t owner_slot,
+    const std::vector<Character::MaterializedPlacementResult>& materialized) {
+  if (owner_slot >= m_area_slots.size() || !m_area_slots.at(owner_slot).primary.has_value()) {
+    return std::expected<void, std::string>{
+        std::unexpect, "AREA character binding has no resident owner"};
+  }
+  const RuntimeAreaSlot& slot{m_area_slots.at(owner_slot)};
+  const Omikron::IamAreaRecord* const primary{
+      slot.primary.has_value() ? std::addressof(*slot.primary) : nullptr};
+  if (primary == nullptr) {
+    return std::expected<void, std::string>{
+        std::unexpect, "AREA character binding has no parsed AREA"};
+  }
+  m_character_references.install_area(owner_slot, slot.primary_area_id, *primary);
+  std::size_t initially_active{0};
+  for (const Character::MaterializedPlacementResult& placement : materialized) {
+    if (auto bound{m_character_references.bind_placement_body(CharacterReferenceSource::k_area,
+            owner_slot,
+            slot.primary_area_id,
+            -1,
+            placement.placement_index,
+            placement.body_identity)};
+        !bound) {
+      m_character_references.remove_area(owner_slot, slot.primary_area_id);
+      return std::expected<void, std::string>{std::unexpect,
+          fmt::format("AREA {} slot {} placement {} binding failed: {}",
+              slot.primary_area_id,
+              owner_slot,
+              placement.placement_index,
+              bound.error())};
+    }
+    initially_active += placement.initially_active ? 1U : 0U;
+  }
+  const std::size_t placement_count{primary->character_placements().size()};
+  if (materialized.size() != placement_count) {
+    m_character_references.remove_area(owner_slot, slot.primary_area_id);
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format("AREA {} slot {} character residency is incomplete: placements={} bound={}",
+            slot.primary_area_id,
+            owner_slot,
+            placement_count,
+            materialized.size())};
+  }
+  App::Log::info(LogCategory::Scenario,
+      "AREA {} character residency prepared — placements={} bound={} initiallyActive={} "
+      "inactive={}",
+      slot.primary_area_id,
+      placement_count,
+      materialized.size(),
+      initially_active,
+      materialized.size() - initially_active);
   return {};
 }
 
@@ -1172,8 +1253,18 @@ std::expected<void, std::string> ScenarioStartupController::service_area_transit
   destination_slot.scene.reset();
   destination_slot.scene_id = -1;
   destination_slot.scene_script.reset();
-  m_character_references.install_area(
-      transition.destination_slot, destination_slot.primary_area_id, *destination_slot.primary);
+  if (auto bound{bind_preloaded_area_characters(transition.destination_slot, prepared->characters)};
+      !bound) {
+    if (auto unloaded{m_manager->unload_world_context(destination_slot.world_scene_id)};
+        !unloaded) {
+      return fail_transition(fmt::format("destination character binding: {}; rollback failed: {}",
+          bound.error(),
+          unloaded.error()));
+    }
+    destination_slot.primary.reset();
+    destination_slot.primary_area_id = -1;
+    return fail_transition(fmt::format("destination character binding: {}", bound.error()));
+  }
 
   // Runtime creates the destination AREA's compact context as part of loading
   // the resident AREA and queues event 1 immediately. It does not replace the
@@ -2920,7 +3011,16 @@ std::expected<void, std::string> ScenarioStartupController::deactivate_owner_cha
   const auto resolved{
       m_character_references.resolve(owner_slot, slot.primary_area_id, request.character_id)};
   if (resolved.status == CharacterReferenceResolutionStatus::k_placement_without_body) {
-    return {};
+    if (resolved.binding_state == CharacterPlacementBindingState::k_explicitly_unbound) {
+      return {};
+    }
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format("AREA {} slot {} placement {} character reference {} remained unmaterialized "
+                    "after resident preparation",
+            slot.primary_area_id,
+            owner_slot,
+            resolved.placement_index.value_or(0U),
+            request.character_id)};
   }
   if (resolved.status != CharacterReferenceResolutionStatus::k_resolved ||
       !resolved.resolved.has_value()) {
@@ -2935,7 +3035,36 @@ std::expected<void, std::string> ScenarioStartupController::deactivate_owner_cha
   if (!located.has_value()) {
     return {};
   }
-  return located->runtime->character_runtime().deactivate_body(body_identity);
+  if (auto deactivated{located->runtime->character_runtime().deactivate_body(body_identity)};
+      !deactivated) {
+    return deactivated;
+  }
+  const auto placement_index{
+      resolved.resolved->source == CharacterReferenceResolutionSource::k_area_placement
+          ? m_character_references.find_mutable_placement(
+                owner_slot, slot.primary_area_id, request.character_id)
+          : m_character_references.find_mutable_scene_placement(
+                owner_slot, slot.primary_area_id, slot.scene_id, request.character_id)};
+  const RuntimeCharacterReferenceEntry* const placement{
+      placement_index.has_value() ? m_character_references.placement(placement_index.value())
+                                  : nullptr};
+  if (placement == nullptr || m_manager->game_state() == nullptr) {
+    return std::expected<void, std::string>{
+        std::unexpect, "resolved character placement metadata is unavailable"};
+  }
+  std::uint16_t state_bit_index{0};
+  if (placement->source == CharacterReferenceSource::k_area) {
+    state_bit_index =
+        slot.primary->character_placements().at(placement->placement_index).state_bit_index;
+  } else {
+    if (!slot.scene.has_value()) {
+      return std::expected<void, std::string>{
+          std::unexpect, "resolved SCENE character placement has no parsed SCENE"};
+    }
+    state_bit_index =
+        slot.scene->character_placements().at(placement->placement_index).state_bit_index;
+  }
+  return m_manager->game_state()->set_character_flag(state_bit_index, false);
 }
 
 std::expected<std::size_t, std::string> ScenarioStartupController::launch_character_script(

@@ -15,7 +15,15 @@ Runtime's global actor-slot namespace maps each live slot to its canonical
 character ID. OpenNomad represents that slot as `Character::BodyIdentity`, not
 as `RuntimeCharacter::instance_id`; the latter is vector-local and can be
 renumbered. Canonical IDs remain persistent profile/save data and do not change
-when an AREA or SCENE placement is rebound during possession.
+when an AREA or SCENE placement is rebound during possession. A canonical ID
+is not a unique live-entity key: two resident worlds may contain distinct
+placements with the same character ID and different `BodyIdentity` values.
+
+AREA/SCENE table-0 `+0x00` is a mutable reference into this actor-slot
+namespace. OpenNomad's immutable IAM parser keeps the serialized seed and the
+`CharacterReferenceRuntime` overlay stores the live `BodyIdentity`. Camera
+attachments, body transfer, placement rebinding, and structured character
+launch all carry this same stable identity.
 
 ## Reference executable
 

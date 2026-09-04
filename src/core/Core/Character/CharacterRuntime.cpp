@@ -22,6 +22,7 @@
 
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/GameDataLoader.hpp"
+#include "Core/GameState.hpp"
 #include "Core/Omikron/CtlControlSet.hpp"
 #include "Core/Omikron/IamArea.hpp"
 #include "Core/Omikron/IamScene.hpp"
@@ -383,6 +384,63 @@ std::expected<MaterializedCharacterResult, std::string> Runtime::ensure_area_cha
       true);
 }
 
+std::expected<std::vector<MaterializedPlacementResult>, std::string>
+Runtime::preload_area_characters(const std::int32_t area_id,
+    const Omikron::IamAreaRecord& area,
+    const App::GameState& game_state) {
+  std::vector<MaterializedPlacementResult> materialized;
+  const std::vector<Omikron::IamAreaCharacterRecord> placements{area.character_placements()};
+  materialized.reserve(placements.size());
+  const auto roll_back = [this, &materialized]() {
+    std::erase_if(m_characters, [&materialized](const RuntimeCharacter& character) {
+      return std::ranges::any_of(
+          materialized, [&character](const MaterializedPlacementResult& result) {
+            return result.body_identity == character.body_identity;
+          });
+    });
+  };
+
+  for (std::size_t index{0}; index < placements.size(); ++index) {
+    const Omikron::IamAreaCharacterRecord& placement{placements.at(index)};
+    const auto definition{area.character_definition_by_character_id(placement.character_id)};
+    if (!definition.has_value()) {
+      roll_back();
+      return std::expected<std::vector<MaterializedPlacementResult>, std::string>{std::unexpect,
+          fmt::format("AREA character placement {} (reference {}) has no matching definition",
+              index,
+              placement.character_id)};
+    }
+    auto initially_active{game_state.character_flag(placement.state_bit_index)};
+    if (!initially_active) {
+      roll_back();
+      return std::expected<std::vector<MaterializedPlacementResult>, std::string>{
+          std::unexpect, std::move(initially_active).error()};
+    }
+    auto result{materialize_character(area_id,
+        std::nullopt,
+        placement.character_id,
+        placement.serialized_position,
+        placement.orientation_units,
+        definition->name,
+        definition->model_resource,
+        true,
+        initially_active.value(),
+        false)};
+    if (!result) {
+      roll_back();
+      return std::expected<std::vector<MaterializedPlacementResult>, std::string>{
+          std::unexpect, std::move(result).error()};
+    }
+    materialized.push_back(MaterializedPlacementResult{.placement_index = index,
+        .body_identity = result->body_identity,
+        .initially_active = initially_active.value()});
+  }
+  for (std::size_t index{0}; index < m_characters.size(); ++index) {
+    m_characters.at(index).instance_id = index;
+  }
+  return materialized;
+}
+
 std::expected<MaterializedCharacterResult, std::string> Runtime::ensure_scene_character(
     const std::int32_t area_id,
     const std::int32_t scene_id,
@@ -521,6 +579,27 @@ std::expected<void, std::string> Runtime::deactivate_body(const BodyIdentity bod
   return {};
 }
 
+std::expected<void, std::string> Runtime::apply_placement_transform(
+    const BodyIdentity body_identity,
+    const std::array<std::int32_t, 3>& serialized_position,
+    const std::int16_t orientation_units) {
+  RuntimeCharacter* const character{find_body(body_identity)};
+  if (character == nullptr) {
+    return std::expected<void, std::string>{
+        std::unexpect, fmt::format("body {} is not materialized", body_identity)};
+  }
+  character->serialized_area_position = serialized_position;
+  character->serialized_orientation_units = orientation_units;
+  character->runtime_orientation_degrees = App::Runtime::area_angle_to_degrees(orientation_units);
+  character->transform.translation = App::Runtime::area_position_to_inches(serialized_position);
+  character->set_principal_orientation(App::Runtime::Vec3{
+      .x = 0.0F, .y = static_cast<float>(character->runtime_orientation_degrees), .z = 0.0F});
+  character->transform.scale = App::Runtime::Vec3{.x = 1.0F, .y = 1.0F, .z = 1.0F};
+  PhysicalMotionService::synchronize(*character);
+  character->pose_revision += 1U;
+  return {};
+}
+
 std::expected<RuntimeCharacter, std::string> Runtime::extract_body(
     const BodyIdentity body_identity) {
   const auto found{
@@ -613,7 +692,8 @@ std::expected<MaterializedCharacterResult, std::string> Runtime::materialize_cha
     const std::string_view definition_name,
     const std::string_view model_resource,
     const bool apply_transform,
-    const bool activate) {
+    const bool activate,
+    const bool reuse_existing) {
   if (model_resource.empty()) {
     return std::expected<MaterializedCharacterResult, std::string>{
         std::unexpect, fmt::format("character definition {} has no model resource", character_id)};
@@ -633,7 +713,7 @@ std::expected<MaterializedCharacterResult, std::string> Runtime::materialize_cha
     m_model_resources.emplace(std::string{model_resource}, resource);
   }
 
-  RuntimeCharacter* character{find(character_id)};
+  RuntimeCharacter* character{reuse_existing ? find(character_id) : nullptr};
   const bool newly_created{character == nullptr};
   if (character == nullptr) {
     m_characters.push_back(RuntimeCharacter{.body_identity = allocate_body_identity(),

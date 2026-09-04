@@ -317,9 +317,30 @@ void install_stub_ctl_loader(App::ScenarioRuntime& runtime) {
       });
 }
 
+void install_resident_model_loader(
+    App::Character::Runtime& runtime, const App::Character::Runtime::ModelLoader& model_loader) {
+  runtime.set_model_loader(model_loader);
+  for (const App::Character::RuntimeCharacter& resident : runtime.characters()) {
+    App::Character::RuntimeCharacter* const character{runtime.find_body(resident.body_identity)};
+    REQUIRE(character != nullptr);
+    auto resource{model_loader(character->model_resource_name)};
+    REQUIRE(resource.has_value());
+    character->model_resource = std::move(resource).value();
+    character->runtime_objects = character->model_resource->model.runtime_objects;
+    character->object_poses.assign(
+        character->runtime_objects.size(), App::Character::BodyAnimationObjectPose{});
+    character->posed_groups = character->model_resource->groups;
+    character->body_animation = App::Character::BodyAnimationPlayback{};
+    character->dialog_performance.reset();
+    character->pose_owner = App::Character::PoseOwner::k_model_defaults;
+    App::Character::PhysicalMotionService::synchronize(*character);
+    character->pose_revision += 1U;
+  }
+}
+
 void install_collision_body_model_loader(
     App::ScenarioRuntime& runtime, const float radius = 10.0F) {
-  runtime.character_runtime().set_model_loader(
+  install_resident_model_loader(runtime.character_runtime(),
       [radius](const std::string_view name)
           -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
         auto resource{std::make_shared<App::Character::ModelResource>()};
@@ -1031,7 +1052,7 @@ std::vector<std::byte> make_minimal_character_3do() {
       .u32(0)
       .u32(1)
       .u32(0)
-      .chars("ROOT", 20)
+      .chars("UBassin", 20)
       .f32(0.0F)
       .f32(0.0F)
       .f32(0.0F)
@@ -1052,6 +1073,12 @@ class TempDirectory {
   TempDirectory() : m_root{std::filesystem::temp_directory_path() / "opennomad-startup-test"} {
     std::filesystem::remove_all(m_root);
     std::filesystem::create_directories(m_root);
+    for (const std::string_view model : {"HO1_FNM", "CURRENT_BO"}) {
+      write_bytes(m_root / "MESHES" / "PERSOS" / (std::string{model} + ".3DO"),
+          make_minimal_character_3do());
+      write_bytes(m_root / "MESHES" / "PERSOS" / (std::string{model} + ".3DT"),
+          {std::byte{0}, std::byte{0}, std::byte{0}, std::byte{0}});
+    }
   }
 
   ~TempDirectory() {
@@ -1250,6 +1277,33 @@ void write_explicitly_unbound_activation_fixtures(const TempDirectory& temp) {
   write_bytes(temp.root() / "MESHES" / "DECORS" / "GRID.3DO", make_minimal_3do());
 }
 
+void write_inactive_character_script_fixtures(const TempDirectory& temp, const bool tracked) {
+  Buffer script;
+  script.u8(tracked ? 0x3CU : 0x3BU).u16(310).u16(221).u16(0).u8(0x03);
+  std::vector<std::byte> area{make_area_archive()};
+  std::memcpy(area.data() + 0x800U + 0x3FCU, script.data().data(), script.data().size());
+  write_bytes(temp.root() / "IAM" / "START", make_start());
+  write_bytes(temp.root() / "IAM" / "GLOBAL", App::Tests::make_empty_iam_global());
+  write_bytes(temp.root() / "IAM" / "AREA", area);
+  write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
+  write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_kayl_arrives_scx(221));
+  write_bytes(temp.root() / "MESHES" / "DECORS" / "GRID.3DO", make_minimal_3do());
+}
+
+void write_character_activation_fixtures(
+    const TempDirectory& temp, const bool apply_area_transform) {
+  Buffer script;
+  script.u8(0x4E).u16(310).u16(apply_area_transform ? 1U : 0U).u8(0x03);
+  std::vector<std::byte> area{make_area_archive()};
+  std::memcpy(area.data() + 0x800U + 0x3FCU, script.data().data(), script.data().size());
+  write_bytes(temp.root() / "IAM" / "START", make_start());
+  write_bytes(temp.root() / "IAM" / "GLOBAL", App::Tests::make_empty_iam_global());
+  write_bytes(temp.root() / "IAM" / "AREA", area);
+  write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
+  write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_minimal_scx());
+  write_bytes(temp.root() / "MESHES" / "DECORS" / "GRID.3DO", make_minimal_3do());
+}
+
 void write_character_value_fixtures(const TempDirectory& temp) {
   Buffer script;
   script.u8(0x38).u16(136);
@@ -1323,6 +1377,32 @@ void write_camera_namespace_fixtures(
 }  // namespace
 
 TEST_SUITE("Core::Scenario::ScenarioStartupController") {
+  TEST_CASE("AREA character residency is bound before the primary event can execute") {
+    const TempDirectory temp;
+    write_boot_fixtures(temp);
+    const ScopedGameDataRoot root{temp.root()};
+    App::ScenarioManager manager;
+    App::ScenarioStartupController controller;
+
+    REQUIRE(controller.initialize(manager).has_value());
+    App::ScenarioRuntime* const runtime{manager.world_runtime(0U)};
+    REQUIRE(runtime != nullptr);
+    REQUIRE_EQ(runtime->character_runtime().characters().size(), 2U);
+    REQUIRE_EQ(controller.character_reference_entries().size(), 2U);
+    for (const App::RuntimeCharacterReferenceEntry& entry :
+        controller.character_reference_entries()) {
+      CHECK(entry.source == App::CharacterReferenceSource::k_area);
+      CHECK(entry.binding_state == App::CharacterPlacementBindingState::k_bound);
+      REQUIRE(entry.body_identity.has_value());
+      const App::Character::RuntimeCharacter* const body{
+          runtime->character_runtime().find_body(entry.body_identity.value())};
+      REQUIRE(body != nullptr);
+      CHECK_FALSE(body->active);
+      CHECK_FALSE(body->area_present);
+    }
+    CHECK_FALSE(controller.ticked());
+  }
+
   TEST_CASE("new session requires a valid IAM/GLOBAL before compact execution") {
     const TempDirectory temp;
     write_boot_fixtures(temp);
@@ -1513,7 +1593,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(controller.initialize(manager).has_value());
     App::ScenarioRuntime* runtime{manager.world_runtime(0)};
     REQUIRE(runtime != nullptr);
-    runtime->character_runtime().set_model_loader(
+    install_resident_model_loader(runtime->character_runtime(),
         [](const std::string_view name)
             -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
           auto resource{std::make_shared<App::Character::ModelResource>()};
@@ -1591,7 +1671,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(controller.initialize(manager).has_value());
     App::ScenarioRuntime* runtime{manager.world_runtime(0)};
     REQUIRE(runtime != nullptr);
-    runtime->character_runtime().set_model_loader(
+    install_resident_model_loader(runtime->character_runtime(),
         [](const std::string_view name)
             -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
           auto resource{std::make_shared<App::Character::ModelResource>()};
@@ -1653,7 +1733,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(controller.initialize(manager).has_value());
     App::ScenarioRuntime* runtime{manager.world_runtime(0)};
     REQUIRE(runtime != nullptr);
-    runtime->character_runtime().set_model_loader(
+    install_resident_model_loader(runtime->character_runtime(),
         [](const std::string_view name)
             -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
           auto resource{std::make_shared<App::Character::ModelResource>()};
@@ -1694,7 +1774,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(controller.initialize(manager).has_value());
     App::ScenarioRuntime* runtime{manager.world_runtime(0)};
     REQUIRE(runtime != nullptr);
-    runtime->character_runtime().set_model_loader(
+    install_resident_model_loader(runtime->character_runtime(),
         [](const std::string_view name)
             -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
           auto resource{std::make_shared<App::Character::ModelResource>()};
@@ -1754,7 +1834,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(controller.initialize(manager).has_value());
     App::ScenarioRuntime* runtime{manager.world_runtime(0)};
     REQUIRE(runtime != nullptr);
-    runtime->character_runtime().set_model_loader(
+    install_resident_model_loader(runtime->character_runtime(),
         [](const std::string_view name)
             -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
           auto resource{std::make_shared<App::Character::ModelResource>()};
@@ -1797,7 +1877,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(controller.initialize(manager).has_value());
     App::ScenarioRuntime* runtime{manager.world_runtime(0)};
     REQUIRE(runtime != nullptr);
-    runtime->character_runtime().set_model_loader(
+    install_resident_model_loader(runtime->character_runtime(),
         [](const std::string_view name)
             -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
           auto resource{std::make_shared<App::Character::ModelResource>()};
@@ -1883,7 +1963,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(controller.initialize(manager).has_value());
     App::ScenarioRuntime* runtime{manager.world_runtime(0)};
     REQUIRE(runtime != nullptr);
-    runtime->character_runtime().set_model_loader(
+    install_resident_model_loader(runtime->character_runtime(),
         [](const std::string_view name)
             -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
           auto resource{std::make_shared<App::Character::ModelResource>()};
@@ -1927,7 +2007,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(controller.initialize(manager).has_value());
     App::ScenarioRuntime* runtime{manager.world_runtime(0)};
     REQUIRE(runtime != nullptr);
-    runtime->character_runtime().set_model_loader(
+    install_resident_model_loader(runtime->character_runtime(),
         [](const std::string_view name)
             -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
           auto resource{std::make_shared<App::Character::ModelResource>()};
@@ -1964,7 +2044,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     App::ScenarioRuntime* destination{manager.world_runtime(2U)};
     REQUIRE(source != nullptr);
     REQUIRE(destination != nullptr);
-    source->character_runtime().set_model_loader(
+    install_resident_model_loader(source->character_runtime(),
         [](const std::string_view name)
             -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
           auto resource{std::make_shared<App::Character::ModelResource>()};
@@ -2007,7 +2087,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     App::ScenarioRuntime* runtime{manager.world_runtime(0)};
     REQUIRE(runtime != nullptr);
     std::size_t model_loads{0};
-    runtime->character_runtime().set_model_loader(
+    install_resident_model_loader(runtime->character_runtime(),
         [&model_loads](const std::string_view name)
             -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
           ++model_loads;
@@ -2072,7 +2152,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(manager.load_world_context(2U, std::nullopt, "SCPTDATA/B.SCX").has_value());
     App::ScenarioRuntime* const other_runtime{manager.world_runtime(2U)};
     REQUIRE(other_runtime != nullptr);
-    runtime->character_runtime().set_model_loader(
+    install_resident_model_loader(runtime->character_runtime(),
         [](const std::string_view name)
             -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
           auto resource{std::make_shared<App::Character::ModelResource>()};
@@ -2099,10 +2179,16 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
             .has_value());
     aliased_body = other_runtime->character_runtime().find_body(body_identity);
     REQUIRE(aliased_body != nullptr);
+    const std::shared_ptr<const App::Character::ModelResource> model_resource{
+        aliased_body->model_resource};
+    const std::size_t resident_body_count{runtime->character_runtime().characters().size() +
+                                          other_runtime->character_runtime().characters().size()};
     REQUIRE(controller.begin_tick(1.0F / 30.0F).has_value());
     CHECK(runtime->character_runtime().find(310) == nullptr);
     CHECK_FALSE(aliased_body->active);
     CHECK_FALSE(aliased_body->area_present);
+    REQUIRE(manager.game_state() != nullptr);
+    CHECK_FALSE(manager.game_state()->character_flag(468).value());
     runtime->tick(1.0F / 30.0F);
     REQUIRE(controller.finish_tick(1.0F / 30.0F).has_value());
 
@@ -2110,6 +2196,11 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK(aliased_body->active);
     CHECK(aliased_body->area_present);
     CHECK_EQ(aliased_body->body_identity, body_identity);
+    CHECK(aliased_body->model_resource == model_resource);
+    CHECK_EQ(runtime->character_runtime().characters().size() +
+                 other_runtime->character_runtime().characters().size(),
+        resident_body_count);
+    CHECK(manager.game_state()->character_flag(468).value());
   }
 
   TEST_CASE("activation does not rematerialize an explicitly-unbound placement") {
@@ -2121,7 +2212,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(controller.initialize(manager).has_value());
     App::ScenarioRuntime* runtime{manager.world_runtime(0)};
     REQUIRE(runtime != nullptr);
-    runtime->character_runtime().set_model_loader(
+    install_resident_model_loader(runtime->character_runtime(),
         [](const std::string_view name)
             -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
           auto resource{std::make_shared<App::Character::ModelResource>()};
@@ -2130,11 +2221,121 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
           return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
         });
 
+    REQUIRE_EQ(runtime->character_runtime().characters().size(), 2U);
+    const App::Character::RuntimeCharacter* const original_body{
+        runtime->character_runtime().find(310)};
+    REQUIRE(original_body != nullptr);
+    const App::Character::BodyIdentity original_identity{original_body->body_identity};
     const auto result{controller.tick()};
-    REQUIRE_FALSE(result.has_value());
-    CHECK(result.error().find("without a materializable body") != std::string::npos);
-    REQUIRE_EQ(runtime->character_runtime().characters().size(), 1U);
-    CHECK_EQ(runtime->character_runtime().characters().front().character_id, 310);
+    REQUIRE(result.has_value());
+    REQUIRE_EQ(runtime->character_runtime().characters().size(), 2U);
+    REQUIRE(runtime->character_runtime().find_body(original_identity) != nullptr);
+  }
+
+  TEST_CASE("0x3B starts an explicit structured script on an inactive resident body") {
+    const TempDirectory temp;
+    write_inactive_character_script_fixtures(temp, false);
+    const ScopedGameDataRoot root{temp.root()};
+    App::ScenarioManager manager;
+    App::ScenarioStartupController controller;
+    REQUIRE(controller.initialize(manager).has_value());
+    App::ScenarioRuntime* const runtime{manager.world_runtime(0U)};
+    REQUIRE(runtime != nullptr);
+    const App::Character::RuntimeCharacter* const body{runtime->character_runtime().find(310)};
+    REQUIRE(body != nullptr);
+    const App::Character::BodyIdentity body_identity{body->body_identity};
+    CHECK_FALSE(body->active);
+    CHECK_FALSE(body->area_present);
+
+    REQUIRE(controller.tick().has_value());
+    REQUIRE(controller.area_script() != nullptr);
+    CHECK_EQ(controller.area_script()->instruction_pointer(), 0x404U);
+    CHECK(controller.area_script()->state() != App::Script::AreaScriptState::k_waiting);
+    CHECK(controller.area_script()->state() != App::Script::AreaScriptState::k_failed);
+    REQUIRE_EQ(runtime->script_runtime()->instances().size(), 1U);
+    const App::Script::ScriptInstance& instance{runtime->script_runtime()->instances().front()};
+    CHECK_EQ(instance.launch_context.character_id, std::optional<std::int16_t>{310});
+    CHECK_EQ(instance.launch_context.character_body_identity,
+        std::optional<App::Character::BodyIdentity>{body_identity});
+    CHECK_FALSE(body->active);
+    CHECK_FALSE(body->area_present);
+  }
+
+  TEST_CASE("0x3C tracks an explicit structured script on an inactive resident body") {
+    const TempDirectory temp;
+    write_inactive_character_script_fixtures(temp, true);
+    const ScopedGameDataRoot root{temp.root()};
+    App::ScenarioManager manager;
+    App::ScenarioStartupController controller;
+    REQUIRE(controller.initialize(manager).has_value());
+    App::ScenarioRuntime* const runtime{manager.world_runtime(0U)};
+    REQUIRE(runtime != nullptr);
+    const App::Character::RuntimeCharacter* const body{runtime->character_runtime().find(310)};
+    REQUIRE(body != nullptr);
+    const App::Character::BodyIdentity body_identity{body->body_identity};
+
+    REQUIRE(controller.tick().has_value());
+    REQUIRE(controller.area_script() != nullptr);
+    CHECK(controller.area_script()->state() == App::Script::AreaScriptState::k_waiting);
+    CHECK_EQ(controller.area_script()->wait_state(), 4U);
+    REQUIRE_EQ(runtime->script_runtime()->instances().size(), 1U);
+    const App::Script::ScriptInstance& instance{runtime->script_runtime()->instances().front()};
+    CHECK_EQ(controller.area_script()->wait_info().character_script_instance,
+        std::optional<std::size_t>{instance.instance_id});
+    CHECK_EQ(instance.launch_context.character_body_identity,
+        std::optional<App::Character::BodyIdentity>{body_identity});
+    CHECK_FALSE(body->active);
+    CHECK_FALSE(body->area_present);
+
+    runtime->tick(1.0F);
+    REQUIRE(controller.tick().has_value());
+    CHECK_EQ(controller.area_script()->instruction_pointer(), 0x404U);
+    CHECK(controller.area_script()->state() != App::Script::AreaScriptState::k_waiting);
+    CHECK(controller.area_script()->state() != App::Script::AreaScriptState::k_failed);
+  }
+
+  TEST_CASE("0x4E reuses the resident body and conditionally restores authored placement") {
+    const auto verify_activation = [](const bool apply_area_transform) {
+      const TempDirectory temp;
+      write_character_activation_fixtures(temp, apply_area_transform);
+      const ScopedGameDataRoot root{temp.root()};
+      App::ScenarioManager manager;
+      App::ScenarioStartupController controller;
+      REQUIRE(controller.initialize(manager).has_value());
+      App::ScenarioRuntime* const runtime{manager.world_runtime(0U)};
+      REQUIRE(runtime != nullptr);
+      App::Character::RuntimeCharacter* const body{runtime->character_runtime().find(310)};
+      REQUIRE(body != nullptr);
+      const App::Character::BodyIdentity body_identity{body->body_identity};
+      const std::shared_ptr<const App::Character::ModelResource> model_resource{
+          body->model_resource};
+      const std::size_t body_count{runtime->character_runtime().characters().size()};
+      body->transform.translation = {.x = 11.0F, .y = 22.0F, .z = 33.0F};
+
+      REQUIRE(controller.tick().has_value());
+      CHECK_EQ(runtime->character_runtime().characters().size(), body_count);
+      CHECK_EQ(body->body_identity, body_identity);
+      CHECK(body->model_resource == model_resource);
+      CHECK(body->active);
+      CHECK(body->area_present);
+      if (apply_area_transform) {
+        CHECK_EQ(body->transform.translation.x,
+            static_cast<float>(App::Runtime::area_position_to_inches(-2588)));
+        CHECK_EQ(body->transform.translation.y,
+            static_cast<float>(App::Runtime::area_position_to_inches(-271)));
+        CHECK_EQ(body->transform.translation.z,
+            static_cast<float>(App::Runtime::area_position_to_inches(-816)));
+      } else {
+        CHECK_EQ(body->transform.translation.x, 11.0F);
+        CHECK_EQ(body->transform.translation.y, 22.0F);
+        CHECK_EQ(body->transform.translation.z, 33.0F);
+      }
+      REQUIRE(manager.game_state() != nullptr);
+      CHECK(manager.game_state()->character_flag(468).value());
+    };
+
+    verify_activation(false);
+    verify_activation(true);
   }
 
   TEST_CASE("ordinary actor service advances generation for each due physical tick") {
@@ -2149,7 +2350,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(controller.initialize(manager).has_value());
     App::ScenarioRuntime* runtime{manager.world_runtime(0)};
     REQUIRE(runtime != nullptr);
-    runtime->character_runtime().set_model_loader(
+    install_resident_model_loader(runtime->character_runtime(),
         [](const std::string_view name)
             -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
           auto resource{std::make_shared<App::Character::ModelResource>()};
@@ -2237,7 +2438,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(controller.initialize(manager).has_value());
     App::ScenarioRuntime* runtime{manager.world_runtime(0)};
     REQUIRE(runtime != nullptr);
-    runtime->character_runtime().set_model_loader(
+    install_resident_model_loader(runtime->character_runtime(),
         [](const std::string_view name)
             -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
           auto resource{std::make_shared<App::Character::ModelResource>()};
@@ -2314,7 +2515,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(controller.initialize(manager).has_value());
     App::ScenarioRuntime* runtime{manager.world_runtime(0)};
     REQUIRE(runtime != nullptr);
-    runtime->character_runtime().set_model_loader(
+    install_resident_model_loader(runtime->character_runtime(),
         [](const std::string_view name)
             -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
           auto resource{std::make_shared<App::Character::ModelResource>()};
@@ -2388,7 +2589,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(controller.initialize(manager).has_value());
     App::ScenarioRuntime* runtime{manager.world_runtime(0)};
     REQUIRE(runtime != nullptr);
-    runtime->character_runtime().set_model_loader(
+    install_resident_model_loader(runtime->character_runtime(),
         [](const std::string_view name)
             -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
           auto resource{std::make_shared<App::Character::ModelResource>()};
@@ -2431,7 +2632,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(controller.initialize(manager).has_value());
     App::ScenarioRuntime* runtime{manager.world_runtime(0)};
     REQUIRE(runtime != nullptr);
-    runtime->character_runtime().set_model_loader(
+    install_resident_model_loader(runtime->character_runtime(),
         [](const std::string_view name)
             -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
           auto resource{std::make_shared<App::Character::ModelResource>()};
@@ -2757,7 +2958,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(controller.initialize(manager).has_value());
     App::ScenarioRuntime* runtime{manager.world_runtime(0)};
     REQUIRE(runtime != nullptr);
-    runtime->character_runtime().set_model_loader(
+    install_resident_model_loader(runtime->character_runtime(),
         [](const std::string_view name)
             -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
           auto resource{std::make_shared<App::Character::ModelResource>()};
@@ -2801,7 +3002,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(controller.initialize(manager).has_value());
     App::ScenarioRuntime* runtime{manager.world_runtime(0)};
     REQUIRE(runtime != nullptr);
-    runtime->character_runtime().set_model_loader(
+    install_resident_model_loader(runtime->character_runtime(),
         [](const std::string_view name)
             -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
           auto resource{std::make_shared<App::Character::ModelResource>()};
@@ -2848,7 +3049,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(controller.initialize(manager).has_value());
     App::ScenarioRuntime* runtime{manager.world_runtime(0)};
     REQUIRE(runtime != nullptr);
-    runtime->character_runtime().set_model_loader(
+    install_resident_model_loader(runtime->character_runtime(),
         [](const std::string_view name)
             -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
           auto resource{std::make_shared<App::Character::ModelResource>()};
@@ -2911,7 +3112,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(controller.initialize(manager).has_value());
     App::ScenarioRuntime* runtime{manager.world_runtime(0)};
     REQUIRE(runtime != nullptr);
-    runtime->character_runtime().set_model_loader(
+    install_resident_model_loader(runtime->character_runtime(),
         [](const std::string_view name)
             -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
           auto resource{std::make_shared<App::Character::ModelResource>()};
@@ -2942,7 +3143,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(controller.initialize(manager).has_value());
     App::ScenarioRuntime* runtime{manager.world_runtime(0)};
     REQUIRE(runtime != nullptr);
-    runtime->character_runtime().set_model_loader(
+    install_resident_model_loader(runtime->character_runtime(),
         [](const std::string_view name)
             -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
           auto resource{std::make_shared<App::Character::ModelResource>()};
@@ -3020,7 +3221,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(controller.initialize(manager).has_value());
     App::ScenarioRuntime* source_runtime{manager.world_runtime(0)};
     REQUIRE(source_runtime != nullptr);
-    source_runtime->character_runtime().set_model_loader(
+    install_resident_model_loader(source_runtime->character_runtime(),
         [](const std::string_view name)
             -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
           auto resource{std::make_shared<App::Character::ModelResource>()};
@@ -3106,7 +3307,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(controller.initialize(manager).has_value());
     App::ScenarioRuntime* source_runtime{manager.world_runtime(0)};
     REQUIRE(source_runtime != nullptr);
-    source_runtime->character_runtime().set_model_loader(
+    install_resident_model_loader(source_runtime->character_runtime(),
         [](const std::string_view name)
             -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
           auto resource{std::make_shared<App::Character::ModelResource>()};
@@ -3166,7 +3367,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(controller.initialize(manager).has_value());
     App::ScenarioRuntime* source_runtime{manager.world_runtime(0)};
     REQUIRE(source_runtime != nullptr);
-    source_runtime->character_runtime().set_model_loader(
+    install_resident_model_loader(source_runtime->character_runtime(),
         [](const std::string_view name)
             -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
           auto resource{std::make_shared<App::Character::ModelResource>()};
@@ -3219,7 +3420,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(controller.initialize(manager).has_value());
     App::ScenarioRuntime* source_runtime{manager.world_runtime(0)};
     REQUIRE(source_runtime != nullptr);
-    source_runtime->character_runtime().set_model_loader(
+    install_resident_model_loader(source_runtime->character_runtime(),
         [](const std::string_view name)
             -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
           auto resource{std::make_shared<App::Character::ModelResource>()};
@@ -3283,7 +3484,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(controller.initialize(manager).has_value());
     App::ScenarioRuntime* source_runtime{manager.world_runtime(0)};
     REQUIRE(source_runtime != nullptr);
-    source_runtime->character_runtime().set_model_loader(
+    install_resident_model_loader(source_runtime->character_runtime(),
         [](const std::string_view name)
             -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
           auto resource{std::make_shared<App::Character::ModelResource>()};
@@ -3346,7 +3547,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(controller.initialize(manager).has_value());
     App::ScenarioRuntime* runtime{manager.world_runtime(0)};
     REQUIRE(runtime != nullptr);
-    runtime->character_runtime().set_model_loader(
+    install_resident_model_loader(runtime->character_runtime(),
         [](const std::string_view name)
             -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
           auto resource{std::make_shared<App::Character::ModelResource>()};
@@ -3374,7 +3575,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(controller.initialize(manager).has_value());
     App::ScenarioRuntime* runtime{manager.world_runtime(0)};
     REQUIRE(runtime != nullptr);
-    runtime->character_runtime().set_model_loader(
+    install_resident_model_loader(runtime->character_runtime(),
         [](const std::string_view name)
             -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
           auto resource{std::make_shared<App::Character::ModelResource>()};
@@ -3433,7 +3634,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
 
     App::ScenarioRuntime* runtime{manager.world_runtime(0)};
     REQUIRE(runtime != nullptr);
-    runtime->character_runtime().set_model_loader(
+    install_resident_model_loader(runtime->character_runtime(),
         [](const std::string_view name)
             -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
           auto resource{std::make_shared<App::Character::ModelResource>()};
@@ -3497,7 +3698,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     App::WorldSceneContext* context{manager.active_world_context()};
     REQUIRE(context != nullptr);
     REQUIRE(context->runtime != nullptr);
-    context->runtime->character_runtime().set_model_loader(
+    install_resident_model_loader(context->runtime->character_runtime(),
         [](const std::string_view name)
             -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
           auto resource{std::make_shared<App::Character::ModelResource>()};

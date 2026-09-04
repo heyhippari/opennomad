@@ -14,11 +14,14 @@
 #include <vector>
 
 #include "Core/Character/CharacterRuntime.hpp"
+#include "Core/GameState.hpp"
 #include "Core/Omikron/IamArea.hpp"
 #include "Core/Omikron/IamScene.hpp"
+#include "Core/Omikron/IamStart.hpp"
 #include "Core/Omikron/Model3DO.hpp"
 #include "Core/RuntimeMath.hpp"
 #include "Core/Script/AreaScriptRuntime.hpp"
+#include "IamStartTestData.hpp"
 #include "OmikronTestBuffer.hpp"
 
 namespace {
@@ -55,6 +58,32 @@ App::Omikron::IamAreaRecord make_area() {
   write_i16(data, k_placement_offset + 0x10U, 4084);
   write_u16(data, k_placement_offset + 0x12U, k_state_bit_index);
 
+  write_u32(
+      data, App::Omikron::IamAreaRecord::k_offset_table_offsets + (4U * 4U), k_definition_offset);
+  write_u16(data, App::Omikron::IamAreaRecord::k_offset_table_counts + (4U * 2U), 1);
+  constexpr std::string_view k_name{"KAY'L 669"};
+  std::memcpy(data.data() + k_definition_offset + 0x08U, k_name.data(), k_name.size());
+  constexpr std::string_view k_model{"HO1_FNM"};
+  std::memcpy(data.data() + k_definition_offset + 0x90U, k_model.data(), k_model.size());
+  write_u16(data, k_definition_offset + 0x110U, 310);
+
+  auto area{App::Omikron::IamAreaRecord::load(data)};
+  REQUIRE(area.has_value());
+  return std::move(area).value();
+}
+
+App::Omikron::IamAreaRecord make_partially_invalid_area() {
+  constexpr std::size_t k_placement_offset{App::Omikron::IamAreaRecord::k_header_size};
+  constexpr std::size_t k_definition_offset{k_placement_offset + (2U * 0x14U)};
+  std::vector<std::byte> data(k_definition_offset + 0x114U, std::byte{});
+  write_u32(data, App::Omikron::IamAreaRecord::k_offset_table_offsets, k_placement_offset);
+  write_u16(data, App::Omikron::IamAreaRecord::k_offset_table_counts, 2);
+  write_i16(data, k_placement_offset + 0x00U, -1);
+  write_i16(data, k_placement_offset + 0x02U, 310);
+  write_u16(data, k_placement_offset + 0x12U, 468);
+  write_i16(data, k_placement_offset + 0x14U, -1);
+  write_i16(data, k_placement_offset + 0x16U, 999);
+  write_u16(data, k_placement_offset + 0x26U, 469);
   write_u32(
       data, App::Omikron::IamAreaRecord::k_offset_table_offsets + (4U * 4U), k_definition_offset);
   write_u16(data, App::Omikron::IamAreaRecord::k_offset_table_counts + (4U * 2U), 1);
@@ -108,6 +137,15 @@ std::shared_ptr<const App::Character::ModelResource> fake_resource(const std::st
   resource->name = name;
   resource->groups.push_back(App::Omikron::MaterialGroup{});
   return resource;
+}
+
+App::GameState make_game_state() {
+  const std::vector<std::byte> bytes{App::Tests::make_canonical_start()};
+  auto start{App::Omikron::IamStart::load(bytes)};
+  REQUIRE(start.has_value());
+  auto state{App::GameState::from_start(start.value())};
+  REQUIRE(state.has_value());
+  return std::move(state).value();
 }
 
 std::shared_ptr<const App::Character::ModelResource> fake_physical_resource(
@@ -292,6 +330,95 @@ TEST_SUITE("Core::Character::Runtime") {
         doctest::Approx(static_cast<float>(character->runtime_orientation_degrees)));
     CHECK_EQ(character->principal_orientation_degrees.z, doctest::Approx(0.0F));
     CHECK_EQ(character->transform.matrix.values, character->principal_orientation().values);
+  }
+
+  TEST_CASE("AREA preload creates and initializes an inactive resident placement body") {
+    const App::Omikron::IamAreaRecord area{make_area()};
+    App::GameState state{make_game_state()};
+    REQUIRE_FALSE(state.character_flag(468).value());
+    App::Character::Runtime runtime{
+        [](const std::string_view name)
+            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
+          return fake_resource(name);
+        }};
+
+    const auto preloaded{runtime.preload_area_characters(118, area, state)};
+    REQUIRE(preloaded.has_value());
+    REQUIRE_EQ(preloaded->size(), 1U);
+    CHECK_EQ(preloaded->front().placement_index, 0U);
+    CHECK_FALSE(preloaded->front().initially_active);
+    CHECK_NE(preloaded->front().body_identity, 0U);
+    REQUIRE_EQ(runtime.characters().size(), 1U);
+    const App::Character::RuntimeCharacter& character{runtime.characters().front()};
+    CHECK_EQ(character.body_identity, preloaded->front().body_identity);
+    CHECK_EQ(character.character_id, 310);
+    CHECK_EQ(character.area_id, 118);
+    CHECK_FALSE(character.active);
+    CHECK_FALSE(character.area_present);
+    CHECK(character.loaded());
+    CHECK_FALSE(character.renderable());
+    CHECK_EQ(character.transform.translation.x,
+        static_cast<float>(App::Runtime::area_position_to_inches(-2588)));
+    CHECK_EQ(character.runtime_orientation_degrees, App::Runtime::area_angle_to_degrees(4084));
+    CHECK(character.physical_motion.initialized);
+  }
+
+  TEST_CASE("AREA preload activates from persistent state without changing body allocation") {
+    const App::Omikron::IamAreaRecord area{make_area()};
+    App::GameState state{make_game_state()};
+    REQUIRE(state.set_character_flag(468, true).has_value());
+    App::Character::Runtime runtime{
+        [](const std::string_view name)
+            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
+          return fake_resource(name);
+        }};
+
+    const auto preloaded{runtime.preload_area_characters(118, area, state)};
+    REQUIRE(preloaded.has_value());
+    REQUIRE_EQ(preloaded->size(), 1U);
+    CHECK(preloaded->front().initially_active);
+    REQUIRE_EQ(runtime.characters().size(), 1U);
+    const App::Character::RuntimeCharacter& character{runtime.characters().front()};
+    CHECK(character.active);
+    CHECK(character.area_present);
+    CHECK(character.renderable());
+  }
+
+  TEST_CASE("AREA preload keeps equal canonical IDs distinct across resident worlds") {
+    const App::Omikron::IamAreaRecord area{make_area()};
+    const App::GameState state{make_game_state()};
+    const auto loader = [](const std::string_view name)
+        -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
+      return fake_resource(name);
+    };
+    App::Character::Runtime world_a{loader};
+    App::Character::Runtime world_b{loader};
+
+    const auto preloaded_a{world_a.preload_area_characters(118, area, state)};
+    const auto preloaded_b{world_b.preload_area_characters(222, area, state)};
+    REQUIRE(preloaded_a.has_value());
+    REQUIRE(preloaded_b.has_value());
+    REQUIRE_EQ(preloaded_a->size(), 1U);
+    REQUIRE_EQ(preloaded_b->size(), 1U);
+    CHECK_EQ(preloaded_a->front().placement_index, 0U);
+    CHECK_EQ(preloaded_b->front().placement_index, 0U);
+    CHECK_NE(preloaded_a->front().body_identity, preloaded_b->front().body_identity);
+    CHECK_EQ(world_a.characters().front().character_id, world_b.characters().front().character_id);
+  }
+
+  TEST_CASE("AREA preload rolls back earlier bodies when a later placement fails") {
+    const App::Omikron::IamAreaRecord area{make_partially_invalid_area()};
+    const App::GameState state{make_game_state()};
+    App::Character::Runtime runtime{
+        [](const std::string_view name)
+            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
+          return fake_resource(name);
+        }};
+
+    const auto preloaded{runtime.preload_area_characters(118, area, state)};
+    REQUIRE_FALSE(preloaded.has_value());
+    CHECK(preloaded.error().find("reference 999") != std::string::npos);
+    CHECK(runtime.characters().empty());
   }
 
   TEST_CASE("Repeated activation reuses character and model while false preserves transform") {

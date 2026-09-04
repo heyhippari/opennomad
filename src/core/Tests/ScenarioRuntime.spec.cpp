@@ -836,7 +836,7 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
     CHECK(runtime.sfx_runtime()->nodes().front().current_position.x == doctest::Approx(25.0F));
   }
 
-  TEST_CASE("Spawns a character-bound script only for an active runtime character") {
+  TEST_CASE("Spawns a character-bound script for an inactive resident character") {
     App::Omikron::ScxData scx;
     scx.scripts.push_back(make_script("unrelated", 1));
     scx.scripts.push_back(make_script("1KaylArrives", 1));
@@ -867,8 +867,11 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
     CAPTURE(activation_error);
     REQUIRE(activated.has_value());
 
-    const App::Character::RuntimeCharacter* const character{runtime.character_runtime().find(310)};
+    App::Character::RuntimeCharacter* const character{runtime.character_runtime().find(310)};
     REQUIRE(character != nullptr);
+    REQUIRE(runtime.character_runtime().deactivate_body(character->body_identity).has_value());
+    CHECK_FALSE(character->active);
+    CHECK_FALSE(character->area_present);
     const auto created{
         runtime.spawn_character_script_instance(1, 310, character->body_identity, -5)};
     REQUIRE(created.has_value());
@@ -878,7 +881,11 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
     CHECK_EQ(instance->source_script_index, 1U);
     CHECK_EQ(instance->script_name, "1KaylArrives");
     CHECK_EQ(instance->launch_context.character_id, std::optional<std::int16_t>{310});
+    CHECK_EQ(instance->launch_context.character_body_identity,
+        std::optional<App::Character::BodyIdentity>{character->body_identity});
     CHECK_EQ(instance->launch_context.parameter, -5);
+    CHECK_FALSE(character->active);
+    CHECK_FALSE(character->area_present);
   }
 
   TEST_CASE("Sprite pool lifecycle works through the runtime") {

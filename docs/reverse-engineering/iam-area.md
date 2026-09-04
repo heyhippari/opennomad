@@ -7,7 +7,9 @@ Runtime's mutable actor-slot field and `+0x02` is the serialized character
 reference. OpenNomad keeps IAM bytes immutable and represents the mutable values
 in `CharacterReferenceRuntime`: `+0x00` maps to runtime-only `BodyIdentity` and
 `+0x02` maps to mutable `reference_character_id`. `+0x12` remains a separate
-state-bit field.
+state-bit field. During AREA load Runtime allocates and initializes a body for
+every table-0 placement before event 1 can run. The state bit controls only its
+initial active/present state.
 
 > **Status:** work-in-progress reverse-engineering documentation for OpenNomad  
 > **Last updated:** 2026-08-25
@@ -890,7 +892,14 @@ struct AreaCharacterPlacement {
 }; // 0x14
 ```
 
-Runtime opcode `0x4E` resolves characters through this table.
+The AREA loader around `0x0040BB90` allocates an actor slot for every record,
+stores it in mutable `+0x00`, constructs the table-4 model, and applies the
+authored XYZ/orientation. It then activates only actors whose `+0x12`
+persistent bit is set. OpenNomad leaves these bytes immutable and stores the
+corresponding `BodyIdentity` in the placement overlay.
+
+Runtime opcode `0x4E` resolves an existing actor slot through this table. It
+does not construct a missing actor.
 
 ---
 
@@ -965,6 +974,12 @@ while the corresponding table-4 character IDs remain:
 310
 136
 ```
+
+The bit does not control body existence. AREA 0 placement 27 is character 537
+(`ANO_FN`) at serialized `(2376, 511, -7124)`, with state bit 27 clear in a new
+game. Runtime still constructs and places its actor during AREA load, leaves it
+inactive, then permits the primary event's immediate `0x3B 537, 49870, 0` to
+launch a structured script on that resident body.
 
 ---
 

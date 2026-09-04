@@ -2282,11 +2282,13 @@ Scalar16 cameraDurationUnits
 Behavior:
 
 ```text
-launch character-bound structured script
+resolve the explicit placement's already-resident actor slot
+launch character-bound structured script (inactive actors are valid)
 continue AREA bytecode
 ```
 
-This is the non-tracked character variant.
+This is the non-tracked character variant. It never materializes or activates
+the target character.
 
 ---
 
@@ -2313,7 +2315,11 @@ context.flags |= 0x0004
 context.state = 4
 ```
 
-This is the tracked character-bound variant.
+This is the tracked character-bound variant. Target validity is identical to
+`0x3B`: the placement must resolve to a resident actor slot, but that actor need
+not be active, present, or renderable. The exact child instance and exact
+`BodyIdentity` are retained for the state-4 wait. Launching does not activate
+the body.
 
 ---
 
@@ -2403,9 +2409,10 @@ ControlledCharacterRef { canonical character ID, BodyIdentity, owning world-scen
 
 It is not an AREA-slot index and is not owned by the currently presented
 `WorldScene`. `0x38` resolves the requesting compact context's fixed owner:
-its AREA table 0 first, then its attached SCENE table 0. First selection
-materializes that authored placement and definition; reselection reuses the
-live body without restoring its authored transform or resetting mutable pose.
+its AREA table 0 first, then its attached SCENE table 0. Ordinary AREA
+placements were already materialized during AREA load; selection uses that
+authored placement binding. Reselection reuses the live body without restoring
+its authored transform or resetting mutable pose.
 The previous selected body remains materialized. Runtime finds a mutable
 placement through `0x0040D6A0` (AREA first, then mapped SCENE), captures its
 body, and rebinds that target placement to the old current body's canonical ID
@@ -2431,12 +2438,13 @@ The exact handler consumes more data than the native descriptor's auxiliary
 word might suggest, further proving that the descriptor word is not an
 instruction-length field.
 
-Current behavior includes:
+Recovered behavior includes:
 
-- resolving an AREA character;
-- restoring/reactivating resident runtime character state;
+- resolving the placement's existing actor slot;
+- returning without constructing a replacement when the mutable slot is `-1`;
+- activating/presenting that resident runtime character;
 - optionally applying AREA-authored transform;
-- updating persistent presence state;
+- setting the placement's persistent character bit;
 - special `-1` current-body path, which enables its presentation bit without
   changing selection or reloading its model.
 
@@ -2445,8 +2453,9 @@ The original source name remains unknown.
 `0x4F` is implemented as `DeactivateCharacter`, also with one Scalar16 and no
 wait. `-1` disables only the selected body's presentation bit; it retains the
 selection and materialized model. A nonnegative authored ID resolves through
-the compact context owner and deactivates its live non-current body. Persistent
-state-bit effects remain an explicit compatibility gap.
+the compact context owner, deactivates its live non-current body, retains its
+actor slot/`BodyIdentity` placement binding, and clears the persistent
+character bit. A later `0x4E` reactivates that same body.
 
 ---
 

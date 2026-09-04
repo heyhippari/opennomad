@@ -239,6 +239,10 @@ class ScenarioStartupController {
   [[nodiscard]] std::size_t character_reference_entry_count() const {
     return m_character_references.entries().size();
   }
+  [[nodiscard]] const std::vector<RuntimeCharacterReferenceEntry>& character_reference_entries()
+      const {
+    return m_character_references.entries();
+  }
 
   /// Delivers an interface completion to the waiting area script. Resumes the
   /// script when the completion matches the stored interface handle; logs and
@@ -383,6 +387,11 @@ class ScenarioStartupController {
   /// presentation handoff makes that resident slot active.
   [[nodiscard]] std::expected<void, std::string> install_primary_area_script(
       std::size_t owner_slot);
+  /// Installs the mutable AREA table-0 overlay and binds every preloaded body
+  /// by exact placement index before the primary compact context is published.
+  [[nodiscard]] std::expected<void, std::string> bind_preloaded_area_characters(
+      std::size_t owner_slot,
+      const std::vector<Character::MaterializedPlacementResult>& materialized);
   /// Advances one accepted native AREA transition through target preparation,
   /// resident primary-context creation, and exact requesting-VM completion.
   [[nodiscard]] std::expected<void, std::string> service_area_transition();

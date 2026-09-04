@@ -587,12 +587,6 @@ std::expected<std::size_t, std::string> ScenarioRuntime::spawn_character_script_
     return std::expected<std::size_t, std::string>{std::unexpect,
         fmt::format("runtime body {} (reference {}) does not exist", body_identity, character_id)};
   }
-  if (!character->active || !character->area_present) {
-    return std::expected<std::size_t, std::string>{std::unexpect,
-        fmt::format("runtime body {} (reference {}) is not active in the current AREA",
-            body_identity,
-            character_id)};
-  }
   auto created{m_script_runtime->create_instance(source_script_index,
       Script::ScriptLaunchContext{.character_id = character_id,
           .character_body_identity = character->body_identity,

@@ -18,10 +18,9 @@ namespace App::Omikron {
 
 /// One 0x14-byte AREA table-0 character-placement record.
 ///
-/// The record identifies a runtime character and provides its AREA-local
-/// transform. The final word at +0x12 participates in the character/body
-/// definition relationship, but its exact semantics are intentionally left
-/// unnamed until that relationship is implemented.
+/// Runtime allocates a resident actor for every record during AREA load and
+/// applies this AREA-local transform. The final word selects the persistent
+/// bit that controls initial activation, not whether the body exists.
 struct IamAreaCharacterRecord {
   /// +0x00 serialized seed for Runtime's mutable actor-slot field. OpenNomad
   /// preserves parser bytes; CharacterReferenceRuntime owns its BodyIdentity equivalent.
