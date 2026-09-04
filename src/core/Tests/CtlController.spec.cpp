@@ -1004,8 +1004,8 @@ TEST_SUITE("Core::Character::CtlController") {
     character.transform.translation = {.x = 500.0F, .y = 600.0F, .z = 700.0F};
     const std::uint64_t revision{character.pose_revision};
 
-    // The initialized-but-disabled controller leaves the pose untouched until
-    // its first service — 0x68 only gates participation.
+    // The initialized-but-suppressed controller leaves the pose untouched
+    // until its first service after compact 0x69 releases participation.
     CHECK_EQ(character.pose_revision, revision);
     CHECK(character.runtime_objects[0].local_offset.x == doctest::Approx(7.0F));
 

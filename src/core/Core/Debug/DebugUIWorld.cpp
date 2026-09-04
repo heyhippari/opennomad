@@ -105,14 +105,15 @@ void DebugUI::show_world_inspector() {
         scenarios == nullptr ? nullptr : scenarios->active_world_context()};
     ImGui::SeparatorText("Session character ownership");
     if (controlled.has_value()) {
-      ImGui::Text("ControlledCharacterRef: character %d, body %llu, world scene %u",
+      ImGui::Text("ControlledCharacterRef: character %d, body %llu, storage world scene %u",
           controlled->character_id,
           static_cast<unsigned long long>(controlled->body_identity),
           controlled->world_scene_id);
     } else {
       ImGui::TextUnformatted("ControlledCharacterRef: none");
     }
-    ImGui::TextDisabled("Session ownership is independent of CTL controller enablement.");
+    ImGui::TextDisabled(
+        "Selected-body storage is independent of logical current AREA and CTL enablement.");
     if (m_context.scenario_engine != nullptr &&
         m_context.scenario_engine->current_character_trigger_proxy().has_value()) {
       const CurrentCharacterTriggerProxy& proxy{
@@ -123,12 +124,17 @@ void DebugUI::show_world_inspector() {
           proxy.owner.world_scene_id,
           static_cast<unsigned long long>(proxy.generation));
       ImGui::Text("Proxy contact readiness: %s", proxy.contact_ready ? "ready" : "armed");
-      ImGui::Text("Proxy XYZ: %.3f, %.3f, %.3f | radius %.3f | heading %.3f deg",
+      ImGui::Text("Proxy XYZ: %.3f, %.3f, %.3f | heading %.3f deg",
           static_cast<double>(proxy.position.x),
           static_cast<double>(proxy.position.y),
           static_cast<double>(proxy.position.z),
-          static_cast<double>(proxy.radius),
           static_cast<double>(proxy.heading_degrees));
+      ImGui::Text("Actor object: [%zu] %s | spatial radius %.3f",
+          proxy.actor_object_index.value_or(0U),
+          proxy.actor_object_name.empty() ? "<invalid>" : proxy.actor_object_name.c_str(),
+          static_cast<double>(proxy.radius));
+      ImGui::Text("Whole-model bounds radius: %.3f (diagnostic only)",
+          static_cast<double>(proxy.model_bounds_radius));
       ImGui::Text("Current qualifying zones: %zu", proxy.overlapping_zone_count);
       ImGui::Text("Zone registrations: %zu / 16 | lifecycle pass: %s",
           m_context.scenario_engine->active_zone_contact_registration_count(),

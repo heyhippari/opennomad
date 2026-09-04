@@ -145,25 +145,8 @@ std::string dependency_path(const std::string_view directory,
 
 [[nodiscard]] bool zone_intersects_proxy_bounds(
     const Omikron::IamZoneRecord& zone, const Runtime::Vec3& position, const float radius) {
-  Runtime::Vec3 minimum{.x = std::numeric_limits<float>::max(),
-      .y = std::numeric_limits<float>::max(),
-      .z = std::numeric_limits<float>::max()};
-  Runtime::Vec3 maximum{.x = std::numeric_limits<float>::lowest(),
-      .y = std::numeric_limits<float>::lowest(),
-      .z = std::numeric_limits<float>::lowest()};
-  for (const auto& vertex : zone.serialized_vertices) {
-    const Runtime::Vec3 runtime_vertex{Runtime::area_position_to_inches(vertex)};
-    minimum.x = std::min(minimum.x, runtime_vertex.x);
-    minimum.y = std::min(minimum.y, runtime_vertex.y);
-    minimum.z = std::min(minimum.z, runtime_vertex.z);
-    maximum.x = std::max(maximum.x, runtime_vertex.x);
-    maximum.y = std::max(maximum.y, runtime_vertex.y);
-    maximum.z = std::max(maximum.z, runtime_vertex.z);
-  }
-  const float safe_radius{std::max(radius, 0.0F)};
-  return (position.x + safe_radius) >= minimum.x && (position.x - safe_radius) <= maximum.x &&
-         (position.y + safe_radius) >= minimum.y && (position.y - safe_radius) <= maximum.y &&
-         (position.z + safe_radius) >= minimum.z && (position.z - safe_radius) <= maximum.z;
+  return Runtime::area_zone_bounds_intersect_actor(
+      Runtime::area_zone_spatial_bounds(zone.serialized_vertices), position, radius);
 }
 
 struct PreparedAreaWorld {
@@ -756,10 +739,20 @@ ScenarioStartupController::begin_area_transition(const std::size_t owner_slot,
   }
 
   const std::size_t destination_slot{owner_slot == 0U ? 1U : 0U};
+  const RuntimeAreaSlot& source_slot{m_area_slots.at(owner_slot)};
+  const WorldSceneContext* const source_context{
+      m_manager->find_world_context(source_slot.world_scene_id)};
+  if (source_context == nullptr || source_context->residency == WorldSceneResidencyState::Free) {
+    return std::expected<Script::AreaTransitionResult, std::string>{
+        std::unexpect, "AREA transition source world is not resident"};
+  }
   const Script::AreaTransitionHandle handle{.generation = m_next_area_transition_generation++};
   m_area_transition.emplace(PendingAreaTransition{.handle = handle,
       .request = request,
       .source_slot = owner_slot,
+      .source_area_id = source_slot.primary_area_id,
+      .source_world_scene_id = source_slot.world_scene_id,
+      .source_world_generation = source_context->generation,
       .destination_slot = destination_slot,
       .requester = requester,
       .error = {}});
@@ -1073,6 +1066,16 @@ std::expected<void, std::string> ScenarioStartupController::service_area_transit
   if (transition.source_slot >= m_area_slots.size()) {
     return fail_transition("requesting resident AREA context has an invalid owner slot");
   }
+  const RuntimeAreaSlot& source_slot{m_area_slots.at(transition.source_slot)};
+  const WorldSceneContext* const source_context{
+      m_manager->find_world_context(transition.source_world_scene_id)};
+  if (!source_slot.primary.has_value() ||
+      source_slot.primary_area_id != transition.source_area_id ||
+      source_slot.world_scene_id != transition.source_world_scene_id || source_context == nullptr ||
+      source_context->residency == WorldSceneResidencyState::Free ||
+      source_context->generation != transition.source_world_generation) {
+    return fail_transition("requesting resident AREA context was destroyed or recycled");
+  }
   Script::AreaScriptRuntime* const requester{resolve_compact_context(transition.requester)};
   if (requester == nullptr) {
     const std::string error{
@@ -1085,10 +1088,6 @@ std::expected<void, std::string> ScenarioStartupController::service_area_transit
     App::Log::error(LogCategory::Scenario, "{}", error);
     return std::expected<void, std::string>{std::unexpect, error};
   }
-  if (transition.source_slot != m_active_area_slot) {
-    return fail_transition("active resident AREA slot changed before commit");
-  }
-
   Script::AreaScriptRuntime& area_script{*requester};
   if (area_script.state() != Script::AreaScriptState::k_waiting ||
       area_script.wait_info().kind != Script::AreaWaitKind::k_area_transition ||
@@ -1226,6 +1225,125 @@ std::optional<std::size_t> ScenarioStartupController::resident_area_slot(
     }
   }
   return std::nullopt;
+}
+
+std::expected<std::size_t, std::string> ScenarioStartupController::current_resident_area_slot()
+    const {
+  if (m_manager == nullptr) {
+    return std::expected<std::size_t, std::string>{
+        std::unexpect, "logical current AREA manager is unavailable"};
+  }
+  if (m_active_area_slot >= m_area_slots.size()) {
+    return std::expected<std::size_t, std::string>{
+        std::unexpect, "logical current AREA slot is out of range"};
+  }
+  const RuntimeAreaSlot& slot{m_area_slots.at(m_active_area_slot)};
+  if (!slot.primary.has_value() || slot.primary_area_id < 0) {
+    return std::expected<std::size_t, std::string>{
+        std::unexpect, "logical current AREA slot is not resident"};
+  }
+  const WorldSceneContext* const current{m_manager->current_world_context()};
+  if (current == nullptr || current->scene_id != slot.world_scene_id) {
+    return std::expected<std::size_t, std::string>{std::unexpect,
+        fmt::format("logical current AREA disagreement: slot {} is AREA {}/world {}, manager is "
+                    "world {}",
+            m_active_area_slot,
+            slot.primary_area_id,
+            slot.world_scene_id,
+            current == nullptr ? -1 : static_cast<std::int64_t>(current->scene_id))};
+  }
+  return m_active_area_slot;
+}
+
+std::expected<bool, std::string> ScenarioStartupController::commit_physical_area_handoff(
+    const std::uint32_t accepted_support_world) {
+  auto current_slot_result{current_resident_area_slot()};
+  if (!current_slot_result) {
+    return std::expected<bool, std::string>{std::unexpect, std::move(current_slot_result).error()};
+  }
+  const std::size_t logical_slot_index{current_slot_result.value()};
+  const RuntimeAreaSlot& logical_slot{m_area_slots.at(logical_slot_index)};
+  if (accepted_support_world == logical_slot.world_scene_id) {
+    return false;
+  }
+
+  auto* destination{
+      std::ranges::find(m_area_slots, accepted_support_world, &RuntimeAreaSlot::world_scene_id)};
+  const WorldSceneContext* const destination_context{
+      m_manager->find_world_context(accepted_support_world)};
+  if (destination == m_area_slots.end() || !destination->primary.has_value() ||
+      destination->primary_area_id < 0 || destination_context == nullptr ||
+      destination_context->residency != WorldSceneResidencyState::ResidentAttached) {
+    return false;
+  }
+  const std::optional<ControlledCharacterRef> controlled{m_manager->controlled_character()};
+  if (!controlled.has_value()) {
+    return std::expected<bool, std::string>{
+        std::unexpect, "physical AREA handoff has no selected controlled body"};
+  }
+
+  const std::uint32_t body_owner_world{controlled->world_scene_id};
+  const bool body_transfer_required{body_owner_world != accepted_support_world};
+  m_manager->reverse_attached_world_order();
+  if (auto selected{m_manager->set_current_world_context(accepted_support_world)}; !selected) {
+    m_manager->reverse_attached_world_order();
+    return std::expected<bool, std::string>{std::unexpect, selected.error()};
+  }
+  if (body_transfer_required) {
+    if (auto transferred{
+            m_manager->transfer_controlled_character(body_owner_world, accepted_support_world)};
+        !transferred) {
+      auto restored{m_manager->set_current_world_context(logical_slot.world_scene_id)};
+      m_manager->reverse_attached_world_order();
+      if (!restored) {
+        return std::expected<bool, std::string>{std::unexpect,
+            fmt::format("{}; failed to restore logical current world: {}",
+                transferred.error(),
+                restored.error())};
+      }
+      return std::expected<bool, std::string>{std::unexpect, transferred.error()};
+    }
+  }
+
+  const std::size_t destination_slot{
+      static_cast<std::size_t>(std::distance(m_area_slots.begin(), destination))};
+  m_active_area_slot = destination_slot;
+  if (GameState* const game_state{m_manager->game_state()}; game_state != nullptr) {
+    game_state->set_current_area(static_cast<std::int16_t>(destination->primary_area_id));
+  }
+  const std::optional<ControlledCharacterRef> updated{m_manager->controlled_character()};
+  if (!updated.has_value()) {
+    return std::expected<bool, std::string>{
+        std::unexpect, "controlled body selection vanished during AREA handoff"};
+  }
+  ScenarioRuntime* const runtime{m_manager->world_runtime(updated->world_scene_id)};
+  Character::RuntimeCharacter* const character{
+      runtime == nullptr ? nullptr
+                         : runtime->character_runtime().find_body(updated->body_identity)};
+  if (character == nullptr) {
+    return std::expected<bool, std::string>{
+        std::unexpect, "controlled body vanished during AREA handoff"};
+  }
+  character->area_id = destination->primary_area_id;
+  character->scene_id.reset();
+  if (m_current_character_trigger_proxy.has_value()) {
+    m_current_character_trigger_proxy->owner = *updated;
+  }
+  if (auto refreshed{refresh_active_zones()}; !refreshed) {
+    return std::expected<bool, std::string>{std::unexpect, refreshed.error()};
+  }
+
+  App::Log::debug(LogCategory::Scenario,
+      "AREA physical handoff — logicalCurrent={}/world{} bodyOwner=world{} "
+      "supportOwner={}/world{} targetSlot={} bodyTransfer={}",
+      logical_slot.primary_area_id,
+      logical_slot.world_scene_id,
+      body_owner_world,
+      destination->primary_area_id,
+      accepted_support_world,
+      destination_slot,
+      body_transfer_required ? "yes" : "no");
+  return true;
 }
 
 std::optional<ResolvedCompactCamera> ScenarioStartupController::resolve_compact_camera(
@@ -2062,7 +2180,7 @@ std::expected<void, std::string> ScenarioStartupController::select_current_chara
   // Becoming the persistent current character installs the adventure CTL
   // controller from the definition's authored control set. The controller is
   // created disabled: scripted cinematic animation keeps owning the pose
-  // until compact 0x68 enables controller participation.
+  // until compact 0x69 releases ordinary controller participation.
   if (auto controller{located_target->runtime->character_runtime().ensure_adventure_controller(
           character->body_identity, definition->adventure_control_set)};
       !controller) {
@@ -2200,18 +2318,17 @@ std::expected<void, std::string> ScenarioStartupController::set_current_characte
         current->world_scene_id);
     return {};
   }
-  // 0x68/0x69 only gate participation of the already-initialized adventure
-  // CTL controller: no repositioning, no transform reset, no explicit state
-  // selection and no bank loading. On enable, the normal player direct-
-  // control flags (native 0x81) become active; the first enabled service
-  // applies the current CTL state's authored animation as the base pose.
+  // The compact VM has already translated native suppression semantics into
+  // gameplay-facing participation: 0x68 is false and 0x69 is true. Neither
+  // operation repositions, resets, selects state, loads a bank, or recreates
+  // the already-initialized adventure CTL controller.
   character->controller_enabled = request.enabled;
   if (character->ctl_controller.has_value()) {
     character->ctl_controller->set_player_direct_control(request.enabled);
   }
   App::Log::info(LogCategory::Scenario,
       "{} — controlledCharacter={} world={} controllerEnabled={} directControl={}",
-      request.enabled ? "ControllerOn" : "ControllerOff",
+      request.enabled ? "PlayerControlReleased" : "PlayerControlSuppressed",
       current->character_id,
       current->world_scene_id,
       character->controller_enabled,
@@ -2321,33 +2438,14 @@ std::expected<bool, std::string> ScenarioStartupController::service_current_char
 
     const std::optional<std::uint32_t> accepted_world{
         character->physical_motion.support.source_world_scene_id};
-    if (character->physical_motion.support.valid && accepted_world.has_value() &&
-        accepted_world.value() != current->world_scene_id) {
-      auto* const destination{std::ranges::find(
-          m_area_slots, accepted_world.value(), &RuntimeAreaSlot::world_scene_id)};
-      const WorldSceneContext* const destination_context{
-          m_manager->find_world_context(accepted_world.value())};
-      if (destination != m_area_slots.end() && destination_context != nullptr &&
-          destination_context->residency == WorldSceneResidencyState::ResidentAttached) {
-        const std::size_t destination_slot{
-            static_cast<std::size_t>(std::distance(m_area_slots.begin(), destination))};
-        const std::uint32_t source_world{current->world_scene_id};
-        m_manager->reverse_attached_world_order();
-        if (auto selected{m_manager->set_current_world_context(accepted_world.value())};
-            !selected) {
-          return std::expected<bool, std::string>{std::unexpect, selected.error()};
-        }
-        if (auto transferred{
-                m_manager->transfer_controlled_character(source_world, accepted_world.value())};
-            !transferred) {
-          return std::expected<bool, std::string>{std::unexpect, transferred.error()};
-        }
-        m_active_area_slot = destination_slot;
-        if (GameState* const game_state{m_manager->game_state()}; game_state != nullptr) {
-          game_state->set_current_area(static_cast<std::int16_t>(destination->primary_area_id));
-        }
+    if (character->physical_motion.support.valid && accepted_world.has_value()) {
+      auto handed_off{commit_physical_area_handoff(accepted_world.value())};
+      if (!handed_off) {
+        return std::expected<bool, std::string>{std::unexpect, handed_off.error()};
+      }
+      if (handed_off.value()) {
         current = m_manager->controlled_character();
-        runtime = m_manager->world_runtime(accepted_world.value());
+        runtime = m_manager->world_runtime(current->world_scene_id);
         character = runtime == nullptr
                         ? nullptr
                         : runtime->character_runtime().find_body(current->body_identity);
@@ -2355,19 +2453,6 @@ std::expected<bool, std::string> ScenarioStartupController::service_current_char
           return std::expected<bool, std::string>{
               std::unexpect, "controlled body vanished during AREA handoff"};
         }
-        character->area_id = destination->primary_area_id;
-        character->scene_id.reset();
-        if (m_current_character_trigger_proxy.has_value()) {
-          m_current_character_trigger_proxy->owner = *current;
-        }
-        if (auto refreshed{refresh_active_zones()}; !refreshed) {
-          return std::expected<bool, std::string>{std::unexpect, refreshed.error()};
-        }
-        App::Log::debug(LogCategory::Scenario,
-            "CurrentAreaPhysicalHandoff — sourceWorld={} targetWorld={} targetArea={}",
-            source_world,
-            accepted_world.value(),
-            destination->primary_area_id);
       }
     }
 
@@ -2401,13 +2486,14 @@ std::expected<bool, std::string> ScenarioStartupController::service_current_char
     }
     App::Log::debug(LogCategory::Scenario,
         "CurrentActorServiced — character={} world={} generation={} xyz=({:.3f},{:.3f},{:.3f}) "
-        "radius={:.3f}",
+        "actorObjectRadius={:.3f} modelBoundsRadius={:.3f}",
         current->character_id,
         current->world_scene_id,
         character->ordinary_actor_service_generation,
         character->transform.translation.x,
         character->transform.translation.y,
         character->transform.translation.z,
+        character->actor_spatial_radius().value_or(0.0F),
         character->model_resource == nullptr ? 0.0F : character->model_resource->bounds_radius);
   }
   return false;
@@ -2415,11 +2501,23 @@ std::expected<bool, std::string> ScenarioStartupController::service_current_char
 
 void ScenarioStartupController::register_current_character_trigger_proxy(
     const ControlledCharacterRef& owner, const Character::RuntimeCharacter& character) {
+  const std::optional<std::size_t> actor_object_index{
+      character.model_resource == nullptr ? std::nullopt
+                                          : character.model_resource->actor_object_index};
+  const bool actor_object_valid{
+      character.model_resource != nullptr && actor_object_index.has_value() &&
+      actor_object_index.value() < character.model_resource->model.meshes.size()};
   m_current_character_trigger_proxy = CurrentCharacterTriggerProxy{.owner = owner,
       .registered = true,
       .contact_ready = false,
       .position = character.transform.translation,
-      .radius =
+      .radius = character.actor_spatial_radius().value_or(0.0F),
+      .actor_object_index = actor_object_index,
+      .actor_object_name =
+          actor_object_valid
+              ? character.model_resource->model.meshes.at(actor_object_index.value()).name
+              : std::string{},
+      .model_bounds_radius =
           character.model_resource == nullptr ? 0.0F : character.model_resource->bounds_radius,
       .heading_degrees = character.principal_orientation_degrees.y,
       .generation = character.ordinary_actor_service_generation,
@@ -2429,14 +2527,17 @@ void ScenarioStartupController::register_current_character_trigger_proxy(
       .suspension_reason = {}};
   App::Log::info(LogCategory::Scenario,
       "TriggerProxyRegistered — character={} world={} generation={} xyz=({:.3f},{:.3f},{:.3f}) "
-      "radius={:.3f}",
+      "actorObject=[{}:'{}'] actorObjectRadius={:.3f} modelBoundsRadius={:.3f}",
       owner.character_id,
       owner.world_scene_id,
       m_current_character_trigger_proxy->generation,
       character.transform.translation.x,
       character.transform.translation.y,
       character.transform.translation.z,
-      m_current_character_trigger_proxy->radius);
+      actor_object_index.has_value() ? fmt::format("{}", actor_object_index.value()) : "invalid",
+      m_current_character_trigger_proxy->actor_object_name,
+      m_current_character_trigger_proxy->radius,
+      m_current_character_trigger_proxy->model_bounds_radius);
 }
 
 bool ScenarioStartupController::publish_current_character_ordinary_spatial_sample(
@@ -2474,7 +2575,16 @@ bool ScenarioStartupController::publish_current_character_ordinary_spatial_sampl
     return false;
   }
   proxy.position = character.transform.translation;
-  proxy.radius =
+  proxy.radius = character.actor_spatial_radius().value_or(0.0F);
+  proxy.actor_object_index = character.model_resource == nullptr
+                                 ? std::nullopt
+                                 : character.model_resource->actor_object_index;
+  proxy.actor_object_name =
+      character.model_resource != nullptr && proxy.actor_object_index.has_value() &&
+              proxy.actor_object_index.value() < character.model_resource->model.meshes.size()
+          ? character.model_resource->model.meshes.at(proxy.actor_object_index.value()).name
+          : std::string{};
+  proxy.model_bounds_radius =
       character.model_resource == nullptr ? 0.0F : character.model_resource->bounds_radius;
   proxy.heading_degrees = character.principal_orientation_degrees.y;
   proxy.last_consumed_actor_spatial_generation = character.ordinary_actor_service_generation;
@@ -2484,14 +2594,18 @@ bool ScenarioStartupController::publish_current_character_ordinary_spatial_sampl
   proxy.suspension_reason.clear();
   App::Log::debug(LogCategory::Scenario,
       "TriggerProxySynchronized — character={} world={} generation={} xyz=({:.3f},{:.3f},{:.3f}) "
-      "radius={:.3f}",
+      "actorObject=[{}:'{}'] actorObjectRadius={:.3f} modelBoundsRadius={:.3f}",
       proxy.owner.character_id,
       proxy.owner.world_scene_id,
       proxy.generation,
       proxy.position.x,
       proxy.position.y,
       proxy.position.z,
-      proxy.radius);
+      proxy.actor_object_index.has_value() ? fmt::format("{}", proxy.actor_object_index.value())
+                                           : "invalid",
+      proxy.actor_object_name,
+      proxy.radius,
+      proxy.model_bounds_radius);
   return true;
 }
 
@@ -3814,9 +3928,11 @@ ScenarioStartupController::reconcile_zone_contacts_from_fresh_spatial_sample() {
       const CurrentCharacterTriggerProxy* const proxy{
           m_current_character_trigger_proxy.has_value() ? &m_current_character_trigger_proxy.value()
                                                         : nullptr};
+      const Runtime::AreaZoneSpatialBounds zone_bounds{
+          Runtime::area_zone_spatial_bounds(active_zone.zone.serialized_vertices)};
       const bool broadphase{
           proxy != nullptr && proxy->registered && proxy->contact_ready &&
-          zone_intersects_proxy_bounds(active_zone.zone, proxy->position, proxy->radius)};
+          Runtime::area_zone_bounds_intersect_actor(zone_bounds, proxy->position, proxy->radius)};
       const bool polygon{proxy != nullptr && proxy->registered && proxy->contact_ready &&
                          zone_contains_runtime_xz(active_zone.zone, proxy->position)};
       const bool heading{proxy != nullptr && proxy->registered && proxy->contact_ready &&
@@ -3824,7 +3940,8 @@ ScenarioStartupController::reconcile_zone_contacts_from_fresh_spatial_sample() {
       App::Log::debug(LogCategory::Scenario,
           "ZoneQualification — source={} ownerSlot={} area={} scene={} zone={} qualifies={} "
           "current={} active={} areaPresent={} controller={} actor=({:.3f},{:.3f},{:.3f}) "
-          "proxyRegistered={} contactReady={} proxy=({:.3f},{:.3f},{:.3f}) radius={:.3f} "
+          "proxyRegistered={} contactReady={} proxy=({:.3f},{:.3f},{:.3f}) "
+          "actorObjectRadius={:.3f} zoneAabb=({:.3f},{:.3f},{:.3f})..({:.3f},{:.3f},{:.3f}) "
           "generation={} "
           "proxyFrozen={} reason='{}' broadphase={} polygon={} heading={}",
           active_zone.source == ActiveZoneSource::k_area ? "AREA" : "SCENE",
@@ -3846,6 +3963,12 @@ ScenarioStartupController::reconcile_zone_contacts_from_fresh_spatial_sample() {
           proxy == nullptr ? 0.0F : proxy->position.y,
           proxy == nullptr ? 0.0F : proxy->position.z,
           proxy == nullptr ? 0.0F : proxy->radius,
+          zone_bounds.minimum.x,
+          zone_bounds.minimum.y,
+          zone_bounds.minimum.z,
+          zone_bounds.maximum.x,
+          zone_bounds.maximum.y,
+          zone_bounds.maximum.z,
           proxy == nullptr ? 0U : proxy->generation,
           proxy != nullptr && proxy->synchronization_suspended,
           proxy == nullptr ? "not registered" : proxy->suspension_reason,

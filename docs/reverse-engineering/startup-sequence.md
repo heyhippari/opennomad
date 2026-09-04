@@ -3070,9 +3070,10 @@ mechanisms, not intro-specific shortcuts:
    selected, and its default move/default state were initialized with the
    controller **disabled**;
 2. scripted body animation owns the visible pose for the whole cinematic;
-3. compact opcode `0x68` only enables the existing controller — it does not
-   reposition the actor, reset transforms, select a state, or clear the
-   cinematic pose;
+3. compact opcode `0x68` suppresses ordinary control while retaining the
+    existing controller; a later `0x69` releases participation without
+    repositioning the actor, resetting transforms, selecting a state, or
+    clearing the cinematic pose;
 4. the next enabled CTL service applies the current CTL state's authored
    animation as the base pose, so the completed cinematic pose stops owning
    the character naturally;

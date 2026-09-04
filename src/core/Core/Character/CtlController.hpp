@@ -50,9 +50,9 @@ inline constexpr std::uint32_t K_CTL_CONDITION_SPECIAL{0x80000000U};
 /// RuntimeCharacter it drives; the immutable CtlControlSet bank is shared.
 ///
 /// The controller exists and holds a current move/state while disabled;
-/// Character::RuntimeCharacter::controller_enabled (compact 0x68/0x69) gates
-/// whether it is serviced, so a cinematic can run over an already-initialized
-/// adventure controller.
+/// Character::RuntimeCharacter::controller_enabled gates whether it is
+/// serviced. Compact 0x68 suppresses that participation and compact 0x69
+/// releases it, so a cinematic can run over an initialized controller.
 class CtlController {
  public:
   /// Independent flag filters and the timing switch of the recovered

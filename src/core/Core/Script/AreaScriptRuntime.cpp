@@ -65,8 +65,8 @@ constexpr std::uint32_t K_OP_DEACTIVATE_CHARACTER{0x4F};
 constexpr std::uint32_t K_OP_GET_CHARACTER_VALUE_TO_VARIABLE{0x56};
 constexpr std::uint32_t K_OP_START_CURRENT_CHARACTER_SCRIPT{0x5A};
 constexpr std::uint32_t K_OP_SET_CHARACTER_VALUE_FROM_VARIABLE{0x5D};
-constexpr std::uint32_t K_OP_SET_CURRENT_CHARACTER_CONTROLLER_ON{0x68};
-constexpr std::uint32_t K_OP_SET_CURRENT_CHARACTER_CONTROLLER_OFF{0x69};
+constexpr std::uint32_t K_OP_SUPPRESS_CURRENT_CHARACTER_CONTROL{0x68};
+constexpr std::uint32_t K_OP_RELEASE_CURRENT_CHARACTER_CONTROL{0x69};
 constexpr std::uint32_t K_OP_OBJECT_ACTIVATE{0x5C};
 constexpr std::uint32_t K_OP_CAMERA_SELECT{0x5F};
 constexpr std::uint32_t K_OP_CAMERA_MOVE_WAIT{0x60};
@@ -430,19 +430,18 @@ constexpr std::array<AreaOpcodeInfo, 52> K_AREA_OPCODE_TABLE{
         .notes = "unresolved subsystem operation",
         .operands = K_OPERANDS_83.data(),
         .operand_count = K_OPERANDS_83.size()},
-    AreaOpcodeInfo{.opcode = K_OP_SET_CURRENT_CHARACTER_CONTROLLER_ON,
-        .name = "SetCurrentCharacterControllerEnabled",
+    AreaOpcodeInfo{.opcode = K_OP_SUPPRESS_CURRENT_CHARACTER_CONTROL,
+        .name = "SuppressCurrentCharacterControl",
         .support = OpcodeSupport::k_supported,
         .provisional = true,
-        .notes = "sets the current actor controller boolean true; its gameplay label is unresolved",
+        .notes = "suppresses ordinary current-character player/CTL control participation",
         .operands = K_OPERANDS_NONE.data(),
         .operand_count = K_OPERANDS_NONE.size()},
-    AreaOpcodeInfo{.opcode = K_OP_SET_CURRENT_CHARACTER_CONTROLLER_OFF,
-        .name = "SetCurrentCharacterControllerDisabled",
+    AreaOpcodeInfo{.opcode = K_OP_RELEASE_CURRENT_CHARACTER_CONTROL,
+        .name = "ReleaseCurrentCharacterControl",
         .support = OpcodeSupport::k_supported,
         .provisional = true,
-        .notes =
-            "sets the current actor controller boolean false; its gameplay label is unresolved",
+        .notes = "restores ordinary current-character player/CTL control participation",
         .operands = K_OPERANDS_NONE.data(),
         .operand_count = K_OPERANDS_NONE.size()},
     AreaOpcodeInfo{.opcode = K_OP_PLAY_MUSIC,
@@ -1967,21 +1966,21 @@ void AreaScriptRuntime::execute_instruction() {
           request.mode_flag);
       break;
     }
-    case K_OP_SET_CURRENT_CHARACTER_CONTROLLER_ON:
-    case K_OP_SET_CURRENT_CHARACTER_CONTROLLER_OFF: {
+    case K_OP_SUPPRESS_CURRENT_CHARACTER_CONTROL:
+    case K_OP_RELEASE_CURRENT_CHARACTER_CONTROL: {
       const AreaCurrentCharacterControllerRequest request{
-          .enabled = opcode == K_OP_SET_CURRENT_CHARACTER_CONTROLLER_ON};
+          .enabled = opcode == K_OP_RELEASE_CURRENT_CHARACTER_CONTROL};
       m_last_current_character_controller_request = request;
       if (m_current_character_controller_sink) {
         if (auto updated{m_current_character_controller_sink(request)}; !updated) {
-          fail_instruction(fmt::format("failed to set current-character controller {}: {}",
+          fail_instruction(fmt::format("failed to set current-character player control {}: {}",
               request.enabled ? "enabled" : "disabled",
               updated.error()));
           return;
         }
       }
-      entry.effect = fmt::format(
-          "set current-character controller {}", request.enabled ? "enabled" : "disabled");
+      entry.effect = request.enabled ? "release current-character player control"
+                                     : "suppress current-character player control";
       break;
     }
     case K_OP_OPEN_INTERFACE: {

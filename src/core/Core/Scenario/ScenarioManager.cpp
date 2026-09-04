@@ -591,7 +591,7 @@ const WorldSceneContext* ScenarioManager::current_world_context() const {
 std::vector<WorldSceneContext*> ScenarioManager::attached_world_contexts() {
   std::vector<WorldSceneContext*> contexts;
   for (const WorldContextIdentity& identity : m_attached_world_order) {
-    const auto context{
+    auto* const context{
         std::ranges::find(m_world_contexts, identity.scene_id, &WorldSceneContext::scene_id)};
     if (context != m_world_contexts.end() && context->generation == identity.generation &&
         context->residency == WorldSceneResidencyState::ResidentAttached) {

@@ -399,14 +399,14 @@ App::Omikron::Model3DOData make_class2_attachment_decor() {
 }
 
 /// Synthetic AREA contact fixture. The top-level context selects a current
-/// body and enables a zone; the record-relative zone event selects
-/// a move, toggles the controller, self-disables, waits on a camera, then
-/// toggles the controller off and ends.
+/// body and enables a zone; the record-relative zone event selects a move,
+/// suppresses player control, waits on a camera, restores player control,
+/// self-disables, and ends.
 std::vector<std::byte> make_zone_contact_area_archive(const bool starts_dialog = false,
     const bool self_disables = true,
     const bool enable_controller = true,
     const std::int16_t zone_id = 3795,
-    const bool controller_off_before_wait = false,
+    const bool release_control_before_wait = false,
     const bool place_before_activation = false,
     const std::uint32_t initial_xz = 50U,
     const std::int16_t orientation_center_units = 4090,
@@ -420,12 +420,12 @@ std::vector<std::byte> make_zone_contact_area_archive(const bool starts_dialog =
     top_level.u8(0x5A).u16(221).u16(0);
   }
   if (enable_controller) {
-    top_level.u8(0x68);
+    top_level.u8(0x69);
   }
   if (place_before_activation) {
     top_level.u8(0x49).u16(44);
     top_level.u8(0x3F).u16(100);
-    top_level.u8(0x68);
+    top_level.u8(0x69);
   }
   for (std::size_t index{0}; index < zone_count; ++index) {
     top_level.u8(0x40).u16(static_cast<std::uint16_t>(zone_id + index));
@@ -442,14 +442,16 @@ std::vector<std::byte> make_zone_contact_area_archive(const bool starts_dialog =
     zone_event.u8(0x3F).u16(100);
     if (self_disables) {
       zone_event.u8(0x68);
-      zone_event.u8(0x41).u16(static_cast<std::uint16_t>(zone_id));
-      if (controller_off_before_wait) {
+      if (release_control_before_wait) {
         zone_event.u8(0x69);
       }
     }
     zone_event.u8(0x60).u16(42).u16(1).u16(3);
-    if (self_disables && !controller_off_before_wait) {
-      zone_event.u8(0x69);
+    if (self_disables) {
+      if (!release_control_before_wait) {
+        zone_event.u8(0x69);
+      }
+      zone_event.u8(0x41).u16(static_cast<std::uint16_t>(zone_id));
     }
   }
   zone_event.u8(0x03);
@@ -548,16 +550,20 @@ std::vector<std::byte> make_zone_contact_area_archive(const bool starts_dialog =
   return data;
 }
 
-std::vector<std::byte> make_handoff_area_archive(const std::int16_t release_area_id = 118) {
+std::vector<std::byte> make_handoff_area_archive(const std::int16_t release_area_id = 118,
+    const bool target_requests_area_142 = false,
+    const bool target_selects_character = false) {
   Buffer handoff;
   handoff.u8(0x38).u16(136);
   handoff.u8(0x4F).u16(0xFFFF);
   handoff.u8(0x41).u16(6);
   handoff.u8(0x40).u16(5);
   handoff.u8(0x2F).u16(222).u16(0xFFFF).u16(0xFFFF);
-  handoff.u8(0x47).u16(222).u16(55);
-  handoff.u8(0x49).u16(654);
-  handoff.u8(0x30).u16(static_cast<std::uint16_t>(release_area_id));
+  if (!target_selects_character) {
+    handoff.u8(0x47).u16(222).u16(55);
+    handoff.u8(0x49).u16(654);
+    handoff.u8(0x30).u16(static_cast<std::uint16_t>(release_area_id));
+  }
   handoff.u8(0x03);
 
   constexpr std::size_t k_source_offset{0x800};
@@ -569,10 +575,25 @@ std::vector<std::byte> make_handoff_area_archive(const std::int16_t release_area
   constexpr std::size_t k_source_script_offset{k_source_zone_offset + (2U * 0x44U)};
   const std::size_t source_camera_offset{k_source_script_offset + handoff.data().size()};
   const std::size_t source_record_size{source_camera_offset + 0x2CU};
-  constexpr std::size_t k_target_zone_offset{k_header_size};
-  constexpr std::size_t k_target_address_offset{k_target_zone_offset + (2U * 0x44U)};
-  constexpr std::size_t k_target_record_size{k_target_address_offset + 0x10U};
-  std::vector<std::byte> data(k_target_offset + k_target_record_size, std::byte{});
+  const std::size_t target_placement_offset{k_header_size};
+  const std::size_t target_definition_offset{
+      target_placement_offset + (target_selects_character ? 0x14U : 0U)};
+  const std::size_t k_target_zone_offset{
+      target_definition_offset + (target_selects_character ? 0x114U : 0U)};
+  const std::size_t k_target_address_offset{k_target_zone_offset + (2U * 0x44U)};
+  const std::size_t k_target_script_offset{k_target_address_offset + 0x10U};
+  Buffer target_script;
+  if (target_selects_character) {
+    target_script.u8(0x38).u16(310).u8(0x03);
+  } else if (target_requests_area_142) {
+    target_script.u8(0x2F).u16(142).u16(0xFFFF).u16(0xFFFF).u8(0x03);
+  }
+  const std::size_t target_record_size{k_target_script_offset + target_script.data().size()};
+  constexpr std::size_t k_third_offset{0x1000U};
+  constexpr std::size_t k_third_record_size{k_header_size};
+  const std::size_t archive_size{target_requests_area_142 ? k_third_offset + k_third_record_size
+                                                          : k_target_offset + target_record_size};
+  std::vector<std::byte> data(archive_size, std::byte{});
   write_u32(data, 118U * 8U, static_cast<std::uint32_t>(k_source_offset));
   write_u32(data, (118U * 8U) + 4U, static_cast<std::uint32_t>(source_record_size));
   write_u32(data, k_source_offset + 0x04U, k_source_script_offset);
@@ -609,10 +630,32 @@ std::vector<std::byte> make_handoff_area_archive(const std::int16_t release_area
       handoff.data().size());
 
   write_u32(data, 222U * 8U, static_cast<std::uint32_t>(k_target_offset));
-  write_u32(data, (222U * 8U) + 4U, k_target_record_size);
-  write_area_bytecode_pool_bounds(
-      data, k_target_offset, k_target_record_size, k_target_record_size);
+  write_u32(data, (222U * 8U) + 4U, static_cast<std::uint32_t>(target_record_size));
+  if (target_requests_area_142 || target_selects_character) {
+    write_u32(data, k_target_offset + 0x04U, k_target_script_offset);
+  }
+  write_area_bytecode_pool_bounds(data,
+      k_target_offset,
+      target_requests_area_142 || target_selects_character ? k_target_script_offset
+                                                           : target_record_size,
+      target_record_size);
   write_name(data, k_target_offset + 0x61U, "DEST");
+  if (target_selects_character) {
+    write_u32(data, k_target_offset + 0x28U, static_cast<std::uint32_t>(target_placement_offset));
+    write_u16(data, k_target_offset + 0x48U, 1);
+    write_u16(data, k_target_offset + target_placement_offset + 0x00U, 0xFFFF);
+    write_u16(data, k_target_offset + target_placement_offset + 0x02U, 310);
+    write_u32(data, k_target_offset + target_placement_offset + 0x04U, 43922U);
+    write_u32(data, k_target_offset + target_placement_offset + 0x08U, 2592U);
+    write_u32(data, k_target_offset + target_placement_offset + 0x0CU, 19656U);
+    write_u32(data,
+        k_target_offset + 0x28U + (4U * 4U),
+        static_cast<std::uint32_t>(target_definition_offset));
+    write_u16(data, k_target_offset + 0x48U + (4U * 2U), 1);
+    write_name(data, k_target_offset + target_definition_offset + 0x08U, "TARGET CHARACTER");
+    write_name(data, k_target_offset + target_definition_offset + 0x90U, "TARGET");
+    write_u16(data, k_target_offset + target_definition_offset + 0x110U, 310);
+  }
   write_u32(data, k_target_offset + 0x28U + (2U * 4U), k_target_zone_offset);
   write_u16(data, k_target_offset + 0x48U + (2U * 2U), 2);
   write_u32(data, k_target_offset + 0x28U + (5U * 4U), k_target_address_offset);
@@ -624,6 +667,17 @@ std::vector<std::byte> make_handoff_area_archive(const std::int16_t release_area
   write_u32(data, k_target_offset + k_target_address_offset + 0x08U, 19656U);
   write_u16(data, k_target_offset + k_target_address_offset + 0x0CU, 0);
   write_u16(data, k_target_offset + k_target_address_offset + 0x0EU, 654);
+  if (target_requests_area_142 || target_selects_character) {
+    std::memcpy(data.data() + k_target_offset + k_target_script_offset,
+        target_script.data().data(),
+        target_script.data().size());
+  }
+  if (target_requests_area_142) {
+    write_u32(data, 142U * 8U, k_third_offset);
+    write_u32(data, (142U * 8U) + 4U, k_third_record_size);
+    write_area_bytecode_pool_bounds(data, k_third_offset, k_third_record_size, k_third_record_size);
+    write_name(data, k_third_offset + 0x61U, "THIRD");
+  }
   return data;
 }
 
@@ -928,6 +982,70 @@ std::vector<std::byte> make_minimal_3do() {
   return bytes.data();
 }
 
+std::vector<std::byte> make_minimal_character_3do() {
+  constexpr std::uint32_t k_root_offset{0x2CU};
+  constexpr std::uint32_t k_material_offset{0x174U};
+  constexpr std::uint32_t k_mesh_offset{k_material_offset + 80U};
+  constexpr std::uint32_t k_lights_offset{k_mesh_offset + 140U};
+  Buffer bytes;
+  bytes.chars("OD3X", 4)
+      .u32(4)
+      .u32(k_root_offset)
+      .u32(k_material_offset)
+      .u32(k_mesh_offset)
+      .u32(k_mesh_offset)
+      .u32(k_mesh_offset)
+      .u32(k_mesh_offset)
+      .u32(0)
+      .u32(0)
+      .u32(k_lights_offset)
+      .zeros(72)
+      .u32(0)
+      .zeros(104)
+      .u32(1)
+      .f32(1.0F)
+      .u32(0)
+      .u32(0)
+      .u32(0)
+      .u64(0)
+      .u32(1)
+      .u32(0)
+      .u32(0)
+      .u32(0)
+      .u32(1)
+      .u32(0)
+      .u32(0)
+      .u32(0)
+      .u32(0)
+      .u32(0)
+      .zeros(80)
+      .chars("MATERIAL", 20)
+      .chars("", 20)
+      .chars("", 20)
+      .u32(1)
+      .u64(0)
+      .u32(0)
+      .u16(1)
+      .u16(1)
+      .u32(0)
+      .u32(0)
+      .u32(1)
+      .u32(0)
+      .chars("ROOT", 20)
+      .f32(0.0F)
+      .f32(0.0F)
+      .f32(0.0F)
+      .i32(-1)
+      .i32(-1)
+      .i32(-1)
+      .u32(0)
+      .u32(0)
+      .u32(0)
+      .u32(0)
+      .zeros(64);
+  return bytes.data();
+}
+
 /// Scratch directory wiped on construction and destruction.
 class TempDirectory {
  public:
@@ -984,7 +1102,7 @@ void write_boot_fixtures(const TempDirectory& temp) {
 void write_zone_contact_fixtures(const TempDirectory& temp,
     const bool enable_controller = true,
     const std::int16_t zone_id = 3795,
-    const bool controller_off_before_wait = false,
+    const bool release_control_before_wait = false,
     const bool place_before_activation = false,
     const std::uint32_t initial_xz = 50U,
     const std::int16_t orientation_center_units = 4090,
@@ -1000,7 +1118,7 @@ void write_zone_contact_fixtures(const TempDirectory& temp,
           self_disables,
           enable_controller,
           zone_id,
-          controller_off_before_wait,
+          release_control_before_wait,
           place_before_activation,
           initial_xz,
           orientation_center_units,
@@ -1166,16 +1284,29 @@ void write_character_value_fixtures(const TempDirectory& temp) {
   write_bytes(temp.root() / "MESHES" / "DECORS" / "GRID.3DO", make_minimal_3do());
 }
 
-void write_handoff_fixtures(const TempDirectory& temp, const std::int16_t release_area_id = 118) {
+void write_handoff_fixtures(const TempDirectory& temp,
+    const std::int16_t release_area_id = 118,
+    const bool target_requests_area_142 = false,
+    const bool target_selects_character = false) {
   std::vector<std::byte> start{make_start()};
   start.at(0x13FCU) = std::byte{0x40};  // ZONE 6 starts persistently enabled.
   write_bytes(temp.root() / "IAM" / "START", start);
   write_bytes(temp.root() / "IAM" / "GLOBAL", App::Tests::make_empty_iam_global());
-  write_bytes(temp.root() / "IAM" / "AREA", make_handoff_area_archive(release_area_id));
+  write_bytes(temp.root() / "IAM" / "AREA",
+      make_handoff_area_archive(
+          release_area_id, target_requests_area_142, target_selects_character));
   write_bytes(temp.root() / "IAM" / "SCENE", make_handoff_scene_archive());
   write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
   write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_minimal_scx());
   write_bytes(temp.root() / "SCPTDATA" / "DEST.SCX", make_minimal_scx());
+  if (target_requests_area_142) {
+    write_bytes(temp.root() / "SCPTDATA" / "THIRD.SCX", make_minimal_scx());
+  }
+  if (target_selects_character) {
+    write_bytes(temp.root() / "MESHES" / "PERSOS" / "TARGET.3DO", make_minimal_character_3do());
+    write_bytes(temp.root() / "MESHES" / "PERSOS" / "TARGET.3DT",
+        {std::byte{0}, std::byte{0}, std::byte{0}, std::byte{0}});
+  }
 }
 
 void write_camera_namespace_fixtures(
@@ -1346,7 +1477,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK(owner->scene_script->state() == AreaScriptState::k_ready);
   }
 
-  TEST_CASE("AREA-shaped zone contact runs record-relative event one through self-deactivation") {
+  TEST_CASE("IMPASSE 3795 suppresses control while waiting then restores and self-deactivates") {
     const TempDirectory temp;
     write_zone_contact_fixtures(temp);
     const ScopedGameDataRoot root{temp.root()};
@@ -1370,15 +1501,31 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(controller.tick(1.0F / 30.0F).has_value());
     REQUIRE(controller.tick(1.0F / 30.0F).has_value());
     REQUIRE(manager.game_state() != nullptr);
-    CHECK_FALSE(manager.game_state()->zone_flag(3795).value());
+    CHECK(manager.game_state()->zone_flag(3795).value());
     CHECK_EQ(controller.zone_contact_count(), 1U);
-    const App::Character::RuntimeCharacter* character{runtime->character_runtime().find(136)};
+    App::Character::RuntimeCharacter* character{runtime->character_runtime().find(136)};
     REQUIRE(character != nullptr);
+    REQUIRE(character->ctl_controller.has_value());
+    App::Character::CtlController* const ctl_controller{&character->ctl_controller.value()};
+    const App::Runtime::Vec3 tutorial_position{character->transform.translation};
     CHECK_EQ(character->current_move_id(), std::optional<std::int16_t>{100});
-    CHECK(character->controller_enabled);
+    CHECK_FALSE(character->controller_enabled);
+    CHECK_FALSE(ctl_controller->direct_control_active());
 
-    // 0x41 refreshed the persistent zone table, but the context must remain
-    // alive long enough to complete its state-7 camera wait and EndEvent.
+    const App::ZoneContactContext* contact{controller.zone_contact(0)};
+    REQUIRE(contact != nullptr);
+    REQUIRE(contact->script != nullptr);
+    CHECK(contact->script->state() == AreaScriptState::k_waiting);
+    CHECK(contact->script->wait_info().kind == App::Script::AreaWaitKind::k_camera);
+
+    // Remaining spatially inside while the tutorial waits retains its one
+    // contact and does not manufacture another event context.
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+    CHECK_EQ(controller.zone_contact_count(), 1U);
+    CHECK_EQ(controller.active_zone_contact_registration_count(), 1U);
+    CHECK_FALSE(character->controller_enabled);
+    CHECK_FALSE(ctl_controller->direct_control_active());
+
     const auto camera{manager.world_presentation().take_camera()};
     REQUIRE(camera.has_value());
     REQUIRE(camera->operation_generation.has_value());
@@ -1389,13 +1536,22 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
         .source_area_id = camera->source_area_id,
         .camera_id = camera->camera_id});
     REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+    CHECK(character->controller_enabled);
+    CHECK(ctl_controller->direct_control_active());
+    CHECK_EQ(&character->ctl_controller.value(), ctl_controller);
+    CHECK_EQ(character->current_move_id(), std::optional<std::int16_t>{100});
+    CHECK_EQ(character->transform.translation.x, tutorial_position.x);
+    CHECK_EQ(character->transform.translation.z, tutorial_position.z);
+    CHECK_FALSE(manager.game_state()->zone_flag(3795).value());
+
     REQUIRE(controller.tick(1.0F / 30.0F).has_value());
     CHECK_EQ(controller.zone_contact_count(), 0U);
-    CHECK_FALSE(character->controller_enabled);
 
     // The disabled zone is not recreated while the actor remains inside it.
     REQUIRE(controller.tick(1.0F / 30.0F).has_value());
     CHECK_EQ(controller.zone_contact_count(), 0U);
+    CHECK(character->controller_enabled);
+    CHECK(ctl_controller->direct_control_active());
   }
 
   TEST_CASE("registered proxy permits fresh contact while controller is disabled") {
@@ -1414,6 +1570,14 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
             -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
           auto resource{std::make_shared<App::Character::ModelResource>()};
           resource->name = name;
+          resource->bounds_radius = 50.0F;
+          resource->model.root_mesh_index = 0;
+          resource->model.meshes.resize(2U);
+          resource->model.meshes.at(0).bounding_radius = 30.0F;
+          resource->model.meshes.at(0).triangle_count = 1U;
+          resource->model.meshes.at(1).bounding_radius = 10.0F;
+          resource->model.meshes.at(1).triangle_count = 2U;
+          resource->actor_object_index = App::Character::actor_object_index(resource->model);
           resource->groups.push_back(App::Omikron::MaterialGroup{});
           return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
         });
@@ -1433,16 +1597,20 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK(proxy.registered);
     CHECK_EQ(proxy.owner.character_id, 136);
     CHECK_EQ(proxy.owner.world_scene_id, 0U);
+    CHECK_EQ(proxy.radius, 10.0F);
+    CHECK_EQ(character->model_resource->bounds_radius, 50.0F);
+    CHECK_EQ(character->model_resource->model.root_mesh_index, 0);
+    CHECK_EQ(character->model_resource->actor_object_index, std::optional<std::size_t>{1U});
     CHECK_EQ(controller.zone_contact_count(), 1U);
     CHECK_EQ(character->current_move_id(), std::optional<std::int16_t>{100});
-    CHECK(character->controller_enabled);
-    CHECK(character->ctl_controller->direct_control_active());
+    CHECK_FALSE(character->controller_enabled);
+    CHECK_FALSE(character->ctl_controller->direct_control_active());
     CHECK_EQ(controller.current_character_trigger_proxy()->position.x, proxy.position.x);
     CHECK_EQ(controller.current_character_trigger_proxy()->position.y, proxy.position.y);
     CHECK_EQ(controller.current_character_trigger_proxy()->position.z, proxy.position.z);
   }
 
-  TEST_CASE("zone contact in progress survives controller-off inside its event") {
+  TEST_CASE("zone contact in progress survives control release before its wait") {
     constexpr std::int16_t k_zone_id{13};
     const TempDirectory temp;
     write_zone_contact_fixtures(temp, true, k_zone_id, true);
@@ -1470,8 +1638,8 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(character != nullptr);
     REQUIRE(character->ctl_controller.has_value());
     CHECK_EQ(character->current_move_id(), std::optional<std::int16_t>{100});
-    CHECK_FALSE(character->controller_enabled);
-    CHECK_FALSE(character->ctl_controller->direct_control_active());
+    CHECK(character->controller_enabled);
+    CHECK(character->ctl_controller->direct_control_active());
     CHECK_EQ(controller.zone_contact_count(), 1U);
     REQUIRE(controller.current_character_trigger_proxy().has_value());
     CHECK(controller.current_character_trigger_proxy()->registered);
@@ -2014,7 +2182,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
   TEST_CASE("ordinary proxy synchronization may create contact while controller is disabled") {
     constexpr std::int16_t k_zone_id{15};
     const TempDirectory temp;
-    write_zone_contact_fixtures(temp, false, k_zone_id, false, false, 500U);
+    write_zone_contact_fixtures(temp, false, k_zone_id, true, false, 500U);
     const ScopedGameDataRoot root{temp.root()};
 
     App::ScenarioManager manager;
@@ -2072,15 +2240,17 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK_EQ(character->current_move_id(), std::optional<std::int16_t>{7});
     CHECK_FALSE(character->controller_enabled);
     REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+    CHECK(character->controller_enabled);
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
     contact = controller.zone_contact(0);
     REQUIRE(contact != nullptr);
-    CHECK(contact->heartbeat_state == App::ZoneContactHeartbeatState::k_awaiting_refresh);
+    CHECK(contact->heartbeat_state == App::ZoneContactHeartbeatState::k_refreshed);
     CHECK(std::ranges::none_of(contact->script->queued_events(), [](const std::uint16_t event) {
       return event == 2U;
     }));
     CHECK_EQ(character->current_move_id(), std::optional<std::int16_t>{100});
     CHECK(character->controller_enabled);
-    CHECK_FALSE(character->spatial_heading_suppression_latch);
+    CHECK(character->spatial_heading_suppression_latch);
     CHECK_EQ(controller.active_zone_contact_registration_count(), 1U);
   }
 
@@ -2879,6 +3049,247 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK_EQ(manager.attached_world_head_context()->scene_id, 1U);
   }
 
+  TEST_CASE("physical support commits logical AREA when body storage already matches destination") {
+    const TempDirectory temp;
+    write_handoff_fixtures(temp);
+    const ScopedGameDataRoot root{temp.root()};
+
+    App::ScenarioManager manager;
+    App::ScenarioStartupController controller;
+    REQUIRE(controller.initialize(manager).has_value());
+    App::ScenarioRuntime* source_runtime{manager.world_runtime(0)};
+    REQUIRE(source_runtime != nullptr);
+    source_runtime->character_runtime().set_model_loader(
+        [](const std::string_view name)
+            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
+          auto resource{std::make_shared<App::Character::ModelResource>()};
+          resource->name = name;
+          resource->groups.push_back(App::Omikron::MaterialGroup{});
+          resource->model.header.collision_sphere_count = 1U;
+          resource->model.header.collision_sphere_slots.at(0) =
+              App::Omikron::CollisionSphere{.center = {.y = 8.0F}, .radius = 12.0F};
+          return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
+        });
+
+    REQUIRE(controller.tick().has_value());
+    REQUIRE(controller.tick().has_value());
+    App::Character::RuntimeCharacter* source_character{
+        source_runtime->character_runtime().find(136)};
+    REQUIRE(source_character != nullptr);
+    const App::Character::BodyIdentity body_identity{source_character->body_identity};
+    const App::Runtime::Vec3 position{source_character->transform.translation};
+    REQUIRE(manager.transfer_controlled_character(0, 1).has_value());
+    App::ScenarioRuntime* destination_runtime{manager.world_runtime(1)};
+    REQUIRE(destination_runtime != nullptr);
+    App::Character::RuntimeCharacter* destination_character{
+        destination_runtime->character_runtime().find_body(body_identity)};
+    REQUIRE(destination_character != nullptr);
+    App::Omikron::Model3DOData destination_decor{make_collision_decor(1000.0F, position.y + 20.0F)};
+    for (std::size_t index{0}; index < 3U; ++index) {
+      destination_decor.vertices.at(index).position.x += position.x;
+      destination_decor.vertices.at(index).position.z += position.z;
+    }
+    destination_runtime->bind_decor_model(&destination_decor);
+    App::Character::PhysicalMotionService::synchronize(*destination_character);
+    destination_character->physical_motion.vertical_velocity = 0.0F;
+
+    REQUIRE_EQ(controller.active_area_slot(), 0U);
+    REQUIRE_EQ(manager.current_world_context()->scene_id, 0U);
+    REQUIRE_EQ(manager.controlled_character()->world_scene_id, 1U);
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+
+    CHECK_EQ(controller.active_area_slot(), 1U);
+    CHECK_EQ(manager.current_world_context()->scene_id, 1U);
+    CHECK_EQ(manager.game_state()->current_area(), 222);
+    CHECK_EQ(manager.controlled_character()->world_scene_id, 1U);
+    CHECK_EQ(manager.controlled_character()->body_identity, body_identity);
+    CHECK(destination_runtime->character_runtime().find_body(body_identity) != nullptr);
+    CHECK(source_runtime->character_runtime().find_body(body_identity) == nullptr);
+    REQUIRE(manager.attached_world_head_context() != nullptr);
+    CHECK_EQ(manager.attached_world_head_context()->scene_id, 1U);
+  }
+
+  TEST_CASE("physical support matching logical current does not follow split body storage") {
+    const TempDirectory temp;
+    write_handoff_fixtures(temp, 9999);
+    const ScopedGameDataRoot root{temp.root()};
+
+    App::ScenarioManager manager;
+    App::ScenarioStartupController controller;
+    REQUIRE(controller.initialize(manager).has_value());
+    App::ScenarioRuntime* source_runtime{manager.world_runtime(0)};
+    REQUIRE(source_runtime != nullptr);
+    source_runtime->character_runtime().set_model_loader(
+        [](const std::string_view name)
+            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
+          auto resource{std::make_shared<App::Character::ModelResource>()};
+          resource->name = name;
+          resource->groups.push_back(App::Omikron::MaterialGroup{});
+          resource->model.header.collision_sphere_count = 1U;
+          resource->model.header.collision_sphere_slots.at(0) =
+              App::Omikron::CollisionSphere{.center = {.y = 8.0F}, .radius = 12.0F};
+          return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
+        });
+
+    REQUIRE(controller.tick().has_value());
+    REQUIRE(controller.tick().has_value());
+    App::Character::RuntimeCharacter* source_character{
+        source_runtime->character_runtime().find(136)};
+    REQUIRE(source_character != nullptr);
+    const App::Character::BodyIdentity body_identity{source_character->body_identity};
+    const App::Runtime::Vec3 position{source_character->transform.translation};
+    REQUIRE(manager.transfer_controlled_character(0, 1).has_value());
+    App::ScenarioRuntime* destination_runtime{manager.world_runtime(1)};
+    REQUIRE(destination_runtime != nullptr);
+    App::Character::RuntimeCharacter* destination_character{
+        destination_runtime->character_runtime().find_body(body_identity)};
+    REQUIRE(destination_character != nullptr);
+    App::Omikron::Model3DOData source_decor{make_collision_decor(1000.0F, position.y + 20.0F)};
+    for (std::size_t index{0}; index < 3U; ++index) {
+      source_decor.vertices.at(index).position.x += position.x;
+      source_decor.vertices.at(index).position.z += position.z;
+    }
+    source_runtime->bind_decor_model(&source_decor);
+    App::Character::PhysicalMotionService::synchronize(*destination_character);
+    destination_character->physical_motion.vertical_velocity = 0.0F;
+
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+
+    CHECK_EQ(controller.active_area_slot(), 0U);
+    CHECK_EQ(manager.current_world_context()->scene_id, 0U);
+    CHECK_EQ(manager.game_state()->current_area(), 118);
+    CHECK_EQ(manager.controlled_character()->world_scene_id, 1U);
+    CHECK_EQ(manager.controlled_character()->body_identity, body_identity);
+  }
+
+  TEST_CASE("slot1 AREA transition requester survives event-9 logical current handoff") {
+    const TempDirectory temp;
+    write_handoff_fixtures(temp, 118, true);
+    const ScopedGameDataRoot root{temp.root()};
+
+    App::ScenarioManager manager;
+    App::ScenarioStartupController controller;
+    REQUIRE(controller.initialize(manager).has_value());
+    App::ScenarioRuntime* source_runtime{manager.world_runtime(0)};
+    REQUIRE(source_runtime != nullptr);
+    source_runtime->character_runtime().set_model_loader(
+        [](const std::string_view name)
+            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
+          auto resource{std::make_shared<App::Character::ModelResource>()};
+          resource->name = name;
+          resource->groups.push_back(App::Omikron::MaterialGroup{});
+          resource->model.header.collision_sphere_count = 1U;
+          resource->model.header.collision_sphere_slots.at(0) =
+              App::Omikron::CollisionSphere{.center = {.y = 8.0F}, .radius = 12.0F};
+          return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
+        });
+
+    REQUIRE(controller.tick().has_value());  // AREA118 requests AREA222.
+    REQUIRE(controller.begin_tick(1.0F / 30.0F).has_value());
+    REQUIRE(controller.area_transition_pending());  // AREA222 requests AREA142.
+    REQUIRE_EQ(controller.active_area_slot(), 0U);
+    REQUIRE(controller.area_script(1) != nullptr);
+    CHECK(controller.area_script(1)->state() == AreaScriptState::k_waiting);
+
+    App::Character::RuntimeCharacter* source_character{
+        source_runtime->character_runtime().find(136)};
+    REQUIRE(source_character != nullptr);
+    const App::Character::BodyIdentity body_identity{source_character->body_identity};
+    const App::Runtime::Vec3 position{source_character->transform.translation};
+    REQUIRE(manager.transfer_controlled_character(0, 1).has_value());
+    App::ScenarioRuntime* destination_runtime{manager.world_runtime(1)};
+    REQUIRE(destination_runtime != nullptr);
+    App::Character::RuntimeCharacter* destination_character{
+        destination_runtime->character_runtime().find_body(body_identity)};
+    REQUIRE(destination_character != nullptr);
+    App::Omikron::Model3DOData destination_decor{make_collision_decor(1000.0F, position.y + 20.0F)};
+    for (std::size_t index{0}; index < 3U; ++index) {
+      destination_decor.vertices.at(index).position.x += position.x;
+      destination_decor.vertices.at(index).position.z += position.z;
+    }
+    destination_runtime->bind_decor_model(&destination_decor);
+    App::Character::PhysicalMotionService::synchronize(*destination_character);
+    destination_character->physical_motion.vertical_velocity = 0.0F;
+
+    REQUIRE(controller.finish_tick(1.0F / 30.0F).has_value());
+    REQUIRE_EQ(controller.active_area_slot(), 1U);
+    REQUIRE_EQ(manager.current_world_context()->scene_id, 1U);
+    REQUIRE(controller.area_transition_pending());
+
+    REQUIRE(controller.begin_tick(1.0F / 30.0F).has_value());
+    CHECK_FALSE(controller.area_transition_pending());
+    REQUIRE(controller.runtime_area_slot(0) != nullptr);
+    CHECK_EQ(controller.runtime_area_slot(0)->primary_area_id, 142);
+    CHECK_EQ(controller.active_area_slot(), 1U);
+    CHECK_EQ(manager.current_world_context()->scene_id, 1U);
+    CHECK(controller.area_script(1)->state() == AreaScriptState::k_ready);
+    REQUIRE(controller.finish_tick(1.0F / 30.0F).has_value());
+  }
+
+  TEST_CASE("SelectCurrentCharacter changes body storage ownership but not logical current AREA") {
+    const TempDirectory temp;
+    write_handoff_fixtures(temp, 118, false, true);
+    const ScopedGameDataRoot root{temp.root()};
+
+    App::ScenarioManager manager;
+    App::ScenarioStartupController controller;
+    REQUIRE(controller.initialize(manager).has_value());
+    App::ScenarioRuntime* source_runtime{manager.world_runtime(0)};
+    REQUIRE(source_runtime != nullptr);
+    source_runtime->character_runtime().set_model_loader(
+        [](const std::string_view name)
+            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
+          auto resource{std::make_shared<App::Character::ModelResource>()};
+          resource->name = name;
+          resource->groups.push_back(App::Omikron::MaterialGroup{});
+          return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
+        });
+
+    REQUIRE(controller.tick().has_value());
+    const auto selected{controller.tick()};
+    const std::string selection_error{selected.has_value() ? std::string{} : selected.error()};
+    INFO(selection_error);
+    REQUIRE(selected.has_value());
+
+    REQUIRE(manager.controlled_character().has_value());
+    CHECK_EQ(manager.controlled_character()->character_id, 310);
+    CHECK_EQ(manager.controlled_character()->world_scene_id, 1U);
+    CHECK_EQ(controller.active_area_slot(), 0U);
+    REQUIRE(manager.current_world_context() != nullptr);
+    CHECK_EQ(manager.current_world_context()->scene_id, 0U);
+    CHECK_EQ(manager.game_state()->current_area(), 118);
+
+    App::ScenarioRuntime* destination_runtime{manager.world_runtime(1)};
+    REQUIRE(destination_runtime != nullptr);
+    App::Character::RuntimeCharacter* character{destination_runtime->character_runtime().find_body(
+        manager.controlled_character()->body_identity)};
+    REQUIRE(character != nullptr);
+    auto model{std::make_shared<App::Character::ModelResource>()};
+    model->name = "TARGET";
+    model->groups.push_back(App::Omikron::MaterialGroup{});
+    model->model.header.collision_sphere_count = 1U;
+    model->model.header.collision_sphere_slots.at(0) =
+        App::Omikron::CollisionSphere{.center = {.y = 8.0F}, .radius = 12.0F};
+    character->model_resource = std::move(model);
+    const App::Character::BodyIdentity body_identity{character->body_identity};
+    const App::Runtime::Vec3 position{character->transform.translation};
+    App::Omikron::Model3DOData destination_decor{make_collision_decor(1000.0F, position.y + 20.0F)};
+    for (std::size_t index{0}; index < 3U; ++index) {
+      destination_decor.vertices.at(index).position.x += position.x;
+      destination_decor.vertices.at(index).position.z += position.z;
+    }
+    destination_runtime->bind_decor_model(&destination_decor);
+    App::Character::PhysicalMotionService::synchronize(*character);
+    character->physical_motion.vertical_velocity = 0.0F;
+
+    REQUIRE(controller.tick(1.0F / 30.0F).has_value());
+    CHECK_EQ(controller.active_area_slot(), 1U);
+    CHECK_EQ(manager.current_world_context()->scene_id, 1U);
+    CHECK_EQ(manager.game_state()->current_area(), 222);
+    CHECK_EQ(manager.controlled_character()->world_scene_id, 1U);
+    CHECK_EQ(manager.controlled_character()->body_identity, body_identity);
+  }
+
   TEST_CASE("explicit nonresident AREA release is a successful no-op") {
     const TempDirectory temp;
     write_handoff_fixtures(temp, 9999);
@@ -3000,6 +3411,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(current != nullptr);
     CHECK_FALSE(current->presentation_enabled);
     CHECK_FALSE(current->renderable());
+    CHECK_FALSE(current->controller_enabled);
   }
 
   TEST_CASE("A negative initial area ID fails startup cleanly") {

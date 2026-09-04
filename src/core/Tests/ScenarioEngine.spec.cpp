@@ -768,7 +768,8 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
     CHECK(engine.area_script()->wait_info().kind == App::Script::AreaWaitKind::k_none);
 
     // Both the explicit mode-1 route and the per-frame update route use the
-    // same gate. Neither may execute the following 0x68 while dialog is active.
+    // same gate. Neither may execute the following control-suppression opcode
+    // 0x68 while dialog is active.
     REQUIRE(engine.enter_mode(App::ScenarioMode::k_tick, 0).has_value());
     REQUIRE(engine.update(1.0F / 30.0F).has_value());
     REQUIRE(engine.update(1.0F / 30.0F).has_value());
@@ -779,8 +780,8 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
     CHECK(manager.dialog_runtime().completed());
 
     // Completion is consumed at the start of the next update. The same AREA
-    // context resumes at record offset 0x3FF, executes 0x68, then reaches its terminator;
-    // 0x3D is not dispatched a second time.
+    // context resumes at record offset 0x3FF, executes suppression opcode
+    // 0x68, then reaches its terminator; 0x3D is not dispatched a second time.
     REQUIRE(engine.update(1.0F / 30.0F).has_value());
     CHECK_FALSE(engine.dialog_takeover_active());
     CHECK_FALSE(manager.dialog_runtime().active());

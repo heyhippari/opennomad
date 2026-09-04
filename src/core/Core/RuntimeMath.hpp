@@ -58,11 +58,29 @@ inline constexpr double k_inches_per_metre{39.37007874015748};
 inline constexpr float k_centimetres_to_inches{0.393700778F};
 inline constexpr float k_default_near_inches{2.0F};
 inline constexpr float k_default_clip_distance_metres{50.0F};
+inline constexpr float k_area_zone_lower_y_extension_inches{19.685039520263672F};
+
+struct AreaZoneSpatialBounds {
+  Vec3 minimum{};
+  Vec3 maximum{};
+};
 
 /// Converts one confirmed positional AREA integer through Runtime's x87/_ftol
 /// path. Conversion truncates toward zero; it must not be rounded or floored.
 [[nodiscard]] std::int32_t area_position_to_inches(std::int32_t serialized);
 [[nodiscard]] Vec3 area_position_to_inches(const std::array<std::int32_t, 3>& serialized);
+
+/// Reproduces Runtime's in-place normalization of one AREA table-2 zone vertex.
+/// Zone Y receives an additional -9 adjustment after ordinary AREA conversion.
+[[nodiscard]] Vec3 area_zone_position_to_runtime(const std::array<std::int32_t, 3>& serialized);
+
+/// Builds Runtime's static zone AABB from four normalized table-2 vertices.
+[[nodiscard]] AreaZoneSpatialBounds area_zone_spatial_bounds(
+    const std::array<std::array<std::int32_t, 3>, 4>& serialized_vertices);
+
+/// Tests actor position +/- representative-object radius against a zone AABB.
+[[nodiscard]] bool area_zone_bounds_intersect_actor(
+    const AreaZoneSpatialBounds& zone_bounds, const Vec3& actor_position, float actor_radius);
 
 /// Converts one serialized IAM camera eye/target vector through the same
 /// in-place normalization performed by Runtime's AREA/SCENE record loader.

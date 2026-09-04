@@ -136,6 +136,15 @@ std::optional<std::size_t> actor_object_index(const Omikron::Model3DOData& model
   return selected;
 }
 
+std::optional<float> RuntimeCharacter::actor_spatial_radius() const {
+  if (model_resource == nullptr || !model_resource->actor_object_index.has_value() ||
+      model_resource->actor_object_index.value() >= model_resource->model.meshes.size()) {
+    return std::nullopt;
+  }
+  return model_resource->model.meshes.at(model_resource->actor_object_index.value())
+      .bounding_radius;
+}
+
 Runtime::Runtime() : Runtime{load_model_resource} {}
 
 Runtime::Runtime(ModelLoader model_loader)

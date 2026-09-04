@@ -2083,7 +2083,7 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     CHECK(missing.run() == AreaScriptState::k_ready);
   }
 
-  TEST_CASE("Current-character control records are nonblocking typed requests") {
+  TEST_CASE("0x68 suppresses and 0x69 restores current-character player control") {
     Buffer bytes;
     bytes.u8(0x3F).u16(100);
     bytes.u8(0x68);
@@ -2107,8 +2107,8 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     CHECK(runtime.run() == AreaScriptState::k_ready);
     CHECK_EQ(move, std::optional<std::int16_t>{100});
     REQUIRE_EQ(controller.size(), 2U);
-    CHECK(controller.at(0));
-    CHECK_FALSE(controller.at(1));
+    CHECK_FALSE(controller.at(0));
+    CHECK(controller.at(1));
   }
 }
 

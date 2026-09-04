@@ -971,6 +971,18 @@ HO1_FNM.3DO: hierarchy root UBassin [2], actor representative UVisage [19]
 OpenNomad represents these identities as `Model3DOData::root_mesh_index` and
 `ModelResource::actor_object_index`, respectively. They are not aliases.
 
+Character registration in Runtime's native spatial system uses the object at
+`actor+0x08`. Candidate queries read that runtime object's authored
+bounding-sphere radius at `+0x58` and construct dynamic axis bounds from live
+logical actor XYZ plus/minus that radius. Consequently, current-character AREA
+trigger qualification uses the representative object's radius, not whole-model
+bounds and not the hierarchy root's radius.
+
+This spatial role does not change body-animation identity semantics. A visual
+animation selected on the hierarchy root remains distinct from the logical
+actor representative. It is also separate from authored body spheres used by
+physical collision.
+
 ---
 
 # 15. Hierarchy resolution

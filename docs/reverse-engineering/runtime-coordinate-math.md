@@ -1,7 +1,7 @@
 # Runtime coordinate and transform math
 
 > **Status:** work-in-progress reverse-engineering documentation for OpenNomad  
-> **Last updated:** 2026-08-22
+> **Last updated:** 2026-09-04
 >
 > This document records the coordinate, unit, matrix, quaternion, animation,
 > path, camera, and presentation rules recovered directly from retail
@@ -126,6 +126,28 @@ floor()
 ```
 
 because negative coordinates differ.
+
+AREA table-2 zone vertices are a confirmed field-specific exception. Runtime
+first applies the ordinary conversion to all three components, then adjusts Y:
+
+```text
+zoneRuntimeY = area_position_to_inches(serializedY) - 9
+```
+
+This adjustment belongs to zone loading only. It does not apply to character
+placements, named addresses, or camera vectors. For example, serialized
+`-511` converts generically to `-79`, but a table-2 zone Y becomes `-88`.
+
+Runtime builds each static zone's spatial AABB from the four normalized XYZ
+vertices, then extends only its lower Y bound by 50 cm:
+
+```text
+minimum = component_min(normalizedVertices)
+maximum = component_max(normalizedVertices)
+minimum.y -= 19.685039520263672 inches
+```
+
+X/Z and maximum Y receive no corresponding extension.
 
 ---
 

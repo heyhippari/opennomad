@@ -1235,15 +1235,26 @@ struct AreaZoneRecord {
 }; // 0x44
 ```
 
-The four serialized XYZ points form an X/Z quadrilateral for spatial contact;
-Y is ignored. Runtime uses an ordinary even/odd ray-crossing test. A zero
-orientation span accepts every heading; otherwise the heading must lie within
-the wrapped center ± half-span interval.
+Runtime normalizes each of the four serialized XYZ points in place. X/Z use the
+ordinary AREA positional conversion; table-2 Y additionally subtracts 9 after
+that conversion. Native candidate enumeration uses the resulting 3D AABB,
+with only `minY` extended downward by `19.685039520263672` inches (50 cm).
+
+The four normalized X/Z points then form the narrow-phase quadrilateral.
+Runtime uses an ordinary even/odd ray-crossing test only after the native 3D
+spatial query returns the zone as a candidate. A zero orientation span accepts
+every heading; otherwise the heading must lie within the wrapped center ±
+half-span interval.
 
 The persistent ZONE bit controls whether the record is available to the
 transient contact producer; geometric overlap alone does not create a contact.
 Fresh reporting is restricted to an ordinary spatial sample of the current,
 resident controlled body and is independent of CTL controller enablement.
+The dynamic query AABB is the live logical actor XYZ plus/minus the bounding
+sphere radius of the registered `actor+0x08` representative object. It is not
+the whole character model's bounds radius. IMPASSE zone 3795 demonstrates the
+behavioral difference: Kay'l's handoff X/Z is polygon-inside, while vertical
+broadphase qualification depends on UTete's object-level radius.
 Each positive qualification registers or refreshes one of the native 16
 contact slots. Persistent deactivation removes the producer from the active
 zone set, but an existing registration leaves through compact-phase missed-
@@ -3525,13 +3536,20 @@ The following authored operations complete the handoff:
 Opcode `0x2F` does not activate scene 55, position the player at address 654,
 release AREA 118, or skip any of those subsequent instructions. The seamless
 `(-1,-1)` form loads and physically attaches the destination decor while the
-source remains attached and current. Current AREA and controlled-body ownership
-change only when ordinary physical support establishes the destination decor as
-the actor's accepted owner (native event 9 equivalent). `0x47` only replaces the
+source remains attached and current. Logical current AREA changes only when
+ordinary physical support establishes the destination decor as the actor's
+accepted owner (native event 9 equivalent). Selected-body runtime storage may
+already name that destination; event 9 still commits logical current AREA but
+skips the redundant body transfer. `0x47` only replaces the
 optional SCENE attached to a resident AREA; it is not an AREA handoff. Address
 lookup for `0x49` still scans both resident AREA table-5 collections, then
 applies the resolved address only to the selected body's recorded owner world;
 it never guesses a current character when no `0x38` selection exists.
+
+Opcode `0x38 SelectCurrentCharacter` changes selected-body identity and runtime
+storage ownership only. It does not write logical current AREA globals. Startup
+`0x2F`, `0x49`, and attachment-chain changes likewise do not imply a logical
+handoff; event 9 owns that transition.
 
 Residency, decor attachment, and current AREA are independent. Two resident
 decors may be attached simultaneously, and any detached resident keeps its AREA
@@ -3552,6 +3570,12 @@ AREA order. Global `0x0093076C` is the attached-decor chain head and decor
 event-9 path calls `0x00419B50 -> 0x004412A0` to reverse the chain before the
 logical current/body-owner handoff. OpenNomad retains generation-tagged chain
 identities so recycled resident slots cannot become stale links.
+
+A pending `0x2F` transaction belongs to the exact requesting compact context,
+not whichever resident slot is logically current when loading completes. Its
+immutable source AREA ID, world ID, world generation, and compact requester
+generation detect actual destruction or slot recycling while allowing event 9
+to change logical current AREA during the wait.
 
 This chain head, not logical current AREA, publishes the selected structured
 camera to global `0x009103D4`. Compact numeric camera commands remain global

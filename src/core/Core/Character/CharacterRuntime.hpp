@@ -129,6 +129,9 @@ struct RuntimeCharacter {
   /// without changing ownership or destroying the materialized character.
   bool presentation_enabled{true};
 
+  /// Bounding-sphere radius of Runtime's actor+0x08 representative object.
+  [[nodiscard]] std::optional<float> actor_spatial_radius() const;
+
   /// Authored AREA/address placement snapshot. Animation/controller motion does
   /// not rewrite this field; trigger contacts use the session-owned proxy.
   std::array<std::int32_t, 3> serialized_area_position{};
@@ -152,8 +155,9 @@ struct RuntimeCharacter {
   /// authored adventure_control_set. It exists and holds a current move/state
   /// while disabled; `controller_enabled` gates whether it is serviced.
   std::optional<CtlController> ctl_controller;
-  /// Neutral controller boolean toggled by compact 0x68/0x69; it gates CTL
-  /// controller participation without repositioning or reposing the actor.
+  /// Gameplay-facing CTL participation flag. It is the inverse of Runtime's
+  /// native suppression bit: compact 0x68 clears it and compact 0x69 sets it.
+  /// Toggling it never repositions or reposes the actor.
   bool controller_enabled{false};
   /// Selected authored CTL move ID, derived from the live controller so there
   /// is a single source of truth.

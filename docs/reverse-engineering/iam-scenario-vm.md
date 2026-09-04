@@ -3564,8 +3564,8 @@ High-confidence or useful current names:
 | `0x5F` | camera select | provisional |
 | `0x60` | camera move/wait | provisional |
 | `0x67` | music operation | track ID firm |
-| `0x68` | `SetCurrentCharacterControllerEnabled` | implemented; zero-operand, nonblocking; enables participation of the existing adventure CTL controller only — no reposition/transform reset/pose clear (see [ctl.md](ctl.md) §4.1) |
-| `0x69` | `SetCurrentCharacterControllerDisabled` | implemented; zero-operand, nonblocking; stops CTL controller participation while preserving its move/state |
+| `0x68` | `SuppressCurrentCharacterControl` | implemented; zero-operand, nonblocking; suppresses ordinary current-character player/CTL participation while preserving the controller and its move/state (see [ctl.md](ctl.md) §4.1) |
+| `0x69` | `ReleaseCurrentCharacterControl` | implemented; zero-operand, nonblocking; restores ordinary current-character player/CTL participation without repositioning, resetting the transform, or reloading the CTL bank |
 | `0x76` | global fade into colour | implemented; colour + duration + delay |
 | `0x77` | global fade out of colour | implemented; colour + duration + delay |
 | `0x83` | subsystem operation | provisional |
@@ -3573,6 +3573,18 @@ High-confidence or useful current names:
 | `0x85` | `EndCinematicLetterbox` | strongly recovered |
 
 Unknown handlers should remain unknown rather than receiving speculative names.
+
+Runtime's native boolean is a suppression flag, not a controller-enabled
+value: `0x68` passes 1 and sets the native control-slot `0x80` flag, while
+`0x69` passes 0 and clears it. OpenNomad deliberately exposes the inverse as
+`RuntimeCharacter::controller_enabled`, so the compact VM emits `false` for
+`0x68` and `true` for `0x69`.
+
+IMPASSE zone 3795 corroborates this interpretation in retail data. Its event
+selects move 100, executes `0x68`, runs the blocking letterbox/camera tutorial,
+then executes `0x69`, deactivates zone 3795 with `0x41`, and ends. Thus control
+is suppressed during the tutorial, restored afterward, and the authored zone
+deactivation remains its one-shot mechanism.
 
 ---
 

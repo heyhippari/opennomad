@@ -266,12 +266,19 @@ and class-2 results retain both resident world/slot identity and the source-loca
 3DO object index. Results are selected by the recovered global distance/support
 rules; unrelated object indexes are never flattened together.
 
-After final accepted support resolution, the controlled actor's support world is
-compared with the current AREA world. A different still-resident, attached owner
-performs the native event-9-equivalent handoff: current AREA changes and the same
-durable body transfers world runtime ownership without teleporting or resetting
+The native movement path around `0x00459AA0` compares the actor's accepted
+support-decor owner with the logical current AREA decor. It does not compare
+against global selected-character state. Native actor 3D/decor ownership,
+accepted support ownership, logical current AREA, and selected-character storage
+are distinct values.
+
+After final accepted support resolution, a different still-resident, attached
+support owner performs the native event-9-equivalent handoff. Current AREA always
+changes. The selected body transfers world runtime storage only when it is not
+already stored in the destination, without teleporting or resetting
 physical/controller/presentation state. Both decors remain attached. Touching a
-neighbor wall while support remains in the source world does not hand off.
+neighbor wall while support remains in the logical current world does not hand
+off, even if selected-body storage names the other world.
 
 Before changing current AREA, event 9 reverses the attached-decor chain through
 `0x00419B50 -> 0x004412A0`. This makes the accepted destination the chain head
@@ -280,6 +287,8 @@ as current-AREA ownership.
 
 Still deferred:
 
+- a separate runtime field for native actor 3D/decor ownership; OpenNomad's
+	`ControlledCharacterRef::world_scene_id` currently records body storage only;
 - primary `0x20000000` special-support response semantics;
 - SCENE/person support association and moving-platform person integration;
 - remaining actor/person general collision;

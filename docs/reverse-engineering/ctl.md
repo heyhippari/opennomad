@@ -312,12 +312,22 @@ already-initialized adventure controller.
   input-history/transient reset, no-input reseed, restart phase 1, default
   child activation, current move switch. The operand is a **move ID**, never
   a state ID. Works while enabled or disabled.
-- Compact `0x68`/`0x69`: 0x004050A0 → 0x0041BD10 → 0x00468DA0 (and the
-  disable counterpart). They only gate whether the existing controller
-  participates in the character update — no repositioning, no transform
-  reset, no explicit state selection, no bank load, no pose clear. On the
-  first enabled service the current CTL state's authored animation replaces
-  the completed cinematic pose.
+- Compact `0x68`/`0x69`: 0x004050A0 → 0x0041BD10 → 0x00468DA0. Opcode
+  `0x68` passes native value 1 and sets the control-slot `0x80` suppression
+  flag; `0x69` passes 0 and clears it. This native boolean means **ordinary
+  control suppressed**, not controller enabled. OpenNomad's gameplay-facing
+  `controller_enabled` is intentionally its inverse: `0x68` stores false and
+  `0x69` stores true. Both operations only gate participation of the existing
+  controller — no repositioning, transform reset, explicit state selection,
+  bank load, pose clear, or controller recreation. On the first released
+  service the current CTL state's authored animation replaces the completed
+  cinematic pose.
+
+Retail IMPASSE zone 3795 confirms the direction: event 1 selects move 100,
+uses `0x68` before its blocking camera tutorial, then uses `0x69` immediately
+before deactivating the zone and ending. AREA 118 likewise uses `0x68` to
+suppress ordinary current-character control during startup and the
+introduction sequence.
 
 Direct player control uses the native `0x81` flag family: the same-state
 restart count is forced to zero and MDSTAND's autonomous wait diversion is
@@ -622,7 +632,7 @@ its follow mathematics are Phase 4.3) only when **all** of these hold:
 | Address | Role |
 | ------- | ---- |
 | `0x0041B6F0` | compact `0x3F` current-character move native path |
-| `0x004050A0` / `0x0041BD10` / `0x00468DA0` | controller enable path (compact `0x68`) |
+| `0x004050A0` / `0x0041BD10` / `0x00468DA0` | current-character ordinary-control suppression path (compact `0x68` passes 1; `0x69` passes 0) |
 | `0x0045A630` | current move installation |
 | `0x0045A700` / `0x0045A920` | controller initialization family |
 | `0x0045A9A0` | input-history reset (16 entries, `0x40000000` seed) |

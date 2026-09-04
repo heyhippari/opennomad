@@ -135,8 +135,8 @@ struct AreaCurrentCharacterMoveRequest {
   std::int16_t move_id{0};
 };
 
-/// Nonblocking current-actor controller boolean requested by 0x68/0x69.
-/// Its original gameplay-facing label remains unresolved.
+/// Whether ordinary current-character player/CTL control participation should
+/// be enabled. Compact 0x68 emits false; compact 0x69 emits true.
 struct AreaCurrentCharacterControllerRequest {
   bool enabled{false};
 };
@@ -388,7 +388,7 @@ class AreaScriptRuntime {
   /// Bridges current-actor control selection (0x3F) to the world runtime.
   using CurrentCharacterMoveSink =
       std::function<std::expected<void, std::string>(const AreaCurrentCharacterMoveRequest&)>;
-  /// Bridges the neutral current-actor controller boolean pair (0x68/0x69).
+  /// Bridges gameplay-facing current-character control participation (0x68/0x69).
   using CurrentCharacterControllerSink =
       std::function<std::expected<void, std::string>(const AreaCurrentCharacterControllerRequest&)>;
 

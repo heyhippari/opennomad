@@ -221,6 +221,16 @@ TEST_SUITE("Core::Character::Runtime") {
 
     model.meshes.at(2).triangle_count = 11;
     CHECK_EQ(App::Character::actor_object_index(model), std::optional<std::size_t>{1U});
+
+    auto resource{std::make_shared<App::Character::ModelResource>()};
+    resource->model = model;
+    resource->bounds_radius = 50.0F;
+    resource->actor_object_index = 1U;
+    resource->model.meshes.at(1).bounding_radius = 10.0F;
+    App::Character::RuntimeCharacter character{.model_resource = resource};
+    CHECK_EQ(character.actor_spatial_radius(), std::optional<float>{10.0F});
+    resource->actor_object_index = 99U;
+    CHECK_FALSE(character.actor_spatial_radius().has_value());
   }
   TEST_CASE("AREA 118 character materialization uses shared transform helpers and model data") {
     const App::Omikron::IamAreaRecord area{make_area()};

@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <numbers>
 
 namespace App::Runtime {
@@ -18,6 +19,45 @@ Vec3 area_position_to_inches(const std::array<std::int32_t, 3>& serialized) {
   return Vec3{.x = static_cast<float>(area_position_to_inches(serialized.at(0))),
       .y = static_cast<float>(area_position_to_inches(serialized.at(1))),
       .z = static_cast<float>(area_position_to_inches(serialized.at(2)))};
+}
+
+Vec3 area_zone_position_to_runtime(const std::array<std::int32_t, 3>& serialized) {
+  Vec3 result{area_position_to_inches(serialized)};
+  result.y -= 9.0F;
+  return result;
+}
+
+AreaZoneSpatialBounds area_zone_spatial_bounds(
+    const std::array<std::array<std::int32_t, 3>, 4>& serialized_vertices) {
+  AreaZoneSpatialBounds result{.minimum = {.x = std::numeric_limits<float>::max(),
+                                   .y = std::numeric_limits<float>::max(),
+                                   .z = std::numeric_limits<float>::max()},
+      .maximum = {.x = std::numeric_limits<float>::lowest(),
+          .y = std::numeric_limits<float>::lowest(),
+          .z = std::numeric_limits<float>::lowest()}};
+  for (const auto& serialized_vertex : serialized_vertices) {
+    const Vec3 vertex{area_zone_position_to_runtime(serialized_vertex)};
+    result.minimum.x = std::min(result.minimum.x, vertex.x);
+    result.minimum.y = std::min(result.minimum.y, vertex.y);
+    result.minimum.z = std::min(result.minimum.z, vertex.z);
+    result.maximum.x = std::max(result.maximum.x, vertex.x);
+    result.maximum.y = std::max(result.maximum.y, vertex.y);
+    result.maximum.z = std::max(result.maximum.z, vertex.z);
+  }
+  result.minimum.y -= k_area_zone_lower_y_extension_inches;
+  return result;
+}
+
+bool area_zone_bounds_intersect_actor(const AreaZoneSpatialBounds& zone_bounds,
+    const Vec3& actor_position,
+    const float actor_radius) {
+  const float safe_radius{std::max(actor_radius, 0.0F)};
+  return (actor_position.x + safe_radius) >= zone_bounds.minimum.x &&
+         (actor_position.x - safe_radius) <= zone_bounds.maximum.x &&
+         (actor_position.y + safe_radius) >= zone_bounds.minimum.y &&
+         (actor_position.y - safe_radius) <= zone_bounds.maximum.y &&
+         (actor_position.z + safe_radius) >= zone_bounds.minimum.z &&
+         (actor_position.z - safe_radius) <= zone_bounds.maximum.z;
 }
 
 Vec3 iam_camera_vector_to_runtime(const std::array<std::int32_t, 3>& serialized) {

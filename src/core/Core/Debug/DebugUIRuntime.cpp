@@ -695,6 +695,29 @@ void DebugUI::show_area_vm() {
   ImGui::Text("AREA transition coordinator: state %u%s",
       static_cast<unsigned int>(engine->area_transition_state()),
       engine->area_transition_pending() ? " (pending/attached)" : " (idle)");
+  const ScenarioManager& manager{engine->manager()};
+  const WorldSceneContext* const manager_current{manager.current_world_context()};
+  const WorldSceneContext* const attached_head{manager.attached_world_head_context()};
+  const std::optional<ControlledCharacterRef> controlled{manager.controlled_character()};
+  std::optional<std::uint32_t> support_world;
+  if (controlled.has_value()) {
+    const std::optional<LocatedConstCharacterBody> body{
+        manager.find_character_body(controlled->body_identity)};
+    if (body.has_value() && body->character->physical_motion.support.valid) {
+      support_world = body->character->physical_motion.support.source_world_scene_id;
+    }
+  }
+  ImGui::SeparatorText("AREA ownership");
+  ImGui::Text(
+      "Logical current: slot %zu, AREA %d", engine->active_area_slot(), engine->active_area_id());
+  ImGui::Text("Manager current world: %s",
+      manager_current == nullptr ? "none" : fmt::format("{}", manager_current->scene_id).c_str());
+  ImGui::Text("Selected body storage world: %s",
+      controlled.has_value() ? fmt::format("{}", controlled->world_scene_id).c_str() : "none");
+  ImGui::Text("Accepted support world: %s",
+      support_world.has_value() ? fmt::format("{}", support_world.value()).c_str() : "none");
+  ImGui::Text("Attached-decor head world: %s",
+      attached_head == nullptr ? "none" : fmt::format("{}", attached_head->scene_id).c_str());
   if (registry.contexts.empty()) {
     m_area_vm_selected_context.reset();
     ImGui::TextUnformatted("AREA bytecode context not loaded.");

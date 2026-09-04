@@ -155,6 +155,9 @@ struct CurrentCharacterTriggerProxy {
   bool contact_ready{false};
   Runtime::Vec3 position{};
   float radius{0.0F};
+  std::optional<std::size_t> actor_object_index;
+  std::string actor_object_name;
+  float model_bounds_radius{0.0F};
   float heading_degrees{0.0F};
   /// The actor spatial-service generation most recently consumed by this proxy.
   /// This is not a movement counter; it advances only when the current actor
@@ -286,7 +289,8 @@ class ScenarioStartupController {
   /// Canonical recovered area-map table (diagnostics).
   [[nodiscard]] std::span<const std::int16_t> area_mapping_entries() const;
   [[nodiscard]] const Omikron::IamAreaRecord* area_record() const;
-  /// Index of the currently presented resident AREA slot.
+  /// Index of the logical current AREA slot (Runtime globals 0x69BC60/0x69BC64).
+  /// This is independent of selected-body storage and attached-decor order.
   [[nodiscard]] std::size_t active_area_slot() const {
     return m_active_area_slot;
   }
@@ -428,6 +432,13 @@ class ScenarioStartupController {
   /// Returns true when a valid structured-owner dispatch omitted ordinary spatial service.
   [[nodiscard]] std::expected<bool, std::string> service_current_character_actor(
       float delta_seconds);
+  /// Validates the two representations of logical current AREA ownership.
+  /// Selected-body runtime storage is deliberately not part of this invariant.
+  [[nodiscard]] std::expected<std::size_t, std::string> current_resident_area_slot() const;
+  /// Commits native event 9 when accepted support belongs to a world other
+  /// than the logical current AREA. Body storage moves only when necessary.
+  [[nodiscard]] std::expected<bool, std::string> commit_physical_area_handoff(
+      std::uint32_t accepted_support_world);
   /// Starts a compact-owned dialog and enters the session-global scheduling
   /// takeover shared by AREA, SCENE, and contact contexts.
   [[nodiscard]] std::expected<void, std::string> start_compact_dialog(
@@ -504,6 +515,9 @@ class ScenarioStartupController {
     Script::AreaTransitionHandle handle;
     Script::AreaTransitionRequest request;
     std::size_t source_slot{0};
+    std::int32_t source_area_id{-1};
+    std::uint32_t source_world_scene_id{0};
+    std::uint32_t source_world_generation{0};
     std::size_t destination_slot{0};
     Script::CompactContextHandle requester;
     std::string error;
@@ -536,6 +550,8 @@ class ScenarioStartupController {
           .scene_id = -1,
           .world_scene_id = 1,
           .scene_script = std::nullopt}};
+  /// Logical current AREA slot. This is not selected-body runtime ownership
+  /// and is not the attached-decor/camera-publisher chain head.
   std::size_t m_active_area_slot{0};
   /// Runtime registers one independent primary compact context per resident
   /// AREA. These are intentionally separate from attached-SCENE contexts.

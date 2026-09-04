@@ -11,6 +11,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <numbers>
 
+#include "Core/Omikron/IamZone.hpp"
 #include "Core/RuntimeMath.hpp"
 #include "Core/RuntimePresentation.hpp"
 
@@ -59,6 +60,42 @@ TEST_SUITE("Core::RuntimeMath") {
     CHECK_EQ(area_position_to_inches(-1), -1);
     CHECK_EQ(area_position_to_inches(-7), -2);
     CHECK_EQ(area_position_to_inches(-8), -2);
+  }
+
+  TEST_CASE("AREA table-2 zone vertices receive Runtime's additional Y adjustment") {
+    CHECK_EQ(App::Runtime::area_position_to_inches(-511), -79);
+    CHECK_EQ(App::Runtime::area_zone_position_to_runtime({100, -511, 200}).y, -88.0F);
+    CHECK_EQ(App::Runtime::area_position_to_inches(256), 38);
+    CHECK_EQ(App::Runtime::area_zone_position_to_runtime({100, 256, 200}).y, 29.0F);
+  }
+
+  TEST_CASE("AREA zone spatial bounds extend only the normalized lower Y") {
+    const std::array<std::array<std::int32_t, 3>, 4> vertices{
+        {{0, 256, 512}, {256, 512, 768}, {512, 768, 1024}, {768, 1024, 1280}}};
+    const App::Runtime::AreaZoneSpatialBounds bounds{
+        App::Runtime::area_zone_spatial_bounds(vertices)};
+    CHECK_EQ(bounds.minimum.x, -1.0F);
+    CHECK_EQ(bounds.maximum.x, 117.0F);
+    CHECK_EQ(bounds.minimum.y,
+        doctest::Approx(29.0F - App::Runtime::k_area_zone_lower_y_extension_inches));
+    CHECK_EQ(bounds.maximum.y, 147.0F);
+    CHECK_EQ(bounds.minimum.z, 77.0F);
+    CHECK_EQ(bounds.maximum.z, 195.0F);
+  }
+
+  TEST_CASE("AREA zone broadphase uses the representative radius at the IMPASSE threshold") {
+    const std::array<std::array<std::int32_t, 3>, 4> vertices{
+        {{46924, -511, 20075}, {46938, -511, 19213}, {47699, -511, 19208}, {47680, -511, 20065}}};
+    const App::Runtime::AreaZoneSpatialBounds bounds{
+        App::Runtime::area_zone_spatial_bounds(vertices)};
+    const App::Runtime::Vec3 actor{.x = 7216.0F, .y = -121.0F, .z = 3040.0F};
+    const App::Omikron::IamZoneRecord zone{.serialized_vertices = vertices};
+    CHECK(zone.contains_xz(46930, 19770));
+    CHECK_EQ(bounds.minimum.y,
+        doctest::Approx(-88.0F - App::Runtime::k_area_zone_lower_y_extension_inches));
+    CHECK_FALSE(App::Runtime::area_zone_bounds_intersect_actor(bounds, actor, 13.0F));
+    CHECK(App::Runtime::area_zone_bounds_intersect_actor(bounds, actor, 13.5F));
+    CHECK(App::Runtime::area_zone_bounds_intersect_actor(bounds, actor, 50.0F));
   }
 
   TEST_CASE("AREA angular normalization reproduces signed Runtime degrees") {
