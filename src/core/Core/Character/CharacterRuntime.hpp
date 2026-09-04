@@ -38,8 +38,8 @@ struct ModelResource {
   std::string resolved_model_path;
   std::string resolved_texture_path;
   Omikron::Model3DOData model;
-  /// First runtime object maximizing triangle_count + rectangle_count.
-  /// Independent from the serialized hierarchy root.
+  /// First object maximizing polygon count along the resolved root-headed
+  /// top-level sibling chain. Descendants are not candidates.
   std::optional<std::size_t> actor_object_index;
   std::vector<Omikron::MaterialGroup> groups;
   std::vector<Omikron::Texture3DTImage> images;
@@ -47,7 +47,8 @@ struct ModelResource {
   float bounds_radius{0.0F};
 };
 
-/// Runtime actor-object selection: first mesh maximizing triangles + rectangles.
+/// Runtime actor-object selection along root -> next sibling, using a strict
+/// triangle-plus-rectangle maximum. Invalid topology has no representative.
 [[nodiscard]] std::optional<std::size_t> actor_object_index(const Omikron::Model3DOData& model);
 
 struct BodyAnimationObjectPose {

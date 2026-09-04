@@ -141,11 +141,11 @@ std::shared_ptr<const App::Character::ModelResource> make_split_actor_model_reso
       .bone_position = {.x = 2.0F}});
   resource->model.polygons.resize(2);
   resource->model.root_mesh_index = 0;
-  resource->actor_object_index = App::Character::actor_object_index(resource->model);
   resource->model.hierarchy_parent_index = {-1, 0};
   resource->model.hierarchy_first_child_index = {1, -1};
   resource->model.hierarchy_next_sibling_index = {-1, -1};
   resource->model.hierarchy_reachable = {1, 1};
+  resource->actor_object_index = App::Character::actor_object_index(resource->model);
   resource->model.skin_parent_index = {-1, 0};
   resource->model.runtime_objects = {App::Omikron::Model3DOData::RuntimeObjectState{},
       App::Omikron::Model3DOData::RuntimeObjectState{.local_offset = {.x = 2.0F}}};
@@ -1112,7 +1112,7 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
     CHECK_EQ(character->transform.translation.z, doctest::Approx(36.811024F));
   }
 
-  TEST_CASE("body animation separates hierarchy-root visuals from actor-object logic") {
+  TEST_CASE("body animation uses resolved root-sibling actor identity") {
     BodyResourcesFixture resources{
         make_body_resources(App::Runtime::Vec3{.x = 100.0F, .y = -50.0F, .z = 25.0F},
             App::Runtime::Vec3{.x = 10.0F, .y = 6.0F, .z = 0.0F},
@@ -1122,7 +1122,7 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
     const std::shared_ptr<const App::Character::ModelResource> shared{
         make_split_actor_model_resource()};
     REQUIRE_EQ(shared->model.root_mesh_index, 0);
-    REQUIRE_EQ(shared->actor_object_index, std::optional<std::size_t>{1U});
+    REQUIRE_EQ(shared->actor_object_index, std::optional<std::size_t>{0U});
     const auto loader = [shared](const std::string_view)
         -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
       return shared;
@@ -1142,13 +1142,13 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
       return runtime;
     };
 
-    auto visual_runtime{make_runtime()};
-    App::Character::RuntimeCharacter* visual{visual_runtime->character_runtime().find(310)};
-    REQUIRE(visual != nullptr);
-    visual->transform.translation = {.x = 7000.0F, .y = -120.0F, .z = 3040.0F};
-    visual->set_principal_orientation({});
+    auto actor_runtime{make_runtime()};
+    App::Character::RuntimeCharacter* actor{actor_runtime->character_runtime().find(310)};
+    REQUIRE(actor != nullptr);
+    actor->transform.translation = {.x = 7000.0F, .y = -120.0F, .z = 3040.0F};
+    actor->set_principal_orientation({});
     const App::Script::BodyAnimationRequest root_request{
-        .character_body_identity = visual->body_identity,
+        .character_body_identity = actor->body_identity,
         .character_id = 310,
         .object_binding = "RootBody",
         .animation_index = 0,
@@ -1159,49 +1159,49 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
         .first_tick = true,
         .execution_count = 0,
         .execution_limit = 1};
-    REQUIRE(visual_runtime->select_body_animation(root_request).has_value());
-    CHECK_EQ(visual->transform.translation.x, doctest::Approx(7000.0F));
-    CHECK_EQ(visual->transform.translation.y, doctest::Approx(-120.0F));
-    CHECK_EQ(visual->transform.translation.z, doctest::Approx(3040.0F));
-    const auto visual_root{visual->object_world_transform(0U)};
-    const auto visual_child{visual->object_world_transform(1U)};
-    REQUIRE(visual_root.has_value());
-    REQUIRE(visual_child.has_value());
-    CHECK_EQ(visual_root->translation.x, doctest::Approx(110.0F));
-    CHECK_EQ(visual_root->translation.y, doctest::Approx(-44.0F));
-    CHECK_EQ(visual_root->translation.z, doctest::Approx(25.0F));
-    CHECK_EQ(visual_child->translation.x - visual_root->translation.x, doctest::Approx(-2.0F));
-    CHECK_EQ(visual_child->translation.y, doctest::Approx(-44.0F));
-    CHECK_EQ(visual->body_animation.logical_actor_delta.x, doctest::Approx(0.0F));
-    CHECK_EQ(visual->body_animation.accumulated_visual_translation.x, doctest::Approx(10.0F));
-
-    REQUIRE(visual_runtime->select_body_animation(root_request).has_value());
-    const auto reseeded_root{visual->object_world_transform(0U)};
-    REQUIRE(reseeded_root.has_value());
-    CHECK_EQ(visual->transform.translation.x, doctest::Approx(7000.0F));
-    CHECK_EQ(reseeded_root->translation.x, doctest::Approx(110.0F));
-
-    auto actor_runtime{make_runtime()};
-    App::Character::RuntimeCharacter* actor{actor_runtime->character_runtime().find(310)};
-    REQUIRE(actor != nullptr);
-    actor->transform.translation = {.x = 7000.0F, .y = -120.0F, .z = 3040.0F};
-    actor->set_principal_orientation({});
-    App::Script::BodyAnimationRequest actor_request{root_request};
-    actor_request.character_body_identity = actor->body_identity;
-    actor_request.object_binding = "Child";
-    REQUIRE(actor_runtime->select_body_animation(actor_request).has_value());
+    REQUIRE(actor_runtime->select_body_animation(root_request).has_value());
     CHECK_EQ(actor->transform.translation.x, doctest::Approx(110.0F));
     CHECK_EQ(actor->transform.translation.y, doctest::Approx(-50.0F));
     CHECK_EQ(actor->transform.translation.z, doctest::Approx(25.0F));
-    const auto actor_visual{actor->object_world_transform(1U)};
-    REQUIRE(actor_visual.has_value());
-    CHECK_EQ(actor_visual->translation.x, doctest::Approx(110.0F));
-    CHECK_EQ(actor_visual->translation.y, doctest::Approx(-44.0F));
-    CHECK_EQ(actor_visual->translation.z, doctest::Approx(25.0F));
+    const auto actor_root{actor->object_world_transform(0U)};
+    const auto actor_child{actor->object_world_transform(1U)};
+    REQUIRE(actor_root.has_value());
+    REQUIRE(actor_child.has_value());
+    CHECK_EQ(actor_root->translation.x, doctest::Approx(110.0F));
+    CHECK_EQ(actor_root->translation.y, doctest::Approx(-44.0F));
+    CHECK_EQ(actor_root->translation.z, doctest::Approx(25.0F));
+    CHECK_EQ(actor_child->translation.x - actor_root->translation.x, doctest::Approx(-2.0F));
+    CHECK_EQ(actor_child->translation.y, doctest::Approx(-44.0F));
     CHECK_EQ(actor->body_animation.logical_actor_delta.x, doctest::Approx(10.0F));
     CHECK_EQ(actor->body_animation.logical_actor_delta.y, doctest::Approx(0.0F));
     CHECK_EQ(actor->body_animation.accumulated_visual_translation.y, doctest::Approx(6.0F));
     CHECK_EQ(actor->body_animation.accumulated_logical_actor_translation.y, doctest::Approx(0.0F));
+
+    REQUIRE(actor_runtime->select_body_animation(root_request).has_value());
+    const auto reseeded_root{actor->object_world_transform(0U)};
+    REQUIRE(reseeded_root.has_value());
+    CHECK_EQ(actor->transform.translation.x, doctest::Approx(110.0F));
+    CHECK_EQ(reseeded_root->translation.x, doctest::Approx(110.0F));
+
+    auto visual_runtime{make_runtime()};
+    App::Character::RuntimeCharacter* visual{visual_runtime->character_runtime().find(310)};
+    REQUIRE(visual != nullptr);
+    visual->transform.translation = {.x = 7000.0F, .y = -120.0F, .z = 3040.0F};
+    visual->set_principal_orientation({});
+    App::Script::BodyAnimationRequest child_request{root_request};
+    child_request.character_body_identity = visual->body_identity;
+    child_request.object_binding = "Child";
+    REQUIRE(visual_runtime->select_body_animation(child_request).has_value());
+    CHECK_EQ(visual->transform.translation.x, doctest::Approx(7000.0F));
+    CHECK_EQ(visual->transform.translation.y, doctest::Approx(-120.0F));
+    CHECK_EQ(visual->transform.translation.z, doctest::Approx(3040.0F));
+    const auto child_visual{visual->object_world_transform(1U)};
+    REQUIRE(child_visual.has_value());
+    CHECK_EQ(child_visual->translation.x, doctest::Approx(110.0F));
+    CHECK_EQ(child_visual->translation.y, doctest::Approx(-44.0F));
+    CHECK_EQ(child_visual->translation.z, doctest::Approx(25.0F));
+    CHECK_EQ(visual->body_animation.logical_actor_delta.x, doctest::Approx(0.0F));
+    CHECK_EQ(visual->body_animation.accumulated_visual_translation.y, doctest::Approx(6.0F));
   }
 
   TEST_CASE("Body root motion keeps logical Y fixed and moves the visual root") {

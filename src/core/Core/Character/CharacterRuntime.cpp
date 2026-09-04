@@ -122,18 +122,38 @@ void resolve_actor_object(ModelResource& resource) {
 }  // namespace
 
 std::optional<std::size_t> actor_object_index(const Omikron::Model3DOData& model) {
-  std::optional<std::size_t> selected;
-  std::uint64_t greatest_polygon_count{0};
-  for (std::size_t index{0}; index < model.meshes.size(); ++index) {
+  if (model.root_mesh_index < 0 || !std::cmp_less(model.root_mesh_index, model.meshes.size()) ||
+      model.hierarchy_next_sibling_index.size() != model.meshes.size()) {
+    return std::nullopt;
+  }
+
+  const std::size_t root_index{static_cast<std::size_t>(model.root_mesh_index)};
+  std::size_t selected_index{root_index};
+  const Omikron::MeshDescriptor& root{model.meshes.at(root_index)};
+  std::uint64_t greatest_polygon_count{static_cast<std::uint64_t>(root.triangle_count) +
+                                       static_cast<std::uint64_t>(root.rectangle_count)};
+  std::vector<std::uint8_t> visited(model.meshes.size(), 0U);
+  std::int32_t current_index{model.root_mesh_index};
+  while (current_index != -1) {
+    if (current_index < 0 || !std::cmp_less(current_index, model.meshes.size())) {
+      return std::nullopt;
+    }
+    const std::size_t index{static_cast<std::size_t>(current_index)};
+    if (visited.at(index) != 0U) {
+      return std::nullopt;
+    }
+    visited.at(index) = 1U;
+
     const Omikron::MeshDescriptor& mesh{model.meshes.at(index)};
     const std::uint64_t polygon_count{static_cast<std::uint64_t>(mesh.triangle_count) +
                                       static_cast<std::uint64_t>(mesh.rectangle_count)};
-    if (!selected.has_value() || polygon_count > greatest_polygon_count) {
-      selected = index;
+    if (polygon_count > greatest_polygon_count) {
+      selected_index = index;
       greatest_polygon_count = polygon_count;
     }
+    current_index = model.hierarchy_next_sibling_index.at(index);
   }
-  return selected;
+  return selected_index;
 }
 
 std::optional<float> RuntimeCharacter::actor_spatial_radius() const {

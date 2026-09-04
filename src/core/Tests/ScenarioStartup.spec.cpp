@@ -1573,10 +1573,15 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
           resource->bounds_radius = 50.0F;
           resource->model.root_mesh_index = 0;
           resource->model.meshes.resize(2U);
-          resource->model.meshes.at(0).bounding_radius = 30.0F;
-          resource->model.meshes.at(0).triangle_count = 1U;
-          resource->model.meshes.at(1).bounding_radius = 10.0F;
-          resource->model.meshes.at(1).triangle_count = 2U;
+          resource->model.meshes.at(0).name = "ActorRoot";
+          resource->model.meshes.at(0).bounding_radius = 42.5F;
+          resource->model.meshes.at(0).triangle_count = 26U;
+          resource->model.meshes.at(1).name = "DetailedChild";
+          resource->model.meshes.at(1).bounding_radius = 5.8F;
+          resource->model.meshes.at(1).triangle_count = 116U;
+          resource->model.hierarchy_parent_index = {-1, 0};
+          resource->model.hierarchy_first_child_index = {1, -1};
+          resource->model.hierarchy_next_sibling_index = {-1, -1};
           resource->actor_object_index = App::Character::actor_object_index(resource->model);
           resource->groups.push_back(App::Omikron::MaterialGroup{});
           return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
@@ -1597,10 +1602,11 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK(proxy.registered);
     CHECK_EQ(proxy.owner.character_id, 136);
     CHECK_EQ(proxy.owner.world_scene_id, 0U);
-    CHECK_EQ(proxy.radius, 10.0F);
+    CHECK_EQ(proxy.radius, 42.5F);
+    CHECK_EQ(proxy.actor_object_name, "ActorRoot");
     CHECK_EQ(character->model_resource->bounds_radius, 50.0F);
     CHECK_EQ(character->model_resource->model.root_mesh_index, 0);
-    CHECK_EQ(character->model_resource->actor_object_index, std::optional<std::size_t>{1U});
+    CHECK_EQ(character->model_resource->actor_object_index, std::optional<std::size_t>{0U});
     CHECK_EQ(controller.zone_contact_count(), 1U);
     CHECK_EQ(character->current_move_id(), std::optional<std::int16_t>{100});
     CHECK_FALSE(character->controller_enabled);
@@ -1770,6 +1776,16 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
             -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
           auto resource{std::make_shared<App::Character::ModelResource>()};
           resource->name = name;
+          resource->bounds_radius = 50.0F;
+          resource->model.root_mesh_index = 0;
+          resource->model.meshes.resize(1U);
+          resource->model.meshes.at(0).name = "ActorRoot";
+          resource->model.meshes.at(0).triangle_count = 26U;
+          resource->model.meshes.at(0).bounding_radius = 42.5F;
+          resource->model.hierarchy_parent_index = {-1};
+          resource->model.hierarchy_first_child_index = {-1};
+          resource->model.hierarchy_next_sibling_index = {-1};
+          resource->actor_object_index = App::Character::actor_object_index(resource->model);
           resource->groups.push_back(App::Omikron::MaterialGroup{});
           return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
         });
@@ -1818,6 +1834,11 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK_EQ(character->physical_motion.candidate_translation.x, structured_position.x);
     CHECK_EQ(character->physical_motion.accepted_translation.x, structured_position.x);
     CHECK_EQ(character->transform.translation.x, structured_position.x);
+    CHECK_EQ(controller.current_character_trigger_proxy()->position.x, structured_position.x);
+    CHECK_EQ(controller.current_character_trigger_proxy()->position.y, structured_position.y);
+    CHECK_EQ(controller.current_character_trigger_proxy()->position.z, structured_position.z);
+    CHECK_EQ(controller.current_character_trigger_proxy()->radius, 42.5F);
+    CHECK_EQ(controller.current_character_trigger_proxy()->actor_object_name, "ActorRoot");
     CHECK(character->physical_motion.vertical_velocity ==
           doctest::Approx(
               App::Character::PhysicalMotionService::K_DEFAULT_GRAVITY_VELOCITY_DELTA_PER_TICK));

@@ -951,22 +951,38 @@ These are **runtime-only pointers** and must not be added to the file schema.
 A modern implementation should instead construct stable indices/references in a
 separate runtime representation.
 
-## 14.1 Character actor representative is independent of the hierarchy root
+## 14.1 Character actor representative uses the root sibling chain
 
-Runtime character construction around `0x0041A730` walks the expanded runtime
-objects and computes `triangleCount + rectangleCount` from object fields
-`+0x44/+0x48`. The first object with the greatest polygon total is retained;
-equal later totals do not replace it. Around `0x0041A7FD`, Runtime writes that
-object pointer to `actor+0x08`.
+Runtime resolves `Serialized3DORootV4+0xB4` to a runtime object around
+`0x0044E322..0x0044E33F`. Hierarchy pointer resolution around
+`0x0044E389..0x0044E3B6` establishes `runtimeObject+0x04` as next sibling,
+`+0x08` as parent, and `+0x0C` as first child.
+
+Character construction around `0x0041A7D0..0x0041A7FD` starts at that resolved
+root and follows only `runtimeObject+0x04`, the next-sibling chain. For each
+candidate it computes `triangleCount + rectangleCount` from descriptor fields
+`+0x44/+0x48`. A strict greater-than comparison selects the first top-level
+sibling with the greatest total; descendants and disconnected descriptors are
+never visited. Runtime then writes the selected pointer to `actor+0x08`.
 
 Helper `0x0041C300` finds an actor by exact identity against `actor+0x08`.
-This representative is independent of `Serialized3DORootV4+0xB4` and may be a
-child. Retail examples demonstrate the distinction:
+The representative begins as the hierarchy root, but a later object linked
+through the root's top-level sibling chain can replace it. It can therefore
+differ from the root, but it cannot be a descendant merely because that child
+has more polygons.
 
 ```text
-HO1_FN.3DO:  hierarchy root UBassin [2], actor representative UTete [17]
-HO1_FNM.3DO: hierarchy root UBassin [2], actor representative UVisage [19]
+HO1_FN.3DO:
+    hierarchy root       UBassin [2]
+    actor representative UBassin [2]
+    actor spatial radius 42.51709747314453 inches
+
+    UTete [17] has 116 polygons, but is a descendant and is not a candidate.
 ```
+
+The earlier HO1_FNM/UVisage example was derived from an incorrect flat scan and
+is not retained as confirmed evidence without revalidation against its root
+sibling chain.
 
 OpenNomad represents these identities as `Model3DOData::root_mesh_index` and
 `ModelResource::actor_object_index`, respectively. They are not aliases.
@@ -976,7 +992,8 @@ Character registration in Runtime's native spatial system uses the object at
 bounding-sphere radius at `+0x58` and construct dynamic axis bounds from live
 logical actor XYZ plus/minus that radius. Consequently, current-character AREA
 trigger qualification uses the representative object's radius, not whole-model
-bounds and not the hierarchy root's radius.
+bounds. It uses the hierarchy root's radius only when the recovered sibling
+selection actually chooses that root, as it does for HO1_FN.
 
 This spatial role does not change body-animation identity semantics. A visual
 animation selected on the hierarchy root remains distinct from the logical

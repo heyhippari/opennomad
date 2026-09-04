@@ -87,10 +87,11 @@ The canonical ordinary spatial position is
 commit/rollback boundary. Its heading is
 `RuntimeCharacter::principal_orientation_degrees.y` at the same boundary, so a
 C.2 yaw correction can coexist with a later positional rollback. The existing
-trigger proxy copies those values and the model `bounds_radius`; there is no
-second physical/contact position representation. Zone qualification retains
-the existing proxy broadphase, exact X/Z polygon containment, and heading
-window.
+trigger proxy copies those values and the bounding radius of the resolved
+`actor+0x08` representative object; the whole-model `bounds_radius` is only a
+diagnostic/rendering bound. There is no second physical/contact position
+representation. Zone qualification retains the existing proxy broadphase,
+exact X/Z polygon containment, and heading window.
 
 C.2 reads the actor-owned spatial-heading latch produced by the previous
 successful ordinary spatial pass. After a genuine forward collision, a set

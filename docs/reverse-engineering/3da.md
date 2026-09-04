@@ -1040,6 +1040,15 @@ Do not multiply the selected object's current `animation_matrix` into the
 root-motion orientation or substitute `root_mesh_index` for representative
 identity.
 
+The representative candidate domain is the resolved model root followed only
+by its top-level next-sibling chain. For HO1_FN, UBassin [2] is both the root
+and `actor+0x08` because it has no next sibling. C_3_KaylsUp selects UBassin, so
+its ordinary absolute key-zero placement updates logical actor XYZ and its
+relative root motion updates logical X/Z through the existing identity check.
+No completion-time reconciliation is involved. This does not imply that every
+root animation is actor-bound: a later top-level sibling can be selected as the
+representative on another model.
+
 ## 21.1 Absolute reseeding across executions
 
 Ordinary `SelectBodyAnimation` calls the key-zero helper recovered around

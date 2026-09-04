@@ -1253,8 +1253,9 @@ resident controlled body and is independent of CTL controller enablement.
 The dynamic query AABB is the live logical actor XYZ plus/minus the bounding
 sphere radius of the registered `actor+0x08` representative object. It is not
 the whole character model's bounds radius. IMPASSE zone 3795 demonstrates the
-behavioral difference: Kay'l's handoff X/Z is polygon-inside, while vertical
-broadphase qualification depends on UTete's object-level radius.
+behavioral difference: HO1_FN resolves UBassin [2] from the root-headed sibling
+chain and uses its `42.51709747314453`-inch object radius. UTete [17] is a
+descendant and its `5.8230462074279785`-inch radius does not participate.
 Each positive qualification registers or refreshes one of the native 16
 contact slots. Persistent deactivation removes the producer from the active
 zone set, but an existing registration leaves through compact-phase missed-

@@ -200,33 +200,50 @@ TEST_SUITE("Core::Character::Runtime") {
     CHECK_FALSE(character.object_world_transform(1U).has_value());
   }
 
-  TEST_CASE("actor object uses first mesh with the greatest polygon total") {
+  TEST_CASE("actor object uses the root-headed top-level sibling chain") {
     App::Omikron::Model3DOData model;
     CHECK_FALSE(App::Character::actor_object_index(model).has_value());
 
-    model.meshes = {App::Omikron::MeshDescriptor{.triangle_count = 6, .rectangle_count = 4},
-        App::Omikron::MeshDescriptor{.triangle_count = 8, .rectangle_count = 2},
-        App::Omikron::MeshDescriptor{.triangle_count = 20, .rectangle_count = 1}};
-    CHECK_EQ(App::Character::actor_object_index(model), std::optional<std::size_t>{2U});
-
-    model.meshes.at(2).triangle_count = 10;
-    model.meshes.at(2).rectangle_count = 0;
-    CHECK_EQ(App::Character::actor_object_index(model), std::optional<std::size_t>{0U});
+    model.meshes = {App::Omikron::MeshDescriptor{.triangle_count = 25},
+        App::Omikron::MeshDescriptor{.triangle_count = 200},
+        App::Omikron::MeshDescriptor{.triangle_count = 30},
+        App::Omikron::MeshDescriptor{.triangle_count = 1000}};
+    CHECK_FALSE(App::Character::actor_object_index(model).has_value());
 
     model.root_mesh_index = 0;
-    model.meshes.at(1).parent_id = 1;
-    model.meshes.at(1).triangle_count = 11;
-    CHECK_EQ(App::Character::actor_object_index(model), std::optional<std::size_t>{1U});
-    CHECK_NE(model.root_mesh_index, 1);
+    model.hierarchy_parent_index = {-1, 0, -1, -1};
+    model.hierarchy_first_child_index = {1, -1, -1, -1};
+    model.hierarchy_next_sibling_index = {-1, -1, -1, -1};
+    CHECK_EQ(App::Character::actor_object_index(model), std::optional<std::size_t>{0U});
 
-    model.meshes.at(2).triangle_count = 11;
-    CHECK_EQ(App::Character::actor_object_index(model), std::optional<std::size_t>{1U});
+    model.hierarchy_next_sibling_index.at(0) = 2;
+    CHECK_EQ(App::Character::actor_object_index(model), std::optional<std::size_t>{2U});
+
+    model.meshes.at(0).triangle_count = 30;
+    CHECK_EQ(App::Character::actor_object_index(model), std::optional<std::size_t>{0U});
+
+    model.meshes.push_back(App::Omikron::MeshDescriptor{.triangle_count = 50});
+    model.hierarchy_parent_index.push_back(-1);
+    model.hierarchy_first_child_index.push_back(-1);
+    model.hierarchy_next_sibling_index = {2, -1, 4, -1, -1};
+    model.meshes.at(2).triangle_count = 31;
+    CHECK_EQ(App::Character::actor_object_index(model), std::optional<std::size_t>{4U});
+
+    model.root_mesh_index = 99;
+    CHECK_FALSE(App::Character::actor_object_index(model).has_value());
+    model.root_mesh_index = 0;
+    model.hierarchy_next_sibling_index.at(2) = 99;
+    CHECK_FALSE(App::Character::actor_object_index(model).has_value());
+    model.hierarchy_next_sibling_index.at(2) = 0;
+    CHECK_FALSE(App::Character::actor_object_index(model).has_value());
+    model.hierarchy_next_sibling_index = {2, -1, 4, -1, -1};
 
     auto resource{std::make_shared<App::Character::ModelResource>()};
     resource->model = model;
     resource->bounds_radius = 50.0F;
-    resource->actor_object_index = 1U;
-    resource->model.meshes.at(1).bounding_radius = 10.0F;
+    resource->actor_object_index = App::Character::actor_object_index(resource->model);
+    REQUIRE_EQ(resource->actor_object_index, std::optional<std::size_t>{4U});
+    resource->model.meshes.at(4).bounding_radius = 10.0F;
     App::Character::RuntimeCharacter character{.model_resource = resource};
     CHECK_EQ(character.actor_spatial_radius(), std::optional<float>{10.0F});
     resource->actor_object_index = 99U;
