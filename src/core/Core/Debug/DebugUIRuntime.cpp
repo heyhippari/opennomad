@@ -521,16 +521,14 @@ void DebugUI::show_scx_script_inspector() {
     ImGui::EndCombo();
   }
   ImGui::SameLine();
-  if (ImGui::Button("Activate")) {
-    if (m_script_selected_source.has_value()) {
-      if (auto created{scenario_runtime->spawn_script_instance(m_script_selected_source.value())};
-          created) {
-        App::Log::warn(LogCategory::Debug,
-            "manual debug activation of script {} (override)",
-            m_script_selected_source.value());
-      } else {
-        App::Log::error(LogCategory::Debug, "manual activation failed: {}", created.error());
-      }
+  if (ImGui::Button("Activate") && m_script_selected_source.has_value()) {
+    if (auto created{scenario_runtime->spawn_script_instance(m_script_selected_source.value())};
+        created) {
+      App::Log::warn(LogCategory::Debug,
+          "manual debug activation of script {} (override)",
+          m_script_selected_source.value());
+    } else {
+      App::Log::error(LogCategory::Debug, "manual activation failed: {}", created.error());
     }
   }
 
@@ -1173,7 +1171,7 @@ void DebugUI::show_runtime_overview() {
 
   ImGui::SeparatorText("Active contexts");
   const ScenarioManager& scenarios{engine->manager()};
-  const WorldSceneContext* active_world{scenarios.active_world_context()};
+  const WorldSceneContext* active_world{scenarios.current_world_context()};
   if (active_world == nullptr) {
     ImGui::TextUnformatted("(none)");
   } else {

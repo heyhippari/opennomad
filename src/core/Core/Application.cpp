@@ -485,7 +485,7 @@ std::expected<Application, std::string> Application::create(const std::string& t
     apply_display_setting(*display_settings, *app.m_window, "display.mode");
   }
   static_cast<void>(app.m_window->show());
-  app.m_window->set_display_shortcut_callback([display_settings]() {
+  app.m_window->set_display_shortcut_callback([display_settings] {
     const DisplayMode actual{
         static_cast<DisplayMode>(display_settings->choice_raw_value("display.mode").value_or(1))};
     const DisplayMode preferred{static_cast<DisplayMode>(
@@ -509,12 +509,12 @@ std::expected<Application, std::string> Application::create(const std::string& t
   // --- Phases 4-6: startup videos (sequential; optional presentation) ---
   // The video system is scoped so it is fully closed before aventure.SCX.
   {
-    auto video_scene{Video::VideoScene::create()};
+    const auto video_scene{Video::VideoScene::create()};
     Video::StartupVideoSequence video_sequence{*app.m_trace, Startup::StartupMediaPolicy{}};
     StartupVideoPresenter presenter{app.m_window.get(), video_scene.get()};
     // Pump events and update the input manager every video-frame tick; only
     // the Escape skip action (or a processed quit request) stops playback.
-    const auto should_stop = [&app]() {
+    const auto should_stop = [&app] {
       app.poll_events();
       app.snapshot_input();
       return !app.m_running || app.m_input.is_action_pressed(Input::Action::k_skip_video);
@@ -721,7 +721,7 @@ void App::Application::run() {
         m_frame_timing,
         decision.reset_frame_timing,
         m_skip_engine_frame,
-        []() -> std::uint64_t {
+        [] -> std::uint64_t {
           return SDL_GetTicks();
         },
         [this] {
@@ -1025,7 +1025,7 @@ bool Application::advance_startup_past_splash() {
 
   // Finishes the phase once compact execution has reached the typed interface
   // wait installed by opcode 0x46.
-  const auto finish_main_menu_phase = [this]() -> bool {
+  const auto finish_main_menu_phase = [this] -> bool {
     if (auto result{m_coordinator->complete(
             Startup::StartupPhase::k_open_main_menu, Startup::StartupPhaseStatus::k_complete)};
         !result) {
@@ -1296,20 +1296,19 @@ void Application::process_event(const SDL_Event& event) {
     }
   }
 
-  if (event.type == SDL_EVENT_KEY_DOWN || event.type == SDL_EVENT_KEY_UP) {
-    if (event.key.windowID == own_window) {
-      if (event.type == SDL_EVENT_KEY_DOWN) {
-        m_held_input.on_key_down(event.key.scancode);
-      } else {
-        m_held_input.on_key_up(event.key.scancode);
-      }
-      // F12 releases the captured mouse so the debug UI can be used.
-      if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.key == SDLK_F12 &&
-          m_mouse_captured) {
-        set_mouse_captured(false);
-      }
-      m_window->on_keyboard_event(event.key);
+  if ((event.type == SDL_EVENT_KEY_DOWN || event.type == SDL_EVENT_KEY_UP) &&
+      (event.key.windowID == own_window)) {
+    if (event.type == SDL_EVENT_KEY_DOWN) {
+      m_held_input.on_key_down(event.key.scancode);
+    } else {
+      m_held_input.on_key_up(event.key.scancode);
     }
+    // F12 releases the captured mouse so the debug UI can be used.
+    if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.key == SDLK_F12 &&
+        m_mouse_captured) {
+      set_mouse_captured(false);
+    }
+    m_window->on_keyboard_event(event.key);
   }
 
   if ((event.type == SDL_EVENT_MOUSE_BUTTON_DOWN || event.type == SDL_EVENT_MOUSE_BUTTON_UP) &&

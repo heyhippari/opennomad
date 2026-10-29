@@ -486,7 +486,7 @@ TEST_SUITE("Core::WorldCameraSystem") {
             .target = {.x = 40.0F, .y = 50.0F, .z = 60.0F},
             .roll_degrees = 7.0F,
             .horizontal_fov_degrees = 80.0F}};
-    camera.set_controller_pose_provider([&live]() {
+    camera.set_controller_pose_provider([&live] {
       return live;
     });
 
@@ -523,7 +523,7 @@ TEST_SUITE("Core::WorldCameraSystem") {
 
   TEST_CASE("Controller 13 can establish the first world-camera pose") {
     WorldCameraSystem camera;
-    camera.set_controller_pose_provider([]() {
+    camera.set_controller_pose_provider([] {
       return std::optional<App::WorldCameraPose>{
           App::WorldCameraPose{.eye = {.x = 1.0F, .y = 2.0F, .z = 3.0F},
               .target = {.x = 4.0F, .y = 5.0F, .z = 6.0F},
@@ -543,7 +543,7 @@ TEST_SUITE("Core::WorldCameraSystem") {
         App::WorldCameraPose{.eye = {.x = 10.0F, .y = 20.0F, .z = 30.0F},
             .target = {.x = 40.0F, .y = 50.0F, .z = 60.0F},
             .horizontal_fov_degrees = 80.0F}};
-    camera.set_controller_pose_provider([&live]() {
+    camera.set_controller_pose_provider([&live] {
       return live;
     });
     camera.apply_command(WorldCameraCommand{
@@ -619,6 +619,25 @@ TEST_SUITE("Core::WorldCameraSystem") {
     CHECK_EQ(completion.source_area_id, 222);
     CHECK_EQ(completion.camera_id, 2148U);
     CHECK_FALSE(camera.take_completed_operation().has_value());
+  }
+  TEST_CASE("The session reset epoch clears stale camera state and re-arms the fallback pose") {
+    WorldCameraSystem camera;
+    App::WorldFadeState fade;
+    App::WorldLetterboxState letterbox;
+    App::WorldPresentationResetObserver observer;
+    camera.apply_command(camera_2172());
+    camera.update(1.0F / 30.0F);
+    REQUIRE(camera.has_pose());
+
+    // A world/current-AREA change never reaches the observer, so the pose survives.
+    CHECK_FALSE(observer.synchronize(0U, fade, letterbox, camera));
+    CHECK(camera.has_pose());
+
+    // The next session epoch drops the stale pose so the new world's fallback can apply.
+    CHECK(observer.synchronize(1U, fade, letterbox, camera));
+    CHECK_FALSE(camera.has_pose());
+    camera.set_fallback_pose({0.0F, 0.0F, 0.0F}, 10.0F);
+    CHECK(camera.has_pose());
   }
 }
 

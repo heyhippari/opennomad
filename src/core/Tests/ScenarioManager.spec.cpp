@@ -15,6 +15,7 @@
 #include <ios>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "Core/Character/CharacterRuntime.hpp"
@@ -1050,6 +1051,85 @@ TEST_SUITE("Core::Scenario::ScenarioManager") {
     CHECK_EQ(loaded.value()->residency, App::WorldSceneResidencyState::ResidentAttached);
     REQUIRE(manager.deactivate_world_context(42U).has_value());
     CHECK_EQ(loaded.value()->residency, App::WorldSceneResidencyState::ResidentDetached);
+  }
+  TEST_CASE("The runtime configurator runs before a world context is returned") {
+    App::ScenarioManager manager;
+    std::size_t configured{0};
+    bool had_no_bodies{false};
+    manager.set_world_runtime_configurator([&](App::ScenarioRuntime& runtime) {
+      ++configured;
+      had_no_bodies = runtime.character_runtime().characters().empty();
+    });
+
+    REQUIRE(manager.load_world_context(5U, std::nullopt, std::nullopt).has_value());
+    CHECK_EQ(configured, 1U);
+    CHECK(had_no_bodies);
+    REQUIRE(manager.load_world_context(6U, std::nullopt, std::nullopt).has_value());
+    CHECK_EQ(configured, 2U);
+  }
+
+  TEST_CASE("A command-owner lookup requires the exact resident generation") {
+    App::ScenarioManager manager;
+    auto loaded{manager.load_world_context(8U, std::nullopt, std::nullopt)};
+    REQUIRE(loaded.has_value());
+    const std::uint32_t generation{loaded.value()->generation};
+
+    // Resident but detached worlds still own the commands they emitted.
+    CHECK(std::as_const(manager).find_world_context(8U, generation) == loaded.value());
+    CHECK(std::as_const(manager).find_world_context(8U, generation + 1U) == nullptr);
+    CHECK(std::as_const(manager).find_world_context(9U, generation) == nullptr);
+
+    REQUIRE(manager.unload_world_context(8U).has_value());
+    CHECK(std::as_const(manager).find_world_context(8U, generation) == nullptr);
+  }
+
+  TEST_CASE("Reloading a scene ID reuses its own entry and never duplicates it") {
+    const TempDirectory temp;
+    write_bytes(temp.root() / "SCPTDATA" / "A.SCX", make_script_scx(1));
+    write_bytes(temp.root() / "SCPTDATA" / "B.SCX", make_script_scx(1));
+    const ScopedGameDataRoot root{temp.root()};
+
+    App::ScenarioManager manager;
+    REQUIRE(manager.load_world_context(1, std::nullopt, "SCPTDATA/A.SCX").has_value());
+    REQUIRE(manager.load_world_context(2, std::nullopt, "SCPTDATA/B.SCX").has_value());
+    // Scene 2 sits in the second entry even though entry 0 is also recyclable.
+    REQUIRE(manager.load_world_context(2, std::nullopt, "SCPTDATA/B.SCX").has_value());
+    CHECK_EQ(manager.world_contexts()[0].scene_id, 1U);
+    CHECK_EQ(manager.world_contexts()[1].scene_id, 2U);
+
+    // An attached holder of the ID cannot be reloaded, and the failure has no side effects.
+    REQUIRE(manager.activate_world_context(2).has_value());
+    const std::uint32_t generation{manager.world_contexts()[1].generation};
+    CHECK_FALSE(manager.load_world_context(2, std::nullopt, "SCPTDATA/B.SCX").has_value());
+    CHECK_EQ(manager.world_contexts()[1].generation, generation);
+    CHECK_EQ(manager.world_contexts()[0].scene_id, 1U);
+  }
+
+  TEST_CASE("A failed body transfer leaves the controlled body in its source world") {
+    App::ScenarioManager manager;
+    REQUIRE(manager.load_world_context(1U, std::nullopt, std::nullopt).has_value());
+    REQUIRE(manager.load_world_context(2U, std::nullopt, std::nullopt).has_value());
+    App::ScenarioRuntime* const source{manager.world_runtime(1U)};
+    App::ScenarioRuntime* const target{manager.world_runtime(2U)};
+    REQUIRE(source != nullptr);
+    REQUIRE(target != nullptr);
+    constexpr App::Character::BodyIdentity k_body{77U};
+    REQUIRE(source->character_runtime()
+            .adopt_character(App::Character::RuntimeCharacter{
+                .body_identity = k_body, .character_id = 136, .active = true})
+            .has_value());
+    // The same body identity already exists in the target: the transfer must be refused whole.
+    REQUIRE(target->character_runtime()
+            .adopt_character(App::Character::RuntimeCharacter{
+                .body_identity = k_body, .character_id = 5, .active = true})
+            .has_value());
+    manager.set_controlled_character(App::ControlledCharacterRef{
+        .character_id = 136, .body_identity = k_body, .world_scene_id = 1U});
+
+    CHECK_FALSE(manager.transfer_controlled_character(1U, 2U).has_value());
+    CHECK(source->character_runtime().find_body(k_body) != nullptr);
+    REQUIRE(manager.controlled_character().has_value());
+    CHECK_EQ(manager.controlled_character()->world_scene_id, 1U);
   }
 }
 

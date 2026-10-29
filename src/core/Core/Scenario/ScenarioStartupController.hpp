@@ -20,7 +20,13 @@
 #include "Core/Omikron/IamZone.hpp"
 #include "Core/RuntimeMath.hpp"
 #include "Core/Scenario/CharacterReferenceRuntime.hpp"
+#include "Core/Scenario/AreaResidencyService.hpp"
+#include "Core/Scenario/AreaTransitionService.hpp"
+#include "Core/Scenario/CompactContextRegistry.hpp"
+#include "Core/Scenario/RuntimeAreaSlot.hpp"
 #include "Core/Scenario/ScenarioManager.hpp"
+#include "Core/Scenario/TriggerProxyService.hpp"
+#include "Core/Scenario/ZoneContactService.hpp"
 #include "Core/Script/AreaScriptRuntime.hpp"
 
 namespace App::Startup {
@@ -39,23 +45,6 @@ namespace App {
 
 class ScenarioManager;
 
-/// One runtime area slot, mirroring Runtime's `RuntimeAreaSlot` layout with
-/// safe ownership: the parsed AREA and optional attached SCENE are owned here;
-/// IDs are ordinary values rather than serialized pointers.
-struct RuntimeAreaSlot {
-  std::optional<Omikron::IamAreaRecord> primary;
-  std::optional<Omikron::IamSceneRecord> scene;
-  std::int32_t primary_area_id{-1};
-  /// START's linked-AREA relationship, not an attached SCENE ID.
-  std::int32_t secondary_area_id{-1};
-  std::int32_t scene_id{-1};
-  /// Stable ScenarioManager world-scene identity owned by this resident slot.
-  /// This is not an IAM AREA ID or an array index.
-  std::uint32_t world_scene_id{0};
-  /// Independent compact IAM context for the attached SCENE top-level script.
-  std::optional<Script::AreaScriptRuntime> scene_script;
-};
-
 /// Definition-table provenance for one compact camera resolved from Runtime's
 /// complete two-resident IAM namespace.
 enum class CompactCameraDefinitionSource : std::uint8_t {
@@ -73,101 +62,12 @@ struct ResolvedCompactCamera {
   std::int32_t scene_id{-1};
 };
 
-/// Origin of one transient, residency-derived active spatial-zone record.
-enum class ActiveZoneSource : std::uint8_t {
-  k_area,
-  k_scene,
-};
-
-/// One enabled IAM table-2 record materialized from a resident AREA or SCENE.
-/// This deliberately retains the raw authored record and never claims
-/// collision or event-trigger semantics for its three event offsets.
-struct ActiveZoneRef {
-  std::size_t resident_slot{0};
-  ActiveZoneSource source{ActiveZoneSource::k_area};
-  std::int32_t area_id{-1};
-  std::int32_t scene_id{-1};
-  Omikron::IamZoneRecord zone;
-};
-
-/// Semantic ordinary heartbeat states corresponding to native states 1/2/3.
-/// Departure pending is OpenNomad context retention after the spatial slot is free;
-/// it is unrelated to the deferred native interaction states 4/5.
-enum class ZoneContactHeartbeatState : std::uint8_t {
-  k_entry_pending,
-  k_refreshed,
-  k_awaiting_refresh,
-  k_departure_pending,
-};
-
-/// One transient zone compact context. Spatial registration may retire while
-/// this context remains alive to drain queued departure work.
-struct ZoneContactContext {
-  std::size_t resident_slot{0};
-  ActiveZoneSource source{ActiveZoneSource::k_area};
-  std::int32_t area_id{-1};
-  std::int32_t scene_id{-1};
-  Omikron::IamZoneRecord zone;
-  std::size_t program_record_origin{0};
-  std::unique_ptr<Script::AreaScriptRuntime> script;
-  ZoneContactHeartbeatState heartbeat_state{ZoneContactHeartbeatState::k_entry_pending};
-  std::uint64_t last_heartbeat_generation{0};
-
-  [[nodiscard]] bool spatially_registered() const {
-    return heartbeat_state != ZoneContactHeartbeatState::k_departure_pending;
-  }
-};
-
-struct ZoneQualificationDiagnostic {
-  std::uint64_t identity{0};
-  bool qualifies{false};
-};
-
-struct OrdinarySpatialSampleResult {
-  std::size_t qualifying_zone_count{0};
-};
-
-enum class AreaTransitionState : std::uint8_t {
-  k_idle = 0,
-  k_rich_loading = 1,
-  k_rich_abandoned_loading = 2,
-  k_seamless_loading = 3,
-  k_seamless_release_pending = 4,
-  k_rich_pre_running = 5,
-  k_rich_departed_first = 6,
-  k_rich_pre_finished_first = 7,
-  k_seamless_attached = 8,
-  k_rich_post_running = 9,
-};
-
-/// Session-owned spatial trigger proxy for the durable current character.
-/// Runtime updates this independently from scripted presentation transforms.
+/// Structured script instance that currently owns the current character's pose.
 struct CurrentCharacterStructuredOwner {
   Character::BodyIdentity body_identity{0};
   std::uint32_t script_world_scene_id{0};
   std::uint32_t script_world_generation{0};
   std::size_t script_instance_id{0};
-};
-
-struct CurrentCharacterTriggerProxy {
-  ControlledCharacterRef owner;
-  bool registered{false};
-  bool contact_ready{false};
-  Runtime::Vec3 position{};
-  float radius{0.0F};
-  std::optional<std::size_t> actor_object_index;
-  std::string actor_object_name;
-  float model_bounds_radius{0.0F};
-  float heading_degrees{0.0F};
-  /// The actor spatial-service generation most recently consumed by this proxy.
-  /// This is not a movement counter; it advances only when the current actor
-  /// genuinely receives the ordinary service path that copies logical XYZ into
-  /// the registered spatial proxy.
-  std::uint64_t generation{0};
-  std::uint64_t last_consumed_actor_spatial_generation{0};
-  std::size_t overlapping_zone_count{0};
-  bool synchronization_suspended{false};
-  std::string suspension_reason;
 };
 
 /// Staged startup that follows the recovered Runtime.exe path:
@@ -178,7 +78,9 @@ struct CurrentCharacterTriggerProxy {
 /// borrow from those buffers, never from raw relocated pointers. Loading a
 /// script never executes it: event/state 1 is queued, the context is
 /// explicitly activated, and tick() runs the first interpreter tick.
-class ScenarioStartupController {
+class ScenarioStartupController final : private ZoneContactHost,
+                                        private AreaResidencyHost,
+                                        private AreaTransitionHost {
  public:
   /// Interface ID of the main menu (confirmed from IAM/AREA record 118).
   static constexpr std::uint16_t k_main_menu_interface{29};
@@ -296,36 +198,38 @@ class ScenarioStartupController {
   /// Index of the logical current AREA slot (Runtime globals 0x69BC60/0x69BC64).
   /// This is independent of selected-body storage and attached-decor order.
   [[nodiscard]] std::size_t active_area_slot() const {
-    return m_active_area_slot;
+    return m_residency.active_slot();
   }
   [[nodiscard]] std::int32_t active_area_id() const;
   [[nodiscard]] const RuntimeAreaSlot* runtime_area_slot(std::size_t index) const;
   /// Transient enabled zone records rebuilt from the two resident AREA slots.
   [[nodiscard]] std::span<const ActiveZoneRef> active_zones() const {
-    return m_active_zones;
+    return m_zone_contacts.active_zones();
   }
   /// Number of live zone-owned compact contexts, exposed for focused lifecycle tests.
   [[nodiscard]] std::size_t zone_contact_count() const {
-    return m_zone_contacts.size();
+    return m_zone_contacts.contact_count();
   }
   /// Number of native-style spatial registrations currently occupying the 16-slot capacity.
-  [[nodiscard]] std::size_t active_zone_contact_registration_count() const;
+  [[nodiscard]] std::size_t active_zone_contact_registration_count() const {
+    return m_zone_contacts.registration_count();
+  }
   [[nodiscard]] bool zone_contact_lifecycle_pass_pending() const {
-    return m_zone_contact_lifecycle_pass_pending;
+    return m_zone_contacts.lifecycle_pass_pending();
   }
   /// One live zone-owned compact context for debugger registry inspection.
   [[nodiscard]] const ZoneContactContext* zone_contact(std::size_t index) const {
-    return index < m_zone_contacts.size() ? m_zone_contacts.at(index).get() : nullptr;
+    return m_zone_contacts.contact(index);
   }
   [[nodiscard]] const std::optional<CurrentCharacterTriggerProxy>& current_character_trigger_proxy()
       const {
-    return m_current_character_trigger_proxy;
+    return m_trigger_proxy.proxy();
   }
   [[nodiscard]] bool area_transition_pending() const {
-    return m_area_transition.has_value();
+    return m_transitions.pending();
   }
   [[nodiscard]] AreaTransitionState area_transition_state() const {
-    return m_area_transition_state;
+    return m_transitions.state();
   }
   /// Primary compact context for the currently presented resident AREA.
   [[nodiscard]] const Script::AreaScriptRuntime* area_script() const;
@@ -371,17 +275,13 @@ class ScenarioStartupController {
   /// Records one fine-grained startup trace event (no-op without a recorder).
   void record(std::string name, std::string detail = {});
 
-  /// Accepts one 0x2F transition on behalf of the exact resident AREA context
-  /// that executed it. The source owner must remain stable while the alternate
-  /// resident slot is prepared.
-  [[nodiscard]] std::expected<Script::AreaTransitionResult, std::string> begin_area_transition(
-      std::size_t owner_slot,
-      Script::CompactContextHandle requester,
-      const Script::AreaTransitionRequest& request);
   [[nodiscard]] Script::CompactContextHandle register_compact_context(
       Script::AreaScriptRuntime& runtime);
   [[nodiscard]] Script::AreaScriptRuntime* resolve_compact_context(
       Script::CompactContextHandle handle);
+  /// Every live compact context in registration order: per resident slot the primary AREA context
+  /// then its SCENE context, followed by zone-owned contexts.
+  [[nodiscard]] std::vector<Script::AreaScriptRuntime*> live_compact_contexts();
   /// Creates and activates the primary compact context owned by a resident AREA.
   /// Runtime registers event 1 when the AREA is loaded, before any later 0x47
   /// presentation handoff makes that resident slot active.
@@ -392,17 +292,6 @@ class ScenarioStartupController {
   [[nodiscard]] std::expected<void, std::string> bind_preloaded_area_characters(
       std::size_t owner_slot,
       const std::vector<Character::MaterializedPlacementResult>& materialized);
-  /// Advances one accepted native AREA transition through target preparation,
-  /// resident primary-context creation, and exact requesting-VM completion.
-  [[nodiscard]] std::expected<void, std::string> service_area_transition();
-  [[nodiscard]] std::expected<void, std::string> attach_area_scene(
-      const Script::AreaSceneAttachRequest& request);
-  [[nodiscard]] std::expected<void, std::string> detach_area_scene(
-      const Script::AreaSceneDetachRequest& request);
-  [[nodiscard]] std::expected<void, std::string> detach_area_scene_from_slot(
-      std::size_t slot_index);
-  [[nodiscard]] std::expected<void, std::string> release_area(
-      const Script::AreaReleaseRequest& request);
   [[nodiscard]] std::expected<void, std::string> place_current_character_at_address(
       const Script::AreaAddressPlacementRequest& request);
   [[nodiscard]] std::expected<void, std::string> set_address_flag(
@@ -410,7 +299,9 @@ class ScenarioStartupController {
   [[nodiscard]] std::expected<void, std::string> add_object_to_persistent_collection(
       const Script::AreaPersistentObjectCollectionRequest& request);
   /// Rebuilds transient zone residency after a ZONE flag or resident-record change.
-  [[nodiscard]] std::expected<void, std::string> refresh_active_zones();
+  [[nodiscard]] std::expected<void, std::string> refresh_active_zones() {
+    return m_zone_contacts.refresh_active_zones();
+  }
   /// Applies persistent ZONE state, then rebuilds resident active zones.
   [[nodiscard]] std::expected<void, std::string> set_zone_activation(
       const Script::AreaZoneActivationRequest& request);
@@ -441,13 +332,6 @@ class ScenarioStartupController {
   /// Returns true when a valid structured-owner dispatch omitted ordinary spatial service.
   [[nodiscard]] std::expected<bool, std::string> service_current_character_actor(
       float delta_seconds);
-  /// Validates the two representations of logical current AREA ownership.
-  /// Selected-body runtime storage is deliberately not part of this invariant.
-  [[nodiscard]] std::expected<std::size_t, std::string> current_resident_area_slot() const;
-  /// Commits native event 9 when accepted support belongs to a world other
-  /// than the logical current AREA. Body storage moves only when necessary.
-  [[nodiscard]] std::expected<bool, std::string> commit_physical_area_handoff(
-      std::uint32_t accepted_support_world);
   /// Starts a compact-owned dialog and enters the session-global scheduling
   /// takeover shared by AREA, SCENE, and contact contexts.
   [[nodiscard]] std::expected<void, std::string> start_compact_dialog(
@@ -498,39 +382,70 @@ class ScenarioStartupController {
   [[nodiscard]] std::expected<std::optional<Script::AreaCameraOperationHandle>, std::string>
   enqueue_compact_camera(std::size_t owner_slot, const Script::AreaCameraRequest& request);
   void service_scene_scripts(float delta_seconds);
-  /// Compact phase: Zone contact VM execution (waits, script.run, events).
-  [[nodiscard]] std::expected<void, std::string> service_zone_contact_scripts(float delta_seconds);
-  void advance_zone_contact_heartbeat_lifecycle();
-  /// Fresh-sample phase: zone qualification, creation, and spatial loss production.
-  [[nodiscard]] std::expected<OrdinarySpatialSampleResult, std::string>
-  reconcile_zone_contacts_from_fresh_spatial_sample();
-  /// Non-spatial cleanup for residency, activation, and completed compact contexts.
-  void service_zone_contact_housekeeping();
-  [[nodiscard]] bool zone_contact_backing_resident(const ZoneContactContext& contact) const;
-  [[nodiscard]] bool zone_contact_spatially_matches(const ZoneContactContext& contact) const;
-  [[nodiscard]] bool zone_contact_reporting_enabled(const ZoneContactContext& contact) const;
-  [[nodiscard]] bool zone_contact_reporting_enabled(const ActiveZoneRef& active_zone) const;
-  void register_current_character_trigger_proxy(
-      const ControlledCharacterRef& owner, const Character::RuntimeCharacter& character);
-  [[nodiscard]] bool publish_current_character_ordinary_spatial_sample(
-      const ControlledCharacterRef& owner, const Character::RuntimeCharacter& character);
-  void service_current_character_trigger_proxy_housekeeping();
-  [[nodiscard]] ZoneContactContext* find_registered_zone_contact(const ActiveZoneRef& active_zone);
-  [[nodiscard]] std::expected<ZoneContactContext*, std::string> register_or_refresh_zone_contact(
-      const ActiveZoneRef& active_zone);
-  [[nodiscard]] std::optional<std::size_t> resident_area_slot(std::int32_t area_id) const;
 
-  struct PendingAreaTransition {
-    Script::AreaTransitionHandle handle;
-    Script::AreaTransitionRequest request;
-    std::size_t source_slot{0};
-    std::int32_t source_area_id{-1};
-    std::uint32_t source_world_scene_id{0};
-    std::uint32_t source_world_generation{0};
-    std::size_t destination_slot{0};
-    Script::CompactContextHandle requester;
-    std::string error;
-  };
+  // AreaTransitionHost
+  [[nodiscard]] ScenarioManager* transition_manager() const override {
+    return m_manager;
+  }
+  [[nodiscard]] std::span<RuntimeAreaSlot> transition_slots() const override;
+  [[nodiscard]] CharacterReferenceRuntime& transition_character_references() override {
+    return m_character_references;
+  }
+  [[nodiscard]] std::size_t transition_active_slot() const override {
+    return m_residency.active_slot();
+  }
+  [[nodiscard]] std::optional<std::size_t> transition_resident_slot(
+      std::int32_t area_id) const override {
+    return m_residency.resident_slot(area_id);
+  }
+  [[nodiscard]] bool area_archive_available() const override {
+    return m_area_archive.has_value();
+  }
+  [[nodiscard]] std::expected<Omikron::IamAreaRecord, std::string> load_area_record(
+      std::int32_t area_id) override;
+  [[nodiscard]] std::expected<Omikron::IamSceneRecord, std::string> load_scene_record(
+      std::int32_t scene_id) override;
+  [[nodiscard]] std::expected<std::size_t, std::string> launch_transition_script(
+      std::size_t slot, std::uint16_t script_id) override;
+  [[nodiscard]] std::expected<bool, std::string> transition_script_completed(
+      std::size_t slot, std::size_t instance_id) override;
+  [[nodiscard]] std::expected<PreparedAreaSummary, std::string> prepare_area_world(
+      std::size_t slot, std::int32_t area_id, const Omikron::IamAreaRecord& record) override;
+  [[nodiscard]] std::expected<void, std::string> bind_area_characters(std::size_t slot,
+      const std::vector<Character::MaterializedPlacementResult>& materialized) override;
+  [[nodiscard]] std::expected<void, std::string> install_area_script(std::size_t slot) override;
+  void discard_area_script(std::size_t slot) override;
+  void bind_scene_script(Script::AreaScriptRuntime& script, std::size_t slot) override;
+  [[nodiscard]] Script::AreaScriptRuntime* resolve_requester(
+      Script::CompactContextHandle handle) override;
+  void erase_zone_contacts(std::size_t slot, bool scene_source_only) override;
+  [[nodiscard]] std::expected<void, std::string> refresh_zones() override {
+    return refresh_active_zones();
+  }
+  void record_trace(std::string name, std::string detail) override;
+  void report_error(const std::string& error) override;
+
+  // AreaResidencyHost
+  [[nodiscard]] ScenarioManager* residency_manager() const override {
+    return m_manager;
+  }
+  [[nodiscard]] std::span<const RuntimeAreaSlot> residency_slots() const override {
+    return m_area_slots;
+  }
+  [[nodiscard]] std::expected<void, std::string> residency_handoff_committed(
+      const ControlledCharacterRef& controlled) override;
+
+  // ZoneContactHost
+  [[nodiscard]] ScenarioManager* zone_contact_manager() const override {
+    return m_manager;
+  }
+  [[nodiscard]] std::span<const RuntimeAreaSlot> zone_contact_slots() const override {
+    return m_area_slots;
+  }
+  void bind_zone_contact_script(
+      Script::AreaScriptRuntime& script, std::size_t resident_slot, bool scene_source) override;
+  [[nodiscard]] std::expected<void, std::string> service_zone_contact_waits(
+      Script::AreaScriptRuntime& script, std::size_t resident_slot) override;
 
   std::vector<std::byte> m_start_bytes;
   std::vector<std::byte> m_global_bytes;
@@ -559,9 +474,6 @@ class ScenarioStartupController {
           .scene_id = -1,
           .world_scene_id = 1,
           .scene_script = std::nullopt}};
-  /// Logical current AREA slot. This is not selected-body runtime ownership
-  /// and is not the attached-decor/camera-publisher chain head.
-  std::size_t m_active_area_slot{0};
   /// Runtime registers one independent primary compact context per resident
   /// AREA. These are intentionally separate from attached-SCENE contexts.
   std::array<std::optional<Script::AreaScriptRuntime>, 2> m_area_scripts{};
@@ -570,20 +482,18 @@ class ScenarioStartupController {
   std::array<std::uint64_t, 2> m_area_script_sequences{};
   std::array<bool, 2> m_area_event_started_recorded{};
   std::array<bool, 2> m_area_waiting_recorded{};
-  std::optional<PendingAreaTransition> m_area_transition;
-  AreaTransitionState m_area_transition_state{AreaTransitionState::k_idle};
   std::uint64_t m_next_area_script_sequence{1};
-  std::uint64_t m_next_area_transition_generation{1};
-  std::uint64_t m_next_compact_context_generation{1};
   std::uint64_t m_next_camera_operation_generation{1};
-  std::vector<ActiveZoneRef> m_active_zones;
-  std::vector<std::unique_ptr<ZoneContactContext>> m_zone_contacts;
-  std::vector<ZoneQualificationDiagnostic> m_zone_qualification_diagnostics;
   std::optional<CurrentCharacterStructuredOwner> m_current_character_structured_owner;
-  std::optional<CurrentCharacterTriggerProxy> m_current_character_trigger_proxy;
-  bool m_zone_contact_lifecycle_pass_pending{false};
+  /// Owns the logical current AREA slot (not selected-body runtime ownership, and not the
+  /// attached-decor/camera-publisher chain head) and event-9 handoffs.
+  AreaResidencyService m_residency{*this};
+  /// Owns the seamless AREA-transition transaction and the resident-SCENE lifecycle.
+  AreaTransitionService m_transitions{*this};
+  CompactContextRegistry m_compact_contexts;
+  TriggerProxyService m_trigger_proxy;
+  ZoneContactService m_zone_contacts{*this, m_trigger_proxy};
   CharacterReferenceRuntime m_character_references;
-  std::uint64_t m_next_trigger_proxy_generation{1};
 
   std::int16_t m_initial_area_id{0};
   std::int16_t m_linked_area_id{0};

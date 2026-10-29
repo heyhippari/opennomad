@@ -56,7 +56,7 @@ std::array<std::byte, Size> read_raw(BinaryReader& reader) {
   return result;
 }
 
-std::expected<void, std::string> require_records(BinaryReader& reader,
+std::expected<void, std::string> require_records(const BinaryReader& reader,
     const std::size_t count,
     const std::size_t stride,
     const std::string_view section) {

@@ -522,7 +522,7 @@ std::expected<void, std::string> GameSettings::load(const std::filesystem::path&
     return std::unexpected{std::string{"unsupported or malformed settings version"}};
   }
 
-  auto parse_value = [](const std::string_view text) -> std::optional<std::int32_t> {
+  const auto parse_value = [](const std::string_view text) -> std::optional<std::int32_t> {
     std::int32_t value{0};
     const auto result{std::from_chars(text.data(), text.data() + text.size(), value)};
     if (result.ec != std::errc{} || result.ptr != text.data() + text.size()) {

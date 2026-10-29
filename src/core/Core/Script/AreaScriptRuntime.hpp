@@ -59,7 +59,10 @@ struct AreaCharacterScriptRequest {
   AreaCharacterScriptLaunchMode mode{AreaCharacterScriptLaunchMode::k_fire_and_forget};
 };
 
-/// Native two-slot AREA transition requested by compact opcode 0x2F.
+/// Native two-slot AREA transition requested by compact opcode 0x2F. A pre-crossing script of -1
+/// selects the seamless form and the post-crossing script is ignored. Otherwise both raw SCX
+/// script IDs run in the requesting (source) AREA's world: the pre script once the destination is
+/// attached, the post script once that finished and the requester departed.
 struct AreaTransitionRequest {
   std::int16_t target_area_id{0};
   std::int16_t pre_crossing_script_id{0};

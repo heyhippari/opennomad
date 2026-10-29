@@ -28,10 +28,8 @@ void MusicPlayer::attach(MIX_Mixer* mixer) {
   }
   m_mixer = mixer;
   m_track = MIX_CreateTrack(mixer);
-  if (m_track != nullptr) {
-    if (!MIX_TagTrack(m_track, "music")) {
-      App::Log::warn(LogCategory::Audio, "failed to tag music track: {}", SDL_GetError());
-    }
+  if ((m_track != nullptr) && (!MIX_TagTrack(m_track, "music"))) {
+    App::Log::warn(LogCategory::Audio, "failed to tag music track: {}", SDL_GetError());
   }
 }
 

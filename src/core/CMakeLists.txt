@@ -30,6 +30,8 @@ add_library(${NAME} STATIC
   Core/Shader.cpp Core/Shader.hpp
   Core/Camera.cpp Core/Camera.hpp
   Core/RuntimeMath.hpp Core/RuntimeMath.cpp
+  Core/ViewFrustum.hpp Core/ViewFrustum.cpp
+  Core/DecorCulling.hpp Core/DecorCulling.cpp
   Core/RuntimePresentation.hpp Core/RuntimePresentation.cpp
   Core/GameState.hpp Core/GameState.cpp
   Core/Dialog/DialogRuntime.hpp Core/Dialog/DialogRuntime.cpp
@@ -102,7 +104,14 @@ add_library(${NAME} STATIC
   Core/Scenario/ScenarioManager.hpp Core/Scenario/ScenarioManager.cpp
   Core/Scenario/CharacterReferenceRuntime.hpp Core/Scenario/CharacterReferenceRuntime.cpp
   Core/Scenario/ScenarioRuntime.hpp Core/Scenario/ScenarioRuntime.cpp
+  Core/Scenario/AreaTransitionService.hpp Core/Scenario/AreaTransitionService.cpp
+  Core/Scenario/ScopeExit.hpp
+  Core/Scenario/AreaResidencyService.hpp Core/Scenario/AreaResidencyService.cpp
+  Core/Scenario/CompactContextRegistry.hpp Core/Scenario/CompactContextRegistry.cpp
+  Core/Scenario/RuntimeAreaSlot.hpp
   Core/Scenario/ScenarioStartupController.hpp Core/Scenario/ScenarioStartupController.cpp
+  Core/Scenario/TriggerProxyService.hpp Core/Scenario/TriggerProxyService.cpp
+  Core/Scenario/ZoneContactService.hpp Core/Scenario/ZoneContactService.cpp
   Core/Scenario/ScenarioEngine.hpp Core/Scenario/ScenarioEngine.cpp
   Core/Interface/InterfaceDispatcher.hpp Core/Interface/InterfaceDispatcher.cpp
   Core/Interface/I2DModel.hpp

@@ -443,7 +443,7 @@ const FontResource* FontManager::ensure_font(const char key, const float referen
 
   const std::size_t bucket{raster_bucket(reference_scale)};
 
-  auto key_found{m_fonts.find(key)};
+  const auto key_found{m_fonts.find(key)};
   if (key_found != m_fonts.end()) {
     const auto bucket_found{key_found->second.find(bucket)};
     if (bucket_found != key_found->second.end()) {

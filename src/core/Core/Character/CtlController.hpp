@@ -12,6 +12,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "Core/Omikron/CtlControlSet.hpp"
@@ -91,13 +92,13 @@ class CtlController {
   /// the operand is a move ID, never a state ID.
   [[nodiscard]] std::expected<void, std::string> select_move(std::uint32_t move_id);
 
-  /// Recovered player direct-control flags (native 0x81 family). Direct
-  /// control forces the same-state restart count to zero; the autonomous
-  /// idle suppression bit (0x80) suppresses MDSTAND wait diversion.
-  void set_direct_control_active(bool active);
-  void set_autonomous_idle_suppressed(bool suppressed);
-  /// Convenience for the normal player path: native bits 0x81 together.
-  void set_player_direct_control(bool active);
+  /// Runtime 0x00468DA0 (0x0045A3E0/0x0045A870): compact 0x68 suppresses
+  /// ordinary control by setting controller flags 0x80|0x01 and compact 0x69
+  /// clears both. While suppressed, state activation forces the same-state
+  /// restart count to zero and MDSTAND skips its autonomous waits. Suppression
+  /// collapses the input history to the no-input singleton; release also
+  /// clears the history and the current-input latch.
+  void set_ordinary_control_suppressed(bool suppressed);
   /// Controller flag 0x00000400: priority-based candidate selection.
   void set_priority_mode(bool enabled);
   void set_priority_threshold(std::uint16_t threshold);
@@ -122,8 +123,20 @@ class CtlController {
       const TransitionQuery& query) const;
 
   /// Dispatches one deferred callback by name (Runtime 0x0045D0E0 queue
-  /// consumer). Unknown names log once and remain nonfatal.
+  /// consumer, tab_special_move at 0x004CB168). Like Runtime, only the first
+  /// eight characters identify the routine. Unknown names log once and remain
+  /// nonfatal.
   void dispatch_callback(std::string_view name, RuntimeCharacter& character);
+
+  /// Runtime 0x0047DF00 (SetITPNbFrames): replaces the interpolation frame
+  /// count (`transition_count`) of `state`'s goto target, which must be a
+  /// resident (0x8000) transition state. Retail writes the shared bank;
+  /// OpenNomad keeps the override on this controller.
+  [[nodiscard]] std::expected<void, std::string> set_goto_interpolation_frames(
+      const Omikron::CtlState& state, std::uint16_t frames);
+  /// Effective interpolation frame count of `state`: the controller override
+  /// when one was set, otherwise the authored `transition_count`.
+  [[nodiscard]] std::uint16_t interpolation_frames(const Omikron::CtlState& state) const;
 
   [[nodiscard]] std::vector<SoundMarkerEvent> take_sound_marker_events();
 
@@ -185,11 +198,8 @@ class CtlController {
   [[nodiscard]] std::uint16_t input_profile() const {
     return m_input_profile;
   }
-  [[nodiscard]] bool direct_control_active() const {
-    return m_direct_control_active;
-  }
-  [[nodiscard]] bool autonomous_idle_suppressed() const {
-    return m_autonomous_idle_suppressed;
+  [[nodiscard]] bool ordinary_control_suppressed() const {
+    return m_ordinary_control_suppressed;
   }
   /// Presentation source state of a keyless resident (0x8000) logical state:
   /// the first key-bearing state reached through its goto chain. Equals the
@@ -260,6 +270,11 @@ class CtlController {
   /// against the same logical current state, repeated with the reduced
   /// working input until no helper matches (bounded for malformed data).
   void run_transient_helpers(std::uint32_t& working_input, RuntimeCharacter& character);
+  /// Applies the one-shot orientation (0x100, angle-wrapped) and local
+  /// movement (0x200, through the live orientation into the candidate
+  /// position) blocks of `state` once. Shared by the transient helper pass and
+  /// the exit of a non-transparent state (Runtime 0x0045C1B0/0x0045C2F0).
+  static void apply_oneshot_auxiliary(const Omikron::CtlState& state, RuntimeCharacter& character);
   /// Continuous auxiliary blocks (flags 0x40 orientation / 0x80 movement):
   /// applies the authored Vec3 scaled by the phase-window overlap of the
   /// traversed animation interval [previous, current], this tick only.
@@ -301,8 +316,8 @@ class CtlController {
   std::uint32_t m_same_state_restart_count{0};
   std::uint16_t m_priority_threshold{0xFFFFU};
 
-  bool m_direct_control_active{false};
-  bool m_autonomous_idle_suppressed{false};
+  /// Native controller flags 0x80|0x01 (compact 0x68 until 0x69).
+  bool m_ordinary_control_suppressed{false};
   bool m_priority_mode{false};
   bool m_swap_turn_slots{false};
   std::uint16_t m_input_profile{0};
@@ -310,6 +325,11 @@ class CtlController {
   std::deque<std::string> m_callback_queue;
   std::uint32_t m_walk_restart_snapshot{0};
   std::uint32_t m_run_restart_snapshot{0};
+  /// SetITPNbFrames overrides of resident states' interpolation frame counts.
+  std::vector<std::pair<const Omikron::CtlState*, std::uint16_t>> m_interpolation_overrides;
+  /// Runtime 0x004CB164: MDHEAD00 flushes the mouse delta once per head-look
+  /// episode; MDHEAD01 re-arms it. Initially armed.
+  bool m_head_look_mouse_flush_armed{true};
   /// MDSTAND wait-move alternation; the initial selection is the first move.
   bool m_wait_alternation{false};
 

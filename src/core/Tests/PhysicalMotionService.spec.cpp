@@ -2,10 +2,16 @@
 
 #include <doctest/doctest.h>
 
+#include <array>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
 #include <initializer_list>
 #include <memory>
 #include <numbers>
+#include <optional>
+#include <span>
+#include <vector>
 
 #include "Core/Character/CharacterRuntime.hpp"
 #include "Core/Omikron/CtlControlSet.hpp"
@@ -201,6 +207,37 @@ TEST_SUITE("Core::Character::PhysicalMotionService") {
     CHECK_EQ(fixture.character.physical_motion.accepted_translation.y, 10.0F);
     CHECK_EQ(fixture.character.physical_motion.vertical_velocity, 0.0F);
     CHECK(fixture.character.physical_motion.support.grounded);
+  }
+
+  TEST_CASE("equal-clearance supports from two decors resolve in attached-chain order") {
+    PhysicalFixture first_decor;
+    PhysicalFixture second_decor;
+    first_decor.character.transform.translation.y = 10.0F;
+    App::Character::PhysicalMotionService::synchronize(first_decor.character);
+    const std::array<App::Character::PhysicalDecorSource, 2> sources{
+        App::Character::PhysicalDecorSource{.world_scene_id = 7U,
+            .resident_slot = 0U,
+            .decor_model = &first_decor.decor,
+            .decor_runtime_objects = first_decor.decor.runtime_objects},
+        App::Character::PhysicalDecorSource{.world_scene_id = 9U,
+            .resident_slot = 1U,
+            .decor_model = &second_decor.decor,
+            .decor_runtime_objects = second_decor.decor.runtime_objects}};
+
+    // Identical floors yield identical clearances; chain order must decide, every time.
+    for (std::size_t attempt{0}; attempt < 3U; ++attempt) {
+      App::Character::PhysicalMotionService::resolve_tick(
+          first_decor.character, {.decor_sources = std::span{sources}});
+      CHECK(first_decor.character.physical_motion.support.valid);
+      CHECK_EQ(first_decor.character.physical_motion.support.source_world_scene_id,
+          std::optional<std::uint32_t>{7U});
+    }
+
+    const std::array<App::Character::PhysicalDecorSource, 2> reversed{sources.at(1), sources.at(0)};
+    App::Character::PhysicalMotionService::resolve_tick(
+        first_decor.character, {.decor_sources = std::span{reversed}});
+    CHECK_EQ(first_decor.character.physical_motion.support.source_world_scene_id,
+        std::optional<std::uint32_t>{9U});
   }
 
   TEST_CASE("horizontal physical terms run while an attached controller is disabled") {
@@ -1512,5 +1549,97 @@ TEST_SUITE("Core::Character::PhysicalMotionService") {
     CHECK_FALSE(fixture.character.physical_motion.horizontal_collision.body_valid);
     CHECK(fixture.character.physical_motion.horizontal_collision.resolved_displacement.x ==
           doctest::Approx(2.0F));
+  }
+
+  TEST_CASE("jump sequence guard skips positive-gap snap and fall classification") {
+    using Service = App::Character::PhysicalMotionService;
+    PhysicalFixture fixture{5.0F + Service::K_SMALL_SUPPORT_SNAP_DISTANCE - 1.0F};
+    attach_controller(fixture.character, {1U, 2U});
+    Service::synchronize(fixture.character);
+    fixture.character.physical_motion.gravity_velocity_delta_per_tick = 0.0F;
+    fixture.character.physical_motion.adventure_jump.sequence_active = true;
+
+    Service::resolve_tick(fixture.character, fixture.environment());
+    const auto& motion{fixture.character.physical_motion};
+    CHECK_FALSE(motion.support.small_step_snapped_this_tick);
+    CHECK_FALSE(motion.support.grounded);
+    CHECK_EQ(motion.fall_stage, 0U);
+    CHECK(motion.support.gap == doctest::Approx(Service::K_SMALL_SUPPORT_SNAP_DISTANCE - 1.0F));
+    CHECK(motion.last_primary_support_gap ==
+          doctest::Approx(Service::K_SMALL_SUPPORT_SNAP_DISTANCE - 1.0F));
+
+    // A serious drop under the guard neither classifies nor selects move 2.
+    PhysicalFixture high{5.0F + Service::K_FALL_STAGE_3_DISTANCE + 10.0F};
+    attach_controller(high.character, {1U, 2U});
+    Service::synchronize(high.character);
+    high.character.physical_motion.gravity_velocity_delta_per_tick = 0.0F;
+    high.character.physical_motion.adventure_jump.sequence_active = true;
+    Service::resolve_tick(high.character, high.environment(true));
+    CHECK_EQ(high.character.physical_motion.fall_stage, 0U);
+    CHECK_EQ(high.character.current_move_id(), std::optional<std::int16_t>{1});
+
+    high.character.physical_motion.adventure_jump.sequence_active = false;
+    Service::resolve_tick(high.character, high.environment(true));
+    CHECK_EQ(high.character.physical_motion.fall_stage, 3U);
+    CHECK_EQ(high.character.current_move_id(), std::optional<std::int16_t>{2});
+  }
+
+  TEST_CASE("jump sequence guard suppresses automatic heading after the spatial latch") {
+    using Reason = App::Character::AutomaticHeadingSuppressionReason;
+    using Service = App::Character::PhysicalMotionService;
+    App::Character::RuntimeCharacter character;
+    auto& horizontal{character.physical_motion.horizontal_collision};
+    horizontal.forward_collision = true;
+    horizontal.intended_displacement = {.x = 1.0F};
+    horizontal.resolved_displacement = {.x = 1.0F, .z = 1.0F};
+    character.physical_motion.adventure_jump.sequence_active = true;
+    character.physical_motion.fall_stage = 2U;
+
+    character.spatial_heading_suppression_latch = true;
+    Service::apply_automatic_collision_heading(character);
+    CHECK_EQ(horizontal.automatic_heading_suppression, Reason::k_spatial_heading_latch);
+
+    character.spatial_heading_suppression_latch = false;
+    Service::apply_automatic_collision_heading(character);
+    CHECK_EQ(horizontal.automatic_heading_suppression, Reason::k_jump_sequence);
+    CHECK_FALSE(horizontal.automatic_heading_applied);
+  }
+
+  TEST_CASE("authoritative placement clears the jump sequence guard") {
+    using Service = App::Character::PhysicalMotionService;
+    App::Character::RuntimeCharacter character;
+    character.physical_motion.adventure_jump.sequence_active = true;
+    Service::synchronize(character);
+    CHECK_FALSE(character.physical_motion.adventure_jump.sequence_active);
+  }
+
+  TEST_CASE("small support snap exists only in the aiming dispatcher state") {
+    using Service = App::Character::PhysicalMotionService;
+    App::Character::RuntimeCharacter character;
+    character.adventure_mode = App::Character::K_ADVENTURE_STATE_ORDINARY;
+    CHECK(Service::small_support_snap_suppressed(character));
+    character.adventure_mode = 0;
+    CHECK(Service::small_support_snap_suppressed(character));
+    character.adventure_mode = App::Character::K_ADVENTURE_STATE_AIMING;
+    CHECK_FALSE(Service::small_support_snap_suppressed(character));
+  }
+
+  TEST_CASE("physical reaction moves are suppressed in dispatcher states 2, 3 and 15") {
+    using Service = App::Character::PhysicalMotionService;
+    for (const std::int32_t state : {2, 3, 15}) {
+      App::Character::RuntimeCharacter character;
+      attach_controller(character, {1U, 2U});
+      character.adventure_mode = state;
+      Service::select_reaction_move(character, 2U, "test");
+      CHECK_EQ(character.current_move_id(), std::optional<std::int16_t>{1});
+    }
+    App::Character::RuntimeCharacter character;
+    attach_controller(character, {1U, 2U});
+    character.adventure_mode = App::Character::K_ADVENTURE_STATE_ORDINARY;
+    Service::select_reaction_move(character, 2U, "test");
+    CHECK_EQ(character.current_move_id(), std::optional<std::int16_t>{2});
+    // A missing move is nonfatal.
+    Service::select_reaction_move(character, 99U, "test");
+    CHECK_EQ(character.current_move_id(), std::optional<std::int16_t>{2});
   }
 }

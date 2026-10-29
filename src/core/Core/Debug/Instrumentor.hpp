@@ -78,7 +78,9 @@ class Instrumentor {
     std::ranges::replace(name, '"', '\'');
 
     // fmt beats a stringstream here — write_profile runs once per profile
-    // sample, so it is on the hot path.
+    // sample, so it is on the hot path. The stream is not flushed per sample:
+    // large scenes emit thousands of samples per frame, and a write syscall
+    // for each one dominated the frame time. end_session() flushes the tail.
     const std::string json{fmt::format(
         R"(,{{"cat":"function","dur":{},"name":"{}","ph":"X","pid":0,"tid":"{}","ts":{:.3f}}})",
         result.elapsed_time.count(),
@@ -89,7 +91,6 @@ class Instrumentor {
     const std::scoped_lock lock(m_mutex);
     if (m_current_session != nullptr) {
       m_output_stream << json;
-      m_output_stream.flush();
     }
 
     // Also store in the ring buffer for real-time in-app display.

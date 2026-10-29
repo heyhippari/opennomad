@@ -1,7 +1,7 @@
 # CTL character control sets
 
 > **Status:** recovered format and controller documentation for OpenNomad
-> **Last updated:** 2026-09-02
+> **Last updated:** 2026-10-29
 >
 > CTL is Omikron's authored character-control/state-machine resource. One CTL
 > bank per character role is named by the IAM character definition
@@ -74,7 +74,7 @@ each child belongs to its containing move by those authored counts
 | `+0x00` | u32 | **state ID** (authored ID, not an array index) |
 | `+0x04` | u32 | input condition (see §3) |
 | `+0x08` | u32 | flags (see §1.4) |
-| `+0x0C` | u32 | unresolved |
+| `+0x0C` | u32 | **jump frame count**: whole airborne arc in controller ticks, read from the take-off state by `MDJUMP0A`/`MDJUMP0B` (`0x0045AC60`); zero on ordinary states |
 | `+0x10` | f32 | transition window start (animation phase units) |
 | `+0x14` | f32 | transition window end |
 | `+0x18` | f32 | transition value (phase seed for goto-at-end) |
@@ -91,7 +91,7 @@ each child belongs to its containing move by those authored counts
 | `+0x44` | u32 | animation key: pointer-era field |
 | `+0x48` | u32 | Runtime-loaded animation pointer |
 | `+0x4C` | u16 | animation mode (see §4.2) |
-| `+0x4E` | u16 | transition count: blend parameter, **not** a length |
+| `+0x4E` | u16 | transition count: interpolation ("ITP") frame count, **not** an animation length; `SetITPNbFrames` (`0x0047DF00`) rewrites it at run time (§4.8a) |
 | `+0x50` | u16 | phase offset |
 | `+0x52` | u16 | **defer ticks** (controller-service ticks, not ms) |
 | `+0x54` | u16 | priority |
@@ -329,10 +329,17 @@ before deactivating the zone and ending. AREA 118 likewise uses `0x68` to
 suppress ordinary current-character control during startup and the
 introduction sequence.
 
-Direct player control uses the native `0x81` flag family: the same-state
-restart count is forced to zero and MDSTAND's autonomous wait diversion is
-suppressed by bit `0x80`. Input is continuously driven from the player
-profile.
+The native `0x81` controller-flag pair is **ordinary-control suppression**,
+not direct control (corrected 2026-10-29): `0x00468DA0` calls `0x0045A3E0`
+(suppress: flags `|= 0x80`; release: flags `&= ~0x80`, all 16 history entries
+cleared and the current-input latch reseeded to `0x40000000`) and
+`0x0045A870` (suppress: flags `|= 0x01`; release: `&= ~0x01`; both edges
+install the `[0x40000000]` singleton history). While either bit is set, state
+activation forces the same-state restart count to zero and `MDSTAND`
+(`0x0045ACB0` tests bit `0x80`) skips its autonomous waits. Released player
+control therefore *does* count restarts and *does* take MDSTAND's wait
+diversions in adventure state 1. Controller initialization starts with both
+bits clear. OpenNomad: `CtlController::set_ordinary_control_suppressed()`.
 
 ## 4.2 Animation start and phase domain — Confirmed — Runtime
 
@@ -436,6 +443,14 @@ disabled.
 
 Central activation, in order:
 
+0. **Exit one-shot auxiliary blocks** (`0x004A7B80`, before the target's
+   callback and entry effects, skipped for later chain iterations): when the
+   state being left has `flags & 0x100` its one-shot orientation Vec3 is
+   applied once (`0x0045C1B0`), and with `flags & 0x200` its one-shot local
+   movement (`0x0045C2F0`). This is how `H_Sd-180` (orientation `(0, 180, 0)`)
+   turns the actor when its turnaround animation completes, and how
+   `H_hfl`/`H_impact` apply their 28-degree yaw. Helpers and transparent
+   nodes never become current, so this only affects ordinary states.
 1. **Transparent bit-2 chain resolution**: while the target has
    `flags & 0x00000002`, the node is collected (never installed as logical
    current), its `transition_value` propagates as the next phase seed and its
@@ -449,7 +464,7 @@ Central activation, in order:
 4. **Entry input-history mutations** of the final state (`0x00100000` drop
    oldest / `0x01000000` reset / `0x10000000` clear latch).
 5. **Same-state restart bookkeeping** (`new == old ? ++count : count = 0`;
-   direct-control `0x81` forces zero).
+   ordinary-control suppression `0x81` forces zero).
 6. **Blend-count bookkeeping** when the previous logical state was a keyless
    resident (`0x8000`) transition state: if the new state has
    `flags & 0x00020000`, `blend_count = previous.transition_count`;
@@ -492,8 +507,8 @@ while (phase >= destination_effective_end)
   updating the actor-owned physical candidate position. Lateral (sidestep) displacement
   is exactly this generic root motion; there is no separate strafe velocity.
 - **One-shot** auxiliary orientation (`0x100`) and local-movement (`0x200`)
-  blocks belong to the transient helper pass (§4.4); presentation never
-  applies them wholesale.
+  blocks belong to the transient helper pass (§4.4) and to the exit of an
+  ordinary state (§4.6 step 0); presentation never applies them.
 - **Continuous** auxiliary blocks (`0x40` orientation, `0x80` movement) use
   the block's +0x00/+0x04 floats as a phase window `[start, end]`: each tick
   the authored Vec3 scales by the traversed interval's overlap with the
@@ -534,6 +549,17 @@ nonfatal and does not alter physical resolution.
 
 ## 4.8 Callbacks — Runtime 0x0045D0E0 queue — Confirmed — Runtime
 
+`0x0045D0E0` resolves the name through **`tab_special_move`** at
+`0x004CB168`: 66 records of `{char name[8]; void (*routine)(actor*)}`. Only
+the first **eight** name bytes are compared, so a longer authored name such as
+`MDJUMP01X` dispatches as `MDJUMP01`. The reserved name `"none"` is never
+queued; a name absent from the table prints `Message %s not found in
+tab_special_move[]` and is not queued. Routines are queued only for the
+**controlled character** (`0x0041C330(slot) == [0x00930724]`), into one global
+10-entry queue (`0x006A50C0`, count `0x0053B074`) that the ordinary actor
+dispatcher drains after the CTL update (`0x004682FD`), passing the actor.
+`MDHEAD01` appears twice; the first entry (`0x0046AEA0`) always wins.
+
 Callbacks are queued at state activation (and by the transient helper pass)
 and drained after each OpenNomad logical 30 Hz CTL tick before that tick's
 physical resolution. Phase 4.2D.1 now completes every due actor-owned fixed
@@ -561,8 +587,17 @@ Unknown names log once and remain nonfatal. Recovered subset:
 | `MDSTOPW` | `0x0046C070` | `run_snapshot > 30 && walk_snapshot < 3` selects move 166; resets both |
 | `MDRUN`   | `0x0046C0C0` | `run_snapshot = restart_count`; no movement |
 | `MDSTOPR` | `0x0046C0E0` | `run_snapshot > 30` selects move 164; resets run snapshot |
-| `RSTAVNT` | `0x0046C120` | adventure mode = 1, principal orientation X = 0 (**yaw preserved**), input profile 0 (reseeds no-input history) |
+| `RSTAVNT` | `0x0046C120` | actor dispatcher state `+0x194` = 1 (ordinary adventure), principal orientation X = 0 (**yaw preserved**), input profile 0 (reseeds no-input history) |
 | `MDROT000`| `0x0046C170` | sets the one-tick automatic collision-heading suppression flag; does **not** rotate |
+| `MDJUMP0A`| `0x0046BB50` | plans a walking jump (2.5 m, `0x00910348`); see §4.8a |
+| `MDJUMP0B`| `0x0046BC50` | plans a running jump (3.5 m, `0x0091034C`); see §4.8a |
+| `MDJUMP01`| `0x0046BD50` | launch: D8 = planned X/tick, DC = planned Y/tick × 30, E0 = planned Z/tick |
+| `MDJUMP02`| `0x0046BD90` | `SetITPNbFrames(current, frames >> 1)` for the descent interpolation |
+| `MDJUMP03`| `0x0046BE40` | landing: clears the jump guard and classifies the drop (§4.8a) |
+| `MDHEAD00`| `0x0046AE70` | first entry of a head-look episode flushes the mouse delta (`0x0043D870`, latch `0x004CB164`); sets actor `+0x519` |
+| `MDHEAD01`| `0x0046AEA0` | re-arms the mouse-flush latch; clears actor `+0x519` |
+| `MDHEAD02`| `0x0046B730` | `0x0047CEB0(0)`: clears aiming-mode flag `0x200` only |
+| `MDRA`/`MDDT`/`MDRDP`/`MDRDM` | `0x0046B680`/`0x0046B690`/`0x0046B7A0`/`0x0046B7B0` | empty routines |
 
 `MDROT000` is fully implemented for ordinary collision steering. The callback
 sets the actor transient before physical resolution. C.1 collision, sliding,
@@ -571,20 +606,64 @@ its yaw correction; B support and vertical response still execute. The
 physical commit or rollback boundary clears the transient, so a following tick
 without another callback may steer normally.
 
-`MDJP` dispatches through `0x0046B710 -> 0x0047D2E0`. Successful native jump
+### 4.8a Adventure jump choreography — Confirmed — Runtime/data
+
+The H1/F1 adventure jump is entirely CTL-authored plus five callbacks. The
+walking chain (`H_WkJumpL`) is: take-off state (`MDJUMP0A`, jump frame count
+14) → resident `0x8000` ascent state (`MDJUMP01`, goto the in-air animation)
+→ `H_JumpOn*` (`MDJUMP02`) → resident descent state → landing `H_JumpSd*`
+(`MDJUMP03`) → stand/walk/run.
+
+```text
+MDJUMP0A/0B (take-off state current):
+  guard 0x006A52CC = 1
+  origin = candidate XYZ
+  frames = current_state.jump_frame_count; half = frames >> 1
+  SetITPNbFrames(current_state, half)          // ascent interpolation
+  world  = transform(0, 0, -distance) by the live actor orientation
+  plan   = (world.x / frames, -(gravity_delta * half * (1/30)), world.z / frames)
+MDJUMP01: D8 = plan.x; DC = plan.y * 30; E0 = plan.z
+MDJUMP02: SetITPNbFrames(current_state, frames >> 1)   // descent interpolation
+MDJUMP03: guard = 0
+  gap = support +0x108 - body bottom +0x114 (latest pre-movement gap)
+  gap >= 5 m -> stage 4; >= 3 m -> stage 3; >= 1.5 m -> stage 1
+    (stage stored in +0x518, move 2 via 0x00465340, event 0x12)
+  else stage 2, nothing else
+```
+
+The upward launch is cancelled by gravity after exactly `half` ticks, and the
+horizontal terms cover the authored distance over `frames` ticks. While the
+guard is set the vertical response returns from the positive-gap branch
+before the small snap and fall classification (`0x00465B65`), and C.2
+automatic heading is suppressed (`0x00467469`, after the spatial latch and
+before the fall-stage test). Authoritative placement clears the guard.
+`MDJUMP02` also runs a bounded descent simulation whose result is unused.
+
+`SetITPNbFrames` (`0x0047DF00`) takes a state, requires its goto target to be
+a resident `0x8000` state (`"SetITPNbFrames, move is NULL"` and related
+diagnostics otherwise) and writes the target's `+0x4E` interpolation count in
+the shared bank. OpenNomad keeps the override per controller
+(`CtlController::set_goto_interpolation_frames`) and uses it for resident
+lifetime and blend-count bookkeeping.
+
+`MDJP` (`0x0046B710`) clears the guard and dispatches `0x0047D2E0`. It is
+authored only in the aiming move `S_Shoot` (200), not in adventure
+locomotion; its `adventureFlags` are the aiming-mode block at `0x006579B0`,
+whose actor `0x006579CC` exists only in dispatcher state 3. Successful native jump
 start initializes its repeat timer and authored vertical adventure term, then
 sets `adventureFlags |= 0x810`: `0x10` is continuing jump-active state and
-`0x800` is a one-adventure-update jump-start latch. Helper `0x0047CF00` tests
-that mask to suppress the ordinary strict `<0.2 m` support snap, preventing an
-active jump from being stuck back to the floor. OpenNomad Phase 4.2B.2 exposes
-this only as the physical resolver's per-tick `suppress_small_support_snap`
-input; it does not implement or dispatch native MDJP jump movement yet.
+`0x800` is a one-adventure-update jump-start latch. Helper `0x0047CF00`
+returns nonzero (suppressing the strict `<0.2 m` support snap) when **no
+aiming-mode actor exists** or that mask is set. Because the aiming-mode actor
+is installed only with dispatcher state 3, ordinary adventure never takes the
+small snap. OpenNomad derives the resolver's `suppress_small_support_snap`
+input from this (`PhysicalMotionService::small_support_snap_suppressed`); the
+aiming-mode MDJP movement itself is not implemented.
 
-Native global `0x006A52CC` is a separate jump-sequence guard checked before
-positive-gap fall classification and small-step processing. Observed producers
-belong to authored callbacks including `MDJUMP0AP` and `MDJUMP0BP`. OpenNomad
-does not add a producerless suppression flag; the guard remains deferred until
-the complete jump callback choreography is implemented.
+Native global `0x006A52CC` is the jump-sequence guard of §4.8a. (Earlier
+notes named its producers `MDJUMP0AP`/`MDJUMP0BP`; the trailing `P` was the
+first byte of each table entry's routine pointer.) OpenNomad models it as
+actor-owned `AdventureJumpState::sequence_active`.
 
 `MDSLIDOU` temporarily sets native global `0x00910327`, performs its own support
 reconciliation, and clears the flag. During that callback the temporary override
@@ -601,10 +680,13 @@ States with `animation_mode & 0x0008` carry the marker block of §1.5. A
 one-shot marker fires once per state execution when the current animation
 interval crosses its authored phase (`previous < phase && current >= phase`);
 state re-entry resets the fired set. The authored sound reference is an SCX
-`DEAD0003` **hID** (lookup 0x0048CC80), never a sound-table index; the
-spatial origin for the ordinary zeroed attachment-selector mode is the live
-character world position. No CTL-specific attenuation metadata is recovered
-for Phase 4.1; OpenNomad uses the general scenario spatial-sound defaults.
+`DEAD0003` **hID** (lookup 0x0048CC80), never a sound-table index. The lookup
+table is `[0x005399C0]`, which the main loop (`0x0045ADB0`) sets each frame to
+the gameplay-mode scenario at `0x00930780` (`aventure.scx`), not the current
+AREA's scenario: retail footsteps use aventure's `STPR`/`STPL` (hIDs 199/203).
+The marker is played through `0x0046CDC0` with no emitter and no owner
+(`0x0045B007`), so it is nonspatial. OpenNomad routes markers to the
+gameplay-mode runtime and submits them as nonspatial one-shots.
 
 ---
 
@@ -649,6 +731,11 @@ its follow mathematics are Phase 4.3) only when **all** of these hold:
 | `0x0046ACE0` | exact move-ID lookup |
 | `0x0046AD90` | default move lookup (`flags & 1`) |
 | `0x0046BF90` | `MDSTAND` |
+| `0x0046BB50`..`0x0046BE40` | `MDJUMP0A`, `MDJUMP0B`, `MDJUMP01`, `MDJUMP02`, `MDJUMP03` |
+| `0x0046AE70` / `0x0046AEA0` | `MDHEAD00` / `MDHEAD01` |
+| `0x0047DF00` | `SetITPNbFrames` |
+| `0x004CB168` | `tab_special_move` callback table |
+| `0x00468DA0` | ordinary-control suppression (`0x0045A3E0` + `0x0045A870`) |
 | `0x0046C050` | `MDWALK` |
 | `0x0046C070` | `MDSTOPW` |
 | `0x0046C0C0` | `MDRUN` |

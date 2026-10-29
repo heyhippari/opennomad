@@ -437,13 +437,14 @@ class WorldLetterboxState {
 /// session-global fade or cinematic mask.
 class WorldPresentationResetObserver {
  public:
-  [[nodiscard]] bool synchronize(
-      const std::uint64_t reset_generation, WorldFadeState& fade, WorldLetterboxState& letterbox) {
+  /// Resets every listed session-global presentation state (fade, letterbox, camera, ...) when
+  /// the epoch advanced. Each argument only needs a `reset()` member.
+  template <typename... Resettable>
+  [[nodiscard]] bool synchronize(const std::uint64_t reset_generation, Resettable&... resettable) {
     if (reset_generation == m_observed_generation) {
       return false;
     }
-    fade.reset();
-    letterbox.reset();
+    (resettable.reset(), ...);
     m_observed_generation = reset_generation;
     return true;
   }

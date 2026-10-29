@@ -257,6 +257,35 @@ void consider_polygon(const std::array<Runtime::Vec3, Size>& vertices,
   }
 }
 
+/// Object-level broadphase: rejects an object whose Runtime bounding sphere
+/// (+0x58 around the descriptor bounds centre) cannot touch the swept sphere.
+/// Skinned meshes may resolve corners against a parent's vertex block, so they
+/// are never rejected here.
+[[nodiscard]] bool outside_swept_bounds(const Omikron::Model3DOData& model,
+    const Omikron::Model3DOData::RuntimeObjectState& object,
+    const std::size_t object_index,
+    const SweptSphereQueryInput& query) {
+  const Omikron::MeshDescriptor& mesh{model.meshes.at(object_index)};
+  if (mesh.bounding_radius <= 0.0F || (object_index < model.skin_parent_index.size() &&
+                                          model.skin_parent_index.at(object_index) >= 0)) {
+    return false;
+  }
+  const Runtime::Vec3 local_center{.x = (mesh.bounds_min.x + mesh.bounds_max.x) * 0.5F,
+      .y = (mesh.bounds_min.y + mesh.bounds_max.y) * 0.5F,
+      .z = (mesh.bounds_min.z + mesh.bounds_max.z) * 0.5F};
+  const Runtime::Vec3 world_center{Runtime::transform_point(local_center,
+      {.matrix = object.world_matrix,
+          .translation = object.world_translation,
+          .scale = object.scale})};
+  const float maximum_scale{
+      std::max({std::abs(object.scale.x), std::abs(object.scale.y), std::abs(object.scale.z)})};
+  const float reach{query.radius + (mesh.bounding_radius * maximum_scale) + K_GEOMETRY_EPSILON};
+  const Runtime::Vec3 offset{subtract(world_center, query.start)};
+  const float along{std::clamp(dot(offset, query.direction), 0.0F, query.max_distance)};
+  const Runtime::Vec3 closest{subtract(offset, scale(query.direction, along))};
+  return dot(closest, closest) > reach * reach;
+}
+
 }  // namespace
 
 std::optional<SweptSphereHit> SweptSphereQuery::find(const Omikron::Model3DOData& model,
@@ -267,7 +296,8 @@ std::optional<SweptSphereHit> SweptSphereQuery::find(const Omikron::Model3DOData
   const std::size_t object_count{
       std::min({model.meshes.size(), model.polygons.size(), runtime_objects.size()})};
   for (std::size_t object_index{0}; object_index < object_count; ++object_index) {
-    if ((model.meshes.at(object_index).flags & excluded_object_flags) != 0U) {
+    if ((model.meshes.at(object_index).flags & excluded_object_flags) != 0U ||
+        outside_swept_bounds(model, runtime_objects[object_index], object_index, query)) {
       continue;
     }
     const auto hit{find_in_object(model, runtime_objects, object_index, query)};

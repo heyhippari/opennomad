@@ -862,7 +862,7 @@ void InterfaceManager::complete_transition_destination(const std::vector<Transit
   }
   std::function<void()> completion;
   if (after_commit) {
-    completion = [this, callback = std::move(after_commit)]() {
+    completion = [this, callback = std::move(after_commit)] {
       callback(*this);
     };
   }
@@ -1282,7 +1282,7 @@ std::string keyboard_mouse_binding_label(const App::Settings::RuntimeControlBind
 /// Returns from interface 35 to the resident interface that opened it. The
 /// host state is restored before closing the child; close() then re-focuses the
 /// most recently opened remaining instance.
-void close_options_to_host(InterfaceManager& manager, InterfaceInstance& options_instance) {
+void close_options_to_host(InterfaceManager& manager, const InterfaceInstance& options_instance) {
   const InterfaceHandle options_handle{options_instance.handle};
   const std::optional<InterfaceHandle> host_handle{options_instance.parent_interface};
 
@@ -1425,7 +1425,7 @@ I2DTextElement make_options_text(InterfaceManager& manager,
     text.layout = I2DTextLayout::k_option_slider;
     const std::string setting_id{definition.stable_id};
     const App::Settings::GameSettings* settings{&manager.game_settings()};
-    text.value_scalar = [settings, setting_id]() {
+    text.value_scalar = [settings, setting_id] {
       return settings->number_fraction(setting_id);
     };
     text.on_adjust =
@@ -1446,11 +1446,11 @@ I2DTextElement make_options_text(InterfaceManager& manager,
     const std::string setting_id{definition.stable_id};
     const App::Settings::GameSettings* settings{&manager.game_settings()};
     const Window* const window{manager.window()};
-    text.value_text = [settings, setting_id]() {
+    text.value_text = [settings, setting_id] {
       return settings->choice_label(setting_id);
     };
     if (setting_id == "display.resolution" && window != nullptr) {
-      text.value_text = [settings, setting_id, window]() {
+      text.value_text = [settings, setting_id, window] {
         if (window->actual_display_mode() == DisplayMode::k_borderless_fullscreen) {
           return fmt::format(
               "Desktop ({})", display_resolution_label(window->display_mode_catalog().desktop));
@@ -1519,7 +1519,7 @@ I2DTextElement make_keyboard_binding_text(InterfaceManager& manager,
   const App::Settings::RuntimeControlBindings& bindings{
       manager.game_settings().runtime_control_bindings()};
 
-  text.value_text = [manager_ptr, &bindings, capture_token, group, slot]() {
+  text.value_text = [manager_ptr, &bindings, capture_token, group, slot] {
     if (manager_ptr->physical_input_capture_active(capture_token)) {
       return std::string{"Press a key or mouse button..."};
     }
@@ -1870,8 +1870,10 @@ void initialize_start_menu(InterfaceManager& manager, InterfaceInstance& instanc
 
 // Runtime StartMenu destroy callback: 0x00479F30. Resource release is RAII;
 // this callback exists to mirror the descriptor contract and to log teardown.
+// Both parameters keep the mutable InterfaceDestroyFn signature.
 void destroy_start_menu(
-    [[maybe_unused]] InterfaceManager& manager, [[maybe_unused]] InterfaceInstance& instance) {
+    [[maybe_unused]] InterfaceManager& manager,      // NOLINT(misc-const-correctness)
+    [[maybe_unused]] InterfaceInstance& instance) {  // NOLINT(misc-const-correctness)
   App::Log::debug(LogCategory::I2D, "destroying START MENU state");
 }
 
@@ -2035,6 +2037,7 @@ void initialize_options(InterfaceManager& manager, InterfaceInstance& instance) 
 }
 
 // Runtime OPTIONS destroy callback: 0x00490F30. Resource release remains RAII.
+// NOLINTNEXTLINE(misc-const-correctness): signature fixed by InterfaceDestroyFn.
 void destroy_options(InterfaceManager& manager, [[maybe_unused]] InterfaceInstance& instance) {
   manager.cancel_physical_input_capture();
   App::Log::debug(LogCategory::I2D, "destroying OPTIONS state");

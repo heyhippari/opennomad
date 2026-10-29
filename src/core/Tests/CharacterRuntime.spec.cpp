@@ -897,6 +897,63 @@ TEST_SUITE("Core::Character::Runtime") {
     CHECK_FALSE(character->dialog_performance.has_value());
     CHECK_EQ(character->posed_groups.at(0).vertices.at(0).position.at(0), 20.0F);
   }
+  TEST_CASE("body transfer succeeds for an equal canonical ID held by a distinct target body") {
+    const App::Omikron::IamAreaRecord area{make_area()};
+    const App::GameState state{make_game_state()};
+    const auto loader = [](const std::string_view name)
+        -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
+      return fake_resource(name);
+    };
+    App::Character::Runtime world_a{loader};
+    App::Character::Runtime world_b{loader};
+    const auto preloaded_a{world_a.preload_area_characters(118, area, state)};
+    const auto preloaded_b{world_b.preload_area_characters(222, area, state)};
+    REQUIRE(preloaded_a.has_value());
+    REQUIRE(preloaded_b.has_value());
+    const App::Character::BodyIdentity moving{preloaded_a->front().body_identity};
+    const App::Character::BodyIdentity staying{preloaded_b->front().body_identity};
+    REQUIRE_NE(moving, staying);
+
+    // Both worlds' placements carry the same canonical character ID; only the body identity
+    // keys a live entity, so the move must be accepted.
+    REQUIRE(world_a.transfer_body_to(world_b, moving).has_value());
+    CHECK(world_a.find_body(moving) == nullptr);
+    REQUIRE(world_b.find_body(moving) != nullptr);
+    CHECK(world_b.find_body(staying) != nullptr);
+    CHECK_EQ(world_b.characters().size(), 2U);
+  }
+
+  TEST_CASE("body transfer is transactional when the target already owns the body") {
+    const App::Omikron::IamAreaRecord area{make_area()};
+    const App::GameState state{make_game_state()};
+    App::Character::Runtime source{
+        [](const std::string_view name)
+            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
+          return fake_resource(name);
+        }};
+    App::Character::Runtime target{
+        [](const std::string_view name)
+            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
+          return fake_resource(name);
+        }};
+    const auto preloaded{source.preload_area_characters(118, area, state)};
+    REQUIRE(preloaded.has_value());
+    const App::Character::BodyIdentity identity{preloaded->front().body_identity};
+    REQUIRE(target.adopt_character(App::Character::RuntimeCharacter{.body_identity = identity,
+                                       .character_id = 999})
+            .has_value());
+
+    const auto transferred{source.transfer_body_to(target, identity)};
+    REQUIRE_FALSE(transferred.has_value());
+    CHECK(source.find_body(identity) != nullptr);
+    CHECK_EQ(source.characters().size(), 1U);
+    CHECK_EQ(target.characters().size(), 1U);
+
+    // A rejected adoption leaves the offered body untouched for the caller.
+    App::Character::RuntimeCharacter offered{.body_identity = identity, .character_id = 1};
+    CHECK_FALSE(target.adopt_character(std::move(offered)).has_value());
+    CHECK_EQ(offered.character_id, 1);
+  }
 }
 
 // NOLINTEND(misc-use-anonymous-namespace, cppcoreguidelines-avoid-do-while, cert-err33-c,

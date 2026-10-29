@@ -130,7 +130,7 @@ std::expected<CtlControlSet, std::string> CtlControlSet::load(
     state.state_id = reader.read_u32();
     state.input_condition = reader.read_u32();
     state.flags = reader.read_u32();
-    state.raw_0c = reader.read_u32();
+    state.jump_frame_count = reader.read_u32();
     state.window_start = reader.read_f32();
     state.window_end = reader.read_f32();
     state.transition_value = reader.read_f32();

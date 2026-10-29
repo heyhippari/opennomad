@@ -46,7 +46,7 @@ cmake --preset quality
 cmake --build --preset quality --target check-format
 ```
 
-The `quality` preset requires the canonical LLVM `22.1.8` clang-format and clang-tidy tools. For a Release build:
+The `quality` preset requires the canonical LLVM `23.1.3` clang-format and clang-tidy tools. For a Release build:
 
 ```shell
 cmake --preset linux-release

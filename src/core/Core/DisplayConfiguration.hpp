@@ -53,7 +53,7 @@ struct DisplayModeCatalog {
     DisplayResolution requested_resolution,
     const DisplayModeCatalog& catalog,
     bool exclusive_application_succeeded);
-[[nodiscard]] std::string display_mode_label(DisplayMode mode);
+[[nodiscard]] std::string_view display_mode_label(DisplayMode mode);
 [[nodiscard]] std::string display_resolution_label(DisplayResolution resolution);
 
 }  // namespace App

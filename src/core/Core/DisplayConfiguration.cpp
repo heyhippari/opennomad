@@ -122,7 +122,7 @@ DisplayMode fallback_display_mode(const DisplayMode requested,
   return DisplayMode::k_borderless_fullscreen;
 }
 
-std::string display_mode_label(const DisplayMode mode) {
+std::string_view display_mode_label(const DisplayMode mode) {
   switch (mode) {
     case DisplayMode::k_windowed:
       return "Windowed";

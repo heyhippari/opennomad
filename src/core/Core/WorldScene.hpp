@@ -71,12 +71,22 @@ class WorldScene final : public Scene, public Debug::SceneDebugView {
 
   void synchronize_presentation_reset();
   void consume_camera_commands();
+  /// One attached world's renderer, keyed by exact (scene, generation). A null renderer records a
+  /// failed build so it is attempted only once per generation.
+  struct AttachedWorldRenderer {
+    std::uint32_t scene_id{0};
+    std::uint32_t generation{0};
+    std::unique_ptr<WorldRenderer> renderer;
+  };
+  [[nodiscard]] AttachedWorldRenderer* find_attached_renderer(const WorldSceneContext* context);
+  [[nodiscard]] const AttachedWorldRenderer* find_attached_renderer(
+      const WorldSceneContext* context) const;
   [[nodiscard]] WorldRenderer* current_world_renderer();
   [[nodiscard]] const WorldRenderer* current_world_renderer() const;
   [[nodiscard]] WorldRenderer* attached_world_head_renderer();
   void consume_fade_commands();
   void consume_letterbox_commands();
-  void consume_object_presentation_commands(const WorldSceneContext* context);
+  void consume_object_presentation_commands();
   void service_camera_completion(const WorldSceneContext* context);
   void service_structured_camera_release(const WorldSceneContext* context);
   void update_audio_listener(const WorldSceneContext* context);
@@ -84,11 +94,6 @@ class WorldScene final : public Scene, public Debug::SceneDebugView {
 
   ScenarioManager* m_scenarios{nullptr};
   Interface::InterfacePresenter m_interfaces;
-  struct AttachedWorldRenderer {
-    std::uint32_t scene_id{0};
-    std::uint32_t generation{0};
-    std::unique_ptr<WorldRenderer> renderer;
-  };
   std::vector<AttachedWorldRenderer> m_attached_world_renderers;
   std::unique_ptr<WorldFadeRenderer> m_fade_renderer;
   std::unique_ptr<WorldLetterboxRenderer> m_letterbox_renderer;

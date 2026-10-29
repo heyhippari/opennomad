@@ -391,7 +391,7 @@ Runtime::preload_area_characters(const std::int32_t area_id,
   std::vector<MaterializedPlacementResult> materialized;
   const std::vector<Omikron::IamAreaCharacterRecord> placements{area.character_placements()};
   materialized.reserve(placements.size());
-  const auto roll_back = [this, &materialized]() {
+  const auto roll_back = [this, &materialized] {
     std::erase_if(m_characters, [&materialized](const RuntimeCharacter& character) {
       return std::ranges::any_of(
           materialized, [&character](const MaterializedPlacementResult& result) {
@@ -616,10 +616,12 @@ std::expected<RuntimeCharacter, std::string> Runtime::extract_body(
   return extracted;
 }
 
-std::expected<void, std::string> Runtime::adopt_character(RuntimeCharacter character) {
-  if (find(character.character_id) != nullptr) {
+std::expected<void, std::string> Runtime::adopt_character(RuntimeCharacter&& character) {
+  // `body_identity` is the live-entity key. Canonical character IDs are profile metadata: two
+  // resident worlds may legitimately hold distinct bodies that share one character ID.
+  if (find_body(character.body_identity) != nullptr) {
     return std::expected<void, std::string>{std::unexpect,
-        fmt::format("character {} already belongs to target world", character.character_id)};
+        fmt::format("body {} already belongs to target world", character.body_identity)};
   }
   if (character.model_resource != nullptr && !character.model_resource_name.empty()) {
     m_model_resources.try_emplace(character.model_resource_name, character.model_resource);
@@ -632,6 +634,14 @@ std::expected<void, std::string> Runtime::adopt_character(RuntimeCharacter chara
 
 std::expected<void, std::string> Runtime::transfer_body_to(
     Runtime& target, const BodyIdentity body_identity) {
+  if (&target == this) {
+    return std::expected<void, std::string>{
+        std::unexpect, fmt::format("body {} cannot transfer to its own world", body_identity)};
+  }
+  if (find_body(body_identity) == nullptr) {
+    return std::expected<void, std::string>{
+        std::unexpect, fmt::format("body {} is not materialized", body_identity)};
+  }
   if (target.find_body(body_identity) != nullptr) {
     return std::expected<void, std::string>{
         std::unexpect, fmt::format("body {} already belongs to target world", body_identity)};
@@ -640,7 +650,16 @@ std::expected<void, std::string> Runtime::transfer_body_to(
   if (!extracted) {
     return std::expected<void, std::string>{std::unexpect, extracted.error()};
   }
-  return target.adopt_character(std::move(extracted).value());
+  RuntimeCharacter body{std::move(extracted).value()};
+  auto adopted{target.adopt_character(std::move(body))};
+  if (!adopted) {
+    // `adopt_character` leaves its argument untouched on failure, so the body is restored to the
+    // source world rather than being lost. Re-adoption cannot clash: it was just extracted.
+    // NOLINTNEXTLINE(bugprone-use-after-move): the rvalue reference is moved from only on success.
+    body.instance_id = m_characters.size();
+    m_characters.push_back(std::move(body));
+  }
+  return adopted;
 }
 
 std::expected<void, std::string> Runtime::place_body_at_address(
@@ -731,6 +750,7 @@ std::expected<MaterializedCharacterResult, std::string> Runtime::materialize_cha
         .controller_enabled = false,
         .pose_owner = PoseOwner::k_model_defaults,
         .adventure_mode = 0,
+        .head_look_requested = false,
         .suppress_automatic_movement_heading = false,
         .definition_name = std::string{definition_name},
         .model_resource_name = std::string{model_resource},

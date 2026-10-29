@@ -438,7 +438,12 @@ void write_boot_fixtures(const TempDirectory& temp) {
 }
 
 void write_structured_zone_fixtures(const TempDirectory& temp) {
-  write_bytes(temp.root() / "IAM" / "START", make_start());
+  // The AREA loader materializes every table-0 placement; the persistent CHARACTERS bit (state bit
+  // 0 here) decides whether the resident body starts active and AREA-present.
+  std::vector<std::byte> start{make_start()};
+  constexpr std::size_t k_character_flags_offset{0x1314U};
+  start.at(k_character_flags_offset) = std::byte{0x01};
+  write_bytes(temp.root() / "IAM" / "START", start);
   write_bytes(temp.root() / "IAM" / "GLOBAL", App::Tests::make_empty_iam_global());
   write_bytes(temp.root() / "IAM" / "AREA", make_structured_zone_area_archive());
   write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
@@ -935,8 +940,8 @@ TEST_SUITE("Core::Scenario::ScenarioEngine") {
     CHECK_EQ(manager.world_contexts()[0].scenario_path, "SCPTDATA/GRID.SCX");
     CHECK(manager.world_contexts()[1].residency == WorldSceneResidencyState::ResidentAttached);
     CHECK_EQ(manager.world_contexts()[1].scenario_path, "SCPTDATA/IMPASSE.SCX");
-    REQUIRE(manager.active_world_context() != nullptr);
-    CHECK_EQ(manager.active_world_context()->scene_id, 0U);
+    REQUIRE(manager.current_world_context() != nullptr);
+    CHECK_EQ(manager.current_world_context()->scene_id, 0U);
 
     CHECK(engine.area_script()->state() == AreaScriptState::k_ready);
     REQUIRE(engine.runtime_area_slot(1)->scene_script.has_value());

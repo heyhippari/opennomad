@@ -3427,8 +3427,13 @@ src/core/Core/Script/AreaScriptRuntime.cpp
 Startup/world consumers:
 
 ```text
-src/core/Core/Scenario/ScenarioStartupController.hpp
-src/core/Core/Scenario/ScenarioStartupController.cpp
+src/core/Core/Scenario/ScenarioStartupController.*
+src/core/Core/Scenario/RuntimeAreaSlot.hpp
+src/core/Core/Scenario/AreaTransitionService.*
+src/core/Core/Scenario/AreaResidencyService.*
+src/core/Core/Scenario/ZoneContactService.*
+src/core/Core/Scenario/TriggerProxyService.*
+src/core/Core/Scenario/CompactContextRegistry.*
 src/core/Core/Scenario/ScenarioRuntime.*
 src/core/Core/Character/CharacterRuntime.*
 ```
@@ -3513,7 +3518,10 @@ The most important conceptual correction is:
 # 111. OpenNomad two-slot transition mapping (`AREA 0x2F`)
 
 Compact AREA opcode `0x2F` uses handler `0x00402D20` and consumes three
-Scalar16 operands (six bytes). Operand 0 is an `AREAS` ID. On an accepted
+Scalar16 operands (six bytes). Operand 0 is an `AREAS` ID; operands 1/2 are the
+pre/post-crossing SCX script IDs of the rich form (see
+[iam-scenario-vm.md](iam-scenario-vm.md) section 108.1). The rest of this
+section describes the seamless `(-1, -1)` form. On an accepted
 transition, the calling context advances past the instruction and waits in
 recovered Runtime state 10 until the session coordinator completes the
 destination handoff.
@@ -3521,7 +3529,7 @@ destination handoff.
 OpenNomad maps Runtime's two resident AREA slots directly onto:
 
 ```text
-ScenarioStartupController::RuntimeAreaSlot[2]
+RuntimeAreaSlot[2]  (owned by ScenarioStartupController)
 ScenarioManager::WorldSceneContext[2]
 ```
 

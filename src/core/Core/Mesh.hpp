@@ -1,6 +1,8 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
+#include <span>
 #include <vector>
 
 #include "Core/Buffers.hpp"
@@ -25,10 +27,19 @@ class Mesh {
   /// Binds the VAO and draws all triangles.
   void draw() const;
 
+  /// Overwrites the vertex data in place, keeping the index buffer. Returns
+  /// false without touching GL state when the vertex count differs.
+  [[nodiscard]] bool update_vertices(std::span<const Vertex> vertices) const;
+
+  [[nodiscard]] std::size_t vertex_count() const {
+    return m_vertex_count;
+  }
+
  private:
   VertexArray m_vertex_array;
   VertexBuffer m_vertex_buffer;
   IndexBuffer m_index_buffer;
+  std::size_t m_vertex_count{0};
 };
 
 }  // namespace App

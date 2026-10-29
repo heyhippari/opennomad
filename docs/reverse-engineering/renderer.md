@@ -1657,6 +1657,33 @@ OpenNomad's GPU matrix use is therefore an implementation modernization.
 
 ---
 
+# 52.1 Scene visibility is a root-sphere test, not portals or occlusion
+
+**Confirmed — Runtime (disassembly).** `0x00441030` calls the scene/object submission at
+`0x0048D7F0`. For every scene linked at context `+0x184` it:
+
+1. takes the scene root object's `+0x58` bounding radius and the scene position (`scene +0x10..+0x18`)
+   relative to the camera;
+2. rejects the scene when its squared camera distance exceeds `(radius + context far distance)^2`
+   (comparison direction inferred from the `fcompp`/`test ah,0x41` idiom);
+3. rejects the scene when the sphere lies fully outside any of four stored side planes
+   (`0x00660AD4..0x00660B18`, plane distance `> radius`);
+4. otherwise marks the scene visible, picks a level of detail from the distance list at `scene +0x20`,
+   and walks the whole object tree, skipping only objects whose descriptor flags match `0x800003`.
+
+Per object, `0x00494650` builds the transform and `0x004947F0`/`0x00494E80` transform every vertex.
+`0x004951C0` then submits polygons; each triangle is dropped only when all three corners fall outside
+the same screen/depth limit. There is no per-object sphere test, no door/portal traversal, no PVS and
+no occlusion query: hidden surfaces are resolved by the depth buffer.
+
+Consequences for OpenNomad: any extra culling is an optimization and must be image-neutral. The
+renderer only skips decor objects whose `+0x58` sphere (centre = local bounds centre transformed by
+the live runtime transform, radius times max abs scale) is entirely outside the camera frustum
+(`Core/ViewFrustum`, `Core/DecorCulling`, used by `WorldRenderer::render`). Skinned objects and
+objects without a radius are never culled.
+
+---
+
 # 53. Root-driven 3DO traversal
 
 3DO Runtime loading identifies an explicit root object from the serialized

@@ -7,16 +7,19 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <map>
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "Core/Character/CharacterRuntime.hpp"
 #include "Core/Character/CtlController.hpp"
+#include "Core/Character/PhysicalMotionService.hpp"
 #include "Core/Omikron/CtlControlSet.hpp"
 #include "Core/Omikron/Model3DO.hpp"
 #include "Core/RuntimeMath.hpp"
@@ -57,6 +60,8 @@ struct CtlStateSpec {
   std::optional<AuxBlockSpec> movement;
   std::string callback;
   std::vector<MarkerSpec> markers;
+  /// Serialized +0x0C jump frame count (take-off states only).
+  std::uint32_t jump_frames{0};
 };
 
 struct CtlMoveSpec {
@@ -155,7 +160,7 @@ Buffer build_ctl(
       ctl.u32(state.id)
           .u32(state.input)
           .u32(state.flags)
-          .u32(0)
+          .u32(state.jump_frames)
           .f32(state.window_start)
           .f32(state.window_end)
           .f32(state.transition_value)
@@ -511,12 +516,13 @@ TEST_SUITE("Core::Character::CtlController") {
     created->service_tick(0x0U, character);
     CHECK_EQ(created->same_state_restart_count(), 2U);
 
-    // Direct player control forces the restart count to zero.
-    created->set_player_direct_control(true);
+    // Ordinary-control suppression (compact 0x68) forces the restart count
+    // to zero.
+    created->set_ordinary_control_suppressed(true);
     created->service_tick(0x0U, character);
     created->service_tick(0x0U, character);
     CHECK_EQ(created->same_state_restart_count(), 0U);
-    created->set_player_direct_control(false);
+    created->set_ordinary_control_suppressed(false);
 
     // Forward input transitions 1 -> 2 immediately; state 2's animation ends
     // after one tick and the end/goto family follows its goto back to state 1
@@ -809,9 +815,9 @@ TEST_SUITE("Core::Character::CtlController") {
     CHECK_EQ(created->walk_restart_snapshot(), created->same_state_restart_count());
     CHECK_EQ(created->run_restart_snapshot(), 0U);
 
-    // Under direct player control the restart count stays zero and so do the
-    // autonomous snapshots.
-    created->set_player_direct_control(true);
+    // While ordinary control is suppressed the restart count stays zero and so
+    // do the autonomous snapshots.
+    created->set_ordinary_control_suppressed(true);
     created->service_tick(0x0U, character);
     created->service_tick(0x0U, character);
     CHECK_EQ(created->same_state_restart_count(), 0U);
@@ -860,7 +866,7 @@ TEST_SUITE("Core::Character::CtlController") {
     CHECK_EQ(created->run_restart_snapshot(), 0U);
   }
 
-  TEST_CASE("MDSTAND alternates wait moves only without direct control") {
+  TEST_CASE("MDSTAND alternates wait moves only while ordinary control is released") {
     const std::vector<CtlMoveSpec> moves{
         CtlMoveSpec{.id = 1,
             .flags = 1,
@@ -881,20 +887,21 @@ TEST_SUITE("Core::Character::CtlController") {
     };
     auto bank{make_bank(moves, {{"LOOP", make_3da(1)}})};
 
-    // Direct player control suppresses the autonomous wait diversion.
+    // Ordinary-control suppression (flag 0x80) blocks the autonomous wait
+    // diversion.
     {
       auto created{App::Character::CtlController::create(bank, "TEST")};
       REQUIRE(created.has_value());
       App::Character::RuntimeCharacter character{make_character()};
       character.adventure_mode = 1;
-      created->set_player_direct_control(true);
+      created->set_ordinary_control_suppressed(true);
       for (std::uint32_t tick{0}; tick < 30U; ++tick) {
         created->service_tick(0x0U, character);
       }
       CHECK_EQ(created->current_move()->move_id, 1U);
     }
 
-    // Non-direct adventure mode 1: >10 restarts alternate 43 then 44.
+    // Released control in adventure state 1: >10 restarts alternate 43 then 44.
     {
       auto created{App::Character::CtlController::create(bank, "TEST")};
       REQUIRE(created.has_value());
@@ -1733,6 +1740,291 @@ TEST_SUITE("Core::Character::CtlController") {
     created->service_tick(0x4U, character);
     CHECK_EQ(created->current_move()->move_id, 164U);
     CHECK_EQ(created->current_state()->state_id, 1642U);
+  }
+
+  TEST_CASE("adventure jump callbacks plan, launch, time and land the arc") {
+    constexpr std::uint32_t k_end_family{0x1U};
+    const std::vector<CtlMoveSpec> moves{
+        CtlMoveSpec{.id = 100,
+            .flags = 1,
+            .name = "Main",
+            .states =
+                {
+                    CtlStateSpec{.id = 1,
+                        .flags = K_DEFAULT_STATE,
+                        .key_bearing = true,
+                        .key = "STAND",
+                        .child_refs = {2}},
+                    // Take-off: plans the arc from its 14-frame jump duration.
+                    CtlStateSpec{.id = 2,
+                        .flags = k_end_family | K_CALLBACK,
+                        .input = 0x20U,
+                        .transition_value = 1.0F,
+                        .goto_id = 3,
+                        .key_bearing = true,
+                        .key = "TAKEOFF",
+                        .callback = "MDJUMP0A",
+                        .jump_frames = 14U},
+                    // Ascent interpolation (authored 2 frames, replaced by 7).
+                    // The ninth name byte must not matter to the dispatcher.
+                    CtlStateSpec{.id = 3,
+                        .flags = K_NO_KEY | K_CALLBACK,
+                        .transition_value = 1.0F,
+                        .goto_id = 4,
+                        .transition_count = 2,
+                        .callback = "MDJUMP01X"},
+                    CtlStateSpec{.id = 4,
+                        .flags = k_end_family | K_CALLBACK,
+                        .transition_value = 1.0F,
+                        .goto_id = 5,
+                        .key_bearing = true,
+                        .key = "AIR",
+                        .callback = "MDJUMP02"},
+                    CtlStateSpec{.id = 5,
+                        .flags = K_NO_KEY,
+                        .transition_value = 1.0F,
+                        .goto_id = 6,
+                        .transition_count = 1},
+                    CtlStateSpec{.id = 6,
+                        .flags = k_end_family | K_CALLBACK,
+                        .transition_value = 1.0F,
+                        .goto_id = 1,
+                        .key_bearing = true,
+                        .key = "LAND",
+                        .callback = "MDJUMP03"},
+                }},
+        CtlMoveSpec{.id = 2,
+            .flags = 0,
+            .name = "Fall",
+            .states = {CtlStateSpec{.id = 21, .flags = K_NO_KEY | K_DEFAULT_STATE}}},
+    };
+    auto created{App::Character::CtlController::create(make_bank(moves,
+                                                           {{"STAND", make_3da(2)},
+                                                               {"TAKEOFF", make_3da(2)},
+                                                               {"AIR", make_3da(2)},
+                                                               {"LAND", make_3da(2)}}),
+        "TEST")};
+    REQUIRE(created.has_value());
+    App::Character::RuntimeCharacter character{make_character()};
+    character.adventure_mode = App::Character::K_ADVENTURE_STATE_ORDINARY;
+    const auto& bank_states{created->current_move()->states};
+    const App::Omikron::CtlState& ascent{*bank_states.at(2)};
+    const App::Omikron::CtlState& descent{*bank_states.at(4)};
+    const auto& jump{character.physical_motion.adventure_jump};
+    const auto tick_until = [&](const std::uint32_t state_id) {
+      for (std::uint32_t tick{0}; tick < 32U && created->current_state()->state_id != state_id;
+          ++tick) {
+        created->service_tick(0x0U, character);
+      }
+      REQUIRE_EQ(created->current_state()->state_id, state_id);
+    };
+
+    // Take-off plans the arc: the ascent interpolation lasts half the jump.
+    character.physical_motion.candidate_translation = {.x = 3.0F, .y = -4.0F, .z = 5.0F};
+    created->service_tick(0x20U, character);
+    REQUIRE_EQ(created->current_state()->state_id, 2U);
+    CHECK(jump.sequence_active);
+    CHECK_EQ(jump.frame_count, 14U);
+    CHECK_EQ(jump.origin.y, -4.0F);
+    CHECK_EQ(created->interpolation_frames(ascent), 7U);
+    const float gravity{character.physical_motion.gravity_velocity_delta_per_tick};
+    const App::Runtime::Vec3 world{App::Runtime::transform_vector(
+        {.x = 0.0F, .y = 0.0F, .z = -98.4251937866F}, character.live_root_orientation())};
+    CHECK(jump.launch_per_tick.x == doctest::Approx(world.x / 14.0F));
+    CHECK(jump.launch_per_tick.z == doctest::Approx(world.z / 14.0F));
+    CHECK(jump.launch_per_tick.y == doctest::Approx(-(gravity * 7.0F / 30.0F)));
+    CHECK_EQ(character.physical_motion.vertical_velocity, 0.0F);
+
+    // Entering the ascent launches the actor through its physical terms.
+    tick_until(3U);
+    CHECK(character.physical_motion.horizontal_physical_x_per_tick ==
+          doctest::Approx(jump.launch_per_tick.x));
+    CHECK(character.physical_motion.horizontal_physical_z_per_tick ==
+          doctest::Approx(jump.launch_per_tick.z));
+    CHECK(character.physical_motion.vertical_velocity == doctest::Approx(-(gravity * 7.0F)));
+
+    // The ascent lives for its replaced seven frames, then the descent
+    // interpolation is given the second half of the arc.
+    std::uint32_t ascent_ticks{0};
+    while (created->current_state()->state_id == 3U && ascent_ticks < 32U) {
+      created->service_tick(0x0U, character);
+      ++ascent_ticks;
+    }
+    CHECK_EQ(ascent_ticks, 6U);
+    REQUIRE_EQ(created->current_state()->state_id, 4U);
+    CHECK_EQ(created->interpolation_frames(descent), 7U);
+
+    // A low landing ends the guard and classifies a small episode.
+    character.physical_motion.last_primary_support_gap = 2.0F;
+    tick_until(6U);
+    CHECK_FALSE(jump.sequence_active);
+    CHECK_EQ(character.physical_motion.fall_stage, 2U);
+    CHECK_EQ(created->current_move()->move_id, 100U);
+
+    // A serious drop at landing turns into a fall (move 2) with its stage.
+    character.physical_motion.adventure_jump.sequence_active = true;
+    character.physical_motion.last_primary_support_gap =
+        App::Character::PhysicalMotionService::K_FALL_STAGE_4_DISTANCE;
+    created->dispatch_callback("MDJUMP03", character);
+    CHECK_FALSE(jump.sequence_active);
+    CHECK_EQ(character.physical_motion.fall_stage, 4U);
+    CHECK_EQ(created->current_move()->move_id, 2U);
+  }
+
+  TEST_CASE("jump landing classification keeps native stage thresholds and state gating") {
+    using Service = App::Character::PhysicalMotionService;
+    const std::vector<CtlMoveSpec> moves{
+        CtlMoveSpec{.id = 100,
+            .flags = 1,
+            .name = "Main",
+            .states = {CtlStateSpec{.id = 1, .flags = K_NO_KEY | K_DEFAULT_STATE}}},
+        CtlMoveSpec{.id = 2,
+            .flags = 0,
+            .name = "Fall",
+            .states = {CtlStateSpec{.id = 21, .flags = K_NO_KEY | K_DEFAULT_STATE}}},
+    };
+    auto bank{make_bank(moves)};
+    const auto land = [&bank](const float gap, const std::int32_t state) {
+      auto created{App::Character::CtlController::create(bank, "TEST")};
+      REQUIRE(created.has_value());
+      App::Character::RuntimeCharacter character{make_character()};
+      character.adventure_mode = state;
+      character.physical_motion.last_primary_support_gap = gap;
+      created->dispatch_callback("MDJUMP03", character);
+      return std::pair{character.physical_motion.fall_stage, created->current_move()->move_id};
+    };
+    constexpr std::int32_t k_ordinary{App::Character::K_ADVENTURE_STATE_ORDINARY};
+    CHECK_EQ(land(Service::K_FALL_STAGE_1_DISTANCE - 0.001F, k_ordinary),
+        std::pair{std::uint8_t{2}, 100U});
+    CHECK_EQ(land(Service::K_FALL_STAGE_1_DISTANCE, k_ordinary), std::pair{std::uint8_t{1}, 2U});
+    CHECK_EQ(land(Service::K_FALL_STAGE_3_DISTANCE, k_ordinary), std::pair{std::uint8_t{3}, 2U});
+    CHECK_EQ(land(Service::K_FALL_STAGE_4_DISTANCE, k_ordinary), std::pair{std::uint8_t{4}, 2U});
+    // The aiming state keeps the stage but suppresses physical move selection.
+    CHECK_EQ(land(Service::K_FALL_STAGE_4_DISTANCE, App::Character::K_ADVENTURE_STATE_AIMING),
+        std::pair{std::uint8_t{4}, 100U});
+  }
+
+  TEST_CASE("SetITPNbFrames requires a resident goto target") {
+    const std::vector<CtlMoveSpec> moves{CtlMoveSpec{.id = 100,
+        .flags = 1,
+        .name = "Main",
+        .states = {
+            CtlStateSpec{.id = 1, .flags = K_NO_KEY | K_DEFAULT_STATE, .goto_id = 2},
+            CtlStateSpec{.id = 2, .flags = K_TRANSPARENT, .goto_id = 3},
+            CtlStateSpec{.id = 3, .flags = K_NO_KEY, .transition_count = 4},
+        }}};
+    auto created{App::Character::CtlController::create(make_bank(moves), "TEST")};
+    REQUIRE(created.has_value());
+    const auto& states{created->current_move()->states};
+    // State 1's goto is transparent, not resident: rejected, nothing changes.
+    CHECK_FALSE(created->set_goto_interpolation_frames(*states.at(0), 9U).has_value());
+    CHECK_EQ(created->interpolation_frames(*states.at(1)), 0U);
+    // State 3 has no goto at all.
+    CHECK_FALSE(created->set_goto_interpolation_frames(*states.at(2), 9U).has_value());
+    // State 2's goto is resident: the override replaces the authored count.
+    CHECK_EQ(created->interpolation_frames(*states.at(2)), 4U);
+    REQUIRE(created->set_goto_interpolation_frames(*states.at(1), 9U).has_value());
+    CHECK_EQ(created->interpolation_frames(*states.at(2)), 9U);
+    REQUIRE(created->set_goto_interpolation_frames(*states.at(1), 3U).has_value());
+    CHECK_EQ(created->interpolation_frames(*states.at(2)), 3U);
+  }
+
+  TEST_CASE("leaving a state applies its one-shot orientation and movement once") {
+    constexpr std::uint32_t k_end_family{0x1U};
+    const std::vector<CtlMoveSpec> moves{CtlMoveSpec{.id = 100,
+        .flags = 1,
+        .name = "Main",
+        .states = {
+            CtlStateSpec{.id = 1,
+                .flags = K_DEFAULT_STATE,
+                .key_bearing = true,
+                .key = "STAND",
+                .child_refs = {2}},
+            CtlStateSpec{.id = 2,
+                .flags = k_end_family | K_HELPER_ORIENTATION | K_HELPER_MOVEMENT,
+                .input = 0x8U,
+                .transition_value = 1.0F,
+                .goto_id = 1,
+                .key_bearing = true,
+                .key = "TURN",
+                .orientation = AuxBlockSpec{.window_start = 1.0F,
+                    .window_end = 38.0F,
+                    .delta = {.x = 0.0F, .y = 180.0F, .z = 0.0F}},
+                .movement = AuxBlockSpec{.delta = {.x = 0.0F, .y = 0.0F, .z = -10.0F}}},
+        }}};
+    auto created{App::Character::CtlController::create(
+        make_bank(moves, {{"STAND", make_3da(2)}, {"TURN", make_3da(3)}}), "TEST")};
+    REQUIRE(created.has_value());
+    App::Character::RuntimeCharacter character{make_character()};
+
+    created->service_tick(0x8U, character);
+    REQUIRE_EQ(created->current_state()->state_id, 2U);
+    CHECK_EQ(character.principal_orientation_degrees.y, 0.0F);
+    created->service_tick(0x0U, character);
+    REQUIRE_EQ(created->current_state()->state_id, 2U);
+    CHECK_EQ(character.principal_orientation_degrees.y, 0.0F);
+
+    // The turn completes: on exit the authored half-turn applies, and the
+    // local movement goes through the orientation live at that moment.
+    const App::Runtime::Vec3 before{character.physical_motion.candidate_translation};
+    App::Character::RuntimeCharacter turned{make_character()};
+    turned.set_principal_orientation({.x = 0.0F, .y = 180.0F, .z = 0.0F});
+    const App::Runtime::Vec3 expected_move{App::Runtime::transform_vector(
+        {.x = 0.0F, .y = 0.0F, .z = -10.0F}, turned.live_root_orientation())};
+    created->service_tick(0x0U, character);
+    REQUIRE_EQ(created->current_state()->state_id, 1U);
+    CHECK(std::abs(character.principal_orientation_degrees.y) == doctest::Approx(180.0F));
+    const App::Runtime::Vec3 after{character.physical_motion.candidate_translation};
+    CHECK(after.x - before.x == doctest::Approx(expected_move.x));
+    CHECK(after.z - before.z == doctest::Approx(expected_move.z));
+
+    // Standing on is not an exit of the turn: nothing further applies.
+    created->service_tick(0x0U, character);
+    CHECK(std::abs(character.principal_orientation_degrees.y) == doctest::Approx(180.0F));
+  }
+
+  TEST_CASE("ordinary control suppression collapses input history; release reseeds it") {
+    auto created{
+        App::Character::CtlController::create(make_simple_bank(make_3da(4), make_3da(4)), "TEST")};
+    REQUIRE(created.has_value());
+    App::Character::RuntimeCharacter character{make_character()};
+    created->service_tick(0x1U, character);
+    created->service_tick(0x3U, character);
+    REQUIRE_EQ(created->input_history().size(), 3U);
+
+    created->set_ordinary_control_suppressed(true);
+    CHECK(created->ordinary_control_suppressed());
+    REQUIRE_EQ(created->input_history().size(), 1U);
+    CHECK_EQ(created->input_history().front(), App::Character::K_CTL_NO_INPUT);
+    // Suppression leaves the current-input latch alone.
+    CHECK_EQ(created->current_input(), 0x3U);
+
+    created->set_ordinary_control_suppressed(false);
+    CHECK_FALSE(created->ordinary_control_suppressed());
+    REQUIRE_EQ(created->input_history().size(), 1U);
+    CHECK_EQ(created->input_history().front(), App::Character::K_CTL_NO_INPUT);
+    CHECK_EQ(created->current_input(), App::Character::K_CTL_NO_INPUT);
+  }
+
+  TEST_CASE("head-look callbacks toggle the request; reserved and empty routines are silent") {
+    auto created{
+        App::Character::CtlController::create(make_simple_bank(make_3da(2), make_3da(1)), "TEST")};
+    REQUIRE(created.has_value());
+    App::Character::RuntimeCharacter character{make_character()};
+    CHECK_FALSE(character.head_look_requested);
+    created->dispatch_callback("MDHEAD00", character);
+    CHECK(character.head_look_requested);
+    created->dispatch_callback("MDHEAD01", character);
+    CHECK_FALSE(character.head_look_requested);
+
+    // Reserved, empty and unknown routines are nonfatal and leave state alone.
+    const std::uint32_t move{created->current_move()->move_id};
+    for (const char* name :
+        {"none", "MDHEAD02", "MDRA", "MDDT", "MDRDP", "MDRDM", "MDACTION", "NOTAROUTINE"}) {
+      created->dispatch_callback(name, character);
+    }
+    CHECK_FALSE(character.head_look_requested);
+    CHECK_EQ(created->current_move()->move_id, move);
   }
 }
 

@@ -19,7 +19,7 @@ cmake --build --preset quality --target check-format
 cmake --build --preset quality --target tidy
 ```
 
-The quality build requires the canonical LLVM 22.1.8 toolchain. If the tool is not present, the configure step must
+The quality build requires the canonical LLVM 23.1.3 toolchain. If the tool is not present, the configure step must
 fail with a clear error instead of silently accepting a different formatter or lint tool.
 
 ## Build and test

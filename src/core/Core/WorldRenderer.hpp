@@ -5,13 +5,17 @@
 #include <cstdint>
 #include <deque>
 #include <expected>
+#include <map>
 #include <memory>
+#include <span>
 #include <string>
+#include <tuple>
 #include <unordered_map>
 #include <vector>
 
 #include "Core/Character/CharacterRuntime.hpp"
 #include "Core/Debug/SceneDebugView.hpp"
+#include "Core/DecorCulling.hpp"
 #include "Core/Mesh.hpp"
 #include "Core/Object/ObjectPlacementRuntime.hpp"
 #include "Core/Omikron/Model3DO.hpp"
@@ -67,6 +71,11 @@ class WorldRenderer {
     return m_textures.size();
   }
 
+  /// Decor groups submitted versus frustum-culled by the most recent render().
+  [[nodiscard]] const DecorCullStats& decor_cull_stats() const {
+    return m_decor_cull_stats;
+  }
+
   [[nodiscard]] std::size_t mirror_group_count() const;
   [[nodiscard]] std::size_t uv_scroll_u_group_count() const;
   [[nodiscard]] std::size_t uv_scroll_v_group_count() const;
@@ -104,6 +113,10 @@ class WorldRenderer {
   void sync_character_models(const ScenarioRuntime& runtime);
   void sync_object_models(const ScenarioRuntime& runtime);
   void sync_decor_model(const ScenarioRuntime& runtime);
+  [[nodiscard]] bool patch_decor_model(const ScenarioRuntime& runtime);
+  void index_decor_groups(const Omikron::Model3DOData& model,
+      std::span<const Omikron::MaterialGroup> groups,
+      std::span<const Omikron::Model3DOData::RuntimeObjectState> runtime_objects);
 
   struct CharacterGpuModel {
     std::shared_ptr<const Character::ModelResource> resource;
@@ -124,6 +137,9 @@ class WorldRenderer {
     std::vector<GameColorTexture> textures;
   };
 
+  [[nodiscard]] static bool update_character_meshes(
+      CharacterGpuModel& gpu, std::span<const Omikron::MaterialGroup> groups);
+
   std::unique_ptr<Shader> m_modern_shader;
   std::unique_ptr<Shader> m_legacy_shader;
   std::unique_ptr<Shader> m_wireframe_shader;
@@ -133,6 +149,11 @@ class WorldRenderer {
   std::vector<Omikron::BlendMode> m_group_modes;
   std::vector<std::array<float, 3>> m_group_centers;
   std::vector<GameColorTexture> m_textures;
+  /// Source 3DO object of each decor group, parallel to m_meshes.
+  std::vector<std::size_t> m_group_mesh_index;
+  /// Per-object frustum spheres that follow the posed decor transforms.
+  DecorCulling m_decor_culling;
+  DecorCullStats m_decor_cull_stats;
 
   Sprite::SpriteRenderer m_sprite_renderer;
   ScenarioRuntime* m_last_sprite_runtime{nullptr};
@@ -143,6 +164,11 @@ class WorldRenderer {
   std::unordered_map<std::size_t, std::unique_ptr<ObjectGpuModel>> m_object_models;
   std::vector<std::string> m_failed_object_models;
   std::uint64_t m_decor_pose_revision{0};
+  /// Decor object transforms the GPU geometry was last posed from. Only meshes
+  /// whose transform differs are re-posed when the decor revision changes.
+  std::vector<Omikron::Model3DOData::RuntimeObjectState> m_decor_posed_objects;
+  /// (mesh, material, flags) group key to its index in m_meshes.
+  std::map<std::tuple<std::size_t, std::int32_t, std::uint32_t>, std::size_t> m_decor_group_index;
   /// Last accepted posed-decor bounds, retained only for mutation diagnostics.
   WorldBounds m_decor_pose_bounds{};
   std::size_t m_decor_pose_vertex_count{0};

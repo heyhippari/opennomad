@@ -726,8 +726,25 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
     REQUIRE(runtime.initialize(scx, std::span<const std::byte>{}, "ctl_audio", nullptr, false)
             .has_value());
     // No SCX sound owns hID 999: nonfatal, never an index lookup, no throw.
-    runtime.play_ctl_sound_marker(999, {.x = 1.0F, .y = 2.0F, .z = 3.0F});
+    runtime.play_ctl_sound_marker(999);
     CHECK(runtime.initialized());
+  }
+
+  TEST_CASE("CTL sound marker requests are nonspatial one-shots") {
+    const App::Audio::SoundDescriptor sound{.resource = App::Audio::SoundResourceId{.index = 4},
+        .name = "STPR.WAV",
+        .h_id = 34,
+        .loaded = true};
+    const App::Audio::SoundPlayRequest request{
+        App::ScenarioRuntime::make_ctl_sound_marker_request(sound, 1U, "aventure")};
+    CHECK_EQ(request.resource.index, 4U);
+    CHECK_FALSE(request.loop);
+    CHECK_FALSE(request.emitter.has_value());
+    CHECK(request.owner.is_null());
+    CHECK_EQ(request.scenario_sound_index, 1U);
+    CHECK_EQ(request.sound_name, "STPR.WAV");
+    CHECK_EQ(request.provenance.origin, App::Audio::AudioOrigin::k_ctl_controller);
+    CHECK_EQ(request.provenance.scenario_name, "aventure");
   }
 
   TEST_CASE("Initializes an empty scenario") {

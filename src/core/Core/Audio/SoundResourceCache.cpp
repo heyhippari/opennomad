@@ -213,7 +213,11 @@ std::expected<SoundResourceId, std::string> SoundResourceCache::load(
 
   SDL_AudioSpec spec{};
   const bool have_format{MIX_GetAudioFormat(audio, &spec)};
-  const std::int64_t duration_ms{MIX_GetAudioDuration(audio)};
+  // MIX_GetAudioDuration reports sample frames; negative values are the
+  // unknown/infinite sentinels and are kept as-is.
+  const std::int64_t duration_frames{MIX_GetAudioDuration(audio)};
+  const std::int64_t duration_ms{
+      duration_frames < 0 ? duration_frames : MIX_AudioFramesToMS(audio, duration_frames)};
   const char* format_name{have_format ? SDL_GetAudioFormatName(spec.format) : "unknown"};
   m_table.mark_loaded(resource,
       format_name,

@@ -16,15 +16,18 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <limits>
+#include <map>
 #include <memory>
 #include <span>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 #include <vector>
 
 #include "Core/Camera.hpp"
 #include "Core/Debug/Instrumentor.hpp"
+#include "Core/DecorCulling.hpp"
 #include "Core/GameDataLoader.hpp"
 #include "Core/Log.hpp"
 #include "Core/LogCategory.hpp"
@@ -39,6 +42,7 @@
 #include "Core/Sprite/SpriteRenderer.hpp"
 #include "Core/Texture.hpp"
 #include "Core/Vertex.hpp"
+#include "Core/ViewFrustum.hpp"
 #include "Core/WorldColorPipeline.hpp"
 
 namespace App {
@@ -141,6 +145,15 @@ struct DecorPoseGeometry {
   WorldBounds bounds;
   std::size_t vertex_count{0};
 };
+
+[[nodiscard]] bool same_world_transform(const Omikron::Model3DOData::RuntimeObjectState& lhs,
+    const Omikron::Model3DOData::RuntimeObjectState& rhs) {
+  return lhs.world_matrix.values == rhs.world_matrix.values &&
+         lhs.world_translation.x == rhs.world_translation.x &&
+         lhs.world_translation.y == rhs.world_translation.y &&
+         lhs.world_translation.z == rhs.world_translation.z && lhs.scale.x == rhs.scale.x &&
+         lhs.scale.y == rhs.scale.y && lhs.scale.z == rhs.scale.z;
+}
 
 [[nodiscard]] std::optional<DecorPoseGeometry> describe_decor_pose(
     const std::span<const Omikron::MaterialGroup> groups) {
@@ -421,6 +434,11 @@ std::expected<std::unique_ptr<WorldRenderer>, std::string> WorldRenderer::create
         0.5F * std::sqrt((extent_x * extent_x) + (extent_y * extent_y) + (extent_z * extent_z)),
         1.0F);
   }
+  renderer->index_decor_groups(model,
+      groups.value(),
+      context.runtime != nullptr && context.runtime->decor_model() == &model
+          ? context.runtime->decor_runtime_objects()
+          : std::span<const Omikron::Model3DOData::RuntimeObjectState>{model.runtime_objects});
   if (const auto pose_geometry{describe_decor_pose(groups.value())}; pose_geometry.has_value()) {
     renderer->m_decor_pose_bounds = pose_geometry->bounds;
     renderer->m_decor_pose_vertex_count = pose_geometry->vertex_count;
@@ -491,8 +509,105 @@ void WorldRenderer::set_sprite_grayscale(const bool enabled) {
   m_sprite_grayscale = enabled;
 }
 
+void WorldRenderer::index_decor_groups(const Omikron::Model3DOData& model,
+    const std::span<const Omikron::MaterialGroup> groups,
+    const std::span<const Omikron::Model3DOData::RuntimeObjectState> runtime_objects) {
+  m_decor_group_index.clear();
+  m_group_mesh_index.clear();
+  m_group_mesh_index.reserve(groups.size());
+  for (const Omikron::MaterialGroup& group : groups) {
+    m_group_mesh_index.push_back(group.mesh_index);
+  }
+  m_decor_culling.rebuild(model, runtime_objects);
+  for (std::size_t index{0}; index < groups.size(); ++index) {
+    const Omikron::MaterialGroup& group{groups.subspan(index, 1U).front()};
+    m_decor_group_index.emplace(
+        std::tuple{group.mesh_index, group.material_id, group.flags}, index);
+  }
+  m_decor_posed_objects.assign(runtime_objects.begin(), runtime_objects.end());
+}
+
+bool WorldRenderer::patch_decor_model(const ScenarioRuntime& runtime) {
+  APP_PROFILE_FUNCTION();
+
+  // Scripted decor motion (MoveObjectOnPath vehicles, doors, ...) bumps the
+  // pose revision every frame while touching only a handful of objects.
+  // Re-posing and re-uploading the whole decor for that stalls large scenes
+  // such as ANEKBAH (1600+ groups), so only the affected meshes are rebuilt.
+  const Omikron::Model3DOData& model{*runtime.decor_model()};
+  const auto objects{runtime.decor_runtime_objects()};
+  if (objects.size() != m_decor_posed_objects.size() ||
+      model.skin_parent_index.size() != objects.size()) {
+    return false;
+  }
+  std::vector<std::uint8_t> changed(objects.size(), 0U);
+  bool any_changed{false};
+  for (std::size_t index{0}; index < objects.size(); ++index) {
+    if (!same_world_transform(
+            objects.subspan(index, 1U).front(), m_decor_posed_objects.at(index))) {
+      changed.at(index) = 1U;
+      any_changed = true;
+    }
+  }
+  if (!any_changed) {
+    return true;
+  }
+  // Skinned corners resolve against the skin parent's transform.
+  std::vector<std::uint8_t> mesh_mask{changed};
+  for (std::size_t index{0}; index < objects.size(); ++index) {
+    const std::int32_t skin_parent{model.skin_parent_index.at(index)};
+    if (skin_parent >= 0 && changed.at(static_cast<std::size_t>(skin_parent)) != 0U) {
+      mesh_mask.at(index) = 1U;
+    }
+  }
+
+  auto groups{Omikron::Model3DO::build_posed_geometry(
+      model, objects, std::span<const Omikron::RawVertex>{model.vertices}, mesh_mask)};
+  if (!groups) {
+    App::Log::warn(LogCategory::Renderer, "World decor pose patch failed: {}", groups.error());
+    return true;
+  }
+
+  std::vector<std::pair<std::size_t, std::vector<Vertex>>> updates;
+  updates.reserve(groups->size());
+  for (const Omikron::MaterialGroup& group : groups.value()) {
+    const auto found{
+        m_decor_group_index.find(std::tuple{group.mesh_index, group.material_id, group.flags})};
+    if (found == m_decor_group_index.end() ||
+        m_meshes.at(found->second).vertex_count() != group.vertices.size()) {
+      return false;
+    }
+    std::vector<Vertex> presentation_vertices;
+    presentation_vertices.reserve(group.vertices.size());
+    for (const Vertex& vertex : group.vertices) {
+      const Vertex presentation{Runtime::Presentation::to_gl(vertex)};
+      if (!std::ranges::all_of(presentation.position, [](const float coordinate) {
+            return std::isfinite(coordinate);
+          })) {
+        App::Log::warn(LogCategory::Renderer,
+            "World decor pose patch produced non-finite geometry for mesh {}; preserving prior "
+            "GPU geometry",
+            group.mesh_index);
+        return true;
+      }
+      presentation_vertices.push_back(presentation);
+    }
+    updates.emplace_back(found->second, std::move(presentation_vertices));
+  }
+  for (const auto& [index, vertices] : updates) {
+    static_cast<void>(m_meshes.at(index).update_vertices(vertices));
+  }
+  m_decor_posed_objects.assign(objects.begin(), objects.end());
+  m_decor_culling.rebuild(model, objects);
+  return true;
+}
+
 void WorldRenderer::sync_decor_model(const ScenarioRuntime& runtime) {
   if (runtime.decor_model() == nullptr || runtime.decor_pose_revision() == m_decor_pose_revision) {
+    return;
+  }
+  if (patch_decor_model(runtime)) {
+    m_decor_pose_revision = runtime.decor_pose_revision();
     return;
   }
   auto groups{Omikron::Model3DO::build_posed_geometry(
@@ -539,6 +654,7 @@ void WorldRenderer::sync_decor_model(const ScenarioRuntime& runtime) {
     }
     m_meshes.emplace_back(presentation_vertices, group.indices);
   }
+  index_decor_groups(*runtime.decor_model(), groups.value(), runtime.decor_runtime_objects());
   m_decor_pose_bounds = geometry->bounds;
   m_decor_pose_vertex_count = geometry->vertex_count;
   m_decor_pose_revision = runtime.decor_pose_revision();
@@ -570,6 +686,32 @@ void WorldRenderer::draw_group(const std::size_t index,
   texture->bind(0);
   shader.set_uniform_int("u_texture0", 0);
   m_meshes.at(index).draw();
+}
+
+bool WorldRenderer::update_character_meshes(
+    CharacterGpuModel& gpu, const std::span<const Omikron::MaterialGroup> groups) {
+  if (gpu.meshes.size() != groups.size()) {
+    return false;
+  }
+  for (std::size_t index{0}; index < groups.size(); ++index) {
+    const Omikron::MaterialGroup& group{groups.subspan(index, 1U).front()};
+    if (gpu.meshes.at(index).vertex_count() != group.vertices.size() ||
+        gpu.group_material_ids.at(index) != group.material_id ||
+        gpu.group_flags.at(index) != group.flags) {
+      return false;
+    }
+  }
+  std::vector<Vertex> presentation_vertices;
+  for (std::size_t index{0}; index < groups.size(); ++index) {
+    const Omikron::MaterialGroup& group{groups.subspan(index, 1U).front()};
+    presentation_vertices.clear();
+    presentation_vertices.reserve(group.vertices.size());
+    for (const Vertex& vertex : group.vertices) {
+      presentation_vertices.push_back(Runtime::Presentation::to_gl(vertex));
+    }
+    static_cast<void>(gpu.meshes.at(index).update_vertices(presentation_vertices));
+  }
+  return true;
 }
 
 void WorldRenderer::sync_character_models(const ScenarioRuntime& runtime) {
@@ -621,6 +763,12 @@ void WorldRenderer::sync_character_models(const ScenarioRuntime& runtime) {
 
     CharacterGpuModel& gpu{*found->second};
     if (gpu.pose_revision == character.pose_revision) {
+      continue;
+    }
+    // Animation re-poses every frame; reuse the GPU buffers when the group
+    // layout is unchanged instead of recreating every VAO/VBO.
+    if (update_character_meshes(gpu, character.posed_groups)) {
+      gpu.pose_revision = character.pose_revision;
       continue;
     }
     gpu.meshes.clear();
@@ -924,11 +1072,28 @@ void WorldRenderer::render(const Camera& camera,
   };
   configure_world_shader(*m_modern_shader);
 
+  // Lossless view-frustum culling of decor: Runtime draws everything inside the view volume, so
+  // only objects whose broadphase sphere is entirely outside it are skipped.
+  const ViewFrustum frustum{
+      ViewFrustum::from_clip_matrix(std::span<const float, 16>{glm::value_ptr(mvp), 16})};
+  std::vector<std::uint8_t> group_visible(m_meshes.size(), 1U);
+  m_decor_cull_stats = DecorCullStats{.groups_total = m_meshes.size()};
+  if (m_group_mesh_index.size() == m_meshes.size()) {
+    for (std::size_t index{0}; index < group_visible.size(); ++index) {
+      if (!m_decor_culling.object_visible(m_group_mesh_index.at(index), frustum)) {
+        group_visible.at(index) = 0U;
+        ++m_decor_cull_stats.groups_culled;
+      }
+    }
+  }
+  m_decor_cull_stats.groups_submitted =
+      m_decor_cull_stats.groups_total - m_decor_cull_stats.groups_culled;
+
   // Opaque and cutout geometry first.
   glDisable(GL_BLEND);
   glDepthMask(GL_TRUE);
   for (std::size_t index{0}; index < m_meshes.size(); ++index) {
-    if (!is_blended(m_group_modes.at(index))) {
+    if (group_visible.at(index) != 0U && !is_blended(m_group_modes.at(index))) {
       draw_group(index, uv_phase_u, uv_phase_v, false);
     }
   }
@@ -967,7 +1132,7 @@ void WorldRenderer::render(const Camera& camera,
   std::vector<std::size_t> blended;
   blended.reserve(m_meshes.size());
   for (std::size_t index{0}; index < m_meshes.size(); ++index) {
-    if (is_blended(m_group_modes.at(index))) {
+    if (group_visible.at(index) != 0U && is_blended(m_group_modes.at(index))) {
       blended.push_back(index);
     }
   }

@@ -195,13 +195,17 @@ std::expected<void, std::string> ScenarioManager::set_gameplay_mode(const Gamepl
   return {};
 }
 
+void ScenarioManager::set_world_runtime_configurator(WorldRuntimeConfigurator configurator) {
+  m_world_runtime_configurator = std::move(configurator);
+}
+
 std::expected<WorldSceneContext*, std::string> ScenarioManager::load_world_context(
     const std::uint32_t scene_id,
     std::optional<std::string> decor_path,
     std::optional<std::string> scenario_path) {
   APP_PROFILE_FUNCTION();
 
-  WorldSceneContext* target{allocate_world_context_slot()};
+  WorldSceneContext* target{allocate_world_context_slot(scene_id)};
   if (target == nullptr) {
     return std::expected<WorldSceneContext*, std::string>{std::unexpect,
         fmt::format("Cannot allocate world context slot for scene {}: no free or recyclable "
@@ -269,6 +273,9 @@ std::expected<WorldSceneContext*, std::string> ScenarioManager::load_world_conte
       return located.has_value() ? located->character : nullptr;
     });
     runtime->initialize_world_only(fmt::format("world-{}", scene_id), m_audio_system);
+  }
+  if (m_world_runtime_configurator) {
+    m_world_runtime_configurator(*runtime);
   }
 
   // The replacement is ready: tear down the recycled entry (if any) and
@@ -355,7 +362,7 @@ std::expected<void, std::string> ScenarioManager::deactivate_world_context(
   return {};
 }
 
-std::expected<void, std::string> ScenarioManager::switch_active_world_context(
+std::expected<void, std::string> ScenarioManager::switch_current_world_context(
     const std::uint32_t source_scene_id, const std::uint32_t target_scene_id) {
   if (source_scene_id == target_scene_id) {
     return std::expected<void, std::string>{
@@ -536,6 +543,12 @@ const WorldSceneContext* ScenarioManager::find_world_context(const std::uint32_t
   return nullptr;
 }
 
+const WorldSceneContext* ScenarioManager::find_world_context(
+    const std::uint32_t scene_id, const std::uint32_t generation) const {
+  const WorldSceneContext* const context{find_world_context(scene_id)};
+  return context != nullptr && context->generation == generation ? context : nullptr;
+}
+
 std::span<const WorldSceneContext, 2> ScenarioManager::world_contexts() const {
   return std::span<const WorldSceneContext, 2>{m_world_contexts};
 }
@@ -568,14 +581,6 @@ std::vector<ScenarioRuntime*> ScenarioManager::resident_world_runtimes() const {
     }
   }
   return runtimes;
-}
-
-WorldSceneContext* ScenarioManager::active_world_context() {
-  return current_world_context();
-}
-
-const WorldSceneContext* ScenarioManager::active_world_context() const {
-  return current_world_context();
 }
 
 WorldSceneContext* ScenarioManager::current_world_context() {
@@ -822,7 +827,7 @@ void ScenarioManager::service_dialog_camera() {
     return;
   }
 
-  const WorldSceneContext* context{active_world_context()};
+  const WorldSceneContext* context{current_world_context()};
   if (context == nullptr) {
     // Do not consume the generation: if presentation temporarily has no
     // active world owner, retry once a world exists.
@@ -914,7 +919,7 @@ void ScenarioManager::service_dialog_performance(const float real_delta_seconds)
   // frame.
   service_dialog_camera();
 
-  const WorldSceneContext* context{active_world_context()};
+  const WorldSceneContext* context{current_world_context()};
   ScenarioRuntime* runtime{context == nullptr ? nullptr : context->runtime.get()};
   Character::Runtime* characters{runtime == nullptr ? nullptr : &runtime->character_runtime()};
   const std::uint64_t identity{
@@ -1133,7 +1138,23 @@ void ScenarioManager::teardown_world_context(WorldSceneContext& context) {
   context.last_error.clear();
 }
 
-WorldSceneContext* ScenarioManager::allocate_world_context_slot() {
+WorldSceneContext* ScenarioManager::allocate_world_context_slot(const std::uint32_t scene_id) {
+  const auto recyclable = [this](const WorldSceneContext& ctx) {
+    return ctx.residency == WorldSceneResidencyState::ResidentDetached &&
+           m_current_world_scene_id != ctx.scene_id &&
+           (!m_controlled_character.has_value() ||
+               m_controlled_character->world_scene_id != ctx.scene_id);
+  };
+
+  // A scene ID is held by at most one entry: reload in place, or refuse without side effects.
+  // Picking another entry here would leave two contexts for one ID (find_world_context would then
+  // resolve the stale one).
+  for (WorldSceneContext& ctx : m_world_contexts) {
+    if (ctx.residency != WorldSceneResidencyState::Free && ctx.scene_id == scene_id) {
+      return recyclable(ctx) ? &ctx : nullptr;
+    }
+  }
+
   // Prefer the first Free entry.
   for (WorldSceneContext& ctx : m_world_contexts) {
     if (ctx.residency == WorldSceneResidencyState::Free) {
@@ -1143,10 +1164,7 @@ WorldSceneContext* ScenarioManager::allocate_world_context_slot() {
 
   // Otherwise, prefer the first ResidentDetached entry.
   for (WorldSceneContext& ctx : m_world_contexts) {
-    if (ctx.residency == WorldSceneResidencyState::ResidentDetached &&
-        m_current_world_scene_id != ctx.scene_id &&
-        (!m_controlled_character.has_value() ||
-            m_controlled_character->world_scene_id != ctx.scene_id)) {
+    if (recyclable(ctx)) {
       return &ctx;
     }
   }

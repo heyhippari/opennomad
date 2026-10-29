@@ -237,9 +237,24 @@ class ScenarioRuntime final : public Script::ScriptWorld, private Sfx::Host {
   [[nodiscard]] std::string_view scenario_name() const override;
 
   /// Resolves one authored SCX DEAD0003 sound hID (never a sound-table
-  /// index) and plays it as a one-shot at the given world position for a CTL
-  /// animation audio marker. Missing or unloadable hIDs are nonfatal.
-  void play_ctl_sound_marker(std::uint16_t sound_hid, Runtime::Vec3 position);
+  /// index) and plays it as a nonspatial one-shot for a CTL animation audio
+  /// marker. Runtime resolves markers in the gameplay-mode scenario
+  /// (aventure.scx, global 0x00930780), so callers use that runtime. Missing
+  /// or unloadable hIDs are nonfatal.
+  void play_ctl_sound_marker(std::uint16_t sound_hid);
+
+  /// Builds the CTL marker request: Runtime 0x0045B007 passes neither emitter
+  /// nor owner, so the voice is nonspatial.
+  [[nodiscard]] static Audio::SoundPlayRequest make_ctl_sound_marker_request(
+      const Audio::SoundDescriptor& sound,
+      std::uint16_t scenario_sound_index,
+      std::string_view scenario_name);
+
+  /// Publishes the camera eye and far distance (native inches) gating static
+  /// SFX emitters; nullopt disables the gate.
+  void set_static_emitter_listener(std::optional<Sfx::StaticEmitterListener> listener) {
+    m_static_emitter_listener = listener;
+  }
 
   /// Binds the context-owned immutable decor descriptor to this scenario's
   /// mutable instance state after transactional world load.
@@ -275,6 +290,9 @@ class ScenarioRuntime final : public Script::ScriptWorld, private Sfx::Host {
   }
   [[nodiscard]] std::string_view sfx_sound_name(std::int32_t authored_h_id) const override;
   [[nodiscard]] std::span<const Sfx::StaticEmitterObject> static_emitter_objects() const override;
+  [[nodiscard]] std::optional<Sfx::StaticEmitterListener> static_emitter_listener() const override {
+    return m_static_emitter_listener;
+  }
   [[nodiscard]] std::optional<Runtime::Vec3> resolve_static_emitter_world_position(
       std::size_t object_index) const override;
 
@@ -338,6 +356,7 @@ class ScenarioRuntime final : public Script::ScriptWorld, private Sfx::Host {
   bool m_xyz_fallback_logged{false};
   const Omikron::Model3DOData* m_decor_model{nullptr};
   std::vector<Sfx::StaticEmitterObject> m_static_emitter_objects;
+  std::optional<Sfx::StaticEmitterListener> m_static_emitter_listener;
   std::vector<Omikron::Model3DOData::RuntimeObjectState> m_decor_runtime_objects;
   std::vector<Omikron::CameraRecord> m_decor_cameras;
   std::optional<std::size_t> m_selected_decor_camera_index;

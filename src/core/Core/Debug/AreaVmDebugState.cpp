@@ -7,6 +7,8 @@
 #include <limits>
 #include <optional>
 #include <span>
+#include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -102,7 +104,7 @@ AreaVmContextDebugState build_area_vm_context_debug_state(
 
 namespace {
 
-std::string command_status(
+std::string_view command_status(
     const Script::ScriptInstance& instance, const Script::RuntimeScriptCommand& command) {
   if (instance.paused) {
     return "paused";
@@ -125,7 +127,7 @@ AreaVmTrackedCommandDebugState snapshot_command(const Script::ScriptInstance& in
       .opcode_name = info == nullptr ? "Unknown" : std::string{info->name},
       .execution_count = command.execution_count,
       .execution_limit = command.execution_limit,
-      .status = command_status(instance, command),
+      .status = std::string{command_status(instance, command)},
       .arguments = {}};
   for (std::uint32_t offset{0}; offset < command.value_count; ++offset) {
     const std::size_t value_index{command.first_value_index + offset};

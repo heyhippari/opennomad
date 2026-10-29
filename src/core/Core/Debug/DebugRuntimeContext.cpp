@@ -42,7 +42,7 @@ ResolvedDebugRuntimeTarget DebugRuntimeContext::resolve(
 
   switch (target) {
     case DebugRuntimeTarget::k_active_world: {
-      const WorldSceneContext* const active{manager->active_world_context()};
+      const WorldSceneContext* const active{manager->current_world_context()};
       if (active == nullptr) {
         return result;
       }

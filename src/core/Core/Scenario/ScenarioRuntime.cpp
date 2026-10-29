@@ -46,8 +46,8 @@ namespace App {
 
 namespace {
 
-using BodyAnimationFailure = Script::BodyAnimationFailure;
-using MoveObjectOnPathFailure = Script::MoveObjectOnPathFailure;
+using Script::BodyAnimationFailure;
+using Script::MoveObjectOnPathFailure;
 
 [[nodiscard]] BodyAnimationFailure body_animation_failure(
     const Script::BodyAnimationApplyError error, std::string reason_text) {
@@ -1497,8 +1497,27 @@ void ScenarioRuntime::reset_body_animation(const Character::BodyIdentity body_id
   }
 }
 
-void ScenarioRuntime::play_ctl_sound_marker(
-    const std::uint16_t sound_hid, const Runtime::Vec3 position) {
+Audio::SoundPlayRequest ScenarioRuntime::make_ctl_sound_marker_request(
+    const Audio::SoundDescriptor& sound,
+    const std::uint16_t scenario_sound_index,
+    const std::string_view scenario_name) {
+  // Runtime 0x0045B007 plays the marker with no emitter and no owner, so the
+  // voice is nonspatial (slot flag 0x04).
+  return Audio::SoundPlayRequest{.resource = sound.resource,
+      .loop = false,
+      .emitter = std::nullopt,
+      .owner = Audio::AudioOwnerToken{},
+      .scenario_sound_index = scenario_sound_index,
+      .sound_name = sound.name,
+      .provenance = Audio::AudioProvenance{.origin = Audio::AudioOrigin::k_ctl_controller,
+          .scenario_name = std::string{scenario_name},
+          .source_script_index = std::nullopt,
+          .script_instance_id = std::nullopt,
+          .function_id = std::nullopt},
+      .raw_flags = 0U};
+}
+
+void ScenarioRuntime::play_ctl_sound_marker(const std::uint16_t sound_hid) {
   const auto sound{std::ranges::find(m_scx.sounds, sound_hid, &Omikron::ScxSoundRecord::h_id)};
   if (sound == m_scx.sounds.end()) {
     App::Log::warn(LogCategory::Scenario,
@@ -1516,20 +1535,9 @@ void ScenarioRuntime::play_ctl_sound_marker(
         sound_hid);
     return;
   }
-  // General scenario spatial defaults apply; no CTL-specific attenuation
-  // metadata has been recovered for Phase 4.1.
-  const Audio::SoundPlayRequest request{.resource = descriptor->resource,
-      .loop = false,
-      .emitter = Audio::SoundEmitterState{.position = {position.x, position.y, position.z}},
-      .scenario_sound_index = static_cast<std::uint16_t>(index),
-      .sound_name = descriptor->name,
-      .provenance = Audio::AudioProvenance{.origin = Audio::AudioOrigin::k_ctl_controller,
-          .scenario_name = m_scenario_name,
-          .source_script_index = std::nullopt,
-          .script_instance_id = std::nullopt,
-          .function_id = std::nullopt},
-      .raw_flags = 0U};
-  if (auto played{play_sound(request)}; !played) {
+  if (auto played{play_sound(make_ctl_sound_marker_request(
+          descriptor.value(), static_cast<std::uint16_t>(index), m_scenario_name))};
+      !played) {
     App::Log::warn(LogCategory::Scenario,
         "CTL marker sound hID {} could not be played: {} (nonfatal)",
         sound_hid,
@@ -1565,8 +1573,8 @@ std::expected<void, std::string> ScenarioRuntime::interpolate_cameras(
       return candidate.name == name;
     });
   };
-  auto camera_a{find_camera(request.camera_a)};
-  auto camera_b{find_camera(request.camera_b)};
+  const auto camera_a{find_camera(request.camera_a)};
+  const auto camera_b{find_camera(request.camera_b)};
   if (camera_a == m_decor_cameras.end()) {
     return std::expected<void, std::string>{std::unexpect,
         fmt::format("can't find 3DO camera '{}' in current scene", request.camera_a)};

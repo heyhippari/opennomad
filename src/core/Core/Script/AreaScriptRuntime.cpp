@@ -93,6 +93,10 @@ constexpr std::uint16_t K_CAMERA_WAIT_STATE{7};
 constexpr std::uint16_t K_AREA_TRANSITION_WAIT_STATE{10};
 /// Runtime context state that yields and retries the same transition opcode.
 constexpr std::uint16_t K_AREA_TRANSITION_RETRY_STATE{9};
+/// Opcode byte plus three Scalar16 operands; 0x2F is skipped whole on departure while retrying.
+constexpr std::size_t K_AREA_TRANSITION_INSTRUCTION_SIZE{7};
+/// Compact departure event (zone exit) that cancels a retrying 0x2F.
+constexpr std::uint16_t K_DEPARTURE_EVENT{3};
 /// Runtime Scalar16 parameter-reference marker.
 constexpr std::uint16_t K_SCALAR16_PARAMETER_REFERENCE{0x4000U};
 constexpr std::uint16_t K_SCALAR16_PARAMETER_INDEX_MASK{0x3FFFU};
@@ -214,8 +218,8 @@ constexpr std::array<AreaOpcodeInfo, 52> K_AREA_OPCODE_TABLE{
         .support = OpcodeSupport::k_supported,
         .provisional = false,
         .notes = "begins a two-slot AREA transition and blocks the calling context in recovered "
-                 "Runtime state 10 until the destination area is ready; operands 1/2 variants "
-                 "remain unresolved",
+                 "Runtime state 10; a non--1 pre-crossing script selects the rich form whose "
+                 "pre/post-crossing SCX scripts run in the source world",
         .operands = K_OPERANDS_3X_I16.data(),
         .operand_count = K_OPERANDS_3X_I16.size()},
     AreaOpcodeInfo{.opcode = K_OP_RELEASE_AREA,
@@ -890,6 +894,15 @@ AreaScriptState AreaScriptRuntime::run(const float /*real_delta_seconds*/) {
     m_wait = AreaWaitState{};
     m_wait_state = 0;
     m_state = AreaScriptState::k_running;
+    // Runtime 0x004063D0 -> 0x00408530 event 2: queueing the departure event while a context
+    // retries 0x2F (state 9) abandons the request. The context resumes in state 1 past the whole
+    // instruction, and the queued event dispatches once the current event finishes.
+    if (std::ranges::find(m_queued_events, K_DEPARTURE_EVENT) != m_queued_events.end()) {
+      App::Log::debug(LogCategory::Script,
+          "area script abandoned retrying AREA transition at +{:#x} after departure",
+          m_ip);
+      m_ip += K_AREA_TRANSITION_INSTRUCTION_SIZE;
+    }
   }
 
   // Runtime state 7 is released only by the presentation-owned completion for
@@ -1392,17 +1405,6 @@ void AreaScriptRuntime::execute_instruction() {
           .pre_crossing_script_id = resolved.at(1),
           .post_crossing_script_id = resolved.at(2)};
       m_last_area_transition_request = request;
-      if (request.pre_crossing_script_id != -1 || request.post_crossing_script_id != -1) {
-        m_pause_info = AreaPauseInfo{.offset = instruction_offset,
-            .opcode = opcode,
-            .opcode_name = std::string{info->name},
-            .reason_text = fmt::format("AREA transition variant ({}, {}) is not yet implemented",
-                request.pre_crossing_script_id,
-                request.post_crossing_script_id),
-            .nearby_bytes = nearby_bytes_hex(instruction_offset)};
-        m_state = AreaScriptState::k_failed;
-        return;
-      }
       if (!m_area_transition_sink) {
         m_pause_info = AreaPauseInfo{.offset = instruction_offset,
             .opcode = opcode,

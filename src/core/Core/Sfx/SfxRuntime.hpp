@@ -30,11 +30,20 @@ struct StaticEmitterObject {
   std::uint32_t flags{0};
 };
 
+/// Camera eye and far distance (native inches) that gate static emitters.
+struct StaticEmitterListener {
+  App::Runtime::Vec3 position{};
+  float radius{0.0F};
+};
+
 /// Scenario bridge used by the CPU-only SFX simulation.
 class Host {
  public:
   virtual ~Host() = default;
   [[nodiscard]] virtual std::span<const StaticEmitterObject> static_emitter_objects() const = 0;
+  /// Current static-emitter gate, or nullopt when no camera has been
+  /// published (static emitters then emit without distance gating).
+  [[nodiscard]] virtual std::optional<StaticEmitterListener> static_emitter_listener() const = 0;
   [[nodiscard]] virtual std::optional<App::Runtime::Vec3> resolve_static_emitter_world_position(
       std::size_t object_index) const = 0;
   [[nodiscard]] virtual std::expected<std::size_t, std::string> resolve_sfx_sprite_id(
@@ -144,7 +153,9 @@ class Runtime {
   Runtime& operator=(const Runtime&) = delete;
   Runtime& operator=(Runtime&&) = delete;
 
+  /// Advances whole 1/30 s steps; only the first step of each call may emit.
   void tick(float real_delta_seconds);
+  /// Advances one emitting logical step (one Runtime frame service).
   void step();
   [[nodiscard]] std::size_t trigger(std::int32_t type, std::int32_t id);
   void emit_definition(
@@ -164,6 +175,7 @@ class Runtime {
 
   Runtime(const Omikron::SfxData& data, Host& host, Random01 random01);
   [[nodiscard]] std::expected<void, std::string> link();
+  void step(bool emitters_may_emit);
   [[nodiscard]] bool activate_node(std::size_t node_index, std::vector<bool>& activation_stack);
   void service_node(std::size_t node_index);
   void service_requests();
@@ -198,6 +210,7 @@ class Runtime {
   std::vector<SoundStartDiagnostic> m_sound_start_diagnostics;
   std::uint64_t m_logical_tick{0};
   float m_accumulator{0.0F};
+  bool m_emitters_may_emit{true};
   bool m_request_capacity_warned{false};
   bool m_particle_capacity_warned{false};
   bool m_static_emitter_capacity_warned{false};

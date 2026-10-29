@@ -104,7 +104,7 @@ std::string fixed_string(const std::span<const std::byte> bytes) {
   return std::string{begin, length};
 }
 
-std::expected<void, std::string> require_record_bytes(BinaryReader& reader,
+std::expected<void, std::string> require_record_bytes(const BinaryReader& reader,
     const std::uint32_t count,
     const std::size_t record_size,
     const std::string_view label) {

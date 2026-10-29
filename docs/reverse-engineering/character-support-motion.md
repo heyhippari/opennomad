@@ -135,12 +135,15 @@ Genuine contact is processed on the following physical tick. Stages 1, 3, and
 4 return from the airborne branch before this predicate and therefore are not
 snapped near landing.
 
-`0x0047CF00` suppresses the small snap when no current adventure actor exists
-or `(adventureFlags & 0x00000810) != 0`. `MDJP` reaches `0x0046B710 ->
-0x0047D2E0`; successful jump start sets both jump-active `0x10` and one-update
-jump-start latch `0x800`. OpenNomad exposes a per-tick
-`suppress_small_support_snap` input, currently false in production. Native jump
-movement is not implemented. `MDSLIDOU` temporarily sets global `0x00910327`
+`0x0047CF00` suppresses the small snap when no aiming-mode actor exists
+(`0x006579CC == 0`) or `(adventureFlags & 0x00000810) != 0`. That actor is
+installed by `0x0047CC70` only together with dispatcher state 3 (aiming), so
+**ordinary adventure never takes the small snap**: a positive gap below 0.2 m is
+classified like any other positive gap and gravity closes it. `MDJP`
+(`0x0046B710 -> 0x0047D2E0`, aiming move only) sets the `0x810` jump flags.
+OpenNomad derives the per-tick `suppress_small_support_snap` input from the
+dispatcher state (`PhysicalMotionService::small_support_snap_suppressed`); the
+aiming-mode jump flags are not modeled. `MDSLIDOU` temporarily sets global `0x00910327`
 while doing callback-specific support reconciliation, forcing its support-snap
 branch independently of the ordinary predicate; that callback path is deferred
 and no persistent global is modeled.
@@ -271,8 +274,10 @@ D8/DC/E0 reset before optional mover seeding; steep contact remains ungrounded
 and applies the confirmed mode-4 and physical-term response above.
 
 Native actor dispatcher state `actor+0x194` suppresses moves 2/4/5/100 for
-values 2, 3, and 15. OpenNomad's current ordinary player service corresponds to
-native state 1, so no speculative native-state field is introduced.
+values 2, 3, and 15 (`0x00465340`). OpenNomad stores this state as
+`RuntimeCharacter::adventure_mode`: creation stores 0, taking control
+(`0x00422730`) and `RSTAVNT` store 1, and
+`PhysicalMotionService::select_reaction_move` applies the gate.
 
 The broader adventure event dispatcher `0x00414DE0` observes serious fall entry
 as event `0x12`, severe current-player landing as `0x13`, and can request event
@@ -280,10 +285,11 @@ as event `0x12`, severe current-player landing as `0x13`, and can request event
 and the `0x00414BF0` subsystem remain deferred; OpenNomad does not model these
 IDs as standalone events.
 
-Before positive-gap classification/snap, native global `0x006A52CC` can return
-early. It is controlled by authored jump callback choreography including
-`MDJUMP0AP` and `MDJUMP0BP`, not a generic physics mode. Its producer lifecycle
-remains deferred with the complete jump callback family.
+Before positive-gap classification/snap, native jump-sequence guard
+`0x006A52CC` returns early (`0x00465B65`). `MDJUMP0A`/`MDJUMP0B` set it,
+`MDJUMP03`, `MDJP` and authoritative placement clear it; `MDJUMP03` then
+classifies the landing drop itself. See [`ctl.md`](ctl.md) §4.8a. OpenNomad
+models it as `PhysicalMotionState::adventure_jump.sequence_active`.
 
 
 ## Failure and deferred branches

@@ -1697,17 +1697,54 @@ TEST_SUITE("Core::Script::AreaScriptRuntime") {
     CHECK_EQ(runtime.instruction_pointer(), 8U);
   }
 
-  TEST_CASE("0x2F rejects unresolved transition variants and parameter references") {
-    SUBCASE("non-default variant") {
-      Buffer bytes;
-      bytes.u8(0x2F).u16(222).u16(0).u16(0xFFFF);
-      AreaScriptRuntime runtime{bytes.data()};
-      runtime.queue_event(1);
-      runtime.activate();
-      CHECK(runtime.run() == AreaScriptState::k_failed);
-      CHECK(
-          runtime.pause_info().reason_text.find("transition variant (0, -1)") != std::string::npos);
-    }
+  TEST_CASE("0x2F forwards the rich pre/post-crossing scripts to the coordinator") {
+    Buffer bytes;
+    bytes.u8(0x2F).u16(238).u16(248).u16(161).u8(0x03);
+    AreaScriptRuntime runtime{bytes.data()};
+    std::vector<AreaTransitionRequest> requests;
+    runtime.set_area_transition_sink([&requests](const AreaTransitionRequest& request)
+                                         -> std::expected<AreaTransitionResult, std::string> {
+      requests.push_back(request);
+      return AreaTransitionResult{.disposition = AreaTransitionDisposition::k_accepted_waiting,
+          .handle = AreaTransitionHandle{.generation = 7}};
+    });
+    runtime.queue_event(1);
+    runtime.activate();
+
+    REQUIRE(runtime.run() == AreaScriptState::k_waiting);
+    REQUIRE_EQ(requests.size(), 1U);
+    CHECK_EQ(requests.front().target_area_id, 238);
+    CHECK_EQ(requests.front().pre_crossing_script_id, 248);
+    CHECK_EQ(requests.front().post_crossing_script_id, 161);
+    CHECK_EQ(runtime.runtime_state(), 10U);
+    CHECK(runtime.wait_info().kind == AreaWaitKind::k_area_transition);
+  }
+
+  TEST_CASE("0x2F retrying in state 9 is abandoned past the instruction once departure queues") {
+    Buffer bytes;
+    bytes.u8(0x2F).u16(222).u16(10).u16(11).u8(0x03);
+    AreaScriptRuntime runtime{bytes.data()};
+    std::size_t calls{0};
+    runtime.set_area_transition_sink(
+        [&calls](const AreaTransitionRequest&) -> std::expected<AreaTransitionResult, std::string> {
+          ++calls;
+          return AreaTransitionResult{
+              .disposition = AreaTransitionDisposition::k_busy_retry, .handle = std::nullopt};
+        });
+    runtime.queue_event(1);
+    runtime.activate();
+
+    REQUIRE(runtime.run() == AreaScriptState::k_waiting);
+    CHECK_EQ(runtime.runtime_state(), 9U);
+    CHECK_EQ(runtime.instruction_pointer(), 0U);
+
+    runtime.queue_event(3);
+    CHECK(runtime.run() == AreaScriptState::k_ready);
+    CHECK_EQ(calls, 1U);
+    CHECK_EQ(runtime.instruction_pointer(), 8U);
+  }
+
+  TEST_CASE("0x2F rejects unresolved parameter references") {
     SUBCASE("parameter-indirected target") {
       Buffer bytes;
       bytes.u8(0x2F).u16(0x4002).u16(0xFFFF).u16(0xFFFF);

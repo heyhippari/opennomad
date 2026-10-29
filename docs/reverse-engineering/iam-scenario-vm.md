@@ -2359,6 +2359,20 @@ mode = 13 (0x0D)
 
 Tracked variants enter compact state 4 only after this camera operation.
 
+The camera operation is conditional. Every launch handler (`0x2E`, `0x39`,
+`0x3A`, `0x3B`, `0x3C`, `0x5A`) first calls `0x0041D9C0(scriptId, world)`,
+which resolves the script in the owner world's ScriptList (`0x0044CD10`) and
+returns nonzero only when one of the script's four camera-editing tag bytes
+(`+0x5E..+0x61`) is set. Only then does it write the duration and call
+`0x00414BF0(13, 0x00930800)`. SCX load (around `0x00449F8E`) clears those tags
+and links each camera-editing track's context ID (track `+0x00`) into its
+target script (track `+0x1C`) through `0x0049F230`
+(`Cam_LinkEditingToScript`); a zero context ID matches the empty-slot test and
+is never stored, and a fifth link is rejected. Retail tags are always zero on
+disk. Ambient launches such as ANEKBAH's `Tete-Mvt`/`mirador01`/`Cargo01`
+therefore leave the current camera untouched; only cinematics with editings
+(`_1KaylArrives`, `1MoineWalk`, `_2JennaLeaves`) select controller 13.
+
 The controller-13 update itself is now traced further at `0x00417D10`. While mode 13 is active, Runtime reads the live source pointer at `0x009103D4` and, when non-null, continuously copies source `+0x14..+0x30` into the active camera's eye, target, roll, and FOV fields. Mode 13 is therefore a live camera follow/copy controller, not a request to freeze the current pose.
 
 The publisher is the head of Runtime's attached-decor chain at `0x0093076C`,
@@ -3218,8 +3232,10 @@ Handler:
 ```
 
 consumes exactly six operand bytes: three Runtime Scalar16 values named
-`targetArea`, `preCrossingScriptId`, and `postCrossingScriptId`. `(-1,-1)` is
-the seamless form. The confirmed startup instruction is:
+`targetArea`, `preCrossingScriptId`, and `postCrossingScriptId`. A pre-crossing
+script of `-1` selects the seamless form (the post-crossing operand is then
+ignored); any other value selects the rich form described in section 108.1.
+The confirmed startup instruction is:
 
 ```text
 +0x10D  2F DE 00 FF FF FF FF
@@ -3236,7 +3252,7 @@ OpenNomad implements this as:
 
 ```text
 BeginAreaTransition request
-  -> generation-tagged ScenarioStartupController coordinator
+  -> generation-tagged AreaTransitionService coordinator
   -> alternate RuntimeAreaSlot and WorldSceneContext preparation
     -> source and destination are resident-attached; source remains current
   -> exact handle completes AreaWaitKind::k_area_transition
@@ -3252,14 +3268,102 @@ requests wait in state 10. State 8 consumes another seamless request immediately
 until `0x30` resets the coordinator. Native coordinator states are: 0 idle, 1
 rich loading, 2 rich abandoned loading, 3 seamless loading, 4 seamless release
 pending, 5 rich pre running, 6 rich departed first, 7 rich pre finished first,
-8 seamless attached, and 9 rich post running. Phase 1 implements 0/3/4/8; rich
-states remain reserved.
+8 seamless attached, and 9 rich post running. OpenNomad implements every state
+except 4; see section 108.1 for the rich form.
 
 Mode-1 release handling preserves the native state distinction. In state 3,
 `0x30` advances the coordinator to state 4 without detaching immediately. In
 state 8, it resolves and detaches the requested decor, then resets the
 transaction to state 0. Other coordinator states treat the nonblocking request
 as a harmless no-op.
+
+**Confirmed — Runtime (`0x00408530` event 3):** completing the load in state 4
+does not attach the destination. It detaches the non-current resident decor
+(`0x00419A90`), resets the coordinator to 0, and leaves the requester in
+state 10. A new seamless `0x2F` for a different target in state 4 retargets the
+transaction, moves the previous requester to state 5, and loads the new target.
+OpenNomad still does not model state 4: its loader completes synchronously on the
+service after acceptance, so a `0x30` issued while the destination is still
+loading is logged and ignored, and the load completes into state 8.
+
+## 108.1 Rich form and coordinator events
+
+**Confirmed — Runtime:** `0x00408530(coordinator=0x006A0600, slot, context,
+event, a, b, c)` implements the whole transaction. The coordinator record is
+eight dwords:
+
+```text
++0x00 source resident slot      +0x10 target AREA ID
++0x04 requester context index   +0x14 pre-crossing script ID
++0x08 state                     +0x18 post-crossing script ID
++0x0C source AREA ID            +0x1C phase timestamp (0x00412100 game ms)
+```
+
+Every state change rewrites the timestamp. Five call sites raise its events:
+
+| Event | Caller | Meaning |
+| --- | --- | --- |
+| 0 | `0x00402D20` (opcode `0x2F`) | begin |
+| 1 | opcode `0x30` | release request |
+| 2 | `0x004063D0`, queueing compact event 3 to a context in state 9 or 10 | requester departure |
+| 3 | `0x00407DC0`, once the alternate slot finished loading | destination loaded |
+| 4 | `0x004067D0` message 3: the requester's tracked structured script finished | crossing script finished |
+
+Event 0 by coordinator state: 0 accepts (state 1 when the pre-crossing script is
+not `-1`, else 3) and loads the destination into slot `1 - slot` through
+`0x00402B70`; 1 is busy (state 9 retry); 3 continues immediately; 8 continues a
+seamless request and retries a rich one; 2/5/6/7/9 continue only for the same
+source slot and requester, otherwise retry.
+
+The rich sequence:
+
+```text
+1 --loaded-->   attach destination decor (0x00419AF0),
+                start pre script in the source AREA world (0x0041DC10)   -> 5
+1 --departed--> 2; once loaded: reset to 0 without attaching
+5 --departed--> 6            5 --pre finished--> 7
+6 --pre finished--> start post script -> 9
+7 --departed-->     start post script -> 9
+9 --post finished--> detach the non-current resident decor (0x00419A90),
+                     reset to 0, requester context state 10 -> 1
+```
+
+The requester stays in state 10 from acceptance until the post-crossing script
+finishes. Both scripts start through `0x0041DC10(scriptId, sourceAreaId,
+requesterIndex, 1)`: they resolve against the **source** AREA world's SCX
+ScriptList and register a tracking record at `0x00910500` for the requester,
+which routes their completion back as event 4. The `0x00402D20` path performs
+no camera-controller handoff around them (the `0x39`/`0x3A` handlers' mode-13
+selection is not part of `0x0041DC10`; this is an inference from the helper's
+body, as the `0x3A` handler itself was not re-decompiled). Every retail rich use
+(488 instructions in IAM/AREA, mostly zone event-1 entries followed by `0x03`)
+sets both scripts. A rich request whose post-crossing script is `-1` would pass
+`-1` to `Script_FindById`; OpenNomad reports that as an error.
+
+Departure is compact event 3. Zone aging (`0x00407DC0`) queues it
+unconditionally, followed by destroy event 4, once a contact misses its
+refresh. Event 1 is gated on its entry; event 3 is not. Queueing event 3 to a
+context that is retrying in state 9 and does not own the coordinator abandons
+its request: the context resumes in state 1 at `IP + 7`, past the whole `0x2F`.
+
+The abandoned-loading path (state 2) never releases its requester: the context
+stays in state 10 and no later event names it. OpenNomad reproduces this.
+
+**Watchdog (`0x00408220`).** Before each compact service, a context whose index
+is the coordinator's requester and whose phase has lasted at least `0xEA61` ms
+(60.001 s of game time) times the transaction out. The context leaves state 10.
+In states 5/6/9 it enters state 11 to await the crossing script already running.
+Otherwise, when a post-crossing script exists, that script starts and the
+context enters state 11. The coordinator resets to 0 at once. When a state-11
+context's tracked script finishes (`0x004067D0` message 3), it detaches the
+non-current resident decor and resumes in state 1. The watchdog also resets
+seamless state 8 after 60 s; a later `0x30` is then a no-op.
+
+OpenNomad maps this onto `AreaTransitionService`. Completions are polled from the
+source world's `ScriptRuntime` instance. Departure is the requester's queued
+event 3. The watchdog clock is the scenario tick delta, so it does not advance
+during a dialog takeover. State-11 work is a `TimedOutCrossing` record that
+outlives the coordinator reset.
 
 ---
 
@@ -3552,7 +3656,7 @@ High-confidence or useful current names:
 | `0x2C` | compare top vs int32 + branch | Runtime |
 | `0x2D` | `AreaOperation` | provisional |
 | `0x2E` | `StartCurrentCharacterScriptTracked` | implemented; raw script ID + Scalar16 duration; exact child state-4 wait |
-| `0x2F` | `BeginAreaTransition` | implemented; state-10 two-slot native wait |
+| `0x2F` | `BeginAreaTransition` | implemented; state-10 two-slot native wait, seamless and rich (pre/post-crossing scripts, departure, watchdog) forms |
 | `0x30` | `ReleaseArea` | implemented; one Scalar16, nonblocking |
 | `0x32` | `AddObjectToPersistentCollection` | implemented for START-backed kinds 0/1/2; newest-first, kind-2 duplicate suppression; kind 3 unresolved |
 | `0x38` | `SelectCurrentCharacter` | implemented; one Scalar16, nonblocking |
@@ -4547,6 +4651,11 @@ src/core/Core/Scenario/ScenarioEngine.*
 src/core/Core/Scenario/ScenarioManager.*
 src/core/Core/Scenario/ScenarioRuntime.*
 src/core/Core/Scenario/ScenarioStartupController.*
+src/core/Core/Scenario/AreaTransitionService.*
+src/core/Core/Scenario/AreaResidencyService.*
+src/core/Core/Scenario/ZoneContactService.*
+src/core/Core/Scenario/TriggerProxyService.*
+src/core/Core/Scenario/CompactContextRegistry.*
 ```
 
 Structured script bridge:

@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <string_view>
 
 #include "Core/Character/StaticSupportQuery.hpp"
 #include "Core/Omikron/Model3DO.hpp"
@@ -103,6 +104,7 @@ enum class AutomaticHeadingSuppressionReason : std::uint8_t {
   k_none,
   k_no_forward_collision,
   k_spatial_heading_latch,
+  k_jump_sequence,
   k_falling,
   k_mdrot,
   k_intended_x_threshold,
@@ -162,6 +164,23 @@ struct BodyVerticalExtents {
   float bottom{0.0F};
 };
 
+/// Runtime adventure jump choreography (global 0x006A52CC and the planned arc
+/// at 0x0053AE40..0x0053AE58). Retail keeps one copy for its single controlled
+/// character; OpenNomad stores it on the actor whose CTL callbacks drive it.
+struct AdventureJumpState {
+  /// 0x006A52CC: set by MDJUMP0A/MDJUMP0B, cleared by MDJUMP03, MDJP and
+  /// authoritative placement. While set, a positive support gap neither snaps
+  /// nor classifies a fall stage, and C.2 automatic heading is suppressed.
+  bool sequence_active{false};
+  /// Candidate position captured when the take-off was planned.
+  App::Runtime::Vec3 origin{};
+  /// Take-off state's authored jump frame count (whole airborne arc, ticks).
+  std::uint32_t frame_count{0};
+  /// Planned launch: X/Z are per-tick horizontal terms, Y is the vertical
+  /// displacement per tick (MDJUMP01 scales it by 30 into vertical velocity).
+  App::Runtime::Vec3 launch_per_tick{};
+};
+
 /// OpenNomad actor-owned representation of Runtime's distinct candidate and
 /// accepted physical positions. This models recovered semantics, not native
 /// actor offsets or layout.
@@ -176,6 +195,10 @@ struct PhysicalMotionState {
   std::uint8_t fall_stage{0};
   float accumulated_fall_travel{0.0F};
   float maximum_support_gap{0.0F};
+  /// Most recent pre-movement primary support gap (Runtime +0x108 minus body
+  /// bottom +0x114). Persists across ticks without a support hit.
+  float last_primary_support_gap{0.0F};
+  AdventureJumpState adventure_jump{};
   SupportHistoryState support_history{};
   HorizontalCollisionState horizontal_collision{};
   SupportMode4ResponseState support_mode4_response{};
@@ -245,6 +268,18 @@ class PhysicalMotionService {
       float intended_heading_degrees, float resolved_heading_degrees);
   [[nodiscard]] static float wrap_automatic_heading_yaw(float yaw_degrees);
   static void apply_automatic_collision_heading(RuntimeCharacter& character);
+  /// Runtime 0x00465340 gate: actor dispatcher states 2, 3 and 15 suppress
+  /// physical CTL move selection.
+  [[nodiscard]] static bool reaction_move_selection_suppressed(std::int32_t adventure_state);
+  /// Runtime 0x00465340: physical CTL move selection through the actor's own
+  /// controller, subject to the dispatcher-state gate. A missing controller
+  /// or move is nonfatal.
+  static void select_reaction_move(
+      RuntimeCharacter& character, std::uint32_t move_id, std::string_view reason);
+  /// Runtime 0x0047CF00: the small support snap needs the aiming-mode actor
+  /// (0x006579CC, installed only with dispatcher state 3). Ordinary adventure
+  /// therefore never takes the small snap.
+  [[nodiscard]] static bool small_support_snap_suppressed(const RuntimeCharacter& character);
 };
 
 }  // namespace App::Character

@@ -1220,8 +1220,13 @@ Consequences:
 - variable ID arrays accompany the fixed records;
 - do not overwrite IDs with pointers in a modern parser.
 
-The semantics of the first `0x14` bytes and whether some/all records represent
-doors remain unresolved.
+**Confirmed — data.** The first `0x14` bytes are a NUL-padded name. Across all retail
+`.3DO` files (2442 records in 67 files) the names are `Porte..`, `Door..`, `Tunnel..`, `Bank`,
+`Librairie` and similar, and the ID lists hold the one to four leaf objects that make up that
+door (for example `ACSlev-2: Porte60 -> {9, 8}`, `AToit: Porte38 -> {77, 79, 80, 78}`). Many
+records (all 53 in `Anekbah.3DO`) have an empty list. The records are therefore named
+door/passage object groups addressed by scripts, **not** a portal, sector or visibility graph.
+No decor visibility is derived from them.
 
 ---
 

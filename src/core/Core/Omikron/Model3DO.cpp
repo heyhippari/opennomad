@@ -471,6 +471,14 @@ std::expected<std::vector<MaterialGroup>, std::string> Model3DO::build_posed_geo
     const Model3DOData& model,
     const std::span<const Model3DOData::RuntimeObjectState> runtime_objects,
     const std::span<const RawVertex> source_vertices) {
+  return build_posed_geometry(model, runtime_objects, source_vertices, {});
+}
+
+std::expected<std::vector<MaterialGroup>, std::string> Model3DO::build_posed_geometry(
+    const Model3DOData& model,
+    const std::span<const Model3DOData::RuntimeObjectState> runtime_objects,
+    const std::span<const RawVertex> source_vertices,
+    const std::span<const std::uint8_t> mesh_mask) {
   APP_PROFILE_FUNCTION();
 
   if (model.meshes.empty()) {
@@ -488,6 +496,10 @@ std::expected<std::vector<MaterialGroup>, std::string> Model3DO::build_posed_geo
   if (source_vertices.size() != model.vertices.size()) {
     return std::expected<std::vector<MaterialGroup>, std::string>{
         std::unexpect, "posed source vertex count does not match the model"};
+  }
+  if (!mesh_mask.empty() && mesh_mask.size() != model.meshes.size()) {
+    return std::expected<std::vector<MaterialGroup>, std::string>{
+        std::unexpect, "posed mesh mask size does not match the model hierarchy"};
   }
 
   std::vector<MaterialGroup> groups;
@@ -581,6 +593,9 @@ std::expected<std::vector<MaterialGroup>, std::string> Model3DO::build_posed_geo
   };
 
   for (std::size_t mesh_index{0}; mesh_index < model.meshes.size(); ++mesh_index) {
+    if (!mesh_mask.empty() && mesh_mask.subspan(mesh_index, 1U).front() == 0U) {
+      continue;
+    }
     const MeshDescriptor& mesh{model.meshes.at(mesh_index)};
 
     // Runtime traverses the object hierarchy beginning at root_mesh_id;

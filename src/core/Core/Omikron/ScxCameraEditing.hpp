@@ -146,6 +146,12 @@ struct ScxCameraEditingData {
   /// Returns nullopt if not found.
   [[nodiscard]] std::optional<std::size_t> track_by_target_script_id(
       std::uint16_t target_script_id) const;
+
+  /// Whether Runtime links any editing to the script at SCX load (0x0049F230
+  /// fills script +0x5E..+0x61 with track context IDs). A zero context ID
+  /// matches the empty-slot test and is never linked. Script launches only
+  /// select camera controller 13 for linked scripts (0x0041D9C0).
+  [[nodiscard]] bool links_script(std::uint16_t script_id) const;
 };
 
 /// Parser for DEAD000A compiled camera-editing timelines.

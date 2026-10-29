@@ -132,11 +132,9 @@ at the ScenarioRuntime audio boundary.
 
 CTL animation audio markers (states with `animation_mode & 0x0008`) use the
 same DEAD0003 **hID** namespace through Runtime's `0x0048CC80` lookup — never
-a table index. The ordinary locomotion markers are one-shot per state
-execution at an authored animation phase (footsteps); their spatial origin is
-the live character position. No CTL-specific attenuation constants are
-recovered for this path, so OpenNomad uses the general scenario spatial-sound
-defaults rather than the SFX-specific 78/585 pair. See [ctl.md](ctl.md) §4.8.
+a table index — resolved in the gameplay-mode scenario (`aventure.scx`). The
+ordinary locomotion markers are one-shot per state execution at an authored
+animation phase (footsteps) and play nonspatially. See [ctl.md](ctl.md) §4.8.
 
 I2D/UI sounds
     WAV-like named resources under I2D paths
@@ -853,6 +851,12 @@ no-op
 
 is preferable to treating it as a fatal script error.
 
+**Confirmed — Runtime.** The same `(sound, owner)` lookup (`0x0046CD10`) and
+stop (`0x0046CD40`) run in PlaySound's reinitializer `0x004A0FB0`: when a
+repeating script starts its next pass, a latched PlaySound stops its voice
+before clearing the latch. PlaySyncSound's reinitializer `0x004A1100` only
+clears its latch.
+
 ---
 
 # 35. Scenario unload
@@ -959,24 +963,25 @@ This confidence split is intentional in the code comments.
 
 ---
 
-# 40. Current attenuation approximation
+# 40. Distance attenuation
 
-OpenNomad currently uses:
+**Confirmed — Runtime.** Runtime spatializes through DirectSound3D. The listener
+is configured at `0x0046D1C8` with `flDistanceFactor = 0.0254` (native inches)
+and `flRolloffFactor = 1.0`; each voice's minimum/maximum distances come from
+its play call (`0x0046CDC0`). DirectSound3D's inverse-distance law therefore
+gives:
 
 ```text
-gain = 1
-    inside minimum distance
-
-linear falloff
-    minimum -> maximum
-
-gain = 0
-    at/outside maximum
+gain = minimum / clamp(distance, minimum, maximum)
 ```
 
-This is currently a compatibility approximation.
+Attenuation stops at the maximum distance rather than reaching silence: a
+PlaySound voice (78/1170 inches) holds at about -23.5 dB, an SFX voice
+(78/585) at about -17.5 dB. The ratio is unit-independent, so OpenNomad applies
+it unchanged at its metre boundary.
 
-Exact Runtime/DirectSound attenuation parity remains to be reconstructed.
+A nonpositive minimum (PlaySyncSound's 0/30 pair) has no recovered Runtime
+meaning; OpenNomad keeps a provisional linear falloff to zero for that case.
 
 ---
 

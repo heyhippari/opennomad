@@ -28,19 +28,22 @@ float attenuation_gain(
   if (!std::isfinite(distance) || distance < 0.0F) {
     return 1.0F;
   }
-  // Degenerate range: treat as full gain at any distance (safe step
-  // behaviour rather than dividing by zero).
-  if (maximum_distance <= minimum_distance) {
-    return distance <= minimum_distance ? 1.0F : 0.0F;
-  }
   if (distance <= minimum_distance) {
     return 1.0F;
   }
-  if (distance >= maximum_distance) {
-    return 0.0F;
+  if (minimum_distance <= 0.0F) {
+    // No recovered Runtime meaning for a nonpositive minimum (DirectSound3D
+    // would yield silence); keep the earlier provisional linear falloff.
+    if (distance >= maximum_distance) {
+      return 0.0F;
+    }
+    return std::clamp((maximum_distance - distance) / maximum_distance, 0.0F, 1.0F);
   }
-  const float gain{(maximum_distance - distance) / (maximum_distance - minimum_distance)};
-  return std::clamp(gain, 0.0F, 1.0F);
+  // DirectSound3D inverse-distance rolloff with factor 1.0: attenuation stops
+  // at the maximum distance rather than reaching silence. A maximum at or
+  // inside the minimum therefore never attenuates.
+  const float clamped{std::min(distance, std::max(maximum_distance, minimum_distance))};
+  return std::clamp(minimum_distance / clamped, 0.0F, 1.0F);
 }
 
 float pan_factor(const Vec3& relative, const Vec3& listener_right) {

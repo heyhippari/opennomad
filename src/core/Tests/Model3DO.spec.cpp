@@ -642,6 +642,46 @@ TEST_SUITE("Core::Omikron::Model3DO") {
     CHECK(groups->at(1).vertices.at(0).position.at(0) == doctest::Approx(200.0F));
   }
 
+  TEST_CASE("Mesh-masked posing emits only the selected meshes' full-build groups") {
+    Buffer file{make_header(1, 3, 2, 2, 0, 0, 0, 0, 0, 0, 10)};
+    append_material(file, "PORTAL");
+    append_vertex(file);
+    append_vertex(file);
+    append_degenerate_triangle(file);
+    append_degenerate_triangle(file);
+    append_mesh(file, 0, 10, -1, 1, 1, 0, 100.0F, -1, 11);
+    append_mesh(file, 0, 11, -1, 1, 1, 0, 200.0F, -1, -1, 0.0F);
+    append_mesh(file, 0, 12, -1, 0, 0, 0, 300.0F);
+
+    const auto model{App::Omikron::Model3DO::load(file.data())};
+    REQUIRE(model.has_value());
+    const std::span<const App::Omikron::Model3DOData::RuntimeObjectState> objects{
+        model->runtime_objects};
+    const std::span<const App::Omikron::RawVertex> vertices{model->vertices};
+
+    const auto full{App::Omikron::Model3DO::build_posed_geometry(model.value(), objects)};
+    REQUIRE(full.has_value());
+    REQUIRE_EQ(full->size(), std::size_t{2});
+
+    const std::vector<std::uint8_t> mask{0U, 1U, 0U};
+    const auto masked{
+        App::Omikron::Model3DO::build_posed_geometry(model.value(), objects, vertices, mask)};
+    REQUIRE(masked.has_value());
+    REQUIRE_EQ(masked->size(), std::size_t{1});
+    const auto& group{masked->front()};
+    CHECK_EQ(group.mesh_index, full->at(1).mesh_index);
+    CHECK_EQ(group.material_id, full->at(1).material_id);
+    CHECK_EQ(group.flags, full->at(1).flags);
+    CHECK_EQ(group.indices, full->at(1).indices);
+    REQUIRE_EQ(group.vertices.size(), full->at(1).vertices.size());
+    CHECK(group.vertices.at(0).position.at(0) == doctest::Approx(200.0F));
+
+    const std::vector<std::uint8_t> wrong_size{1U};
+    const auto rejected{
+        App::Omikron::Model3DO::build_posed_geometry(model.value(), objects, vertices, wrong_size)};
+    CHECK_FALSE(rejected.has_value());
+  }
+
   TEST_CASE("Nested child siblings retain parent-relative bone offsets") {
     Buffer file{make_header(0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 10)};
     append_mesh(file, 0, 10, -1, 0, 0, 0, 100.0F, 11);

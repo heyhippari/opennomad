@@ -1594,6 +1594,36 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
     CHECK_EQ(fixture.world.stop_requests.at(0).second.object_index, 5U);
   }
 
+  TEST_CASE("A repeating script pass stops its started PlaySound voice before replaying") {
+    App::Omikron::ScxScript script{single_root_script(command(K_PLAY_SOUND, 0, 4))};
+    script.repeat_limit = -1;
+    RuntimeFixture fixture{{script}, make_values(4, {9, 0, 0, 0xFFFFFFFFU})};
+    REQUIRE(fixture.runtime->create_instance(0).has_value());
+
+    fixture.runtime->step_tick(1.0F);
+    REQUIRE_EQ(fixture.world.play_requests.size(), 1U);
+    REQUIRE_EQ(fixture.world.stop_requests.size(), 1U);
+    CHECK_EQ(fixture.world.stop_requests.at(0).first.index, 7U);
+    CHECK(fixture.world.stop_requests.at(0).second.is_null());
+
+    fixture.runtime->step_tick(1.0F);
+    CHECK_EQ(fixture.world.play_requests.size(), 2U);
+    CHECK_EQ(fixture.world.stop_requests.size(), 2U);
+  }
+
+  TEST_CASE("A repeating script pass only clears the PlaySyncSound latch") {
+    App::Omikron::ScxScript script{single_root_script(command(K_PLAY_SYNC_SOUND, 0, 5))};
+    script.repeat_limit = -1;
+    RuntimeFixture fixture{{script}, make_values(5, {9, 0, 0, 0, 0xFFFFFFFFU})};
+    REQUIRE(fixture.runtime->create_instance(0).has_value());
+
+    fixture.runtime->step_tick(1.0F);
+    fixture.runtime->step_tick(1.0F);
+
+    CHECK_GE(fixture.world.play_requests.size(), 2U);
+    CHECK(fixture.world.stop_requests.empty());
+  }
+
   TEST_CASE("PlaySound reset clears the latch and stops the matching voice") {
     RuntimeFixture fixture{
         {single_root_script(command(K_PLAY_SOUND, 0, 4))}, make_values(4, {9, 0, 0, 0xFFFFFFFFU})};

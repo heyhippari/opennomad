@@ -53,7 +53,7 @@ ASAN_OPTIONS=detect_leaks=0 ctest --preset linux-sanitize -R '^Model3DOTest$'
 
 Disabling leak detection is a diagnostic workaround, not a clean LeakSanitizer result, and should be reported as such.
 
-The `quality` preset requires the canonical LLVM `22.1.8` toolchain. Diagnostics are errors, including include-cleaner and the
+The `quality` preset requires the canonical LLVM `23.1.3` toolchain. Diagnostics are errors, including include-cleaner and the
 checks configured in `.clang-tidy`. It also provides `format` and non-mutating `check-format` targets.
 
 See [Toolchain.md](Toolchain.md) for the complete host-preset and quality-tool contract.
@@ -108,6 +108,13 @@ TEST_SUITE("Core::Resources") {
 
 Keep fixtures in the test source when practical. Binary-parser tests use `OmikronTestBuffer.hpp` to construct explicit
 little-endian byte fixtures. Assert on `std::expected` with `.has_value()` or `.value()` so failures remain readable.
+
+Session-level specs (`ScenarioStartup`, `ScenarioEngine`) start sessions through `StartedSession` in
+`ScenarioSessionFixtures.hpp` (shared with `AreaTransitionService.spec.cpp`), which installs model and CTL loaders with
+`ScenarioManager::set_world_runtime_configurator` before the AREA loader preloads any body. Installing a loader after
+`initialize()` no longer reaches bodies the loader already built. AREA load materializes every table-0 placement; the
+persistent CHARACTERS bit only decides whether the resident body starts active, so a spec that needs an active current
+character must set that bit in its generated `IAM/START` (`make_start_with_active_character_bits`).
 
 All includes must be direct: Debug builds enforce include-cleaner in tests as well as production code. Use a targeted
 `NOLINTNEXTLINE` with a reason only when a test intentionally exercises a pattern rejected by clang-tidy.

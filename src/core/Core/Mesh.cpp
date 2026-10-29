@@ -14,7 +14,8 @@ namespace App {
 
 Mesh::Mesh(const std::vector<Vertex>& vertices, const std::vector<std::uint32_t>& indices)
     : m_vertex_buffer(std::as_bytes(std::span{vertices})),
-      m_index_buffer(std::span{indices}) {
+      m_index_buffer(std::span{indices}),
+      m_vertex_count(vertices.size()) {
   APP_PROFILE_FUNCTION();
 
   m_vertex_array.bind();
@@ -65,9 +66,16 @@ Mesh::Mesh(const std::vector<Vertex>& vertices, const std::vector<std::uint32_t>
   IndexBuffer::unbind();
 }
 
-void Mesh::draw() const {
-  APP_PROFILE_FUNCTION();
+bool Mesh::update_vertices(const std::span<const Vertex> vertices) const {
+  if (vertices.size() != m_vertex_count) {
+    return false;
+  }
+  m_vertex_buffer.update(0U, std::as_bytes(vertices));
+  VertexBuffer::unbind();
+  return true;
+}
 
+void Mesh::draw() const {
   m_vertex_array.bind();
   glDrawElements(
       GL_TRIANGLES, static_cast<GLsizei>(m_index_buffer.count()), GL_UNSIGNED_INT, nullptr);

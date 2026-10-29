@@ -788,7 +788,7 @@ The default table is overwhelmingly `-1`.
 
 OpenNomad keeps the complete fixed indexed table in `GameState`. Startup,
 SCENE attachment, release, and diagnostics all use it directly;
-`ScenarioStartupController` has no separate map or cache. Release writes `-1`
+`AreaTransitionService` (owned by `ScenarioStartupController`) has no separate map or cache. Release writes `-1`
 to the existing slot rather than erasing an entry.
 
 ---

@@ -2,6 +2,7 @@
 
 #include <fmt/format.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -72,6 +73,12 @@ std::optional<std::size_t> ScxCameraEditingData::track_by_target_script_id(
     }
   }
   return std::nullopt;
+}
+
+bool ScxCameraEditingData::links_script(const std::uint16_t script_id) const {
+  return std::ranges::any_of(tracks, [script_id](const ScxCameraEditingTrack& track) {
+    return track.context_id != 0U && track.target_script_id == script_id;
+  });
 }
 
 std::expected<ScxCameraEditingData, std::string> ScxCameraEditing::load(

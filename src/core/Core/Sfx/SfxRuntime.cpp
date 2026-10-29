@@ -444,7 +444,7 @@ void Runtime::service_node(const std::size_t node_index) {
       definition = &*found;
     }
   }
-  if (definition != nullptr) {
+  if (definition != nullptr && m_emitters_may_emit) {
     const std::optional<std::uint16_t> script_trigger{
         source.trigger_type == 0 && source.trigger_id >= 0 &&
                 std::cmp_less_equal(source.trigger_id, std::numeric_limits<std::uint16_t>::max())
@@ -646,7 +646,12 @@ void Runtime::bind_static_emitters() {
   }
 }
 
+// Runtime 0x0044FC30 emits a static emitter only while the camera eye lies
+// strictly inside the scene far distance (decor +0x154). Definition flag 0x4000
+// would instead start one looping voice (117/390 inches) and suppress the
+// per-emission sound; no retail SFX definition sets it, so it is not modelled.
 void Runtime::service_static_emitters() {
+  const std::optional<StaticEmitterListener> listener{m_host.static_emitter_listener()};
   for (std::size_t index{0}; index < m_static_emitters.size();) {
     StaticEmitterState& state{m_static_emitters.at(index)};
     if (!state.active) {
@@ -671,6 +676,10 @@ void Runtime::service_static_emitters() {
       continue;
     }
     state.interval_phase = 0.0F;
+    if (!m_emitters_may_emit) {
+      ++index;
+      continue;
+    }
     const auto position{m_host.resolve_static_emitter_world_position(state.object_index)};
     if (!position.has_value()) {
       App::Log::warn(LogCategory::Scenario,
@@ -681,6 +690,15 @@ void Runtime::service_static_emitters() {
       state.active = false;
       ++index;
       continue;
+    }
+    if (listener.has_value()) {
+      const float dx{position->x - listener->position.x};
+      const float dy{position->y - listener->position.y};
+      const float dz{position->z - listener->position.z};
+      if ((dx * dx) + (dy * dy) + (dz * dz) >= listener->radius * listener->radius) {
+        ++index;
+        continue;
+      }
     }
     const auto definition_it{m_definition_indices.find(state.definition_id)};
     if (definition_it == m_definition_indices.end()) {
@@ -872,22 +890,36 @@ void Runtime::service_particles() {
 }
 
 void Runtime::step() {
+  step(true);
+}
+
+void Runtime::step(const bool emitters_may_emit) {
   ++m_logical_tick;
+  m_emitters_may_emit = emitters_may_emit;
   for (std::size_t index{0}; index < m_nodes.size(); ++index) {
     service_node(index);
   }
   service_static_emitters();
+  m_emitters_may_emit = true;
   service_requests();
   service_particles();
 }
 
+// Runtime services nodes, static emitters and requests once per rendered
+// frame (0x00451600, 0x0044FC30, 0x0046DB80) and advances their clocks by the
+// frame delta (0x00450D60 adds [0x004C30D8]). A long frame therefore yields at
+// most one emission per emitter. Catch-up steps keep the 30 Hz clocks exact but
+// do not emit, so a frame hitch cannot start several phase-aligned copies of
+// one sound in the same mixer frame.
 void Runtime::tick(const float real_delta_seconds) {
   if (real_delta_seconds <= 0.0F) {
     return;
   }
   m_accumulator += real_delta_seconds;
+  bool first_step{true};
   while (m_accumulator >= k_fixed_step_seconds) {
-    step();
+    step(first_step);
+    first_step = false;
     m_accumulator -= k_fixed_step_seconds;
   }
 }

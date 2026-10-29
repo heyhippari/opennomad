@@ -1,7 +1,7 @@
 include_guard(GLOBAL)
 
-set(OPENNOMAD_CLANG_TOOLCHAIN_VERSION "22.1.8" CACHE STRING "Canonical LLVM/Clang toolchain version")
-set(OPENNOMAD_CLANG_TOOLS_MAJOR "22" CACHE STRING "Canonical LLVM/Clang major version for quality tooling")
+set(OPENNOMAD_CLANG_TOOLCHAIN_VERSION "23.1.3" CACHE STRING "Canonical LLVM/Clang toolchain version")
+set(OPENNOMAD_CLANG_TOOLS_MAJOR "23" CACHE STRING "Canonical LLVM/Clang major version for quality tooling")
 
 option(OPENNOMAD_ENABLE_CLANG_TIDY "Run clang-tidy for OpenNomad targets" OFF)
 option(OPENNOMAD_ENABLE_ASAN "Enable AddressSanitizer for OpenNomad targets" OFF)
@@ -38,13 +38,13 @@ function(opennomad_find_clang_tool tool output_variable)
   if (NOT version_match)
     message(FATAL_ERROR
       "OpenNomad expected ${tool} ${OPENNOMAD_CLANG_TOOLCHAIN_VERSION} but found ${tool_path} with output: ${tool_version}. "
-      "Set OPENNOMAD_LLVM_ROOT to a LLVM 22.1.8 installation or update PATH.")
+      "Set OPENNOMAD_LLVM_ROOT to an LLVM ${OPENNOMAD_CLANG_TOOLCHAIN_VERSION} installation or update PATH.")
   endif ()
 
   if (NOT version_match STREQUAL OPENNOMAD_CLANG_TOOLCHAIN_VERSION)
     message(FATAL_ERROR
       "OpenNomad requires ${tool} ${OPENNOMAD_CLANG_TOOLCHAIN_VERSION}, but found ${tool_path} version ${version_match}. "
-      "Set OPENNOMAD_LLVM_ROOT or PATH to the canonical LLVM 22.1.8 toolchain.")
+      "Set OPENNOMAD_LLVM_ROOT or PATH to the canonical LLVM ${OPENNOMAD_CLANG_TOOLCHAIN_VERSION} toolchain.")
   endif ()
 
   set(${output_variable} "${tool_path}" PARENT_SCOPE)

@@ -130,7 +130,7 @@ abs(intendedX) > 0.0001
 abs(resolvedX) > 0.0001
 ```
 
-The X comparisons are strict and deliberately have no corresponding Z threshold. OpenNomad implements the real-forward-collision, actor `+0x51D`, pre-B fall-stage, MDROT, intended-X, and resolved-X guards. Its ordinary service is structurally the native state-1 path, so no fake dispatcher-state field is needed; native state 3 remains documented for future generic dispatch parity.
+The X comparisons are strict and deliberately have no corresponding Z threshold. OpenNomad implements the real-forward-collision, actor `+0x51D`, jump-sequence guard (`0x006A52CC`, reason `k_jump_sequence`), pre-B fall-stage, MDROT, intended-X, and resolved-X guards. The dispatcher-state 3 guard is not applied because OpenNomad's ordinary service never runs in the aiming state; the state itself is `RuntimeCharacter::adventure_mode`.
 
 Actor construction clears `+0x51D` at `0x0041ABA9`. Ordinary C.2 reads it at `0x0046745D`; the following ordinary spatial service clears it at `0x0046779A` and sets it at `0x0046791E` when at least one record passes containment and heading qualification. OpenNomad therefore treats the latch as the previous completed ordinary spatial-pass result. A genuine forward collision observes it before fall and MDROT suppression, without clearing it; the later successful spatial sample replaces it from its final heading-qualified aggregate. Broadphase or polygon containment alone is insufficient, and D.2 registration lifetime is independent.
 

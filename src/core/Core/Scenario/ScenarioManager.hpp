@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <span>
@@ -278,7 +279,7 @@ class ScenarioManager {
   [[nodiscard]] std::expected<void, std::string> deactivate_world_context(std::uint32_t scene_id);
 
   /// Changes current AREA ownership without changing either attachment state.
-  [[nodiscard]] std::expected<void, std::string> switch_active_world_context(
+  [[nodiscard]] std::expected<void, std::string> switch_current_world_context(
       std::uint32_t source_scene_id, std::uint32_t target_scene_id);
 
   [[nodiscard]] std::expected<void, std::string> set_current_world_context(std::uint32_t scene_id);
@@ -330,11 +331,14 @@ class ScenarioManager {
   /// Finds a world context by scene ID.
   [[nodiscard]] WorldSceneContext* find_world_context(std::uint32_t scene_id);
   [[nodiscard]] const WorldSceneContext* find_world_context(std::uint32_t scene_id) const;
+  /// The resident (attached or detached) context for `scene_id` only if it is still the exact
+  /// `generation` that emitted a command; nullptr for free, recycled, or unknown contexts.
+  [[nodiscard]] const WorldSceneContext* find_world_context(
+      std::uint32_t scene_id, std::uint32_t generation) const;
 
-  /// Current AREA world context. Compatibility name retained for callers that
-  /// mean current-world presentation rather than physical attachment.
-  [[nodiscard]] WorldSceneContext* active_world_context();
-  [[nodiscard]] const WorldSceneContext* active_world_context() const;
+  /// The logical current AREA's world context. It may be physically detached (for example after
+  /// 0x30 releases the current AREA's decor before the event-9 handoff): "current" and "attached"
+  /// are independent, so callers needing the decor must check `residency`.
   [[nodiscard]] WorldSceneContext* current_world_context();
   [[nodiscard]] const WorldSceneContext* current_world_context() const;
 
@@ -394,6 +398,13 @@ class ScenarioManager {
 
   /// Injects the audio system for scenario-owned voice lifecycle management.
   void set_audio_system(Audio::AudioSystem* audio_system);
+
+  /// Hook applied to every world runtime immediately after it is created and
+  /// before `load_world_context` returns it, i.e. before the session preloads
+  /// AREA characters into it. Lets embedders (and focused tests) inject model
+  /// and CTL loaders that must be in place for the very first materialization.
+  using WorldRuntimeConfigurator = std::function<void(ScenarioRuntime&)>;
+  void set_world_runtime_configurator(WorldRuntimeConfigurator configurator);
 
   [[nodiscard]] WorldPresentationState& world_presentation() {
     return m_world_presentation;
@@ -489,6 +500,7 @@ class ScenarioManager {
   std::optional<std::uint64_t> m_dialog_camera_generation;
 
   Audio::AudioSystem* m_audio_system{nullptr};  ///< Non-owning.
+  WorldRuntimeConfigurator m_world_runtime_configurator;
 
   /// Normalizes legacy Windows separators to the portable form.
   [[nodiscard]] static std::string normalize_asset_path(std::string path);
@@ -527,12 +539,14 @@ class ScenarioManager {
   /// Tears down a world context completely (runtime/decor first, then data).
   void teardown_world_context(WorldSceneContext& context);
 
-  /// Returns the best target context for allocation:
+  /// Returns the best target context for allocating `scene_id`:
+  /// 0. The entry already holding `scene_id` (reloaded in place), or nullptr when that entry is
+  ///    attached, current, or owns the controlled body.
   /// 1. The first Free entry (by index).
   /// 2. If none, the first ResidentDetached entry that does not own the
   ///    controlled body (by index).
   /// 3. If none (both are ResidentAttached), nullptr.
-  [[nodiscard]] WorldSceneContext* allocate_world_context_slot();
+  [[nodiscard]] WorldSceneContext* allocate_world_context_slot(std::uint32_t scene_id);
 };
 
 }  // namespace App

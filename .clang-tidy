@@ -24,6 +24,7 @@ Checks: >
   -zircon-*,
   -bugprone-easily-swappable-parameters,
   -bugprone-exception-escape,
+  -bugprone-signed-bitwise,
   -cert-env33-c,
   -cert-err58-cpp,
   -cppcoreguidelines-avoid-magic-numbers,
@@ -55,6 +56,7 @@ Checks: >
   -readability-redundant-cast,
   -readability-redundant-member-init,
   -readability-simplify-boolean-expr,
+  -readability-trailing-comma,
   -readability-identifier-naming.IgnoreMainLikeFunctions
 
 WarningsAsErrors: '*'

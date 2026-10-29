@@ -8,6 +8,7 @@
 #include <string>
 #include <string_view>
 
+#include "Core/Omikron/ScxCameraEditing.hpp"
 #include "OmikronTestBuffer.hpp"
 
 // NOLINTBEGIN(misc-use-anonymous-namespace, cppcoreguidelines-avoid-do-while, cert-err33-c,
@@ -405,6 +406,20 @@ TEST_SUITE("Core::Omikron::SCX") {
     REQUIRE(scx.has_value());
     REQUIRE_EQ(scx->sounds.size(), 1U);
     CHECK_EQ(scx->sounds.at(0).name, "ABCDEFGHIJKLMNOPQRSTUV");
+  }
+
+  TEST_CASE("Camera editings link only their nonzero-context target scripts") {
+    App::Omikron::ScxCameraEditingData editing;
+    editing.tracks.push_back(
+        App::Omikron::ScxCameraEditingTrack{.context_id = 3U, .target_script_id = 42U});
+    editing.tracks.push_back(
+        App::Omikron::ScxCameraEditingTrack{.context_id = 0U, .target_script_id = 77U});
+
+    CHECK(editing.links_script(42U));
+    // A zero context ID matches Runtime's empty-slot test and is never linked.
+    CHECK_FALSE(editing.links_script(77U));
+    // Ambient scripts without an editing never hand the camera to controller 13.
+    CHECK_FALSE(editing.links_script(258U));
   }
 }
 

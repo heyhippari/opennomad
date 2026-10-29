@@ -118,7 +118,7 @@ Buffer build_ctl(
       ctl.u32(state.id)
           .u32(state.input)
           .u32(state.flags)
-          .u32(0)  // raw_0c
+          .u32(0)  // jump frame count
           .f32(state.window_start)
           .f32(state.window_end)
           .f32(state.transition_value)
@@ -286,7 +286,7 @@ TEST_SUITE("Core::Omikron::CtlControlSet") {
     ctl.u32(0xAABBCCDDU)   // state_id
         .u32(0x00040004U)  // input condition
         .u32(0x8022U)      // flags (default + no-key family)
-        .u32(0x0C0C0C0CU)  // raw_0c
+        .u32(0x0C0C0C0CU)  // jump frame count
         .f32(4.0F)         // window start
         .f32(21.0F)        // window end
         .f32(2.5F)         // transition value
@@ -318,7 +318,7 @@ TEST_SUITE("Core::Omikron::CtlControlSet") {
     CHECK_EQ(state.state_id, 0xAABBCCDDU);
     CHECK_EQ(state.input_condition, 0x00040004U);
     CHECK_EQ(state.flags, 0x8022U);
-    CHECK_EQ(state.raw_0c, 0x0C0C0C0CU);
+    CHECK_EQ(state.jump_frame_count, 0x0C0C0C0CU);
     CHECK(state.window_start == doctest::Approx(4.0F));
     CHECK(state.window_end == doctest::Approx(21.0F));
     CHECK(state.transition_value == doctest::Approx(2.5F));

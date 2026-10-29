@@ -296,7 +296,7 @@ struct RuntimeCharacterDebugState {
   bool has_controller{false};
   std::string ctl_control_set;
   bool ctl_enabled{false};
-  bool ctl_direct_control{false};
+  bool ctl_control_suppressed{false};
   std::optional<std::uint32_t> ctl_move_id;
   std::string ctl_move_name;
   std::optional<std::uint32_t> ctl_state_id;
@@ -325,6 +325,9 @@ struct WorldRenderDebugState {
   std::size_t legacy_composites{0};
 
   std::size_t group_count{0};
+  /// Decor groups drawn / skipped by view-frustum culling in the last frame.
+  std::size_t decor_groups_submitted{0};
+  std::size_t decor_groups_culled{0};
   std::size_t material_count{0};
   std::size_t mirror_group_count{0};
   std::size_t uv_scroll_u_group_count{0};

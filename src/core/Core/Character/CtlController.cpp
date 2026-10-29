@@ -3,6 +3,7 @@
 #include <fmt/format.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -16,6 +17,7 @@
 #include <vector>
 
 #include "Core/Character/CharacterRuntime.hpp"
+#include "Core/Character/PhysicalMotionService.hpp"
 #include "Core/Log.hpp"
 #include "Core/LogCategory.hpp"
 #include "Core/Omikron/Animation3DA.hpp"
@@ -93,6 +95,86 @@ constexpr std::uint32_t K_CALLBACK_MOVE_RUN_BREATHE{164U};
 constexpr std::uint32_t K_CALLBACK_MOVE_WALK_BREATHE{166U};
 constexpr std::uint32_t K_CALLBACK_MOVE_WAIT_SHORT{43U};
 constexpr std::uint32_t K_CALLBACK_MOVE_WAIT_LONG{44U};
+/// MDJUMP03 turns a landing over a serious drop into the fall move (0x0046BEA2).
+constexpr std::uint32_t K_CALLBACK_MOVE_FALL{2U};
+
+/// Runtime tab_special_move compares only this many leading name bytes.
+constexpr std::size_t K_CALLBACK_NAME_LENGTH{8U};
+/// Every routine name of Runtime's tab_special_move (0x004CB168), so that
+/// unimplemented routines are told apart from names Runtime never queues.
+constexpr std::array<std::string_view, 66U> K_RETAIL_CALLBACK_NAMES{"MDSNEAK0",
+    "MDHEAD00",
+    "MDHEAD01",
+    "MDACTION",
+    "MDGETOBJ",
+    "MDLETOBJ",
+    "MDPUTSNK",
+    "MDNOTAKE",
+    "MDSHOOT0",
+    "MDCAMADV",
+    "MDCAMSHT",
+    "MDCAMFGT",
+    "MDSLIDIN",
+    "MDSLIDOU",
+    "MDJUMP0A",
+    "MDJUMP0B",
+    "MDJUMP01",
+    "MDRG",
+    "MDRD",
+    "MDAR",
+    "MDAV",
+    "MDCO",
+    "MDRA",
+    "MDDT",
+    "MDDG",
+    "MDDD",
+    "MDUP",
+    "MDDO",
+    "MDLUP",
+    "MDLDO",
+    "MDGUN",
+    "MDRDP",
+    "MDRDM",
+    "I2DMU",
+    "I2DMD",
+    "I2DML",
+    "I2DMR",
+    "I2DM0",
+    "I2DM1",
+    "I2DM2",
+    "I2DM3",
+    "I2DM4",
+    "I2DM5",
+    "I2DM6",
+    "I2DM7",
+    "I2DM8",
+    "I2DM9",
+    "MDTR",
+    "MDJP",
+    "MDJUMP02",
+    "MDJUMP03",
+    "MDRAISE0",
+    "MDHEAD01",
+    "MDHEAD02",
+    "MDDIVEND",
+    "MDSW2SD",
+    "MDSTAND",
+    "RSTAVNT",
+    "RSTNAGE",
+    "MDRUN",
+    "MDWALK",
+    "MDSTOPR",
+    "MDSTOPW",
+    "MDADJSTP",
+    "MDROT000",
+    "MDDIVBEG"};
+/// MDJUMP0A walking-jump and MDJUMP0B running-jump horizontal distances
+/// (Runtime 0x00910348 = 2.5 m and 0x0091034C = 3.5 m, in inches).
+constexpr float K_WALK_JUMP_DISTANCE{98.4251937866F};
+constexpr float K_RUN_JUMP_DISTANCE{137.795272827F};
+/// Runtime's single-precision 1/30 constant (0x004BC94C) and its inverse.
+constexpr float K_TICK_SECONDS{0.033333335F};
+constexpr float K_TICKS_PER_SECOND{30.0F};
 
 /// MDSTOPR/MDSTOPW autonomous-diversion restart threshold.
 constexpr std::uint32_t K_RUN_SNAPSHOT_THRESHOLD{30U};
@@ -270,17 +352,53 @@ std::expected<void, std::string> CtlController::select_move(const std::uint32_t 
   return {};
 }
 
-void CtlController::set_direct_control_active(const bool active) {
-  m_direct_control_active = active;
+void CtlController::set_ordinary_control_suppressed(const bool suppressed) {
+  m_ordinary_control_suppressed = suppressed;
+  if (suppressed) {
+    // 0x0045A870(controller, 0): history collapses to the no-input singleton;
+    // the current-input latch is left alone.
+    m_input_history.at(0) = K_CTL_NO_INPUT;
+    m_history_count = 1U;
+  } else {
+    // 0x0045A3E0 clears all 16 history entries and reseeds the latch, then
+    // 0x0045A870 installs the no-input singleton.
+    reset_input_history();
+  }
 }
 
-void CtlController::set_autonomous_idle_suppressed(const bool suppressed) {
-  m_autonomous_idle_suppressed = suppressed;
+std::expected<void, std::string> CtlController::set_goto_interpolation_frames(
+    const Omikron::CtlState& state, const std::uint16_t frames) {
+  const Omikron::CtlState* const target{state.goto_state};
+  if (target == nullptr) {
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format("CTL '{}' SetITPNbFrames: state {} has no goto target",
+            m_resource_name,
+            state.state_id)};
+  }
+  if ((target->flags & K_STATE_RESIDENT_TRANSITION_FLAG) == 0U) {
+    return std::expected<void, std::string>{std::unexpect,
+        fmt::format("CTL '{}' SetITPNbFrames: goto target {} of state {} is not a resident "
+                    "transition state",
+            m_resource_name,
+            target->state_id,
+            state.state_id)};
+  }
+  const auto existing{std::ranges::find_if(m_interpolation_overrides, [target](const auto& entry) {
+    return entry.first == target;
+  })};
+  if (existing != m_interpolation_overrides.end()) {
+    existing->second = frames;
+  } else {
+    m_interpolation_overrides.emplace_back(target, frames);
+  }
+  return {};
 }
 
-void CtlController::set_player_direct_control(const bool active) {
-  m_direct_control_active = active;
-  m_autonomous_idle_suppressed = active;
+std::uint16_t CtlController::interpolation_frames(const Omikron::CtlState& state) const {
+  const auto existing{std::ranges::find_if(m_interpolation_overrides, [&state](const auto& entry) {
+    return entry.first == &state;
+  })};
+  return existing != m_interpolation_overrides.end() ? existing->second : state.transition_count;
 }
 
 void CtlController::set_priority_mode(const bool enabled) {
@@ -583,8 +701,8 @@ void CtlController::tick_once(const std::uint32_t profile_input, RuntimeCharacte
                       (m_current_state->flags & K_STATE_TRANSPARENT_CHAIN_FLAG) == 0U};
   float end_phase{m_effective_end};
   if (resident) {
-    if (m_current_state->transition_count > 0U) {
-      end_phase = static_cast<float>(m_current_state->transition_count);
+    if (const std::uint16_t lifetime{interpolation_frames(*m_current_state)}; lifetime > 0U) {
+      end_phase = static_cast<float>(lifetime);
     } else if (end_phase <= 0.0F) {
       return;
     }
@@ -655,6 +773,12 @@ void CtlController::activate_state(
     if ((previous_state->flags & K_STATE_EXIT_RESET_HISTORY_FLAG) != 0U) {
       reset_input_history();
     }
+    // Runtime 0x004A7B80 applies the left state's one-shot orientation and
+    // movement blocks on exit (e.g. H_Sd-180 turns the actor by 180 degrees
+    // once its animation completes). Logical-only activations have no actor.
+    if (character != nullptr) {
+      apply_oneshot_auxiliary(*previous_state, *character);
+    }
   }
 
   // Entry side effects of every transparent chain node, in chain order.
@@ -675,7 +799,7 @@ void CtlController::activate_state(
   } else {
     m_same_state_restart_count = 0U;
   }
-  if (m_direct_control_active && m_autonomous_idle_suppressed) {
+  if (m_ordinary_control_suppressed) {
     m_same_state_restart_count = 0U;
   }
 
@@ -686,14 +810,15 @@ void CtlController::activate_state(
   if (previous_state != nullptr &&
       (previous_state->flags & K_STATE_RESIDENT_TRANSITION_FLAG) != 0U &&
       (previous_state->flags & K_STATE_TRANSPARENT_CHAIN_FLAG) == 0U) {
-    const float previous_lifetime{static_cast<float>(previous_state->transition_count)};
+    const std::uint16_t previous_frames{interpolation_frames(*previous_state)};
+    const float previous_lifetime{static_cast<float>(previous_frames)};
     if ((target->flags & K_STATE_BLEND_INHERIT_FLAG) != 0U) {
-      m_transition_blend_count = previous_state->transition_count;
+      m_transition_blend_count = previous_frames;
     } else if (previous_lifetime < outgoing_phase) {
       m_transition_blend_count = 1U;
     } else {
-      m_transition_blend_count = previous_state->transition_count -
-                                 static_cast<std::uint32_t>(std::floor(outgoing_phase)) + 1U;
+      m_transition_blend_count =
+          previous_frames - static_cast<std::uint32_t>(std::floor(outgoing_phase)) + 1U;
     }
   }
 
@@ -827,22 +952,11 @@ void CtlController::run_transient_helpers(
 
     const std::uint32_t before{working_input};
 
-    if ((helper->flags & K_STATE_ONESHOT_ORIENTATION_FLAG) != 0U &&
-        helper->orientation_block.has_value()) {
-      const App::Runtime::Vec3& delta{helper->orientation_block->orientation_delta};
-      const App::Runtime::Vec3 current{character.principal_orientation_degrees};
-      character.set_principal_orientation(App::Runtime::Vec3{.x = wrap_degrees(current.x + delta.x),
-          .y = wrap_degrees(current.y + delta.y),
-          .z = wrap_degrees(current.z + delta.z)});
-      working_input &= ~(helper->input_condition & K_CTL_POSITIVE_MASK);
-    }
-    if ((helper->flags & K_STATE_ONESHOT_MOVEMENT_FLAG) != 0U &&
-        helper->movement_block.has_value()) {
-      const App::Runtime::Vec3 world_delta{App::Runtime::transform_vector(
-          helper->movement_block->local_delta, character.live_root_orientation())};
-      character.physical_motion.candidate_translation.x += world_delta.x;
-      character.physical_motion.candidate_translation.y += world_delta.y;
-      character.physical_motion.candidate_translation.z += world_delta.z;
+    apply_oneshot_auxiliary(*helper, character);
+    if (((helper->flags & K_STATE_ONESHOT_ORIENTATION_FLAG) != 0U &&
+            helper->orientation_block.has_value()) ||
+        ((helper->flags & K_STATE_ONESHOT_MOVEMENT_FLAG) != 0U &&
+            helper->movement_block.has_value())) {
       working_input &= ~(helper->input_condition & K_CTL_POSITIVE_MASK);
     }
     if ((helper->flags & K_STATE_CALLBACK_FLAG) != 0U &&
@@ -869,6 +983,25 @@ void CtlController::run_transient_helpers(
       "CTL '{}' state {} transient helper pass hit its iteration bound",
       m_resource_name,
       m_current_state->state_id);
+}
+
+void CtlController::apply_oneshot_auxiliary(
+    const Omikron::CtlState& state, RuntimeCharacter& character) {
+  if ((state.flags & K_STATE_ONESHOT_ORIENTATION_FLAG) != 0U &&
+      state.orientation_block.has_value()) {
+    const App::Runtime::Vec3& delta{state.orientation_block->orientation_delta};
+    const App::Runtime::Vec3 current{character.principal_orientation_degrees};
+    character.set_principal_orientation(App::Runtime::Vec3{.x = wrap_degrees(current.x + delta.x),
+        .y = wrap_degrees(current.y + delta.y),
+        .z = wrap_degrees(current.z + delta.z)});
+  }
+  if ((state.flags & K_STATE_ONESHOT_MOVEMENT_FLAG) != 0U && state.movement_block.has_value()) {
+    const App::Runtime::Vec3 world_delta{App::Runtime::transform_vector(
+        state.movement_block->local_delta, character.live_root_orientation())};
+    character.physical_motion.candidate_translation.x += world_delta.x;
+    character.physical_motion.candidate_translation.y += world_delta.y;
+    character.physical_motion.candidate_translation.z += world_delta.z;
+  }
 }
 
 void CtlController::service_continuous_auxiliary(
@@ -990,7 +1123,14 @@ void CtlController::drain_callbacks(RuntimeCharacter& character) {
   }
 }
 
-void CtlController::dispatch_callback(const std::string_view name, RuntimeCharacter& character) {
+void CtlController::dispatch_callback(
+    const std::string_view full_name, RuntimeCharacter& character) {
+  // Runtime compares only the first eight bytes against tab_special_move and
+  // never queues the reserved name "none".
+  const std::string_view name{full_name.substr(0U, K_CALLBACK_NAME_LENGTH)};
+  if (full_name == "none") {
+    return;
+  }
   const auto switch_move = [this, &name](const std::uint32_t move_id) {
     if (auto selected{select_move(move_id)}; !selected) {
       App::Log::warn(LogCategory::Scenario,
@@ -1018,9 +1158,10 @@ void CtlController::dispatch_callback(const std::string_view name, RuntimeCharac
     m_run_restart_snapshot = 0U;
     m_walk_restart_snapshot = 0U;
   } else if (name == "MDSTAND") {
-    // Direct-control bit 0x80 suppresses the autonomous wait diversion; the
-    // restart count is the only inactivity measure — there is no timer.
-    if (!m_autonomous_idle_suppressed && character.adventure_mode == 1 &&
+    // Ordinary-control suppression (flag 0x80, compact 0x68) blocks the
+    // autonomous wait diversion; the restart count is the only inactivity
+    // measure — there is no timer.
+    if (!m_ordinary_control_suppressed && character.adventure_mode == K_ADVENTURE_STATE_ORDINARY &&
         m_same_state_restart_count > K_STAND_RESTART_THRESHOLD) {
       switch_move(m_wait_alternation ? K_CALLBACK_MOVE_WAIT_LONG : K_CALLBACK_MOVE_WAIT_SHORT);
       m_wait_alternation = !m_wait_alternation;
@@ -1033,7 +1174,7 @@ void CtlController::dispatch_callback(const std::string_view name, RuntimeCharac
     // control of the heading.
     character.suppress_automatic_movement_heading = true;
   } else if (name == "RSTAVNT") {
-    character.adventure_mode = 1;
+    character.adventure_mode = K_ADVENTURE_STATE_ORDINARY;
     const App::Runtime::Vec3 orientation{character.principal_orientation_degrees};
     // Pitch resets; yaw deliberately survives.
     character.set_principal_orientation(
@@ -1042,11 +1183,108 @@ void CtlController::dispatch_callback(const std::string_view name, RuntimeCharac
     // history.
     m_input_profile = 0U;
     reset_input_history();
+  } else if (name == "MDJUMP0A" || name == "MDJUMP0B") {
+    // 0x0046BB50/0x0046BC50: plan the airborne arc from the take-off state.
+    // The whole arc lasts the state's authored jump frame count; the resident
+    // state after take-off interpolates over its first half.
+    AdventureJumpState& jump{character.physical_motion.adventure_jump};
+    jump.sequence_active = true;
+    jump.origin = character.physical_motion.candidate_translation;
+    jump.frame_count = m_current_state != nullptr ? m_current_state->jump_frame_count : 0U;
+    const std::uint32_t half{jump.frame_count >> 1U};
+    if (m_current_state != nullptr) {
+      if (auto set{
+              set_goto_interpolation_frames(*m_current_state, static_cast<std::uint16_t>(half))};
+          !set) {
+        App::Log::warn(LogCategory::Scenario, "{}", set.error());
+      }
+    }
+    if (jump.frame_count == 0U) {
+      App::Log::warn(LogCategory::Scenario,
+          "CTL '{}' callback '{}': take-off state has no jump frame count; no launch planned",
+          m_resource_name,
+          name);
+      jump.launch_per_tick = {};
+      return;
+    }
+    const float distance{name == "MDJUMP0A" ? K_WALK_JUMP_DISTANCE : K_RUN_JUMP_DISTANCE};
+    const App::Runtime::Vec3 world{
+        App::Runtime::transform_vector(App::Runtime::Vec3{.x = 0.0F, .y = 0.0F, .z = -distance},
+            character.live_root_orientation())};
+    const auto frames{static_cast<float>(jump.frame_count)};
+    // Upward launch that gravity cancels after half the arc (positive Y is
+    // downward; the vertical term is per tick until MDJUMP01 scales it).
+    jump.launch_per_tick = App::Runtime::Vec3{.x = world.x / frames,
+        .y = -(character.physical_motion.gravity_velocity_delta_per_tick *
+               static_cast<float>(half) * K_TICK_SECONDS),
+        .z = world.z / frames};
+  } else if (name == "MDJUMP01") {
+    // 0x0046BD50: launch. Horizontal terms are per tick; vertical velocity is
+    // per second.
+    const AdventureJumpState& jump{character.physical_motion.adventure_jump};
+    character.physical_motion.horizontal_physical_x_per_tick = jump.launch_per_tick.x;
+    character.physical_motion.vertical_velocity = jump.launch_per_tick.y * K_TICKS_PER_SECOND;
+    character.physical_motion.horizontal_physical_z_per_tick = jump.launch_per_tick.z;
+  } else if (name == "MDJUMP02") {
+    // 0x0046BD90: the descent interpolation lasts the second half of the arc.
+    // Its bounded descent simulation has no side effects and is omitted.
+    if (m_current_state != nullptr) {
+      const std::uint32_t half{character.physical_motion.adventure_jump.frame_count >> 1U};
+      if (auto set{
+              set_goto_interpolation_frames(*m_current_state, static_cast<std::uint16_t>(half))};
+          !set) {
+        App::Log::warn(LogCategory::Scenario, "{}", set.error());
+      }
+    }
+  } else if (name == "MDJUMP03") {
+    // 0x0046BE40: landing. The guard ends; the latest support gap classifies
+    // the episode, and a serious drop turns the landing into a fall (move 2).
+    PhysicalMotionState& motion{character.physical_motion};
+    motion.adventure_jump.sequence_active = false;
+    const float gap{motion.last_primary_support_gap};
+    if (gap >= PhysicalMotionService::K_FALL_STAGE_4_DISTANCE) {
+      motion.fall_stage = 4U;
+    } else if (gap >= PhysicalMotionService::K_FALL_STAGE_3_DISTANCE) {
+      motion.fall_stage = 3U;
+    } else if (gap >= PhysicalMotionService::K_FALL_STAGE_1_DISTANCE) {
+      motion.fall_stage = 1U;
+    } else {
+      motion.fall_stage = 2U;
+      return;
+    }
+    // Physical move selection 0x00465340 (dispatcher-state gated). Native
+    // adventure event 0x12 (serious fall) is deferred with the 0x00414DE0
+    // event subsystem.
+    if (!PhysicalMotionService::reaction_move_selection_suppressed(character.adventure_mode)) {
+      switch_move(K_CALLBACK_MOVE_FALL);
+    }
+  } else if (name == "MDHEAD00") {
+    // 0x0046AE70: the first entry of a head-look episode flushes the mouse
+    // delta (0x0043D870); the request itself is the actor +0x519 flag.
+    m_head_look_mouse_flush_armed = false;
+    character.head_look_requested = true;
+  } else if (name == "MDHEAD01") {
+    // 0x0046AEA0 (the table's first MDHEAD01 entry wins over 0x0046B720).
+    m_head_look_mouse_flush_armed = true;
+    character.head_look_requested = false;
+  } else if (name == "MDHEAD02" || name == "MDRA" || name == "MDDT" || name == "MDRDP" ||
+             name == "MDRDM") {
+    // MDHEAD02 only clears aiming-mode flag 0x200 (0x0047CEB0), which is not
+    // modeled; the other entries are empty routines in Runtime.
   } else if (m_warned_callbacks.emplace(name).second) {
-    App::Log::warn(LogCategory::Scenario,
-        "CTL '{}' has no implementation for callback '{}' (nonfatal)",
-        m_resource_name,
-        name);
+    const bool known{
+        std::ranges::find(K_RETAIL_CALLBACK_NAMES, name) != K_RETAIL_CALLBACK_NAMES.end()};
+    if (known) {
+      App::Log::warn(LogCategory::Scenario,
+          "CTL '{}' has no implementation for callback '{}' (nonfatal)",
+          m_resource_name,
+          name);
+    } else {
+      App::Log::warn(LogCategory::Scenario,
+          "CTL '{}' callback '{}' is not in Runtime's tab_special_move (ignored)",
+          m_resource_name,
+          name);
+    }
   }
 }
 

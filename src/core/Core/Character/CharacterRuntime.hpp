@@ -119,6 +119,12 @@ enum class PoseOwner : std::uint8_t {
 
 /// Resident logical actor/body in one world runtime. `active` and
 /// `area_present` control presentation; an inactive body remains scriptable.
+/// Runtime actor dispatcher state (+0x194) of ordinary adventure control.
+inline constexpr std::int32_t K_ADVENTURE_STATE_ORDINARY{1};
+/// Runtime dispatcher state 3: aiming/shooting mode, the only state with the
+/// native aiming-mode actor (0x006579CC) installed.
+inline constexpr std::int32_t K_ADVENTURE_STATE_AIMING{3};
+
 struct RuntimeCharacter {
   /// Stable logical body identity. Never renumber on vector erase/adoption.
   BodyIdentity body_identity{0};
@@ -176,9 +182,14 @@ struct RuntimeCharacter {
 
   /// Which subsystem currently owns the visible base pose.
   PoseOwner pose_owner{PoseOwner::k_model_defaults};
-  /// Character adventure/control mode consumed by CTL callbacks (RSTAVNT
-  /// selects mode 1; MDSTAND's autonomous waits require it).
+  /// Runtime actor dispatcher state (+0x194). Character creation stores 0;
+  /// becoming the controlled character (0x00422730) and RSTAVNT select the
+  /// ordinary adventure state 1, which MDSTAND's autonomous waits require.
   std::int32_t adventure_mode{0};
+  /// Runtime actor +0x519 head-look request: MDHEAD00 sets it, MDHEAD01
+  /// clears it. The first-person look consumer in the ordinary actor service
+  /// (camera mode 3 request and head angles) is deferred camera work.
+  bool head_look_requested{false};
   /// Transient MDROT000 flag observed and cleared by the next physical tick.
   bool suppress_automatic_movement_heading{false};
   /// Runtime actor +0x51D equivalent. This is the result of the most recent
@@ -354,10 +365,12 @@ class Runtime {
 
   /// Adopts a body moved from another world without invoking the model loader.
   /// The target-local instance ID is assigned on adoption; stable body identity
-  /// is preserved.
-  [[nodiscard]] std::expected<void, std::string> adopt_character(RuntimeCharacter character);
+  /// is preserved. Rejects only a duplicate `body_identity`; equal canonical character IDs in
+  /// different worlds are distinct bodies. On failure `character` is left unmodified.
+  [[nodiscard]] std::expected<void, std::string> adopt_character(RuntimeCharacter&& character);
 
-  /// Transfers one body to a target world without reloading or duplicating it.
+  /// Transfers one body to a target world without reloading or duplicating it. Transactional: on
+  /// any failure the body remains in this world.
   [[nodiscard]] std::expected<void, std::string> transfer_body_to(
       Runtime& target, BodyIdentity body_identity);
 

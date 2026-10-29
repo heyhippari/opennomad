@@ -35,6 +35,7 @@
 #include "Core/RuntimePresentation.hpp"
 #include "Core/Scenario/ScenarioManager.hpp"
 #include "Core/Scenario/ScenarioRuntime.hpp"
+#include "Core/Sfx/SfxRuntime.hpp"
 #include "Core/Shader.hpp"
 #include "Core/WorldCamera.hpp"
 #include "Core/WorldColorPipeline.hpp"
@@ -301,7 +302,7 @@ WorldScene::WorldScene(ScenarioManager& scenarios, Interface::InterfaceManager& 
   // global 0x009103D4 after structured script execution. Controller mode 13
   // consumes that live record continuously. The native publisher is the head
   // of the attached-decor chain, independently of logical current AREA.
-  m_camera.set_controller_pose_provider([this]() -> std::optional<WorldCameraPose> {
+  m_camera.set_controller_pose_provider([this] -> std::optional<WorldCameraPose> {
     if (m_scenarios == nullptr) {
       return std::nullopt;
     }
@@ -322,46 +323,48 @@ WorldScene::WorldScene(ScenarioManager& scenarios, Interface::InterfaceManager& 
 
 WorldScene::~WorldScene() = default;
 
-WorldRenderer* WorldScene::current_world_renderer() {
-  const WorldSceneContext* const context{
-      m_scenarios == nullptr ? nullptr : m_scenarios->current_world_context()};
+WorldScene::AttachedWorldRenderer* WorldScene::find_attached_renderer(
+    const WorldSceneContext* const context) {
   if (context == nullptr) {
     return nullptr;
   }
-  const auto renderer{std::ranges::find_if(
+  const auto found{std::ranges::find_if(
       m_attached_world_renderers, [context](const AttachedWorldRenderer& candidate) {
         return candidate.scene_id == context->scene_id &&
                candidate.generation == context->generation;
       })};
-  return renderer == m_attached_world_renderers.end() ? nullptr : renderer->renderer.get();
+  return found == m_attached_world_renderers.end() ? nullptr : &*found;
+}
+
+const WorldScene::AttachedWorldRenderer* WorldScene::find_attached_renderer(
+    const WorldSceneContext* const context) const {
+  if (context == nullptr) {
+    return nullptr;
+  }
+  const auto found{std::ranges::find_if(
+      m_attached_world_renderers, [context](const AttachedWorldRenderer& candidate) {
+        return candidate.scene_id == context->scene_id &&
+               candidate.generation == context->generation;
+      })};
+  return found == m_attached_world_renderers.end() ? nullptr : &*found;
+}
+
+WorldRenderer* WorldScene::current_world_renderer() {
+  const AttachedWorldRenderer* const attached{find_attached_renderer(
+      m_scenarios == nullptr ? nullptr : m_scenarios->current_world_context())};
+  return attached == nullptr ? nullptr : attached->renderer.get();
 }
 
 const WorldRenderer* WorldScene::current_world_renderer() const {
-  const WorldSceneContext* const context{
-      m_scenarios == nullptr ? nullptr : m_scenarios->current_world_context()};
-  if (context == nullptr) {
-    return nullptr;
-  }
-  const auto renderer{std::ranges::find_if(
-      m_attached_world_renderers, [context](const AttachedWorldRenderer& candidate) {
-        return candidate.scene_id == context->scene_id &&
-               candidate.generation == context->generation;
-      })};
-  return renderer == m_attached_world_renderers.end() ? nullptr : renderer->renderer.get();
+  const AttachedWorldRenderer* const attached{find_attached_renderer(
+      m_scenarios == nullptr ? nullptr : m_scenarios->current_world_context())};
+  return attached == nullptr ? nullptr : attached->renderer.get();
 }
 
 WorldRenderer* WorldScene::attached_world_head_renderer() {
-  const WorldSceneContext* const context{
-      m_scenarios == nullptr ? nullptr : m_scenarios->attached_world_head_context()};
-  if (context == nullptr) {
-    return nullptr;
-  }
-  const auto renderer{std::ranges::find_if(
-      m_attached_world_renderers, [context](const AttachedWorldRenderer& candidate) {
-        return candidate.scene_id == context->scene_id &&
-               candidate.generation == context->generation;
-      })};
-  return renderer == m_attached_world_renderers.end() ? nullptr : renderer->renderer.get();
+  const AttachedWorldRenderer* const attached{find_attached_renderer(
+      m_scenarios == nullptr ? nullptr : m_scenarios->attached_world_head_context())};
+  return attached == nullptr ? nullptr : attached->renderer.get();
 }
 
 std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state() const {
@@ -382,6 +385,8 @@ std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state
   state.uv_phase_v = static_cast<float>(m_uv_phases.v_phase());
   if (world_renderer != nullptr) {
     state.group_count = world_renderer->group_count();
+    state.decor_groups_submitted = world_renderer->decor_cull_stats().groups_submitted;
+    state.decor_groups_culled = world_renderer->decor_cull_stats().groups_culled;
     state.material_count = world_renderer->material_count();
     state.mirror_group_count = world_renderer->mirror_group_count();
     state.uv_scroll_u_group_count = world_renderer->uv_scroll_u_group_count();
@@ -646,7 +651,7 @@ std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state
           .has_controller = false,
           .ctl_control_set = {},
           .ctl_enabled = false,
-          .ctl_direct_control = false,
+          .ctl_control_suppressed = false,
           .ctl_move_id = std::nullopt,
           .ctl_move_name = {},
           .ctl_state_id = std::nullopt,
@@ -857,7 +862,7 @@ std::optional<Debug::WorldRenderDebugState> WorldScene::world_render_debug_state
         const Character::CtlController& controller{character.ctl_controller.value()};
         debug_character.has_controller = true;
         debug_character.ctl_control_set = controller.resource_name();
-        debug_character.ctl_direct_control = controller.direct_control_active();
+        debug_character.ctl_control_suppressed = controller.ordinary_control_suppressed();
         if (controller.current_move() != nullptr) {
           debug_character.ctl_move_id = controller.current_move()->move_id;
           debug_character.ctl_move_name = controller.current_move()->name;
@@ -990,7 +995,9 @@ bool WorldScene::geometry_wireframe_enabled() const {
 void WorldScene::set_geometry_wireframe_enabled(const bool enabled) {
   m_geometry_wireframe_enabled = enabled;
   for (AttachedWorldRenderer& attached : m_attached_world_renderers) {
-    attached.renderer->set_geometry_wireframe(enabled);
+    if (attached.renderer != nullptr) {
+      attached.renderer->set_geometry_wireframe(enabled);
+    }
   }
 }
 
@@ -999,9 +1006,9 @@ void WorldScene::synchronize_presentation_reset() {
     return;
   }
   if (m_presentation_reset_observer.synchronize(
-          m_scenarios->world_presentation().reset_generation(), m_fade, m_letterbox)) {
+          m_scenarios->world_presentation().reset_generation(), m_fade, m_letterbox, m_camera)) {
     App::Log::debug(LogCategory::Renderer,
-        "WorldScene: reset session-global fade and letterbox presentation for epoch {}",
+        "WorldScene: reset session-global fade, letterbox and camera presentation for epoch {}",
         m_presentation_reset_observer.observed_generation());
   }
 }
@@ -1039,14 +1046,23 @@ void WorldScene::consume_letterbox_commands() {
   }
 }
 
-void WorldScene::consume_object_presentation_commands(const WorldSceneContext* const context) {
-  if (m_scenarios == nullptr || context == nullptr) {
+void WorldScene::consume_object_presentation_commands() {
+  if (m_scenarios == nullptr) {
     return;
   }
+  // OBJECTS presentation belongs to the resident world that emitted it (matching generation), not
+  // to the logical current AREA: a destination AREA runs its objects while the source is still
+  // current until native event 9. Voice-over audio uses the owner's runtime. World text is a single
+  // session-global overlay that any resident owner may set.
+  const auto resident_owner = [this](const std::uint32_t scene_id,
+                                  const std::uint32_t generation) -> const WorldSceneContext* {
+    return m_scenarios->find_world_context(scene_id, generation);
+  };
   while (std::optional<WorldVoiceOverCommand> command{
       m_scenarios->world_presentation().take_voice_over()}) {
-    if (command->scene_id != context->scene_id ||
-        command->scene_generation != context->generation) {
+    const WorldSceneContext* const owner{
+        resident_owner(command->scene_id, command->scene_generation)};
+    if (owner == nullptr) {
       App::Log::debug(LogCategory::Audio,
           "WorldScene: discarded stale OBJECTS voice-over for scene={} generation={}",
           command->scene_id,
@@ -1054,7 +1070,7 @@ void WorldScene::consume_object_presentation_commands(const WorldSceneContext* c
       continue;
     }
     Audio::AudioSystem* const audio{
-        context->runtime == nullptr ? nullptr : context->runtime->audio_system()};
+        owner->runtime == nullptr ? nullptr : owner->runtime->audio_system()};
     if (audio == nullptr) {
       App::Log::warn(LogCategory::Audio,
           "OBJECTS {} voice-over '{}' requested without audio",
@@ -1072,8 +1088,10 @@ void WorldScene::consume_object_presentation_commands(const WorldSceneContext* c
   }
   while (std::optional<WorldTextCommand> command{
       m_scenarios->world_presentation().take_world_text()}) {
-    const bool applied{
-        m_world_text.apply_command(*command, context->scene_id, context->generation)};
+    const WorldSceneContext* const owner{
+        resident_owner(command->scene_id, command->scene_generation)};
+    const bool applied{owner != nullptr &&
+                       m_world_text.apply_command(*command, owner->scene_id, owner->generation)};
     if (!applied) {
       App::Log::debug(LogCategory::Renderer,
           "WorldScene: discarded stale OBJECTS world text for scene={} generation={}",
@@ -1180,6 +1198,12 @@ void WorldScene::update(const float delta_time, const Input::InputManager& input
             attached_context->scene_id,
             attached_context->generation,
             renderer.error());
+        // Remember the failure for this exact (scene, generation) so the build is not retried
+        // (and logged) every frame; the entry is dropped when the generation leaves the chain.
+        m_attached_world_renderers.push_back(AttachedWorldRenderer{
+            .scene_id = attached_context->scene_id,
+            .generation = attached_context->generation,
+            .renderer = nullptr});
         continue;
       }
       renderer.value()->set_geometry_wireframe(m_geometry_wireframe_enabled);
@@ -1231,7 +1255,7 @@ void WorldScene::update(const float delta_time, const Input::InputManager& input
 
   consume_fade_commands();
   consume_letterbox_commands();
-  consume_object_presentation_commands(context);
+  consume_object_presentation_commands();
   m_fade.update(delta_time);
   m_letterbox.update(delta_time);
   m_world_text.update(delta_time);
@@ -1292,6 +1316,18 @@ void WorldScene::update(const float delta_time, const Input::InputManager& input
     }
   }
 
+  // Static SFX emitters emit only while the camera eye is inside the scene far
+  // distance (Runtime 0x0044FC30 compares against decor +0x154).
+  if (m_scenarios != nullptr && m_camera.has_pose()) {
+    const Sfx::StaticEmitterListener gate{
+        .position = m_camera.pose().eye, .radius = m_camera.camera().get_far_plane()};
+    for (const WorldSceneContext& world : m_scenarios->world_contexts()) {
+      if (world.runtime != nullptr) {
+        world.runtime->set_static_emitter_listener(gate);
+      }
+    }
+  }
+
   if (update_dialog_input(delta_time, input)) {
     m_interfaces.update_without_input(delta_time);
   } else {
@@ -1303,9 +1339,8 @@ void WorldScene::consume_camera_commands() {
   if (m_scenarios != nullptr) {
     while (std::optional<WorldCameraCommand> command{
         m_scenarios->world_presentation().take_camera()}) {
-      const WorldSceneContext* const owner{m_scenarios->find_world_context(command->scene_id)};
-      if (owner == nullptr || owner->residency == WorldSceneResidencyState::Free ||
-          owner->generation != command->scene_generation) {
+      if (m_scenarios->find_world_context(command->scene_id, command->scene_generation) ==
+          nullptr) {
         if (command->kind == WorldCameraCommandKind::k_controller_mode) {
           App::Log::debug(LogCategory::Renderer,
               "WorldScene: discarded stale camera controller {} for scene={} generation={}",
@@ -1385,15 +1420,16 @@ void WorldScene::render() {
   consume_camera_commands();
   consume_fade_commands();
   consume_letterbox_commands();
-  consume_object_presentation_commands(context);
+  consume_object_presentation_commands();
 
   // A world context may be replaced between update and render; never
   // dereference a runtime cached by the renderer. If generation no longer
   // matches, skip one world frame and rebuild on the next update.
   bool world_renderable{false};
   for (const AttachedWorldRenderer& attached_renderer : m_attached_world_renderers) {
-    const WorldSceneContext* attached_context{
-        m_scenarios->find_world_context(attached_renderer.scene_id)};
+    const WorldSceneContext* const attached_context{
+        m_scenarios == nullptr ? nullptr
+                               : m_scenarios->find_world_context(attached_renderer.scene_id)};
     if (attached_context == nullptr ||
         attached_context->residency != WorldSceneResidencyState::ResidentAttached ||
         attached_context->generation != attached_renderer.generation ||

@@ -74,8 +74,10 @@ struct CtlState {
   std::uint32_t state_id{0};
   std::uint32_t input_condition{0};
   std::uint32_t flags{0};
-  /// Unresolved serialized field at +0x0C; preserved without semantics.
-  std::uint32_t raw_0c{0};
+  /// Serialized +0x0C: authored jump duration in controller ticks. Runtime's
+  /// MDJUMP0A/MDJUMP0B callbacks read it from the current take-off state
+  /// (0x0045AC60) to plan the airborne arc; zero on ordinary states.
+  std::uint32_t jump_frame_count{0};
   float window_start{0.0F};
   float window_end{0.0F};
   float transition_value{0.0F};

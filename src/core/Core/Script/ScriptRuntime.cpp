@@ -290,7 +290,7 @@ std::uint16_t interpolation_kind(const std::uint32_t opcode) {
 
 /// Reinitialises the mutable arguments of one command (current = initial,
 /// elapsed = 0) as the Runtime reinitializers do.
-void reinitialize_command(ScriptInstance& instance, RuntimeScriptCommand& command) {
+void reinitialize_command(ScriptInstance& instance, const RuntimeScriptCommand& command) {
   const std::uint32_t base{command.first_value_index};
   const std::size_t pool_size{instance.value_pool.size()};
   switch (command.opcode) {
@@ -499,10 +499,10 @@ std::expected<std::size_t, std::string> ScriptRuntime::create_instance(
         .source_file_offset = command.file_offset});
   }
 
-  for (RuntimeScriptCommand& command : instance.root_commands) {
+  for (const RuntimeScriptCommand& command : instance.root_commands) {
     reinitialize_command(instance, command);
   }
-  for (RuntimeScriptCommand& command : instance.linked_commands) {
+  for (const RuntimeScriptCommand& command : instance.linked_commands) {
     reinitialize_command(instance, command);
   }
 
@@ -868,7 +868,7 @@ HandlerResult ScriptRuntime::handle_interpolate_cameras(
   const float duration{instance.value_pool.at(base + 2U).as_float()};
   const float elapsed{instance.value_pool.at(base + 3U).as_float()};
 
-  const auto finish_execution = [&]() -> HandlerResult {
+  const auto finish_execution = [&] -> HandlerResult {
     command.execution_count += 1U;
     if (command.execution_limit != K_INFINITE_EXECUTION_LIMIT &&
         command.execution_count >= command.execution_limit) {
@@ -1324,6 +1324,9 @@ void ScriptRuntime::finish_script_pass(ScriptInstance& instance) {
     return;
   }
 
+  // Runtime reinitializes every command for the next pass; PlaySound's
+  // reinitializer stops the voice it started before clearing the latch.
+  reset_audio_commands(instance, /*include_sync_sounds=*/false);
   for (RuntimeScriptCommand& command : instance.root_commands) {
     command.execution_count = command.initial_execution_count;
     reinitialize_command(instance, command);
@@ -1368,10 +1371,8 @@ void ScriptRuntime::reset_instance_to_initial_state(ScriptInstance& instance) {
       owns_body_animation = owns_body_animation || command.opcode == K_SELECT_BODY_ANIMATION ||
                             command.opcode == K_SELECT_RELATIVE_BODY_ANIMATION;
     }
-    if (owns_body_animation) {
-      if (instance.launch_context.character_body_identity.has_value()) {
-        m_world->reset_body_animation(instance.launch_context.character_body_identity.value());
-      }
+    if (owns_body_animation && instance.launch_context.character_body_identity.has_value()) {
+      m_world->reset_body_animation(instance.launch_context.character_body_identity.value());
     }
   }
   instance.current_group_index = 0;
@@ -2009,7 +2010,7 @@ HandlerResult ScriptRuntime::handle_stop_sound(
   return audio_completion(command);
 }
 
-void ScriptRuntime::reset_audio_commands(ScriptInstance& instance) {
+void ScriptRuntime::reset_audio_commands(ScriptInstance& instance, const bool include_sync_sounds) {
   const auto stop_if_started = [&](const RuntimeScriptCommand& command) {
     const std::uint32_t base{command.first_value_index};
     const std::uint32_t pool_size{static_cast<std::uint32_t>(instance.value_pool.size())};
@@ -2019,7 +2020,8 @@ void ScriptRuntime::reset_audio_commands(ScriptInstance& instance) {
     if (command.opcode == K_PLAY_SOUND && command.value_count >= 4U) {
       started = instance.value_pool.at(base + 2U).as_unsigned() != 0U;
       object_arg = base + 3U;
-    } else if (command.opcode == K_PLAY_SYNC_SOUND && command.value_count >= 5U) {
+    } else if (include_sync_sounds && command.opcode == K_PLAY_SYNC_SOUND &&
+               command.value_count >= 5U) {
       started = instance.value_pool.at(base + 3U).as_unsigned() != 0U;
       object_arg = base + 4U;
     }

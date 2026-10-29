@@ -60,6 +60,15 @@ OpenNomad separates recovered state from presentation responsibilities:
   backing bytes, its mutable `ScenarioRuntime`, and—for a world context—decoded decor resources.
 - `ScenarioEngine` is the sole scheduler. It advances resident AREA/event execution, the gameplay-mode runtime, and all
   resident world runtimes in the recovered order.
+- `ScenarioStartupController` owns the two resident AREA slots (`RuntimeAreaSlot`) and wires compact contexts to the
+  session. The self-contained parts live in collaborators it owns, each behind a narrow host interface:
+  `AreaTransitionService` (the seamless and rich 0x2F transactions with rollback, 0x30 release and 0x47/0x48 SCENE
+  attach/detach, including their deferral while SCENE or zone scripts run), `AreaResidencyService` (the logical
+  current AREA and event-9 physical handoff), `ZoneContactService` (active zones, zone-owned compact contexts,
+  heartbeat and capacity), `TriggerProxyService` (the current character's spatial trigger proxy), and
+  `CompactContextRegistry` (stable compact-context handles).
+  Specs can inject loaders into world runtimes before the first AREA preload with
+  `ScenarioManager::set_world_runtime_configurator`.
 - `WorldScene` is installed after startup and remains the normal presentation scene. It observes all attached contexts,
   while camera/debug ownership follows the current context; it does not own or execute a runtime.
 - Each `WorldRenderer` owns GPU resources for one attached world-context generation. Detach destroys that renderer;

@@ -104,6 +104,10 @@ class FakeHost final : public App::Sfx::Host {
     return static_objects;
   }
 
+  std::optional<App::Sfx::StaticEmitterListener> static_emitter_listener() const override {
+    return listener;
+  }
+
   std::optional<App::Runtime::Vec3> resolve_static_emitter_world_position(
       const std::size_t object_index) const override {
     const auto found{object_positions.find(object_index)};
@@ -118,6 +122,7 @@ class FakeHost final : public App::Sfx::Host {
   App::Sprite::SpritePool pool;
   std::vector<App::Sprite::SpriteHandle> spawned;
   std::vector<App::Sfx::StaticEmitterObject> static_objects;
+  std::optional<App::Sfx::StaticEmitterListener> listener;
   std::unordered_map<std::size_t, App::Runtime::Vec3> object_positions;
   std::size_t frame_count{5U};
   std::size_t destroyed_count{0U};
@@ -208,7 +213,7 @@ App::Omikron::SfxData basic_data() {
 }
 
 std::unique_ptr<App::Sfx::Runtime> create_runtime(
-    App::Omikron::SfxData& data, FakeHost& host, App::Sfx::Runtime::Random01 random = {}) {
+    const App::Omikron::SfxData& data, FakeHost& host, App::Sfx::Runtime::Random01 random = {}) {
   auto created{App::Sfx::Runtime::create(data, host, std::move(random))};
   REQUIRE(created.has_value());
   return std::move(created).value();
@@ -271,6 +276,42 @@ TEST_SUITE("Core::Sfx::Runtime") {
     CHECK(has_position(100.0F, 200.0F, 300.0F));
   }
 
+  TEST_CASE("static emitters emit only while the camera is inside the far distance") {
+    FakeHost host;
+    host.static_objects = {
+        App::Sfx::StaticEmitterObject{.object_index = 0U, .name = "neon01", .flags = 0x40000000U}};
+    host.object_positions.emplace(0U, App::Runtime::Vec3{.x = 100.0F, .y = 0.0F, .z = 0.0F});
+    host.listener = App::Sfx::StaticEmitterListener{.position = {}, .radius = 100.0F};
+    App::Omikron::SfxData data;
+    data.magic = App::Omikron::k_sfx_magic;
+    data.definitions.push_back(make_definition(10U, 9U));
+    data.section_d.push_back(App::Omikron::SfxStaticEmitterRecord{
+        .definition_id = 10,
+        .object_name_prefix = {'n', 'e', 'o', 'n'},
+        .duration = 9999999.0F,
+        .emission_interval = 0.0F,
+    });
+    auto runtime{create_runtime(data, host)};
+    runtime->bind_static_emitters();
+    REQUIRE(runtime->static_emitter_count() == 1U);
+
+    // Exactly at the radius is outside: Runtime requires distance² < radius².
+    runtime->step();
+    CHECK(host.spawned.empty());
+    CHECK(runtime->static_emitter_state(0).emission_count == 0U);
+
+    host.listener->position.x = 1.0F;
+    runtime->step();
+    CHECK(host.spawned.size() == 1U);
+    CHECK(runtime->static_emitter_state(0).emission_count == 1U);
+
+    // No published camera disables the gate.
+    host.listener.reset();
+    host.object_positions.at(0U).x = 1.0e6F;
+    runtime->step();
+    CHECK(runtime->static_emitter_state(0).emission_count == 2U);
+  }
+
   TEST_CASE("structured node sound starts retain their trigger ID provenance") {
     FakeHost host;
     auto data{basic_data()};
@@ -325,6 +366,23 @@ TEST_SUITE("Core::Sfx::Runtime") {
     CHECK(host.pool.live_count() == 0U);
     runtime->step();
     CHECK(host.pool.live_count() == 1U);
+  }
+
+  TEST_CASE("catch-up steps advance clocks but emit at most once per frame") {
+    FakeHost host;
+    auto data{basic_data()};
+    data.definitions.front().sound_id = 50;
+    auto runtime{create_runtime(data, host)};
+    // One long frame covering five logical steps behaves like one Runtime
+    // frame service: a single emission, with every clock still advanced.
+    runtime->tick(App::Sfx::Runtime::k_fixed_step_seconds * 5.5F);
+    CHECK(host.sound_requests.size() == 1U);
+    CHECK(host.pool.live_count() == 1U);
+    REQUIRE(runtime->nodes().size() == 1U);
+    CHECK(runtime->nodes()[0].elapsed == doctest::Approx(5.0F));
+    runtime->tick(App::Sfx::Runtime::k_fixed_step_seconds);
+    CHECK(host.sound_requests.size() == 2U);
+    CHECK(runtime->nodes()[0].elapsed == doctest::Approx(6.0F));
   }
 
   TEST_CASE("sound countdown submits authored hID without suppressing particles") {

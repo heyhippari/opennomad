@@ -66,17 +66,6 @@ struct SourcedSupportHit {
   return stage == 1U || stage == 3U || stage == 4U;
 }
 
-void try_select_physical_reaction_move(
-    CtlController& controller, const std::uint32_t move_id, const std::string_view reason) {
-  if (const auto selected{controller.select_move(move_id)}; !selected) {
-    App::Log::warn(LogCategory::Core,
-        "Unable to select physical {} reaction move {}: {}",
-        reason,
-        move_id,
-        selected.error());
-  }
-}
-
 [[nodiscard]] std::optional<std::uint32_t> landing_reaction_move(
     const PhysicalMotionState& motion, const std::optional<std::int16_t> current_move_id) {
   if (motion.accumulated_fall_travel >= PhysicalMotionService::K_FALL_STAGE_4_DISTANCE) {
@@ -185,11 +174,41 @@ void rollback(RuntimeCharacter& character) {
 
 }  // namespace
 
+bool PhysicalMotionService::reaction_move_selection_suppressed(const std::int32_t adventure_state) {
+  return adventure_state == 2 || adventure_state == K_ADVENTURE_STATE_AIMING ||
+         adventure_state == 15;
+}
+
+void PhysicalMotionService::select_reaction_move(
+    RuntimeCharacter& character, const std::uint32_t move_id, const std::string_view reason) {
+  if (reaction_move_selection_suppressed(character.adventure_mode) ||
+      !character.ctl_controller.has_value()) {
+    return;
+  }
+  if (const auto selected{character.ctl_controller->select_move(move_id)}; !selected) {
+    App::Log::warn(LogCategory::Core,
+        "Unable to select physical {} reaction move {}: {}",
+        reason,
+        move_id,
+        selected.error());
+  }
+}
+
+bool PhysicalMotionService::small_support_snap_suppressed(const RuntimeCharacter& character) {
+  // Outside the aiming state no aiming-mode actor exists and 0x0047CF00
+  // returns nonzero. Inside it, its jump flags (0x810) would decide; that
+  // aiming-mode jump state is not modeled, so the snap stays available.
+  return character.adventure_mode != K_ADVENTURE_STATE_AIMING;
+}
+
 void PhysicalMotionService::synchronize(RuntimeCharacter& character) {
   PhysicalMotionState& motion{character.physical_motion};
   motion.candidate_translation = character.transform.translation;
   motion.accepted_translation = character.transform.translation;
   reset_physical_episode_for_reanchor(motion);
+  // Authoritative placement also clears the jump-sequence guard (0x0041BDF0
+  // family writes 0x006A52CC = 0).
+  motion.adventure_jump.sequence_active = false;
   motion.initialized = true;
 }
 
@@ -394,6 +413,10 @@ void PhysicalMotionService::apply_automatic_collision_heading(RuntimeCharacter& 
         AutomaticHeadingSuppressionReason::k_spatial_heading_latch;
     return;
   }
+  if (motion.adventure_jump.sequence_active) {
+    horizontal.automatic_heading_suppression = AutomaticHeadingSuppressionReason::k_jump_sequence;
+    return;
+  }
   if (motion.fall_stage != 0U) {
     horizontal.automatic_heading_suppression = AutomaticHeadingSuppressionReason::k_falling;
     return;
@@ -556,7 +579,9 @@ void PhysicalMotionService::resolve_tick(
       support_candidates.push_back(SourcedSupportHit{.hit = *result->alternate, .source = &source});
     }
   }
-  std::ranges::sort(support_candidates, {}, [](const SourcedSupportHit& candidate) {
+  // Stable: equal-clearance supports from two decors keep attached-chain order, so the accepted
+  // support world (which drives the event-9 handoff) cannot flip between logic steps.
+  std::ranges::stable_sort(support_candidates, {}, [](const SourcedSupportHit& candidate) {
     return candidate.hit.clearance;
   });
   if (support_candidates.empty()) {
@@ -607,6 +632,7 @@ void PhysicalMotionService::resolve_tick(
           ? std::optional{motion.support.alternate_relative_y - extents->bottom}
           : std::nullopt};
   motion.maximum_support_gap = std::max(motion.maximum_support_gap, old_gap);
+  motion.last_primary_support_gap = old_gap;
   float resolved_delta_y{resolve_vertical_displacement(old_gap, desired.y)};
   const std::uint8_t previous_fall_stage{motion.fall_stage};
   if (previous_fall_stage != 0U && resolved_delta_y > 0.0F) {
@@ -668,6 +694,13 @@ void PhysicalMotionService::resolve_tick(
   }
 
   motion.support.walkable = support_is_walkable(hit.world_normal);
+  // An authored jump sequence (0x006A52CC) returns from the positive-gap
+  // branch before the small snap and fall-stage classification (0x00465B65).
+  if (new_gap > 0.0F && motion.adventure_jump.sequence_active) {
+    motion.support.gap = new_gap;
+    commit(character);
+    return;
+  }
   if (new_gap > 0.0F && (previous_fall_stage == 0U || previous_fall_stage == 2U) &&
       new_gap < K_SMALL_SUPPORT_SNAP_DISTANCE && !environment.suppress_small_support_snap) {
     motion.candidate_translation.y += new_gap;
@@ -746,16 +779,14 @@ void PhysicalMotionService::resolve_tick(
     if (previous_fall_stage != 0U && character.ctl_controller.has_value()) {
       if (const auto reaction{landing_reaction_move(motion, character.current_move_id())};
           reaction.has_value()) {
-        try_select_physical_reaction_move(
-            character.ctl_controller.value(), reaction.value(), "landing");
+        select_reaction_move(character, reaction.value(), "landing");
       }
     }
     clear_fall_episode(motion);
   } else {
     motion.fall_stage = resolve_fall_stage(previous_fall_stage, new_gap);
-    if (motion.fall_stage != previous_fall_stage && is_serious_fall_stage(motion.fall_stage) &&
-        character.ctl_controller.has_value()) {
-      try_select_physical_reaction_move(character.ctl_controller.value(), 2U, "serious-fall");
+    if (motion.fall_stage != previous_fall_stage && is_serious_fall_stage(motion.fall_stage)) {
+      select_reaction_move(character, 2U, "serious-fall");
     }
   }
   motion.support.gap = new_gap;

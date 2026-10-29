@@ -15,6 +15,7 @@
 #include <expected>
 #include <filesystem>
 #include <fstream>
+#include <initializer_list>
 #include <ios>
 #include <memory>
 #include <optional>
@@ -37,1355 +38,16 @@
 #include "IamStartTestData.hpp"
 #include "OmikronTestBuffer.hpp"
 
-namespace {
-
-constexpr std::uint32_t K_SCX_MAGIC{0x00DEAD00U};
-constexpr std::uint32_t K_SCRIPTS_TAG{0xDEAD0002U};
-constexpr std::uint32_t K_END_TAG{0xDEADFFFFU};
-
-using App::WorldSceneResidencyState;
-using App::Script::AreaScriptState;
-
-void write_u16(std::vector<std::byte>& data, const std::size_t offset, const std::uint16_t value) {
-  std::memcpy(data.data() + offset, &value, sizeof(value));
-}
-
-void write_u32(std::vector<std::byte>& data, const std::size_t offset, const std::uint32_t value) {
-  std::memcpy(data.data() + offset, &value, sizeof(value));
-}
-
-void write_area_bytecode_pool_bounds(std::vector<std::byte>& data,
-    const std::size_t record_offset,
-    const std::size_t start,
-    const std::size_t end) {
-  write_u32(data,
-      record_offset + App::Omikron::IamAreaRecord::k_offset_table_offsets +
-          (6U * sizeof(std::uint32_t)),
-      static_cast<std::uint32_t>(end));
-  write_u32(data,
-      record_offset + App::Omikron::IamAreaRecord::k_offset_table_offsets +
-          (7U * sizeof(std::uint32_t)),
-      static_cast<std::uint32_t>(start));
-}
-
-void write_name(
-    std::vector<std::byte>& data, const std::size_t offset, const std::string_view name) {
-  for (std::size_t index{0}; index < 9U; ++index) {
-    data[offset + index] = index < name.size() ? static_cast<std::byte>(name[index]) : std::byte{};
-  }
-}
-
-constexpr std::uint16_t K_NAMESPACE_CAMERA_ID{42};
-
-void write_camera_record(std::vector<std::byte>& data,
-    const std::size_t offset,
-    const std::int32_t marker,
-    const std::uint16_t camera_id = K_NAMESPACE_CAMERA_ID) {
-  for (std::size_t axis{0}; axis < 3U; ++axis) {
-    write_u32(data,
-        offset + (axis * 4U),
-        static_cast<std::uint32_t>(marker + static_cast<std::int32_t>(axis)));
-    write_u32(data,
-        offset + 0x0CU + (axis * 4U),
-        static_cast<std::uint32_t>(-marker - static_cast<std::int32_t>(axis)));
-  }
-  write_u16(data, offset + 0x18U, camera_id);
-  write_u16(data, offset + 0x1AU, 12U);
-  write_u16(data, offset + 0x1CU, 0U);
-  write_u16(data, offset + 0x1EU, static_cast<std::uint16_t>(800 + marker));
-  write_u16(data, offset + 0x20U, 0U);
-  write_u16(data, offset + 0x22U, 0U);
-}
-
-struct CameraNamespaceFixture {
-  bool slot_0_area{false};
-  bool slot_0_scene{false};
-  bool slot_1_area{false};
-  bool slot_1_scene{false};
-  bool global{false};
-  bool request_from_slot_1_scene{false};
-  bool tracked{false};
-};
-
-void append_camera_request(
-    Buffer& script, const bool tracked, const std::uint16_t camera_id = K_NAMESPACE_CAMERA_ID) {
-  script.u8(tracked ? 0x60U : 0x5FU).u16(camera_id).u16(1).u16(0);
-}
-
-std::vector<std::byte> make_camera_namespace_global(const bool has_camera) {
-  constexpr std::size_t k_header_size{0x20U};
-  constexpr std::size_t k_camera_size{0x2CU};
-  std::vector<std::byte> data(k_header_size + (has_camera ? k_camera_size : 0U), std::byte{});
-  write_u32(data, 0x14U, k_header_size);
-  write_u16(data, 0x1EU, has_camera ? 1U : 0U);
-  if (has_camera) {
-    write_camera_record(data, k_header_size, 500);
-  }
-  return data;
-}
-
-void write_bytes(const std::filesystem::path& path, const std::vector<std::byte>& data) {
-  std::filesystem::create_directories(path.parent_path());
-  std::ofstream stream{path, std::ios::binary};
-  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
-  stream.write(
-      reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size()));
-}
-
-/// The confirmed area-118 startup prefix bytes.
-std::vector<std::byte> make_prefix() {
-  Buffer bytes;
-  bytes.u8(0x0D).u16(175);
-  bytes.u8(0x0E).u16(170).u8(50);
-  bytes.u8(0x38).u16(136);
-  bytes.u8(0x4F).u16(0xFFFF);
-  bytes.u8(0x68);
-  bytes.u8(0x5C).u16(997);
-  bytes.u8(0x83).u16(0).u16(1);
-  bytes.u8(0x67).u16(109).u16(1).u16(1);
-  bytes.u8(0x76).u32(0).u16(0).u16(0);
-  bytes.u8(0x46).u16(29).u16(0xFFFF).u16(19);
-  return bytes.data();
-}
-
-std::vector<std::byte> make_new_game_script() {
-  Buffer bytes;
-  const std::vector<std::byte> prefix{make_prefix()};
-  for (const std::byte value : prefix) {
-    bytes.u8(std::to_integer<std::uint8_t>(value));
-  }
-  bytes.u8(0x67).u16(87).u16(1).u16(1);
-  bytes.u8(0x84);
-  bytes.u8(0x07).u8(0);
-  bytes.u8(0x0A).u16(19);
-  bytes.u8(0x19);
-  bytes.u8(0x06).u16(0x003B);
-  bytes.u8(0x77).u32(0x00FFFFFFU).u16(30).u16(20);
-  bytes.u8(0x5F).u16(2152).u16(0).u16(3);
-  bytes.u8(0x39).u16(20).u16(0).u16(0);
-  bytes.u8(0x5F).u16(2153).u16(0).u16(1);
-  bytes.u8(0x5C).u16(753);
-  bytes.u8(0x60).u16(2154).u16(100).u16(1);
-  bytes.u8(0x76).u32(0x00FFFFFFU).u16(5).u16(0);
-  bytes.u8(0x60).u16(2158).u16(25).u16(1);
-  bytes.u8(0x04).u16(0x00A6);
-  bytes.u8(0x77).u32(0).u16(30).u16(0);
-  bytes.u8(0x5F).u16(2172).u16(0).u16(2);
-  bytes.u8(0x5F).u16(2148).u16(130).u16(2);
-  bytes.u8(0x4E).u16(310).u16(1);
-  bytes.u8(0x3C).u16(310).u16(1).u16(0);
-  bytes.u8(0x3B).u16(310).u16(6).u16(0);
-  bytes.u8(0x77).u32(0xFFFFFFFFU).u16(45).u16(0);
-  bytes.u8(0x3D).u16(272);
-  bytes.zeros(0x11FU - bytes.data().size());
-  bytes.u8(0x03);
-  return bytes.data();
-}
-
-/// IAM/START selecting initial area 118 with linked area -1.
-std::vector<std::byte> make_start() {
-  return App::Tests::make_canonical_start();
-}
-
-/// IAM/AREA with record 118 at offset 0x800, size 0x9C0.
-std::vector<std::byte> make_area_archive() {
-  const std::vector<std::byte> script{make_new_game_script()};
-  constexpr std::size_t k_record_offset{0x800};
-  constexpr std::uint32_t k_record_size{0x9C0};
-
-  std::vector<std::byte> data(k_record_offset + k_record_size, std::byte{});
-  const std::size_t entry{118U * 8U};
-  write_u32(data, entry, static_cast<std::uint32_t>(k_record_offset));
-  write_u32(data, entry + 4U, k_record_size);
-
-  write_u32(data, k_record_offset + 0x04, 0x3FC);  // Primary event.
-  write_area_bytecode_pool_bounds(data, k_record_offset, 0x3FC, k_record_size);
-  write_name(data, k_record_offset + 0x58, "GRID");
-  write_name(data, k_record_offset + 0x61, "GRID");
-
-  // AREA table-0 placements selected by the compact startup and New Game paths.
-  constexpr std::size_t k_placement_offset{0x0B4};
-  constexpr std::size_t k_definition_offset{0x1D4};
-  constexpr std::size_t k_second_placement_offset{k_placement_offset + 0x14U};
-  constexpr std::size_t k_second_definition_offset{k_definition_offset + 0x114U};
-  write_u32(data, k_record_offset + 0x28, k_placement_offset);
-  write_u16(data, k_record_offset + 0x48, 2);
-  write_u16(data, k_record_offset + k_placement_offset + 0x00U, 0xFFFF);
-  write_u16(data, k_record_offset + k_placement_offset + 0x02U, 310);
-  const std::int32_t position_x{-2588};
-  const std::int32_t position_y{-271};
-  const std::int32_t position_z{-816};
-  std::memcpy(
-      data.data() + k_record_offset + k_placement_offset + 0x04U, &position_x, sizeof(position_x));
-  std::memcpy(
-      data.data() + k_record_offset + k_placement_offset + 0x08U, &position_y, sizeof(position_y));
-  std::memcpy(
-      data.data() + k_record_offset + k_placement_offset + 0x0CU, &position_z, sizeof(position_z));
-  write_u16(data, k_record_offset + k_placement_offset + 0x10U, 4084);
-  write_u16(data, k_record_offset + k_placement_offset + 0x12U, 468);
-  write_u16(data, k_record_offset + k_second_placement_offset + 0x00U, 0xFFFF);
-  write_u16(data, k_record_offset + k_second_placement_offset + 0x02U, 136);
-  write_u32(data, k_record_offset + k_second_placement_offset + 0x04U, 100U);
-  write_u32(data, k_record_offset + k_second_placement_offset + 0x08U, 200U);
-  write_u32(data, k_record_offset + k_second_placement_offset + 0x0CU, 300U);
-  write_u16(data, k_record_offset + k_second_placement_offset + 0x10U, 0);
-  write_u16(data, k_record_offset + k_second_placement_offset + 0x12U, 469);
-
-  // The authored body resolves by the character identity stored at +0x110.
-  write_u32(data, k_record_offset + 0x28U + (4U * 4U), k_definition_offset);
-  write_u16(data, k_record_offset + 0x48U + (4U * 2U), 2);
-  constexpr std::string_view k_character_name{"KAY'L 669"};
-  std::memcpy(data.data() + k_record_offset + k_definition_offset + 0x08U,
-      k_character_name.data(),
-      k_character_name.size());
-  constexpr std::string_view k_model_name{"HO1_FNM"};
-  std::memcpy(data.data() + k_record_offset + k_definition_offset + 0x90U,
-      k_model_name.data(),
-      k_model_name.size());
-  write_u16(data, k_record_offset + k_definition_offset + 0x110U, 310);
-  constexpr std::string_view k_current_character_name{"CURRENT CHARACTER"};
-  std::memcpy(data.data() + k_record_offset + k_second_definition_offset + 0x08U,
-      k_current_character_name.data(),
-      k_current_character_name.size());
-  std::memcpy(data.data() + k_record_offset + k_second_definition_offset + 0x90U,
-      k_model_name.data(),
-      k_model_name.size());
-  write_u16(data, k_record_offset + k_second_definition_offset + 0x110U, 136);
-
-  std::memcpy(data.data() + k_record_offset + 0x3FC, script.data(), script.size());
-  return data;
-}
-
-std::vector<std::byte> make_object_activation_area_archive(const std::uint16_t object_id) {
-  std::vector<std::byte> data{make_area_archive()};
-  Buffer script;
-  script.u8(0x5C).u16(object_id).u8(0x03);
-  constexpr std::size_t k_record_offset{0x800U};
-  constexpr std::size_t k_script_offset{0x3FCU};
-  std::memcpy(
-      data.data() + k_record_offset + k_script_offset, script.data().data(), script.data().size());
-  return data;
-}
-
-std::vector<std::byte> make_object_archive(const std::uint16_t object_id,
-    const std::uint16_t object_type,
-    const std::string_view stem,
-    const std::string_view subtitle) {
-  constexpr std::size_t k_record_stride{0x800U};
-  constexpr std::size_t k_record_size{0x518U};
-  constexpr std::size_t k_type_offset{0x02U};
-  constexpr std::size_t k_stem_offset{0x0EU};
-  constexpr std::size_t k_subtitle_offset{0x118U};
-  const std::size_t record_offset{static_cast<std::size_t>(object_id) * k_record_stride};
-  std::vector<std::byte> data(record_offset + k_record_stride, std::byte{});
-  write_u16(data, record_offset + k_type_offset, object_type);
-  std::memcpy(data.data() + record_offset + k_stem_offset, stem.data(), stem.size());
-  std::memcpy(data.data() + record_offset + k_subtitle_offset, subtitle.data(), subtitle.size());
-  return data;
-}
-
-/// Synthetic CTL bank for zone-contact fixtures: move 7 is the flag-selected
-/// default; the 0x3F zone event explicitly selects move 100. Keeping the two
-/// distinct proves the opcode performs a real move switch.
-std::vector<std::byte> make_stub_ctl_bank_bytes() {
-  Buffer ctl;
-  ctl.u32(0x30374543U).u32(0x101U).u32(0).u32(2).zeros(0x48U);
-  ctl.u32(7).u32(1).u32(1).u32(0).u32(0).chars("Default", 12);
-  ctl.u32(100).u32(1).u32(0).u32(0).u32(0).chars("Selected", 12);
-  ctl.u32(71).u32(0).u32(0x8022U).zeros(0x58U - 12U);
-  ctl.u32(101).u32(0).u32(0x8022U).zeros(0x58U - 12U);
-  return ctl.data();
-}
-
-/// Installs a CTL bank loader answering every authored control set with the
-/// stub bank, so current-character selection builds a real controller.
-void install_stub_ctl_loader(App::ScenarioRuntime& runtime) {
-  runtime.character_runtime().set_ctl_bank_loader(
-      [](const std::string_view name)
-          -> std::expected<std::shared_ptr<const App::Omikron::CtlControlSet>, std::string> {
-        if (name.empty()) {
-          return std::expected<std::shared_ptr<const App::Omikron::CtlControlSet>, std::string>{
-              std::unexpect, "empty control set"};
-        }
-        const std::vector<std::byte> bytes{make_stub_ctl_bank_bytes()};
-        auto parsed{App::Omikron::CtlControlSet::load(bytes)};
-        if (!parsed) {
-          return std::expected<std::shared_ptr<const App::Omikron::CtlControlSet>, std::string>{
-              std::unexpect, parsed.error()};
-        }
-        return std::make_shared<const App::Omikron::CtlControlSet>(std::move(parsed).value());
-      });
-}
-
-void install_resident_model_loader(
-    App::Character::Runtime& runtime, const App::Character::Runtime::ModelLoader& model_loader) {
-  runtime.set_model_loader(model_loader);
-  for (const App::Character::RuntimeCharacter& resident : runtime.characters()) {
-    App::Character::RuntimeCharacter* const character{runtime.find_body(resident.body_identity)};
-    REQUIRE(character != nullptr);
-    auto resource{model_loader(character->model_resource_name)};
-    REQUIRE(resource.has_value());
-    character->model_resource = std::move(resource).value();
-    character->runtime_objects = character->model_resource->model.runtime_objects;
-    character->object_poses.assign(
-        character->runtime_objects.size(), App::Character::BodyAnimationObjectPose{});
-    character->posed_groups = character->model_resource->groups;
-    character->body_animation = App::Character::BodyAnimationPlayback{};
-    character->dialog_performance.reset();
-    character->pose_owner = App::Character::PoseOwner::k_model_defaults;
-    App::Character::PhysicalMotionService::synchronize(*character);
-    character->pose_revision += 1U;
-  }
-}
-
-void install_collision_body_model_loader(
-    App::ScenarioRuntime& runtime, const float radius = 10.0F) {
-  install_resident_model_loader(runtime.character_runtime(),
-      [radius](const std::string_view name)
-          -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
-        auto resource{std::make_shared<App::Character::ModelResource>()};
-        resource->name = name;
-        resource->groups.push_back(App::Omikron::MaterialGroup{});
-        resource->model.header.collision_sphere_count = 1U;
-        resource->model.header.collision_sphere_slots.at(0) =
-            App::Omikron::CollisionSphere{.radius = radius};
-        return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
-      });
-}
-
-App::Omikron::Model3DOData make_collision_decor(const float wall_x, const float floor_y) {
-  App::Omikron::Model3DOData decor;
-  decor.meshes.push_back(App::Omikron::MeshDescriptor{.vertex_count = 3});
-  decor.polygons.push_back(App::Omikron::MeshPolygons{
-      .triangles = {App::Omikron::Triangle{
-          .vertices = {{{.index = 0}, {.index = 1}, {.index = 2}}}, .face_normal = {.y = -1.0F}}}});
-  decor.vertices = {{.position = {.x = -1000.0F, .y = floor_y, .z = -1000.0F}},
-      {.position = {.x = 1000.0F, .y = floor_y, .z = -1000.0F}},
-      {.position = {.x = 0.0F, .y = floor_y, .z = 1000.0F}}};
-  decor.runtime_objects.push_back(App::Omikron::Model3DOData::RuntimeObjectState{});
-
-  decor.meshes.push_back(App::Omikron::MeshDescriptor{.vertex_count = 4, .vertex_base = 3});
-  decor.polygons.push_back(
-      App::Omikron::MeshPolygons{.rectangles = {App::Omikron::Rectangle{
-                                     .vertices = {0, 1, 2, 3}, .face_normal = {.x = -1.0F}}}});
-  decor.vertices.insert(decor.vertices.end(),
-      {{.position = {.x = wall_x, .y = 100.0F, .z = -100.0F}},
-          {.position = {.x = wall_x, .y = 100.0F, .z = 100.0F}},
-          {.position = {.x = wall_x, .y = 200.0F, .z = 100.0F}},
-          {.position = {.x = wall_x, .y = 200.0F, .z = -100.0F}}});
-  decor.runtime_objects.push_back(App::Omikron::Model3DOData::RuntimeObjectState{});
-  return decor;
-}
-
-void add_collision_ceiling(App::Omikron::Model3DOData& decor, const float ceiling_y) {
-  const std::uint32_t vertex_base{static_cast<std::uint32_t>(decor.vertices.size())};
-  decor.meshes.push_back(
-      App::Omikron::MeshDescriptor{.vertex_count = 4, .vertex_base = vertex_base});
-  decor.polygons.push_back(
-      App::Omikron::MeshPolygons{.rectangles = {App::Omikron::Rectangle{
-                                     .vertices = {0, 1, 2, 3}, .face_normal = {.y = 1.0F}}}});
-  decor.vertices.insert(decor.vertices.end(),
-      {{.position = {.x = -1000.0F, .y = ceiling_y, .z = -1000.0F}},
-          {.position = {.x = -1000.0F, .y = ceiling_y, .z = 1000.0F}},
-          {.position = {.x = 1000.0F, .y = ceiling_y, .z = 1000.0F}},
-          {.position = {.x = 1000.0F, .y = ceiling_y, .z = -1000.0F}}});
-  decor.runtime_objects.push_back(App::Omikron::Model3DOData::RuntimeObjectState{});
-}
-
-App::Omikron::Model3DOData make_class2_attachment_decor() {
-  App::Omikron::Model3DOData decor;
-  decor.meshes.push_back(
-      App::Omikron::MeshDescriptor{.flags = 0x00080000U, .vertex_count = 4, .vertex_base = 0});
-  decor.polygons.push_back(
-      App::Omikron::MeshPolygons{.rectangles = {App::Omikron::Rectangle{
-                                     .vertices = {0, 1, 2, 3}, .face_normal = {.y = -1.0F}}}});
-  decor.vertices = {{.position = {.x = 80.0F, .y = 60.0F, .z = 32.0F}},
-      {.position = {.x = 104.0F, .y = 60.0F, .z = 32.0F}},
-      {.position = {.x = 104.0F, .y = 60.0F, .z = 56.0F}},
-      {.position = {.x = 80.0F, .y = 60.0F, .z = 56.0F}}};
-  decor.runtime_objects.push_back(App::Omikron::Model3DOData::RuntimeObjectState{});
-
-  const std::uint32_t vertex_base{static_cast<std::uint32_t>(decor.vertices.size())};
-  decor.meshes.push_back(
-      App::Omikron::MeshDescriptor{.vertex_count = 3, .vertex_base = vertex_base});
-  decor.polygons.push_back(App::Omikron::MeshPolygons{
-      .triangles = {App::Omikron::Triangle{
-          .vertices = {{{.index = 0}, {.index = 1}, {.index = 2}}}, .face_normal = {.y = -1.0F}}}});
-  decor.vertices.insert(decor.vertices.end(),
-      {{.position = {.x = -1000.0F, .y = 100.0F, .z = -1000.0F}},
-          {.position = {.x = 1000.0F, .y = 100.0F, .z = -1000.0F}},
-          {.position = {.x = 0.0F, .y = 100.0F, .z = 1000.0F}}});
-  decor.runtime_objects.push_back(App::Omikron::Model3DOData::RuntimeObjectState{});
-  return decor;
-}
-
-/// Synthetic AREA contact fixture. The top-level context selects a current
-/// body and enables a zone; the record-relative zone event selects a move,
-/// suppresses player control, waits on a camera, restores player control,
-/// self-disables, and ends.
-std::vector<std::byte> make_zone_contact_area_archive(const bool starts_dialog = false,
-    const bool self_disables = true,
-    const bool enable_controller = true,
-    const std::int16_t zone_id = 3795,
-    const bool release_control_before_wait = false,
-    const bool place_before_activation = false,
-    const std::uint32_t initial_xz = 50U,
-    const std::int16_t orientation_center_units = 4090,
-    const std::int16_t orientation_span_units = 0,
-    const bool launch_fire_and_forget = false,
-    const bool launch_from_zone_event = false,
-    const std::size_t zone_count = 1U) {
-  Buffer top_level;
-  top_level.u8(0x38).u16(136);
-  if (launch_fire_and_forget) {
-    top_level.u8(0x5A).u16(221).u16(0);
-  }
-  if (enable_controller) {
-    top_level.u8(0x69);
-  }
-  if (place_before_activation) {
-    top_level.u8(0x49).u16(44);
-    top_level.u8(0x3F).u16(100);
-    top_level.u8(0x69);
-  }
-  for (std::size_t index{0}; index < zone_count; ++index) {
-    top_level.u8(0x40).u16(static_cast<std::uint16_t>(zone_id + index));
-  }
-  top_level.u8(0x03);
-
-  Buffer zone_event;
-  if (launch_from_zone_event) {
-    zone_event.u8(0x5A).u16(221).u16(0);
-  }
-  if (starts_dialog) {
-    zone_event.u8(0x3D).u16(272);
-  } else {
-    zone_event.u8(0x3F).u16(100);
-    if (self_disables) {
-      zone_event.u8(0x68);
-      if (release_control_before_wait) {
-        zone_event.u8(0x69);
-      }
-    }
-    zone_event.u8(0x60).u16(42).u16(1).u16(3);
-    if (self_disables) {
-      if (!release_control_before_wait) {
-        zone_event.u8(0x69);
-      }
-      zone_event.u8(0x41).u16(static_cast<std::uint16_t>(zone_id));
-    }
-  }
-  zone_event.u8(0x03);
-  Buffer departure_event;
-  departure_event.u8(0x03);
-
-  constexpr std::size_t k_record_offset{0x800};
-  constexpr std::size_t k_table0_offset{0x0B4};
-  constexpr std::size_t k_table2_offset{k_table0_offset + 0x14U};
-  const std::size_t k_table4_offset{k_table2_offset + (zone_count * 0x44U)};
-  const std::size_t k_table5_offset{k_table4_offset + 0x114U};
-  const std::size_t k_script_offset{k_table5_offset + (place_before_activation ? 0x10U : 0U)};
-  const std::size_t zone_event_offset{k_script_offset + top_level.data().size()};
-  const std::size_t departure_event_offset{zone_event_offset + zone_event.data().size()};
-  const std::size_t record_size{departure_event_offset + departure_event.data().size()};
-  std::vector<std::byte> data(k_record_offset + record_size, std::byte{});
-  write_u32(data, 118U * 8U, static_cast<std::uint32_t>(k_record_offset));
-  write_u32(data, (118U * 8U) + 4U, static_cast<std::uint32_t>(record_size));
-  write_u32(data, k_record_offset + 0x04U, k_script_offset);
-  write_area_bytecode_pool_bounds(data, k_record_offset, k_script_offset, record_size);
-  write_name(data, k_record_offset + 0x61U, "GRID");
-
-  write_u32(data, k_record_offset + 0x28U, k_table0_offset);
-  write_u16(data, k_record_offset + 0x48U, 1);
-  write_u16(data, k_record_offset + k_table0_offset + 0x00U, 0xFFFF);
-  write_u16(data, k_record_offset + k_table0_offset + 0x02U, 136);
-  write_u32(data, k_record_offset + k_table0_offset + 0x04U, initial_xz);
-  write_u32(data, k_record_offset + k_table0_offset + 0x08U, 999);
-  write_u32(data, k_record_offset + k_table0_offset + 0x0CU, initial_xz);
-  write_u16(data, k_record_offset + k_table0_offset + 0x10U, 4090);
-  write_u16(data, k_record_offset + k_table0_offset + 0x12U, 136);
-
-  write_u32(data, k_record_offset + 0x28U + (2U * 4U), k_table2_offset);
-  write_u16(data, k_record_offset + 0x48U + (2U * 2U), static_cast<std::uint16_t>(zone_count));
-  // Four X/Y/Z vertices; the Y slab contains the zero-radius synthetic actor.
-  constexpr std::array<std::array<std::uint32_t, 3>, 4> k_vertices = {
-      {{0U, 900U, 0U}, {100U, 1100U, 0U}, {100U, 1100U, 100U}, {0U, 900U, 100U}}};
-  for (std::size_t zone_index{0}; zone_index < zone_count; ++zone_index) {
-    const std::size_t zone_offset{k_table2_offset + (zone_index * 0x44U)};
-    write_u32(data, k_record_offset + zone_offset, static_cast<std::uint32_t>(zone_event_offset));
-    write_u32(data,
-        k_record_offset + zone_offset + 0x08U,
-        static_cast<std::uint32_t>(departure_event_offset));
-    for (std::size_t index{0}; index < k_vertices.size(); ++index) {
-      for (std::size_t coordinate{0}; coordinate < k_vertices.at(index).size(); ++coordinate) {
-        write_u32(data,
-            k_record_offset + zone_offset + 0x0CU + ((index * 3U + coordinate) * 4U),
-            k_vertices.at(index).at(coordinate));
-      }
-    }
-    write_u16(data,
-        k_record_offset + zone_offset + 0x3CU,
-        static_cast<std::uint16_t>(orientation_center_units));
-    write_u16(data,
-        k_record_offset + zone_offset + 0x3EU,
-        static_cast<std::uint16_t>(orientation_span_units));
-    write_u16(data,
-        k_record_offset + zone_offset + 0x40U,
-        static_cast<std::uint16_t>(zone_id + zone_index));
-    write_u16(data, k_record_offset + zone_offset + 0x42U, 0xFFFF);
-  }
-
-  write_u32(data, k_record_offset + 0x28U + (4U * 4U), k_table4_offset);
-  write_u16(data, k_record_offset + 0x48U + (4U * 2U), 1);
-  constexpr std::string_view k_character_name{"CURRENT CHARACTER"};
-  constexpr std::string_view k_model_name{"CURRENT_BODY"};
-  constexpr std::string_view k_control_set{"TESTCTL"};
-  std::memcpy(data.data() + k_record_offset + k_table4_offset + 0x08U,
-      k_character_name.data(),
-      k_character_name.size());
-  std::memcpy(data.data() + k_record_offset + k_table4_offset + 0x48U,
-      k_control_set.data(),
-      k_control_set.size());
-  std::memcpy(data.data() + k_record_offset + k_table4_offset + 0x90U,
-      k_model_name.data(),
-      k_model_name.size());
-  write_u16(data, k_record_offset + k_table4_offset + 0x110U, 136);
-  write_u32(data, k_record_offset + 0x28U + (5U * 4U), static_cast<std::uint32_t>(k_table5_offset));
-  write_u16(data, k_record_offset + 0x48U + (5U * 2U), place_before_activation ? 1U : 0U);
-  if (place_before_activation) {
-    write_u32(data, k_record_offset + k_table5_offset + 0x00U, 500U);
-    write_u32(data, k_record_offset + k_table5_offset + 0x04U, 999U);
-    write_u32(data, k_record_offset + k_table5_offset + 0x08U, 500U);
-    write_u16(data, k_record_offset + k_table5_offset + 0x0CU, 0U);
-    write_u16(data, k_record_offset + k_table5_offset + 0x0EU, 44U);
-  }
-  std::memcpy(data.data() + k_record_offset + k_script_offset,
-      top_level.data().data(),
-      top_level.data().size());
-  std::memcpy(data.data() + k_record_offset + zone_event_offset,
-      zone_event.data().data(),
-      zone_event.data().size());
-  std::memcpy(data.data() + k_record_offset + departure_event_offset,
-      departure_event.data().data(),
-      departure_event.data().size());
-  return data;
-}
-
-std::vector<std::byte> make_handoff_area_archive(const std::int16_t release_area_id = 118,
-    const bool target_requests_area_142 = false,
-    const bool target_selects_character = false) {
-  Buffer handoff;
-  handoff.u8(0x38).u16(136);
-  handoff.u8(0x4F).u16(0xFFFF);
-  handoff.u8(0x41).u16(6);
-  handoff.u8(0x40).u16(5);
-  handoff.u8(0x2F).u16(222).u16(0xFFFF).u16(0xFFFF);
-  if (!target_selects_character) {
-    handoff.u8(0x47).u16(222).u16(55);
-    handoff.u8(0x49).u16(654);
-    handoff.u8(0x30).u16(static_cast<std::uint16_t>(release_area_id));
-  }
-  handoff.u8(0x03);
-
-  constexpr std::size_t k_source_offset{0x800};
-  constexpr std::size_t k_target_offset{0xC00};
-  constexpr std::size_t k_header_size{0xB4};
-  constexpr std::size_t k_source_placement_offset{k_header_size};
-  constexpr std::size_t k_source_definition_offset{k_source_placement_offset + 0x14U};
-  constexpr std::size_t k_source_zone_offset{k_source_definition_offset + 0x114U};
-  constexpr std::size_t k_source_script_offset{k_source_zone_offset + (2U * 0x44U)};
-  const std::size_t source_camera_offset{k_source_script_offset + handoff.data().size()};
-  const std::size_t source_record_size{source_camera_offset + 0x2CU};
-  const std::size_t target_placement_offset{k_header_size};
-  const std::size_t target_definition_offset{
-      target_placement_offset + (target_selects_character ? 0x14U : 0U)};
-  const std::size_t k_target_zone_offset{
-      target_definition_offset + (target_selects_character ? 0x114U : 0U)};
-  const std::size_t k_target_address_offset{k_target_zone_offset + (2U * 0x44U)};
-  const std::size_t k_target_script_offset{k_target_address_offset + 0x10U};
-  Buffer target_script;
-  if (target_selects_character) {
-    target_script.u8(0x38).u16(310).u8(0x03);
-  } else if (target_requests_area_142) {
-    target_script.u8(0x2F).u16(142).u16(0xFFFF).u16(0xFFFF).u8(0x03);
-  }
-  const std::size_t target_record_size{k_target_script_offset + target_script.data().size()};
-  constexpr std::size_t k_third_offset{0x1000U};
-  constexpr std::size_t k_third_record_size{k_header_size};
-  const std::size_t archive_size{target_requests_area_142 ? k_third_offset + k_third_record_size
-                                                          : k_target_offset + target_record_size};
-  std::vector<std::byte> data(archive_size, std::byte{});
-  write_u32(data, 118U * 8U, static_cast<std::uint32_t>(k_source_offset));
-  write_u32(data, (118U * 8U) + 4U, static_cast<std::uint32_t>(source_record_size));
-  write_u32(data, k_source_offset + 0x04U, k_source_script_offset);
-  write_area_bytecode_pool_bounds(
-      data, k_source_offset, k_source_script_offset, source_camera_offset);
-  write_name(data, k_source_offset + 0x61U, "GRID");
-  write_u32(data, k_source_offset + 0x28U, k_source_placement_offset);
-  write_u16(data, k_source_offset + 0x48U, 1);
-  write_u16(data, k_source_offset + k_source_placement_offset + 0x00U, 0xFFFF);
-  write_u16(data, k_source_offset + k_source_placement_offset + 0x02U, 136);
-  write_u32(data, k_source_offset + k_source_placement_offset + 0x04U, 100U);
-  write_u32(data, k_source_offset + k_source_placement_offset + 0x08U, 200U);
-  write_u32(data, k_source_offset + k_source_placement_offset + 0x0CU, 300U);
-  write_u16(data, k_source_offset + k_source_placement_offset + 0x10U, 0);
-  write_u32(data, k_source_offset + 0x28U + (4U * 4U), k_source_definition_offset);
-  write_u16(data, k_source_offset + 0x48U + (4U * 2U), 1);
-  write_u32(data, k_source_offset + 0x28U + (2U * 4U), k_source_zone_offset);
-  write_u16(data, k_source_offset + 0x48U + (2U * 2U), 2);
-  write_u16(data, k_source_offset + 0x48U + (6U * 2U), 1);
-  constexpr std::string_view k_source_name{"CURRENT CHARACTER"};
-  constexpr std::string_view k_source_model{"CURRENT_BODY"};
-  std::memcpy(data.data() + k_source_offset + k_source_definition_offset + 0x08U,
-      k_source_name.data(),
-      k_source_name.size());
-  std::memcpy(data.data() + k_source_offset + k_source_definition_offset + 0x90U,
-      k_source_model.data(),
-      k_source_model.size());
-  write_u16(data, k_source_offset + k_source_definition_offset + 0x110U, 136);
-  write_u16(data, k_source_offset + k_source_zone_offset + 0x40U, 5);
-  write_u16(data, k_source_offset + k_source_zone_offset + 0x44U + 0x40U, 6);
-  write_camera_record(data, k_source_offset + source_camera_offset, 0, 0);
-  std::memcpy(data.data() + k_source_offset + k_source_script_offset,
-      handoff.data().data(),
-      handoff.data().size());
-
-  write_u32(data, 222U * 8U, static_cast<std::uint32_t>(k_target_offset));
-  write_u32(data, (222U * 8U) + 4U, static_cast<std::uint32_t>(target_record_size));
-  if (target_requests_area_142 || target_selects_character) {
-    write_u32(data, k_target_offset + 0x04U, k_target_script_offset);
-  }
-  write_area_bytecode_pool_bounds(data,
-      k_target_offset,
-      target_requests_area_142 || target_selects_character ? k_target_script_offset
-                                                           : target_record_size,
-      target_record_size);
-  write_name(data, k_target_offset + 0x61U, "DEST");
-  if (target_selects_character) {
-    write_u32(data, k_target_offset + 0x28U, static_cast<std::uint32_t>(target_placement_offset));
-    write_u16(data, k_target_offset + 0x48U, 1);
-    write_u16(data, k_target_offset + target_placement_offset + 0x00U, 0xFFFF);
-    write_u16(data, k_target_offset + target_placement_offset + 0x02U, 310);
-    write_u32(data, k_target_offset + target_placement_offset + 0x04U, 43922U);
-    write_u32(data, k_target_offset + target_placement_offset + 0x08U, 2592U);
-    write_u32(data, k_target_offset + target_placement_offset + 0x0CU, 19656U);
-    write_u32(data,
-        k_target_offset + 0x28U + (4U * 4U),
-        static_cast<std::uint32_t>(target_definition_offset));
-    write_u16(data, k_target_offset + 0x48U + (4U * 2U), 1);
-    write_name(data, k_target_offset + target_definition_offset + 0x08U, "TARGET CHARACTER");
-    write_name(data, k_target_offset + target_definition_offset + 0x90U, "TARGET");
-    write_u16(data, k_target_offset + target_definition_offset + 0x110U, 310);
-  }
-  write_u32(data, k_target_offset + 0x28U + (2U * 4U), k_target_zone_offset);
-  write_u16(data, k_target_offset + 0x48U + (2U * 2U), 2);
-  write_u32(data, k_target_offset + 0x28U + (5U * 4U), k_target_address_offset);
-  write_u16(data, k_target_offset + 0x48U + (5U * 2U), 1);
-  write_u16(data, k_target_offset + k_target_zone_offset + 0x40U, 5);
-  write_u16(data, k_target_offset + k_target_zone_offset + 0x44U + 0x40U, 0x8005U);
-  write_u32(data, k_target_offset + k_target_address_offset + 0x00U, 43922U);
-  write_u32(data, k_target_offset + k_target_address_offset + 0x04U, 2592U);
-  write_u32(data, k_target_offset + k_target_address_offset + 0x08U, 19656U);
-  write_u16(data, k_target_offset + k_target_address_offset + 0x0CU, 0);
-  write_u16(data, k_target_offset + k_target_address_offset + 0x0EU, 654);
-  if (target_requests_area_142 || target_selects_character) {
-    std::memcpy(data.data() + k_target_offset + k_target_script_offset,
-        target_script.data().data(),
-        target_script.data().size());
-  }
-  if (target_requests_area_142) {
-    write_u32(data, 142U * 8U, k_third_offset);
-    write_u32(data, (142U * 8U) + 4U, k_third_record_size);
-    write_area_bytecode_pool_bounds(data, k_third_offset, k_third_record_size, k_third_record_size);
-    write_name(data, k_third_offset + 0x61U, "THIRD");
-  }
-  return data;
-}
-
-std::vector<std::byte> make_handoff_scene_archive() {
-  Buffer script;
-  script.u8(0x03);
-
-  constexpr std::size_t k_record_offset{0x800};
-  constexpr std::size_t k_script_offset{0x44};
-  const std::size_t table6_offset{k_script_offset + script.data().size()};
-  std::vector<std::byte> data(k_record_offset + table6_offset, std::byte{});
-  write_u32(data, 55U * 8U, static_cast<std::uint32_t>(k_record_offset));
-  write_u32(data, (55U * 8U) + 4U, static_cast<std::uint32_t>(table6_offset));
-  write_u32(data, k_record_offset + 0x04U, static_cast<std::uint32_t>(k_script_offset));
-  write_u32(data, k_record_offset + 0x08U + (6U * 4U), static_cast<std::uint32_t>(table6_offset));
-  write_u32(data, k_record_offset + 0x08U + (7U * 4U), static_cast<std::uint32_t>(k_script_offset));
-  std::memcpy(
-      data.data() + k_record_offset + k_script_offset, script.data().data(), script.data().size());
-  return data;
-}
-
-std::vector<std::byte> make_camera_namespace_area_archive(const CameraNamespaceFixture& fixture) {
-  Buffer script;
-  script.u8(0x47).u16(118).u16(0);
-  script.u8(0x2F).u16(222).u16(0xFFFF).u16(0xFFFF);
-  script.u8(0x47).u16(222).u16(1);
-  if (!fixture.request_from_slot_1_scene) {
-    append_camera_request(script, fixture.tracked);
-  }
-  script.u8(0x03);
-
-  constexpr std::size_t k_source_offset{0x800U};
-  constexpr std::size_t k_target_offset{0xC00U};
-  constexpr std::size_t k_header_size{0xB4U};
-  constexpr std::size_t k_camera_size{0x2CU};
-  constexpr std::size_t k_source_script_offset{k_header_size};
-  const std::size_t source_camera_offset{k_source_script_offset + script.data().size()};
-  const std::size_t source_size{source_camera_offset + (fixture.slot_0_area ? k_camera_size : 0U)};
-  constexpr std::size_t k_target_camera_offset{k_header_size};
-  const std::size_t target_size{k_header_size + (fixture.slot_1_area ? k_camera_size : 0U)};
-  std::vector<std::byte> data(k_target_offset + target_size, std::byte{});
-
-  write_u32(data, 118U * 8U, k_source_offset);
-  write_u32(data, (118U * 8U) + 4U, static_cast<std::uint32_t>(source_size));
-  write_u32(data, k_source_offset + 0x04U, static_cast<std::uint32_t>(k_source_script_offset));
-  write_area_bytecode_pool_bounds(
-      data, k_source_offset, k_source_script_offset, source_camera_offset);
-  write_name(data, k_source_offset + 0x61U, "GRID");
-  write_u16(data, k_source_offset + 0x48U + (6U * 2U), fixture.slot_0_area ? 1U : 0U);
-  if (fixture.slot_0_area) {
-    write_camera_record(data, k_source_offset + source_camera_offset, 100);
-  }
-  std::memcpy(data.data() + k_source_offset + k_source_script_offset,
-      script.data().data(),
-      script.data().size());
-
-  write_u32(data, 222U * 8U, k_target_offset);
-  write_u32(data, (222U * 8U) + 4U, static_cast<std::uint32_t>(target_size));
-  write_area_bytecode_pool_bounds(
-      data, k_target_offset, k_target_camera_offset, k_target_camera_offset);
-  write_name(data, k_target_offset + 0x61U, "DEST");
-  write_u16(data, k_target_offset + 0x48U + (6U * 2U), fixture.slot_1_area ? 1U : 0U);
-  if (fixture.slot_1_area) {
-    write_camera_record(data, k_target_offset + k_target_camera_offset, 300);
-  }
-  return data;
-}
-
-std::vector<std::byte> make_camera_namespace_scene_record(const bool has_camera,
-    const std::int32_t marker,
-    const bool request_camera,
-    const bool tracked) {
-  Buffer script;
-  if (request_camera) {
-    append_camera_request(script, tracked);
-  }
-  script.u8(0x03);
-
-  constexpr std::size_t k_header_size{0x44U};
-  constexpr std::size_t k_camera_size{0x2CU};
-  const std::size_t camera_offset{k_header_size + script.data().size()};
-  std::vector<std::byte> data(camera_offset + (has_camera ? k_camera_size : 0U), std::byte{});
-  write_u32(data, 0x04U, k_header_size);
-  write_u32(data, 0x08U + (6U * 4U), static_cast<std::uint32_t>(camera_offset));
-  write_u16(data, 0x28U + (6U * 2U), has_camera ? 1U : 0U);
-  std::memcpy(data.data() + k_header_size, script.data().data(), script.data().size());
-  if (has_camera) {
-    write_camera_record(data, camera_offset, marker);
-  }
-  return data;
-}
-
-std::vector<std::byte> make_camera_namespace_scene_archive(const CameraNamespaceFixture& fixture) {
-  const std::vector<std::byte> source{
-      make_camera_namespace_scene_record(fixture.slot_0_scene, 200, false, false)};
-  const std::vector<std::byte> target{make_camera_namespace_scene_record(
-      fixture.slot_1_scene, 400, fixture.request_from_slot_1_scene, fixture.tracked)};
-  constexpr std::size_t k_source_offset{0x800U};
-  constexpr std::size_t k_target_offset{0xA00U};
-  std::vector<std::byte> data(k_target_offset + target.size(), std::byte{});
-  write_u32(data, 0U, k_source_offset);
-  write_u32(data, 4U, static_cast<std::uint32_t>(source.size()));
-  write_u32(data, 8U, k_target_offset);
-  write_u32(data, 12U, static_cast<std::uint32_t>(target.size()));
-  std::memcpy(data.data() + k_source_offset, source.data(), source.size());
-  std::memcpy(data.data() + k_target_offset, target.data(), target.size());
-  return data;
-}
-
-/// Minimal valid SCX container (empty descriptor, end tag only).
-std::vector<std::byte> make_minimal_scx() {
-  Buffer bytes;
-  bytes.u32(K_SCX_MAGIC).u32(5).u32(8).u32(4).u32(K_END_TAG);
-  return bytes.data();
-}
-
-/// Minimal SCX with one immediately completable structured wait command.
-std::vector<std::byte> make_kayl_arrives_scx(const std::uint16_t script_id = 1) {
-  Buffer descriptor;
-  descriptor.u32(K_SCRIPTS_TAG).u32(1);
-  descriptor.u32(0).chars("1KaylArrives", 22).u16(script_id).u16(0).u16(0);
-  descriptor.u32(1).u32(0).u32(0);           // One root, current index, root placeholder.
-  descriptor.u32(0).u32(0);                  // No linked commands, linked placeholder.
-  descriptor.u32(0).u32(0);                  // field34 and runtime field38.
-  descriptor.zeros(3U * 4U).zeros(3U * 4U);  // Binding-table header fields.
-  descriptor.u32(0).u32(0).zeros(8);         // Related/runtime placeholders and tail.
-  descriptor.u32(2).f32(0.0F).f32(0.0F);     // Wait duration and elapsed time.
-  descriptor.u8(0);                          // No related script.
-  descriptor.u32(0x06000017U).u32(2).u32(0).u32(0xFFFFFFFFU).u32(1).u32(0);
-  descriptor.u32(0).u32(0);  // Empty binding tables A and B.
-  descriptor.u32(K_END_TAG);
-
-  Buffer bytes;
-  bytes.u32(K_SCX_MAGIC).u32(5).u32(8).u32(static_cast<std::uint32_t>(descriptor.data().size()));
-  for (const std::byte value : descriptor.data()) {
-    bytes.u8(std::to_integer<std::uint8_t>(value));
-  }
-  return bytes.data();
-}
-
-/// One fixed 0x64-byte SCX source-script record.
-Buffer& append_scx_script_record(Buffer& descriptor,
-    const std::string_view name,
-    const std::uint16_t script_id,
-    const std::uint32_t root_count) {
-  descriptor.u32(0)
-      .chars(name, 22)
-      .u16(script_id)
-      .u16(0)
-      .u16(0)
-      .u32(root_count)
-      .u32(0)
-      .u32(0)
-      .u32(0)
-      .u32(0)
-      .i32(1)
-      .u32(0)
-      .zeros(3U * 4U)
-      .zeros(3U * 4U)
-      .u32(0)
-      .u32(0)
-      .zeros(8);
-  return descriptor;
-}
-
-/// Synthetic, fully executable shape of Grid's 1KaylArrives. It deliberately
-/// keeps the authored names/command shape but uses tiny in-memory resources so
-/// the tracked-child regression has no retail-data dependency.
-std::vector<std::byte> make_complete_kayl_arrives_scx() {
-  constexpr std::uint32_t k_section0_tag{0xDEAD0000U};
-  constexpr std::uint32_t k_animations_tag{0xDEAD0001U};
-  constexpr std::uint32_t k_select_relative_body_animation{0x0200002AU};
-
-  Buffer descriptor;
-  descriptor.u32(k_section0_tag).u32(1);
-  descriptor.chars("Grid_pb.3dp", 24).u32(0).u32(1);
-  descriptor.u32(k_animations_tag).u32(1);
-  descriptor.chars("INTRO1.3DA", 24).u32(0).u32(0).u32(77);
-  descriptor.u32(K_SCRIPTS_TAG).u32(2);
-  append_scx_script_record(descriptor, "1KaylArrives", 1, 1);
-  append_scx_script_record(descriptor, "KaylContinues", 6, 0);
-  descriptor.u32(12);
-  descriptor
-      .u32(0)     // binding table A index
-      .u32(0)     // animation index
-      .f32(0.0F)  // mutable previous frame
-      .f32(1.0F)  // mutable current frame
-      .f32(0.0F)
-      .f32(0.0F)
-      .f32(0.0F)
-      .u32(0)  // path index
-      .u32(0)  // subpath index
-      .f32(0.0F)
-      .f32(0.0F)
-      .f32(0.0F);
-  descriptor.u8(0);  // 1KaylArrives has no related script.
-  descriptor.u32(k_select_relative_body_animation).u32(12).u32(0).i32(-1).u32(1).u32(0);
-  descriptor.u32(1).u64(0).chars("UBassin", 21);  // binding table A
-  descriptor.u32(0);                              // binding table B
-  descriptor.u8(0);                               // script 6 has no related script.
-  descriptor.u32(0).u32(0);                       // empty binding tables
-  descriptor.u32(K_END_TAG);
-
-  Buffer path;
-  path.u32(1).chars("UBas.p1", 20).u32(2).u32(3);
-  for (std::uint32_t key{0}; key < 3U; ++key) {
-    path.u32(key).f32(10.0F).f32(20.0F).f32(30.0F).f32(1.0F).f32(0.0F).f32(0.0F).f32(0.0F);
-  }
-
-  constexpr std::uint32_t k_animation_descriptor_end{8U + 0x28U};
-  constexpr std::uint32_t k_rotation_offset{k_animation_descriptor_end + (3U * 12U)};
-  Buffer animation;
-  animation.u32(2).u32(1);
-  animation.u32(1)
-      .chars("UBassin", 20)
-      .u32(3)
-      .u32(k_animation_descriptor_end)
-      .u32(3)
-      .u32(k_rotation_offset);
-  for (std::uint32_t frame{0}; frame < 3U; ++frame) {
-    animation.f32(0.0F).f32(0.0F).f32(0.0F);
-  }
-  for (std::uint32_t frame{0}; frame < 3U; ++frame) {
-    animation.f32(1.0F).f32(0.0F).f32(0.0F).f32(0.0F);
-  }
-
-  Buffer header;
-  header.u32(K_SCX_MAGIC).u32(5).u32(8).u32(static_cast<std::uint32_t>(descriptor.data().size()));
-  std::vector<std::byte> result{header.data()};
-  result.insert(result.end(), descriptor.data().begin(), descriptor.data().end());
-  const auto append_resource = [&result](const std::vector<std::byte>& payload) {
-    const std::size_t resource_offset{result.size()};
-    result.resize(resource_offset + 8U, std::byte{});
-    write_u32(result, resource_offset, static_cast<std::uint32_t>(resource_offset));
-    write_u32(result, resource_offset + 4U, static_cast<std::uint32_t>(payload.size()));
-    result.insert(result.end(), payload.begin(), payload.end());
-  };
-  append_resource(path.data());
-  append_resource(animation.data());
-  return result;
-}
-
-std::vector<std::byte> make_dialog_archive(const std::uint16_t dialog_id) {
-  Buffer record;
-  record.u16(310).u16(1).u16(0).u16(0);
-  record.zeros(0x10U);  // Four condition offsets.
-  record.zeros(0x10U);  // Four action offsets.
-  record.u32(0x48U);
-  record.u16(0xFFFFU).u16(0xFFFFU).u16(0xFFFFU).u16(0xFFFFU);
-  record.u16(0).chars("FACE", 10);
-  record.u16(0xFFFFU).u16(0xFFFFU).u16(0xFFFFU).u16(0xFFFFU);
-  record.chars("Portal dialog", 15).zeros(5);
-
-  const std::size_t entry{(static_cast<std::size_t>(dialog_id >> 8U) * 0x800U) +
-                          (static_cast<std::size_t>(dialog_id & 0xFFU) * 8U)};
-  constexpr std::size_t k_record_offset{0x1000U};
-  std::vector<std::byte> archive(k_record_offset + record.data().size(), std::byte{});
-  write_u32(archive, entry, k_record_offset);
-  write_u32(archive, entry + 4U, static_cast<std::uint32_t>(record.data().size()));
-  std::memcpy(archive.data() + k_record_offset, record.data().data(), record.data().size());
-  return archive;
-}
-
-/// Minimal valid header-only .3DO (OD3X + version 4, all sections empty),
-/// accepted by Model3DO::load without game data.
-std::vector<std::byte> make_minimal_3do() {
-  Buffer bytes;
-  bytes.chars("OD3X", 4)
-      .u32(4)
-      .u32(0x2C)
-      .u32(416)
-      .u32(416)
-      .u32(416)
-      .u32(416)
-      .u32(416)
-      .u32(0)
-      .u32(0)
-      .u32(416)
-      .zeros(72)
-      .u32(0)
-      .zeros(104)
-      .u32(0)
-      .zeros(24)
-      .u32(0)
-      .zeros(12)
-      .u32(0)
-      .u32(0)
-      .u32(0)
-      .u32(0)
-      .u32(0)
-      .u64(0)
-      .u32(0)
-      .u32(0)
-      .u32(0)
-      .u32(0)
-      .u32(0)
-      .u32(0)
-      .u32(0)
-      .u32(0)
-      .u32(0)
-      .zeros(84);
-  return bytes.data();
-}
-
-std::vector<std::byte> make_minimal_character_3do() {
-  constexpr std::uint32_t k_root_offset{0x2CU};
-  constexpr std::uint32_t k_material_offset{0x174U};
-  constexpr std::uint32_t k_mesh_offset{k_material_offset + 80U};
-  constexpr std::uint32_t k_lights_offset{k_mesh_offset + 140U};
-  Buffer bytes;
-  bytes.chars("OD3X", 4)
-      .u32(4)
-      .u32(k_root_offset)
-      .u32(k_material_offset)
-      .u32(k_mesh_offset)
-      .u32(k_mesh_offset)
-      .u32(k_mesh_offset)
-      .u32(k_mesh_offset)
-      .u32(0)
-      .u32(0)
-      .u32(k_lights_offset)
-      .zeros(72)
-      .u32(0)
-      .zeros(104)
-      .u32(1)
-      .f32(1.0F)
-      .u32(0)
-      .u32(0)
-      .u32(0)
-      .u64(0)
-      .u32(1)
-      .u32(0)
-      .u32(0)
-      .u32(0)
-      .u32(1)
-      .u32(0)
-      .u32(0)
-      .u32(0)
-      .u32(0)
-      .u32(0)
-      .zeros(80)
-      .chars("MATERIAL", 20)
-      .chars("", 20)
-      .chars("", 20)
-      .u32(1)
-      .u64(0)
-      .u32(0)
-      .u16(1)
-      .u16(1)
-      .u32(0)
-      .u32(0)
-      .u32(1)
-      .u32(0)
-      .chars("UBassin", 20)
-      .f32(0.0F)
-      .f32(0.0F)
-      .f32(0.0F)
-      .i32(-1)
-      .i32(-1)
-      .i32(-1)
-      .u32(0)
-      .u32(0)
-      .u32(0)
-      .u32(0)
-      .zeros(64);
-  return bytes.data();
-}
-
-/// Scratch directory wiped on construction and destruction.
-class TempDirectory {
- public:
-  TempDirectory() : m_root{std::filesystem::temp_directory_path() / "opennomad-startup-test"} {
-    std::filesystem::remove_all(m_root);
-    std::filesystem::create_directories(m_root);
-    for (const std::string_view model : {"HO1_FNM", "CURRENT_BO"}) {
-      write_bytes(m_root / "MESHES" / "PERSOS" / (std::string{model} + ".3DO"),
-          make_minimal_character_3do());
-      write_bytes(m_root / "MESHES" / "PERSOS" / (std::string{model} + ".3DT"),
-          {std::byte{0}, std::byte{0}, std::byte{0}, std::byte{0}});
-    }
-  }
-
-  ~TempDirectory() {
-    std::filesystem::remove_all(m_root);
-  }
-
-  TempDirectory(const TempDirectory&) = delete;
-  TempDirectory(TempDirectory&&) = delete;
-  TempDirectory& operator=(const TempDirectory&) = delete;
-  TempDirectory& operator=(TempDirectory&&) = delete;
-
-  [[nodiscard]] const std::filesystem::path& root() const {
-    return m_root;
-  }
-
- private:
-  std::filesystem::path m_root;
-};
-
-/// RAII override of the game-data root for the duration of a test.
-class ScopedGameDataRoot {
- public:
-  explicit ScopedGameDataRoot(const std::filesystem::path& root) {
-    static_cast<void>(SDL_SetEnvironmentVariable(
-        SDL_GetEnvironment(), "OPENNOMAD_GAME_DATA_ROOT", root.string().c_str(), true));
-  }
-
-  ~ScopedGameDataRoot() {
-    static_cast<void>(
-        SDL_UnsetEnvironmentVariable(SDL_GetEnvironment(), "OPENNOMAD_GAME_DATA_ROOT"));
-  }
-
-  ScopedGameDataRoot(const ScopedGameDataRoot&) = delete;
-  ScopedGameDataRoot(ScopedGameDataRoot&&) = delete;
-  ScopedGameDataRoot& operator=(const ScopedGameDataRoot&) = delete;
-  ScopedGameDataRoot& operator=(ScopedGameDataRoot&&) = delete;
-};
-
-void write_boot_fixtures(const TempDirectory& temp) {
-  write_bytes(temp.root() / "IAM" / "START", make_start());
-  write_bytes(temp.root() / "IAM" / "GLOBAL", App::Tests::make_empty_iam_global());
-  write_bytes(temp.root() / "IAM" / "AREA", make_area_archive());
-  write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
-  write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_minimal_scx());
-  write_bytes(temp.root() / "MESHES" / "DECORS" / "GRID.3DO", make_minimal_3do());
-}
-
-void write_zone_contact_fixtures(const TempDirectory& temp,
-    const bool enable_controller = true,
-    const std::int16_t zone_id = 3795,
-    const bool release_control_before_wait = false,
-    const bool place_before_activation = false,
-    const std::uint32_t initial_xz = 50U,
-    const std::int16_t orientation_center_units = 4090,
-    const std::int16_t orientation_span_units = 0,
-    const bool launch_fire_and_forget = false,
-    const bool launch_from_zone_event = false,
-    const bool self_disables = true,
-    const std::size_t zone_count = 1U) {
-  write_bytes(temp.root() / "IAM" / "START", make_start());
-  write_bytes(temp.root() / "IAM" / "GLOBAL", make_camera_namespace_global(true));
-  write_bytes(temp.root() / "IAM" / "AREA",
-      make_zone_contact_area_archive(false,
-          self_disables,
-          enable_controller,
-          zone_id,
-          release_control_before_wait,
-          place_before_activation,
-          initial_xz,
-          orientation_center_units,
-          orientation_span_units,
-          launch_fire_and_forget,
-          launch_from_zone_event,
-          zone_count));
-  write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
-  write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX",
-      launch_fire_and_forget || launch_from_zone_event ? make_kayl_arrives_scx(221)
-                                                       : make_minimal_scx());
-}
-
-void write_live_zone_contact_fixtures(const TempDirectory& temp) {
-  write_bytes(temp.root() / "IAM" / "START", make_start());
-  write_bytes(temp.root() / "IAM" / "GLOBAL", make_camera_namespace_global(true));
-  write_bytes(temp.root() / "IAM" / "AREA", make_zone_contact_area_archive(false, false));
-  write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
-  write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_minimal_scx());
-}
-
-void write_zone_dialog_fixtures(const TempDirectory& temp) {
-  write_bytes(temp.root() / "IAM" / "START", make_start());
-  write_bytes(temp.root() / "IAM" / "GLOBAL", make_camera_namespace_global(true));
-  write_bytes(temp.root() / "IAM" / "AREA", make_zone_contact_area_archive(true));
-  write_bytes(temp.root() / "IAM" / "DIALOG", make_dialog_archive(272));
-  write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
-  write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_minimal_scx());
-}
-
-void write_current_character_script_fixtures(const TempDirectory& temp) {
-  Buffer script;
-  script.u8(0x2E).u16(221).u16(0).u8(0x03);
-  std::vector<std::byte> area{make_area_archive()};
-  std::memcpy(area.data() + 0x800U + 0x3FCU, script.data().data(), script.data().size());
-
-  write_bytes(temp.root() / "IAM" / "START", make_start());
-  write_bytes(temp.root() / "IAM" / "GLOBAL", App::Tests::make_empty_iam_global());
-  write_bytes(temp.root() / "IAM" / "AREA", area);
-  write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
-  write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_kayl_arrives_scx(221));
-  write_bytes(temp.root() / "MESHES" / "DECORS" / "GRID.3DO", make_minimal_3do());
-}
-
-/// Fixture for structured-child completion testing: Sets current character first, then
-/// launches a tracked character script.
-void write_structured_child_completion_fixtures(const TempDirectory& temp) {
-  Buffer script;
-  script.u8(0x38).u16(136);                  // SetCurrentCharacter 136
-  script.u8(0x2E).u16(221).u16(0).u8(0x03);  // StartCurrentCharacterScriptTracked, wait, EndEvent
-  std::vector<std::byte> area{make_area_archive()};
-  std::memcpy(area.data() + 0x800U + 0x3FCU, script.data().data(), script.data().size());
-
-  write_bytes(temp.root() / "IAM" / "START", make_start());
-  write_bytes(temp.root() / "IAM" / "GLOBAL", App::Tests::make_empty_iam_global());
-  write_bytes(temp.root() / "IAM" / "AREA", area);
-  write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
-  write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_kayl_arrives_scx(221));
-  write_bytes(temp.root() / "MESHES" / "DECORS" / "GRID.3DO", make_minimal_3do());
-}
-
-void write_chained_structured_child_fixtures(const TempDirectory& temp) {
-  Buffer script;
-  script.u8(0x38).u16(136);
-  script.u8(0x2E).u16(221).u16(0);
-  script.u8(0x2E).u16(221).u16(0).u8(0x03);
-  std::vector<std::byte> area{make_area_archive()};
-  std::memcpy(area.data() + 0x800U + 0x3FCU, script.data().data(), script.data().size());
-
-  write_bytes(temp.root() / "IAM" / "START", make_start());
-  write_bytes(temp.root() / "IAM" / "GLOBAL", App::Tests::make_empty_iam_global());
-  write_bytes(temp.root() / "IAM" / "AREA", area);
-  write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
-  write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_kayl_arrives_scx(221));
-  write_bytes(temp.root() / "MESHES" / "DECORS" / "GRID.3DO", make_minimal_3do());
-}
-
-void write_possession_cycle_fixtures(const TempDirectory& temp) {
-  Buffer script;
-  script.u8(0x38).u16(310);
-  script.u8(0x2E).u16(221).u16(0);
-  script.u8(0x38).u16(136);
-  script.u8(0x2E).u16(221).u16(0);
-  script.u8(0x38).u16(310);
-  script.u8(0x38).u16(310).u8(0x03);
-  std::vector<std::byte> area{make_area_archive()};
-  std::memcpy(area.data() + 0x800U + 0x3FCU, script.data().data(), script.data().size());
-
-  write_bytes(temp.root() / "IAM" / "START", make_start());
-  write_bytes(temp.root() / "IAM" / "GLOBAL", App::Tests::make_empty_iam_global());
-  write_bytes(temp.root() / "IAM" / "AREA", area);
-  write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
-  write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_kayl_arrives_scx(221));
-  write_bytes(temp.root() / "MESHES" / "DECORS" / "GRID.3DO", make_minimal_3do());
-}
-
-void write_activation_alias_fixtures(const TempDirectory& temp) {
-  Buffer script;
-  script.u8(0x38).u16(310);
-  script.u8(0x2E).u16(221).u16(0);
-  script.u8(0x38).u16(136);
-  script.u8(0x2E).u16(221).u16(0);
-  script.u8(0x4F).u16(310);
-  script.u8(0x2E).u16(221).u16(0);
-  script.u8(0x4E).u16(310).u16(0).u8(0x03);
-  std::vector<std::byte> area{make_area_archive()};
-  std::memcpy(area.data() + 0x800U + 0x3FCU, script.data().data(), script.data().size());
-
-  write_bytes(temp.root() / "IAM" / "START", make_start());
-  write_bytes(temp.root() / "IAM" / "GLOBAL", App::Tests::make_empty_iam_global());
-  write_bytes(temp.root() / "IAM" / "AREA", area);
-  write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
-  write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_kayl_arrives_scx(221));
-  write_bytes(temp.root() / "SCPTDATA" / "B.SCX", make_minimal_scx());
-  write_bytes(temp.root() / "MESHES" / "DECORS" / "GRID.3DO", make_minimal_3do());
-}
-
-void write_explicitly_unbound_activation_fixtures(const TempDirectory& temp) {
-  Buffer script;
-  script.u8(0x38).u16(310);
-  script.u8(0x4E).u16(310).u16(0).u8(0x03);
-  std::vector<std::byte> area{make_area_archive()};
-  std::memcpy(area.data() + 0x800U + 0x3FCU, script.data().data(), script.data().size());
-  write_bytes(temp.root() / "IAM" / "START", make_start());
-  write_bytes(temp.root() / "IAM" / "GLOBAL", App::Tests::make_empty_iam_global());
-  write_bytes(temp.root() / "IAM" / "AREA", area);
-  write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
-  write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_minimal_scx());
-  write_bytes(temp.root() / "MESHES" / "DECORS" / "GRID.3DO", make_minimal_3do());
-}
-
-void write_inactive_character_script_fixtures(const TempDirectory& temp, const bool tracked) {
-  Buffer script;
-  script.u8(tracked ? 0x3CU : 0x3BU).u16(310).u16(221).u16(0).u8(0x03);
-  std::vector<std::byte> area{make_area_archive()};
-  std::memcpy(area.data() + 0x800U + 0x3FCU, script.data().data(), script.data().size());
-  write_bytes(temp.root() / "IAM" / "START", make_start());
-  write_bytes(temp.root() / "IAM" / "GLOBAL", App::Tests::make_empty_iam_global());
-  write_bytes(temp.root() / "IAM" / "AREA", area);
-  write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
-  write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_kayl_arrives_scx(221));
-  write_bytes(temp.root() / "MESHES" / "DECORS" / "GRID.3DO", make_minimal_3do());
-}
-
-void write_character_activation_fixtures(
-    const TempDirectory& temp, const bool apply_area_transform) {
-  Buffer script;
-  script.u8(0x4E).u16(310).u16(apply_area_transform ? 1U : 0U).u8(0x03);
-  std::vector<std::byte> area{make_area_archive()};
-  std::memcpy(area.data() + 0x800U + 0x3FCU, script.data().data(), script.data().size());
-  write_bytes(temp.root() / "IAM" / "START", make_start());
-  write_bytes(temp.root() / "IAM" / "GLOBAL", App::Tests::make_empty_iam_global());
-  write_bytes(temp.root() / "IAM" / "AREA", area);
-  write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
-  write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_minimal_scx());
-  write_bytes(temp.root() / "MESHES" / "DECORS" / "GRID.3DO", make_minimal_3do());
-}
-
-void write_character_value_fixtures(const TempDirectory& temp) {
-  Buffer script;
-  script.u8(0x38).u16(136);
-  script.u8(0x56).u16(0xFFFF).u16(5).u16(61);
-  script.u8(0x56).u16(310).u16(4).u16(63);
-  script.u8(0x0C).u16(60);
-  script.u8(0x5D).u16(0xFFFF).u16(5).u16(60);
-  script.u8(0x0C).u16(37);
-  script.u8(0x5D).u16(0xFFFF).u16(4).u16(37);
-  script.u8(0x5D).u16(310).u16(4).u16(62);
-  script.u8(0x56).u16(0xFFFF).u16(5).u16(64);
-  script.u8(0x56).u16(310).u16(4).u16(65);
-  script.u8(0x03);
-
-  std::vector<std::byte> start{make_start()};
-  write_u32(start, 0x058CU + (60U * sizeof(std::int32_t)), 1234U);
-  write_u32(start, 0x058CU + (62U * sizeof(std::int32_t)), 321U);
-
-  std::vector<std::byte> area{make_area_archive()};
-  constexpr std::size_t k_record_offset{0x800};
-  constexpr std::size_t k_definition_offset{0x1D4};
-  constexpr std::size_t k_second_definition_offset{k_definition_offset + 0x114U};
-  write_u16(area, k_record_offset + k_definition_offset + 0xACU, 444);
-  write_u16(area, k_record_offset + k_second_definition_offset + 0xAEU, 77);
-  std::memcpy(area.data() + k_record_offset + 0x3FCU, script.data().data(), script.data().size());
-
-  write_bytes(temp.root() / "IAM" / "START", start);
-  write_bytes(temp.root() / "IAM" / "GLOBAL", App::Tests::make_empty_iam_global());
-  write_bytes(temp.root() / "IAM" / "AREA", area);
-  write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
-  write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_minimal_scx());
-  write_bytes(temp.root() / "MESHES" / "DECORS" / "GRID.3DO", make_minimal_3do());
-}
-
-void write_handoff_fixtures(const TempDirectory& temp,
-    const std::int16_t release_area_id = 118,
-    const bool target_requests_area_142 = false,
-    const bool target_selects_character = false) {
-  std::vector<std::byte> start{make_start()};
-  start.at(0x13FCU) = std::byte{0x40};  // ZONE 6 starts persistently enabled.
-  write_bytes(temp.root() / "IAM" / "START", start);
-  write_bytes(temp.root() / "IAM" / "GLOBAL", App::Tests::make_empty_iam_global());
-  write_bytes(temp.root() / "IAM" / "AREA",
-      make_handoff_area_archive(
-          release_area_id, target_requests_area_142, target_selects_character));
-  write_bytes(temp.root() / "IAM" / "SCENE", make_handoff_scene_archive());
-  write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
-  write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_minimal_scx());
-  write_bytes(temp.root() / "SCPTDATA" / "DEST.SCX", make_minimal_scx());
-  if (target_requests_area_142) {
-    write_bytes(temp.root() / "SCPTDATA" / "THIRD.SCX", make_minimal_scx());
-  }
-  if (target_selects_character) {
-    write_bytes(temp.root() / "MESHES" / "PERSOS" / "TARGET.3DO", make_minimal_character_3do());
-    write_bytes(temp.root() / "MESHES" / "PERSOS" / "TARGET.3DT",
-        {std::byte{0}, std::byte{0}, std::byte{0}, std::byte{0}});
-  }
-}
-
-void write_camera_namespace_fixtures(
-    const TempDirectory& temp, const CameraNamespaceFixture& fixture) {
-  write_bytes(temp.root() / "IAM" / "START", make_start());
-  write_bytes(temp.root() / "IAM" / "GLOBAL", make_camera_namespace_global(fixture.global));
-  write_bytes(temp.root() / "IAM" / "AREA", make_camera_namespace_area_archive(fixture));
-  write_bytes(temp.root() / "IAM" / "SCENE", make_camera_namespace_scene_archive(fixture));
-  write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
-  write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_minimal_scx());
-  write_bytes(temp.root() / "SCPTDATA" / "DEST.SCX", make_minimal_scx());
-}
-
-}  // namespace
+#include "ScenarioSessionFixtures.hpp"
 
 TEST_SUITE("Core::Scenario::ScenarioStartupController") {
   TEST_CASE("AREA character residency is bound before the primary event can execute") {
     const TempDirectory temp;
     write_boot_fixtures(temp);
-    const ScopedGameDataRoot root{temp.root()};
-    App::ScenarioManager manager;
-    App::ScenarioStartupController controller;
-
-    REQUIRE(controller.initialize(manager).has_value());
-    App::ScenarioRuntime* const runtime{manager.world_runtime(0U)};
+    StartedSession session{temp};
+    App::ScenarioRuntime* const runtime{&session.world(0U)};
+    App::ScenarioManager& manager{session.manager};
+    App::ScenarioStartupController& controller{session.controller};
     REQUIRE(runtime != nullptr);
     REQUIRE_EQ(runtime->character_runtime().characters().size(), 2U);
     REQUIRE_EQ(controller.character_reference_entries().size(), 2U);
@@ -1451,10 +113,9 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     for (const LookupCase& lookup : cases) {
       const TempDirectory temp;
       write_camera_namespace_fixtures(temp, lookup.fixture);
-      const ScopedGameDataRoot root{temp.root()};
-      App::ScenarioManager manager;
-      App::ScenarioStartupController controller;
-      REQUIRE(controller.initialize(manager).has_value());
+      StartedSession session{temp};
+      App::ScenarioManager& manager{session.manager};
+      App::ScenarioStartupController& controller{session.controller};
       REQUIRE(controller.tick().has_value());
       REQUIRE(controller.tick().has_value());
       CHECK_EQ(controller.active_area_slot(), 0U);
@@ -1472,10 +133,9 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
       write_camera_namespace_fixtures(temp,
           CameraNamespaceFixture{
               .slot_0_area = true, .slot_1_scene = true, .request_from_slot_1_scene = true});
-      const ScopedGameDataRoot root{temp.root()};
-      App::ScenarioManager manager;
-      App::ScenarioStartupController controller;
-      REQUIRE(controller.initialize(manager).has_value());
+      StartedSession session{temp};
+      App::ScenarioManager& manager{session.manager};
+      App::ScenarioStartupController& controller{session.controller};
       REQUIRE(controller.tick().has_value());
       REQUIRE(controller.tick().has_value());
       const auto command{manager.world_presentation().take_camera()};
@@ -1494,10 +154,9 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
       const TempDirectory temp;
       write_camera_namespace_fixtures(
           temp, CameraNamespaceFixture{.global = true, .request_from_slot_1_scene = true});
-      const ScopedGameDataRoot root{temp.root()};
-      App::ScenarioManager manager;
-      App::ScenarioStartupController controller;
-      REQUIRE(controller.initialize(manager).has_value());
+      StartedSession session{temp};
+      App::ScenarioManager& manager{session.manager};
+      App::ScenarioStartupController& controller{session.controller};
       REQUIRE(controller.tick().has_value());
       REQUIRE(controller.tick().has_value());
       const auto command{manager.world_presentation().take_camera()};
@@ -1516,10 +175,9 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
   TEST_CASE("missing camera is a no-op without emitting a command or blocking") {
     const TempDirectory temp;
     write_camera_namespace_fixtures(temp, CameraNamespaceFixture{.tracked = true});
-    const ScopedGameDataRoot root{temp.root()};
-    App::ScenarioManager manager;
-    App::ScenarioStartupController controller;
-    REQUIRE(controller.initialize(manager).has_value());
+    StartedSession session{temp};
+    App::ScenarioManager& manager{session.manager};
+    App::ScenarioStartupController& controller{session.controller};
     REQUIRE(controller.tick().has_value());
     const auto result{controller.tick()};
     REQUIRE(result.has_value());
@@ -1529,10 +187,9 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
   TEST_CASE("compact camera captures the controlled body identity") {
     const TempDirectory temp;
     write_camera_namespace_fixtures(temp, CameraNamespaceFixture{.global = true});
-    const ScopedGameDataRoot root{temp.root()};
-    App::ScenarioManager manager;
-    App::ScenarioStartupController controller;
-    REQUIRE(controller.initialize(manager).has_value());
+    StartedSession session{temp};
+    App::ScenarioManager& manager{session.manager};
+    App::ScenarioStartupController& controller{session.controller};
     App::ScenarioRuntime* const runtime{manager.world_runtime(0)};
     REQUIRE(runtime != nullptr);
     constexpr App::Character::BodyIdentity k_body_identity{4100U};
@@ -1556,10 +213,9 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     const TempDirectory temp;
     write_camera_namespace_fixtures(temp,
         CameraNamespaceFixture{.global = true, .request_from_slot_1_scene = true, .tracked = true});
-    const ScopedGameDataRoot root{temp.root()};
-    App::ScenarioManager manager;
-    App::ScenarioStartupController controller;
-    REQUIRE(controller.initialize(manager).has_value());
+    StartedSession session{temp};
+    App::ScenarioManager& manager{session.manager};
+    App::ScenarioStartupController& controller{session.controller};
     REQUIRE(controller.tick().has_value());
     REQUIRE(controller.tick().has_value());
     const auto command{manager.world_presentation().take_camera()};
@@ -1586,22 +242,11 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
   TEST_CASE("IMPASSE 3795 suppresses control while waiting then restores and self-deactivates") {
     const TempDirectory temp;
     write_zone_contact_fixtures(temp);
-    const ScopedGameDataRoot root{temp.root()};
-
-    App::ScenarioManager manager;
-    App::ScenarioStartupController controller;
-    REQUIRE(controller.initialize(manager).has_value());
+    StartedSession session{temp, {.model_loader = make_stub_model_loader(), .stub_ctl_bank = true}};
+    App::ScenarioManager& manager{session.manager};
+    App::ScenarioStartupController& controller{session.controller};
     App::ScenarioRuntime* runtime{manager.world_runtime(0)};
     REQUIRE(runtime != nullptr);
-    install_resident_model_loader(runtime->character_runtime(),
-        [](const std::string_view name)
-            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
-          auto resource{std::make_shared<App::Character::ModelResource>()};
-          resource->name = name;
-          resource->groups.push_back(App::Omikron::MaterialGroup{});
-          return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
-        });
-    install_stub_ctl_loader(*runtime);
 
     REQUIRE(controller.tick().has_value());
     REQUIRE(controller.tick(1.0F / 30.0F).has_value());
@@ -1616,7 +261,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     const App::Runtime::Vec3 tutorial_position{character->transform.translation};
     CHECK_EQ(character->current_move_id(), std::optional<std::int16_t>{100});
     CHECK_FALSE(character->controller_enabled);
-    CHECK_FALSE(ctl_controller->direct_control_active());
+    CHECK(ctl_controller->ordinary_control_suppressed());
 
     const App::ZoneContactContext* contact{controller.zone_contact(0)};
     REQUIRE(contact != nullptr);
@@ -1630,7 +275,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK_EQ(controller.zone_contact_count(), 1U);
     CHECK_EQ(controller.active_zone_contact_registration_count(), 1U);
     CHECK_FALSE(character->controller_enabled);
-    CHECK_FALSE(ctl_controller->direct_control_active());
+    CHECK(ctl_controller->ordinary_control_suppressed());
 
     const auto camera{manager.world_presentation().take_camera()};
     REQUIRE(camera.has_value());
@@ -1643,7 +288,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
         .camera_id = camera->camera_id});
     REQUIRE(controller.tick(1.0F / 30.0F).has_value());
     CHECK(character->controller_enabled);
-    CHECK(ctl_controller->direct_control_active());
+    CHECK_FALSE(ctl_controller->ordinary_control_suppressed());
     CHECK_EQ(&character->ctl_controller.value(), ctl_controller);
     CHECK_EQ(character->current_move_id(), std::optional<std::int16_t>{100});
     CHECK_EQ(character->transform.translation.x, tutorial_position.x);
@@ -1657,42 +302,18 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(controller.tick(1.0F / 30.0F).has_value());
     CHECK_EQ(controller.zone_contact_count(), 0U);
     CHECK(character->controller_enabled);
-    CHECK(ctl_controller->direct_control_active());
+    CHECK_FALSE(ctl_controller->ordinary_control_suppressed());
   }
 
   TEST_CASE("registered proxy permits fresh contact while controller is disabled") {
     constexpr std::int16_t k_zone_id{12};
     const TempDirectory temp;
     write_zone_contact_fixtures(temp, false, k_zone_id);
-    const ScopedGameDataRoot root{temp.root()};
-
-    App::ScenarioManager manager;
-    App::ScenarioStartupController controller;
-    REQUIRE(controller.initialize(manager).has_value());
+    StartedSession session{temp, {.model_loader = make_stub_model_loader({.bounds_radius = 50.0F, .actor_meshes = true}), .stub_ctl_bank = true}};
+    App::ScenarioManager& manager{session.manager};
+    App::ScenarioStartupController& controller{session.controller};
     App::ScenarioRuntime* runtime{manager.world_runtime(0)};
     REQUIRE(runtime != nullptr);
-    install_resident_model_loader(runtime->character_runtime(),
-        [](const std::string_view name)
-            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
-          auto resource{std::make_shared<App::Character::ModelResource>()};
-          resource->name = name;
-          resource->bounds_radius = 50.0F;
-          resource->model.root_mesh_index = 0;
-          resource->model.meshes.resize(2U);
-          resource->model.meshes.at(0).name = "ActorRoot";
-          resource->model.meshes.at(0).bounding_radius = 42.5F;
-          resource->model.meshes.at(0).triangle_count = 26U;
-          resource->model.meshes.at(1).name = "DetailedChild";
-          resource->model.meshes.at(1).bounding_radius = 5.8F;
-          resource->model.meshes.at(1).triangle_count = 116U;
-          resource->model.hierarchy_parent_index = {-1, 0};
-          resource->model.hierarchy_first_child_index = {1, -1};
-          resource->model.hierarchy_next_sibling_index = {-1, -1};
-          resource->actor_object_index = App::Character::actor_object_index(resource->model);
-          resource->groups.push_back(App::Omikron::MaterialGroup{});
-          return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
-        });
-    install_stub_ctl_loader(*runtime);
 
     REQUIRE(manager.game_state() != nullptr);
     CHECK_FALSE(manager.game_state()->zone_flag(k_zone_id).value());
@@ -1716,7 +337,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK_EQ(controller.zone_contact_count(), 1U);
     CHECK_EQ(character->current_move_id(), std::optional<std::int16_t>{100});
     CHECK_FALSE(character->controller_enabled);
-    CHECK_FALSE(character->ctl_controller->direct_control_active());
+    CHECK(character->ctl_controller->ordinary_control_suppressed());
     CHECK_EQ(controller.current_character_trigger_proxy()->position.x, proxy.position.x);
     CHECK_EQ(controller.current_character_trigger_proxy()->position.y, proxy.position.y);
     CHECK_EQ(controller.current_character_trigger_proxy()->position.z, proxy.position.z);
@@ -1726,22 +347,11 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     constexpr std::int16_t k_zone_id{13};
     const TempDirectory temp;
     write_zone_contact_fixtures(temp, true, k_zone_id, true);
-    const ScopedGameDataRoot root{temp.root()};
-
-    App::ScenarioManager manager;
-    App::ScenarioStartupController controller;
-    REQUIRE(controller.initialize(manager).has_value());
+    StartedSession session{temp, {.model_loader = make_stub_model_loader(), .stub_ctl_bank = true}};
+    App::ScenarioManager& manager{session.manager};
+    App::ScenarioStartupController& controller{session.controller};
     App::ScenarioRuntime* runtime{manager.world_runtime(0)};
     REQUIRE(runtime != nullptr);
-    install_resident_model_loader(runtime->character_runtime(),
-        [](const std::string_view name)
-            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
-          auto resource{std::make_shared<App::Character::ModelResource>()};
-          resource->name = name;
-          resource->groups.push_back(App::Omikron::MaterialGroup{});
-          return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
-        });
-    install_stub_ctl_loader(*runtime);
 
     REQUIRE(controller.tick().has_value());
     REQUIRE(controller.tick(1.0F / 30.0F).has_value());
@@ -1751,7 +361,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(character->ctl_controller.has_value());
     CHECK_EQ(character->current_move_id(), std::optional<std::int16_t>{100});
     CHECK(character->controller_enabled);
-    CHECK(character->ctl_controller->direct_control_active());
+    CHECK_FALSE(character->ctl_controller->ordinary_control_suppressed());
     CHECK_EQ(controller.zone_contact_count(), 1U);
     REQUIRE(controller.current_character_trigger_proxy().has_value());
     CHECK(controller.current_character_trigger_proxy()->registered);
@@ -1767,27 +377,13 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     constexpr std::int16_t k_zone_id{14};
     const TempDirectory temp;
     write_zone_contact_fixtures(temp, false, k_zone_id, false, true);
-    const ScopedGameDataRoot root{temp.root()};
-
-    App::ScenarioManager manager;
-    App::ScenarioStartupController controller;
-    REQUIRE(controller.initialize(manager).has_value());
+    StartedSession session{temp, {.model_loader = make_stub_model_loader(
+                                       {.collision_spheres = {App::Omikron::CollisionSphere{.center = {.y = 5.0F}, .radius = 10.0F},
+                                           App::Omikron::CollisionSphere{.center = {.y = 20.0F}, .radius = 7.0F}}}), .stub_ctl_bank = true}};
+    App::ScenarioManager& manager{session.manager};
+    App::ScenarioStartupController& controller{session.controller};
     App::ScenarioRuntime* runtime{manager.world_runtime(0)};
     REQUIRE(runtime != nullptr);
-    install_resident_model_loader(runtime->character_runtime(),
-        [](const std::string_view name)
-            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
-          auto resource{std::make_shared<App::Character::ModelResource>()};
-          resource->name = name;
-          resource->groups.push_back(App::Omikron::MaterialGroup{});
-          resource->model.header.collision_sphere_count = 2U;
-          resource->model.header.collision_sphere_slots.at(0) =
-              App::Omikron::CollisionSphere{.center = {.y = 5.0F}, .radius = 10.0F};
-          resource->model.header.collision_sphere_slots.at(1) =
-              App::Omikron::CollisionSphere{.center = {.y = 20.0F}, .radius = 7.0F};
-          return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
-        });
-    install_stub_ctl_loader(*runtime);
 
     REQUIRE(controller.tick().has_value());
     const App::Character::RuntimeCharacter* character{runtime->character_runtime().find(136)};
@@ -1800,7 +396,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK_EQ(character->current_move_id(), std::optional<std::int16_t>{100});
     CHECK(character->controller_enabled);
     REQUIRE(character->ctl_controller.has_value());
-    CHECK(character->ctl_controller->direct_control_active());
+    CHECK_FALSE(character->ctl_controller->ordinary_control_suppressed());
     CHECK_EQ(character->ordinary_actor_service_generation, 0U);
     CHECK_EQ(character->physical_motion.candidate_translation.y,
         doctest::Approx(character->transform.translation.y));
@@ -1827,22 +423,11 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
       "generation") {
     const TempDirectory temp;
     write_zone_contact_fixtures(temp, false, 18, false, false, 50U, 4090, 0, true);
-    const ScopedGameDataRoot root{temp.root()};
-
-    App::ScenarioManager manager;
-    App::ScenarioStartupController controller;
-    REQUIRE(controller.initialize(manager).has_value());
+    StartedSession session{temp, {.model_loader = make_stub_model_loader(), .stub_ctl_bank = true}};
+    App::ScenarioManager& manager{session.manager};
+    App::ScenarioStartupController& controller{session.controller};
     App::ScenarioRuntime* runtime{manager.world_runtime(0)};
     REQUIRE(runtime != nullptr);
-    install_resident_model_loader(runtime->character_runtime(),
-        [](const std::string_view name)
-            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
-          auto resource{std::make_shared<App::Character::ModelResource>()};
-          resource->name = name;
-          resource->groups.push_back(App::Omikron::MaterialGroup{});
-          return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
-        });
-    install_stub_ctl_loader(*runtime);
 
     REQUIRE(controller.tick().has_value());
     App::Character::RuntimeCharacter* character{runtime->character_runtime().find(136)};
@@ -1870,15 +455,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
   TEST_CASE("exact structured-child completion defers ordinary service until a later dispatch") {
     const TempDirectory temp;
     write_structured_child_completion_fixtures(temp);
-    const ScopedGameDataRoot root{temp.root()};
-
-    App::ScenarioManager manager;
-    App::ScenarioStartupController controller;
-    REQUIRE(controller.initialize(manager).has_value());
-    App::ScenarioRuntime* runtime{manager.world_runtime(0)};
-    REQUIRE(runtime != nullptr);
-    install_resident_model_loader(runtime->character_runtime(),
-        [](const std::string_view name)
+    StartedSession session{temp, {.model_loader = [](const std::string_view name)
             -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
           auto resource{std::make_shared<App::Character::ModelResource>()};
           resource->name = name;
@@ -1894,8 +471,11 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
           resource->actor_object_index = App::Character::actor_object_index(resource->model);
           resource->groups.push_back(App::Omikron::MaterialGroup{});
           return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
-        });
-    install_stub_ctl_loader(*runtime);
+        }, .stub_ctl_bank = true}};
+    App::ScenarioManager& manager{session.manager};
+    App::ScenarioStartupController& controller{session.controller};
+    App::ScenarioRuntime* runtime{manager.world_runtime(0)};
+    REQUIRE(runtime != nullptr);
 
     INFO(controller.last_error());
     REQUIRE(controller.tick().has_value());
@@ -1956,21 +536,11 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
   TEST_CASE("chained structured children never expose an ordinary actor service gap") {
     const TempDirectory temp;
     write_chained_structured_child_fixtures(temp);
-    const ScopedGameDataRoot root{temp.root()};
-
-    App::ScenarioManager manager;
-    App::ScenarioStartupController controller;
-    REQUIRE(controller.initialize(manager).has_value());
+    StartedSession session{temp, {.model_loader = make_stub_model_loader()}};
+    App::ScenarioManager& manager{session.manager};
+    App::ScenarioStartupController& controller{session.controller};
     App::ScenarioRuntime* runtime{manager.world_runtime(0)};
     REQUIRE(runtime != nullptr);
-    install_resident_model_loader(runtime->character_runtime(),
-        [](const std::string_view name)
-            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
-          auto resource{std::make_shared<App::Character::ModelResource>()};
-          resource->name = name;
-          resource->groups.push_back(App::Omikron::MaterialGroup{});
-          return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
-        });
 
     REQUIRE(controller.begin_tick(1.0F / 30.0F).has_value());
     App::Character::RuntimeCharacter* character{runtime->character_runtime().find(136)};
@@ -2000,21 +570,11 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
   TEST_CASE("session reset clears structured owner proxy references and pending actor phase") {
     const TempDirectory temp;
     write_structured_child_completion_fixtures(temp);
-    const ScopedGameDataRoot root{temp.root()};
-
-    App::ScenarioManager manager;
-    App::ScenarioStartupController controller;
-    REQUIRE(controller.initialize(manager).has_value());
+    StartedSession session{temp, {.model_loader = make_stub_model_loader()}};
+    App::ScenarioManager& manager{session.manager};
+    App::ScenarioStartupController& controller{session.controller};
     App::ScenarioRuntime* runtime{manager.world_runtime(0)};
     REQUIRE(runtime != nullptr);
-    install_resident_model_loader(runtime->character_runtime(),
-        [](const std::string_view name)
-            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
-          auto resource{std::make_shared<App::Character::ModelResource>()};
-          resource->name = name;
-          resource->groups.push_back(App::Omikron::MaterialGroup{});
-          return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
-        });
 
     REQUIRE(controller.begin_tick(1.0F / 30.0F).has_value());
     CHECK(controller.structured_character_owner_active());
@@ -2034,24 +594,14 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     write_structured_child_completion_fixtures(temp);
     write_bytes(temp.root() / "SCPTDATA" / "B.SCX", make_minimal_scx());
     write_bytes(temp.root() / "SCPTDATA" / "C.SCX", make_minimal_scx());
-    const ScopedGameDataRoot root{temp.root()};
-
-    App::ScenarioManager manager;
-    App::ScenarioStartupController controller;
-    REQUIRE(controller.initialize(manager).has_value());
+    StartedSession session{temp, {.model_loader = make_stub_model_loader()}};
+    App::ScenarioManager& manager{session.manager};
+    App::ScenarioStartupController& controller{session.controller};
     REQUIRE(manager.load_world_context(2U, std::nullopt, "SCPTDATA/B.SCX").has_value());
     App::ScenarioRuntime* source{manager.world_runtime(0U)};
     App::ScenarioRuntime* destination{manager.world_runtime(2U)};
     REQUIRE(source != nullptr);
     REQUIRE(destination != nullptr);
-    install_resident_model_loader(source->character_runtime(),
-        [](const std::string_view name)
-            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
-          auto resource{std::make_shared<App::Character::ModelResource>()};
-          resource->name = name;
-          resource->groups.push_back(App::Omikron::MaterialGroup{});
-          return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
-        });
 
     REQUIRE(controller.begin_tick(1.0F / 30.0F).has_value());
     REQUIRE(manager.controlled_character().has_value());
@@ -2079,23 +629,11 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
   TEST_CASE("0x38 possession cycles preserve exact bodies and mutable state") {
     const TempDirectory temp;
     write_possession_cycle_fixtures(temp);
-    const ScopedGameDataRoot root{temp.root()};
-
-    App::ScenarioManager manager;
-    App::ScenarioStartupController controller;
-    REQUIRE(controller.initialize(manager).has_value());
-    App::ScenarioRuntime* runtime{manager.world_runtime(0)};
-    REQUIRE(runtime != nullptr);
     std::size_t model_loads{0};
-    install_resident_model_loader(runtime->character_runtime(),
-        [&model_loads](const std::string_view name)
-            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
-          ++model_loads;
-          auto resource{std::make_shared<App::Character::ModelResource>()};
-          resource->name = name;
-          resource->groups.push_back(App::Omikron::MaterialGroup{});
-          return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
-        });
+    StartedSession session{temp, {.model_loader = make_stub_model_loader({.load_counter = &model_loads})}};
+    App::ScenarioManager& manager{session.manager};
+    App::ScenarioStartupController& controller{session.controller};
+    App::ScenarioRuntime* runtime{&session.world(0U)};
 
     REQUIRE(controller.begin_tick(1.0F / 30.0F).has_value());
     App::Character::RuntimeCharacter* body_a{runtime->character_runtime().find(310)};
@@ -2142,24 +680,14 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
   TEST_CASE("activation and deactivation aliases operate on resolved BodyIdentity") {
     const TempDirectory temp;
     write_activation_alias_fixtures(temp);
-    const ScopedGameDataRoot root{temp.root()};
-
-    App::ScenarioManager manager;
-    App::ScenarioStartupController controller;
-    REQUIRE(controller.initialize(manager).has_value());
+    StartedSession session{temp, {.model_loader = make_stub_model_loader()}};
+    App::ScenarioManager& manager{session.manager};
+    App::ScenarioStartupController& controller{session.controller};
     App::ScenarioRuntime* runtime{manager.world_runtime(0)};
     REQUIRE(runtime != nullptr);
     REQUIRE(manager.load_world_context(2U, std::nullopt, "SCPTDATA/B.SCX").has_value());
     App::ScenarioRuntime* const other_runtime{manager.world_runtime(2U)};
     REQUIRE(other_runtime != nullptr);
-    install_resident_model_loader(runtime->character_runtime(),
-        [](const std::string_view name)
-            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
-          auto resource{std::make_shared<App::Character::ModelResource>()};
-          resource->name = name;
-          resource->groups.push_back(App::Omikron::MaterialGroup{});
-          return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
-        });
 
     REQUIRE(controller.begin_tick(1.0F / 30.0F).has_value());
     App::Character::RuntimeCharacter* aliased_body{runtime->character_runtime().find(310)};
@@ -2200,26 +728,21 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK_EQ(runtime->character_runtime().characters().size() +
                  other_runtime->character_runtime().characters().size(),
         resident_body_count);
-    CHECK(manager.game_state()->character_flag(468).value());
+    // After the 0x38 310 -> 0x38 136 possession cycle table-0 placement 1 (state bit 469) holds the
+    // 310 reference and its body, so 0x4E 310 persists placement 1's bit. Placement 0 (bit 468) was
+    // left explicitly unbound by the first selection.
+    CHECK(manager.game_state()->character_flag(469).value());
+    CHECK_FALSE(manager.game_state()->character_flag(468).value());
   }
 
   TEST_CASE("activation does not rematerialize an explicitly-unbound placement") {
     const TempDirectory temp;
     write_explicitly_unbound_activation_fixtures(temp);
-    const ScopedGameDataRoot root{temp.root()};
-    App::ScenarioManager manager;
-    App::ScenarioStartupController controller;
-    REQUIRE(controller.initialize(manager).has_value());
+    StartedSession session{temp, {.model_loader = make_stub_model_loader()}};
+    App::ScenarioManager& manager{session.manager};
+    App::ScenarioStartupController& controller{session.controller};
     App::ScenarioRuntime* runtime{manager.world_runtime(0)};
     REQUIRE(runtime != nullptr);
-    install_resident_model_loader(runtime->character_runtime(),
-        [](const std::string_view name)
-            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
-          auto resource{std::make_shared<App::Character::ModelResource>()};
-          resource->name = name;
-          resource->groups.push_back(App::Omikron::MaterialGroup{});
-          return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
-        });
 
     REQUIRE_EQ(runtime->character_runtime().characters().size(), 2U);
     const App::Character::RuntimeCharacter* const original_body{
@@ -2235,10 +758,9 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
   TEST_CASE("0x3B starts an explicit structured script on an inactive resident body") {
     const TempDirectory temp;
     write_inactive_character_script_fixtures(temp, false);
-    const ScopedGameDataRoot root{temp.root()};
-    App::ScenarioManager manager;
-    App::ScenarioStartupController controller;
-    REQUIRE(controller.initialize(manager).has_value());
+    StartedSession session{temp};
+    App::ScenarioManager& manager{session.manager};
+    App::ScenarioStartupController& controller{session.controller};
     App::ScenarioRuntime* const runtime{manager.world_runtime(0U)};
     REQUIRE(runtime != nullptr);
     const App::Character::RuntimeCharacter* const body{runtime->character_runtime().find(310)};
@@ -2264,10 +786,9 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
   TEST_CASE("0x3C tracks an explicit structured script on an inactive resident body") {
     const TempDirectory temp;
     write_inactive_character_script_fixtures(temp, true);
-    const ScopedGameDataRoot root{temp.root()};
-    App::ScenarioManager manager;
-    App::ScenarioStartupController controller;
-    REQUIRE(controller.initialize(manager).has_value());
+    StartedSession session{temp};
+    App::ScenarioManager& manager{session.manager};
+    App::ScenarioStartupController& controller{session.controller};
     App::ScenarioRuntime* const runtime{manager.world_runtime(0U)};
     REQUIRE(runtime != nullptr);
     const App::Character::RuntimeCharacter* const body{runtime->character_runtime().find(310)};
@@ -2298,10 +819,9 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     const auto verify_activation = [](const bool apply_area_transform) {
       const TempDirectory temp;
       write_character_activation_fixtures(temp, apply_area_transform);
-      const ScopedGameDataRoot root{temp.root()};
-      App::ScenarioManager manager;
-      App::ScenarioStartupController controller;
-      REQUIRE(controller.initialize(manager).has_value());
+      StartedSession session{temp};
+      App::ScenarioManager& manager{session.manager};
+      App::ScenarioStartupController& controller{session.controller};
       App::ScenarioRuntime* const runtime{manager.world_runtime(0U)};
       REQUIRE(runtime != nullptr);
       App::Character::RuntimeCharacter* const body{runtime->character_runtime().find(310)};
@@ -2341,6 +861,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
   TEST_CASE("ordinary actor service advances generation for each due physical tick") {
     const TempDirectory temp;
     write_zone_contact_fixtures(temp, false, 19, false, false);
+    // Inline: the trace recorder must be attached before initialize() to capture startup events.
     const ScopedGameDataRoot root{temp.root()};
 
     App::ScenarioManager manager;
@@ -2431,22 +952,11 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     constexpr std::int16_t k_zone_id{15};
     const TempDirectory temp;
     write_zone_contact_fixtures(temp, false, k_zone_id, true, false, 500U);
-    const ScopedGameDataRoot root{temp.root()};
-
-    App::ScenarioManager manager;
-    App::ScenarioStartupController controller;
-    REQUIRE(controller.initialize(manager).has_value());
+    StartedSession session{temp, {.model_loader = make_stub_model_loader(), .stub_ctl_bank = true}};
+    App::ScenarioManager& manager{session.manager};
+    App::ScenarioStartupController& controller{session.controller};
     App::ScenarioRuntime* runtime{manager.world_runtime(0)};
     REQUIRE(runtime != nullptr);
-    install_resident_model_loader(runtime->character_runtime(),
-        [](const std::string_view name)
-            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
-          auto resource{std::make_shared<App::Character::ModelResource>()};
-          resource->name = name;
-          resource->groups.push_back(App::Omikron::MaterialGroup{});
-          return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
-        });
-    install_stub_ctl_loader(*runtime);
 
     REQUIRE(controller.tick().has_value());
     App::Character::RuntimeCharacter* character{runtime->character_runtime().find(136)};
@@ -2508,22 +1018,11 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     const TempDirectory temp;
     write_zone_contact_fixtures(
         temp, false, k_zone_id, false, false, 500U, 4090, 0, false, false, false);
-    const ScopedGameDataRoot root{temp.root()};
-
-    App::ScenarioManager manager;
-    App::ScenarioStartupController controller;
-    REQUIRE(controller.initialize(manager).has_value());
+    StartedSession session{temp, {.model_loader = make_stub_model_loader(), .stub_ctl_bank = true}};
+    App::ScenarioManager& manager{session.manager};
+    App::ScenarioStartupController& controller{session.controller};
     App::ScenarioRuntime* runtime{manager.world_runtime(0)};
     REQUIRE(runtime != nullptr);
-    install_resident_model_loader(runtime->character_runtime(),
-        [](const std::string_view name)
-            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
-          auto resource{std::make_shared<App::Character::ModelResource>()};
-          resource->name = name;
-          resource->groups.push_back(App::Omikron::MaterialGroup{});
-          return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
-        });
-    install_stub_ctl_loader(*runtime);
 
     REQUIRE(controller.tick().has_value());
     App::Character::RuntimeCharacter* character{runtime->character_runtime().find(136)};
@@ -2582,22 +1081,11 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     const TempDirectory temp;
     write_zone_contact_fixtures(
         temp, false, k_zone_id, false, false, 50U, 4090, 0, false, true, false);
-    const ScopedGameDataRoot root{temp.root()};
-
-    App::ScenarioManager manager;
-    App::ScenarioStartupController controller;
-    REQUIRE(controller.initialize(manager).has_value());
+    StartedSession session{temp, {.model_loader = make_stub_model_loader(), .stub_ctl_bank = true}};
+    App::ScenarioManager& manager{session.manager};
+    App::ScenarioStartupController& controller{session.controller};
     App::ScenarioRuntime* runtime{manager.world_runtime(0)};
     REQUIRE(runtime != nullptr);
-    install_resident_model_loader(runtime->character_runtime(),
-        [](const std::string_view name)
-            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
-          auto resource{std::make_shared<App::Character::ModelResource>()};
-          resource->name = name;
-          resource->groups.push_back(App::Omikron::MaterialGroup{});
-          return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
-        });
-    install_stub_ctl_loader(*runtime);
 
     REQUIRE(controller.tick().has_value());
     REQUIRE(controller.tick(1.0F / 30.0F).has_value());
@@ -2625,22 +1113,11 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     const TempDirectory temp;
     write_zone_contact_fixtures(
         temp, false, k_first_zone_id, false, false, 50U, 4090, 0, false, false, false, 17U);
-    const ScopedGameDataRoot root{temp.root()};
-
-    App::ScenarioManager manager;
-    App::ScenarioStartupController controller;
-    REQUIRE(controller.initialize(manager).has_value());
+    StartedSession session{temp, {.model_loader = make_stub_model_loader(), .stub_ctl_bank = true}};
+    App::ScenarioManager& manager{session.manager};
+    App::ScenarioStartupController& controller{session.controller};
     App::ScenarioRuntime* runtime{manager.world_runtime(0)};
     REQUIRE(runtime != nullptr);
-    install_resident_model_loader(runtime->character_runtime(),
-        [](const std::string_view name)
-            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
-          auto resource{std::make_shared<App::Character::ModelResource>()};
-          resource->name = name;
-          resource->groups.push_back(App::Omikron::MaterialGroup{});
-          return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
-        });
-    install_stub_ctl_loader(*runtime);
 
     REQUIRE(controller.tick().has_value());
     REQUIRE(controller.tick(1.0F / 30.0F).has_value());
@@ -2667,15 +1144,11 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     constexpr std::int16_t k_zone_id{20};
     const TempDirectory temp;
     write_zone_contact_fixtures(temp, false, k_zone_id, false, false, 500U);
-    const ScopedGameDataRoot root{temp.root()};
-
-    App::ScenarioManager manager;
-    App::ScenarioStartupController controller;
-    REQUIRE(controller.initialize(manager).has_value());
+    StartedSession session{temp, {.model_loader = make_stub_model_loader({.collision_sphere = App::Omikron::CollisionSphere{.radius = 10.0F}}), .stub_ctl_bank = true}};
+    App::ScenarioManager& manager{session.manager};
+    App::ScenarioStartupController& controller{session.controller};
     App::ScenarioRuntime* runtime{manager.world_runtime(0)};
     REQUIRE(runtime != nullptr);
-    install_collision_body_model_loader(*runtime);
-    install_stub_ctl_loader(*runtime);
 
     REQUIRE(controller.tick().has_value());
     App::Character::RuntimeCharacter* character{runtime->character_runtime().find(136)};
@@ -2704,15 +1177,11 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     constexpr std::int16_t k_zone_id{21};
     const TempDirectory temp;
     write_zone_contact_fixtures(temp, false, k_zone_id, false, false, 500U);
-    const ScopedGameDataRoot root{temp.root()};
-
-    App::ScenarioManager manager;
-    App::ScenarioStartupController controller;
-    REQUIRE(controller.initialize(manager).has_value());
+    StartedSession session{temp, {.model_loader = make_stub_model_loader({.collision_sphere = App::Omikron::CollisionSphere{.radius = 10.0F}}), .stub_ctl_bank = true}};
+    App::ScenarioManager& manager{session.manager};
+    App::ScenarioStartupController& controller{session.controller};
     App::ScenarioRuntime* runtime{manager.world_runtime(0)};
     REQUIRE(runtime != nullptr);
-    install_collision_body_model_loader(*runtime);
-    install_stub_ctl_loader(*runtime);
 
     REQUIRE(controller.tick().has_value());
     App::Character::RuntimeCharacter* character{runtime->character_runtime().find(136)};
@@ -2753,15 +1222,11 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
         500U,
         k_corrected_heading_units,
         k_heading_span_units);
-    const ScopedGameDataRoot root{temp.root()};
-
-    App::ScenarioManager manager;
-    App::ScenarioStartupController controller;
-    REQUIRE(controller.initialize(manager).has_value());
+    StartedSession session{temp, {.model_loader = make_stub_model_loader({.collision_sphere = App::Omikron::CollisionSphere{.radius = 10.0F}}), .stub_ctl_bank = true}};
+    App::ScenarioManager& manager{session.manager};
+    App::ScenarioStartupController& controller{session.controller};
     App::ScenarioRuntime* runtime{manager.world_runtime(0)};
     REQUIRE(runtime != nullptr);
-    install_collision_body_model_loader(*runtime);
-    install_stub_ctl_loader(*runtime);
 
     REQUIRE(controller.tick().has_value());
     App::Character::RuntimeCharacter* character{runtime->character_runtime().find(136)};
@@ -2803,15 +1268,11 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
   TEST_CASE("mover next-tick displacement reaches each ordinary spatial sample") {
     const TempDirectory temp;
     write_zone_contact_fixtures(temp, false, 27, false, false, 500U);
-    const ScopedGameDataRoot root{temp.root()};
-
-    App::ScenarioManager manager;
-    App::ScenarioStartupController controller;
-    REQUIRE(controller.initialize(manager).has_value());
+    StartedSession session{temp, {.model_loader = make_stub_model_loader({.collision_sphere = App::Omikron::CollisionSphere{.radius = 10.0F}}), .stub_ctl_bank = true}};
+    App::ScenarioManager& manager{session.manager};
+    App::ScenarioStartupController& controller{session.controller};
     App::ScenarioRuntime* runtime{manager.world_runtime(0)};
     REQUIRE(runtime != nullptr);
-    install_collision_body_model_loader(*runtime);
-    install_stub_ctl_loader(*runtime);
     REQUIRE(controller.tick().has_value());
 
     App::Character::RuntimeCharacter* character{runtime->character_runtime().find(136)};
@@ -2838,15 +1299,11 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
   TEST_CASE("class-two attachment movement reaches the next ordinary spatial sample") {
     const TempDirectory temp;
     write_zone_contact_fixtures(temp, false, 28, false, false, 500U);
-    const ScopedGameDataRoot root{temp.root()};
-
-    App::ScenarioManager manager;
-    App::ScenarioStartupController controller;
-    REQUIRE(controller.initialize(manager).has_value());
+    StartedSession session{temp, {.model_loader = make_stub_model_loader({.collision_sphere = App::Omikron::CollisionSphere{.radius = 60.0F}}), .stub_ctl_bank = true}};
+    App::ScenarioManager& manager{session.manager};
+    App::ScenarioStartupController& controller{session.controller};
     App::ScenarioRuntime* runtime{manager.world_runtime(0)};
     REQUIRE(runtime != nullptr);
-    install_collision_body_model_loader(*runtime, 60.0F);
-    install_stub_ctl_loader(*runtime);
     REQUIRE(controller.tick().has_value());
 
     App::Character::RuntimeCharacter* character{runtime->character_runtime().find(136)};
@@ -2878,15 +1335,11 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
   TEST_CASE("ceiling-clamped live Y reaches the ordinary spatial sample") {
     const TempDirectory temp;
     write_zone_contact_fixtures(temp, false, 29, false, false, 500U);
-    const ScopedGameDataRoot root{temp.root()};
-
-    App::ScenarioManager manager;
-    App::ScenarioStartupController controller;
-    REQUIRE(controller.initialize(manager).has_value());
+    StartedSession session{temp, {.model_loader = make_stub_model_loader({.collision_sphere = App::Omikron::CollisionSphere{.radius = 10.0F}}), .stub_ctl_bank = true}};
+    App::ScenarioManager& manager{session.manager};
+    App::ScenarioStartupController& controller{session.controller};
     App::ScenarioRuntime* runtime{manager.world_runtime(0)};
     REQUIRE(runtime != nullptr);
-    install_collision_body_model_loader(*runtime);
-    install_stub_ctl_loader(*runtime);
     REQUIRE(controller.tick().has_value());
 
     App::Character::RuntimeCharacter* character{runtime->character_runtime().find(136)};
@@ -2913,15 +1366,11 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     constexpr std::int16_t k_zone_id{22};
     const TempDirectory temp;
     write_zone_contact_fixtures(temp, false, k_zone_id, false, false, 500U);
-    const ScopedGameDataRoot root{temp.root()};
-
-    App::ScenarioManager manager;
-    App::ScenarioStartupController controller;
-    REQUIRE(controller.initialize(manager).has_value());
+    StartedSession session{temp, {.model_loader = make_stub_model_loader({.collision_sphere = App::Omikron::CollisionSphere{.radius = 10.0F}}), .stub_ctl_bank = true}};
+    App::ScenarioManager& manager{session.manager};
+    App::ScenarioStartupController& controller{session.controller};
     App::ScenarioRuntime* runtime{manager.world_runtime(0)};
     REQUIRE(runtime != nullptr);
-    install_collision_body_model_loader(*runtime);
-    install_stub_ctl_loader(*runtime);
 
     REQUIRE(controller.tick().has_value());
     App::Character::RuntimeCharacter* character{runtime->character_runtime().find(136)};
@@ -2951,22 +1400,11 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     const TempDirectory temp;
     write_zone_contact_fixtures(
         temp, false, k_zone_id, false, false, 500U, k_quarter_turn_units, 100);
-    const ScopedGameDataRoot root{temp.root()};
-
-    App::ScenarioManager manager;
-    App::ScenarioStartupController controller;
-    REQUIRE(controller.initialize(manager).has_value());
+    StartedSession session{temp, {.model_loader = make_stub_model_loader(), .stub_ctl_bank = true}};
+    App::ScenarioManager& manager{session.manager};
+    App::ScenarioStartupController& controller{session.controller};
     App::ScenarioRuntime* runtime{manager.world_runtime(0)};
     REQUIRE(runtime != nullptr);
-    install_resident_model_loader(runtime->character_runtime(),
-        [](const std::string_view name)
-            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
-          auto resource{std::make_shared<App::Character::ModelResource>()};
-          resource->name = name;
-          resource->groups.push_back(App::Omikron::MaterialGroup{});
-          return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
-        });
-    install_stub_ctl_loader(*runtime);
 
     REQUIRE(controller.tick().has_value());
     App::Character::RuntimeCharacter* character{runtime->character_runtime().find(136)};
@@ -2995,22 +1433,11 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     constexpr std::int16_t k_zone_id{17};
     const TempDirectory temp;
     write_zone_contact_fixtures(temp, false, k_zone_id, false, false, 50U, 4090, 0, true);
-    const ScopedGameDataRoot root{temp.root()};
-
-    App::ScenarioManager manager;
-    App::ScenarioStartupController controller;
-    REQUIRE(controller.initialize(manager).has_value());
+    StartedSession session{temp, {.model_loader = make_stub_model_loader(), .stub_ctl_bank = true}};
+    App::ScenarioManager& manager{session.manager};
+    App::ScenarioStartupController& controller{session.controller};
     App::ScenarioRuntime* runtime{manager.world_runtime(0)};
     REQUIRE(runtime != nullptr);
-    install_resident_model_loader(runtime->character_runtime(),
-        [](const std::string_view name)
-            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
-          auto resource{std::make_shared<App::Character::ModelResource>()};
-          resource->name = name;
-          resource->groups.push_back(App::Omikron::MaterialGroup{});
-          return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
-        });
-    install_stub_ctl_loader(*runtime);
 
     REQUIRE(controller.tick().has_value());
     REQUIRE(controller.current_character_trigger_proxy().has_value());
@@ -3026,7 +1453,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(character != nullptr);
     REQUIRE(character->ctl_controller.has_value());
     character->controller_enabled = true;
-    character->ctl_controller->set_player_direct_control(true);
+    character->ctl_controller->set_ordinary_control_suppressed(false);
     const float ctl_progress_before{character->ctl_controller->current_progress()};
 
     REQUIRE(controller.tick(1.0F / 30.0F).has_value());
@@ -3036,28 +1463,17 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK_FALSE(controller.current_character_trigger_proxy()->contact_ready);
     CHECK_EQ(controller.zone_contact_count(), 0U);
     CHECK_EQ(character->ctl_controller->current_progress(), ctl_progress_before);
-    CHECK(character->ctl_controller->direct_control_active());
+    CHECK_FALSE(character->ctl_controller->ordinary_control_suppressed());
   }
 
   TEST_CASE("zone contact follows live runtime position instead of the AREA placement snapshot") {
     const TempDirectory temp;
     write_live_zone_contact_fixtures(temp);
-    const ScopedGameDataRoot root{temp.root()};
-
-    App::ScenarioManager manager;
-    App::ScenarioStartupController controller;
-    REQUIRE(controller.initialize(manager).has_value());
+    StartedSession session{temp, {.model_loader = make_stub_model_loader(), .stub_ctl_bank = true}};
+    App::ScenarioManager& manager{session.manager};
+    App::ScenarioStartupController& controller{session.controller};
     App::ScenarioRuntime* runtime{manager.world_runtime(0)};
     REQUIRE(runtime != nullptr);
-    install_resident_model_loader(runtime->character_runtime(),
-        [](const std::string_view name)
-            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
-          auto resource{std::make_shared<App::Character::ModelResource>()};
-          resource->name = name;
-          resource->groups.push_back(App::Omikron::MaterialGroup{});
-          return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
-        });
-    install_stub_ctl_loader(*runtime);
 
     REQUIRE(controller.tick().has_value());
     REQUIRE(controller.tick(1.0F / 30.0F).has_value());
@@ -3105,22 +1521,11 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
   TEST_CASE("zone-owned StartDialog enters the shared global dialog takeover") {
     const TempDirectory temp;
     write_zone_dialog_fixtures(temp);
-    const ScopedGameDataRoot root{temp.root()};
-
-    App::ScenarioManager manager;
-    App::ScenarioStartupController controller;
-    REQUIRE(controller.initialize(manager).has_value());
+    StartedSession session{temp, {.model_loader = make_stub_model_loader(), .stub_ctl_bank = true}};
+    App::ScenarioManager& manager{session.manager};
+    App::ScenarioStartupController& controller{session.controller};
     App::ScenarioRuntime* runtime{manager.world_runtime(0)};
     REQUIRE(runtime != nullptr);
-    install_resident_model_loader(runtime->character_runtime(),
-        [](const std::string_view name)
-            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
-          auto resource{std::make_shared<App::Character::ModelResource>()};
-          resource->name = name;
-          resource->groups.push_back(App::Omikron::MaterialGroup{});
-          return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
-        });
-    install_stub_ctl_loader(*runtime);
 
     REQUIRE(controller.tick().has_value());
     REQUIRE(controller.tick(1.0F / 30.0F).has_value());
@@ -3136,21 +1541,11 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
       "compact character values use current and explicit owner profiles without body reload") {
     const TempDirectory temp;
     write_character_value_fixtures(temp);
-    const ScopedGameDataRoot root{temp.root()};
-
-    App::ScenarioManager manager;
-    App::ScenarioStartupController controller;
-    REQUIRE(controller.initialize(manager).has_value());
+    StartedSession session{temp, {.model_loader = make_stub_model_loader()}};
+    App::ScenarioManager& manager{session.manager};
+    App::ScenarioStartupController& controller{session.controller};
     App::ScenarioRuntime* runtime{manager.world_runtime(0)};
     REQUIRE(runtime != nullptr);
-    install_resident_model_loader(runtime->character_runtime(),
-        [](const std::string_view name)
-            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
-          auto resource{std::make_shared<App::Character::ModelResource>()};
-          resource->name = name;
-          resource->groups.push_back(App::Omikron::MaterialGroup{});
-          return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
-        });
 
     REQUIRE(controller.tick().has_value());
     REQUIRE(controller.area_script() != nullptr);
@@ -3170,18 +1565,22 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK_EQ(manager.game_state()->current_character()->values.rings, 0);
     CHECK_EQ(manager.game_state()->current_character()->values.seteks, 0U);
     CHECK(runtime->character_runtime().find(136) != nullptr);
-    CHECK(runtime->character_runtime().find(310) == nullptr);
+    // AREA load materializes every table-0 placement, so 310 is resident but never became the
+    // current character and stays inactive (its persistent state bit is clear).
+    const App::Character::RuntimeCharacter* const resident_310{
+        runtime->character_runtime().find(310)};
+    REQUIRE(resident_310 != nullptr);
+    CHECK_FALSE(resident_310->active);
+    CHECK_FALSE(resident_310->area_present);
   }
 
   TEST_CASE("current-character script bridge rejects missing and nonresident session targets") {
     SUBCASE("no current controlled character") {
       const TempDirectory temp;
       write_current_character_script_fixtures(temp);
-      const ScopedGameDataRoot root{temp.root()};
-
-      App::ScenarioManager manager;
-      App::ScenarioStartupController controller;
-      REQUIRE(controller.initialize(manager).has_value());
+      StartedSession session{temp};
+      App::ScenarioManager& manager{session.manager};
+      App::ScenarioStartupController& controller{session.controller};
 
       const auto result{controller.tick()};
       REQUIRE_FALSE(result.has_value());
@@ -3194,11 +1593,9 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     SUBCASE("current controlled character references a nonresident body") {
       const TempDirectory temp;
       write_current_character_script_fixtures(temp);
-      const ScopedGameDataRoot root{temp.root()};
-
-      App::ScenarioManager manager;
-      App::ScenarioStartupController controller;
-      REQUIRE(controller.initialize(manager).has_value());
+      StartedSession session{temp};
+      App::ScenarioManager& manager{session.manager};
+      App::ScenarioStartupController& controller{session.controller};
       manager.set_controlled_character(
           App::ControlledCharacterRef{.character_id = 49, .world_scene_id = 1});
 
@@ -3214,24 +1611,11 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
   TEST_CASE("retail AREA handoff detaches explicit current AREA before physical transfer") {
     const TempDirectory temp;
     write_handoff_fixtures(temp);
-    const ScopedGameDataRoot root{temp.root()};
-
-    App::ScenarioManager manager;
-    App::ScenarioStartupController controller;
-    REQUIRE(controller.initialize(manager).has_value());
+    StartedSession session{temp, {.model_loader = make_stub_model_loader({.collision_sphere = App::Omikron::CollisionSphere{.center = {.y = 8.0F}, .radius = 12.0F}})}};
+    App::ScenarioManager& manager{session.manager};
+    App::ScenarioStartupController& controller{session.controller};
     App::ScenarioRuntime* source_runtime{manager.world_runtime(0)};
     REQUIRE(source_runtime != nullptr);
-    install_resident_model_loader(source_runtime->character_runtime(),
-        [](const std::string_view name)
-            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
-          auto resource{std::make_shared<App::Character::ModelResource>()};
-          resource->name = name;
-          resource->groups.push_back(App::Omikron::MaterialGroup{});
-          resource->model.header.collision_sphere_count = 1U;
-          resource->model.header.collision_sphere_slots.at(0) =
-              App::Omikron::CollisionSphere{.center = {.y = 8.0F}, .radius = 12.0F};
-          return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
-        });
 
     REQUIRE(controller.tick().has_value());  // Select body and accept 0x2F.
     REQUIRE(controller.tick().has_value());  // Prepare target, then execute 0x47/0x49/0x30/0x03.
@@ -3297,27 +1681,113 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     CHECK_EQ(manager.attached_world_head_context()->scene_id, 1U);
   }
 
+  TEST_CASE("a SCENE event that detaches its own SCENE is applied after the script returns") {
+    const TempDirectory temp;
+    write_handoff_fixtures(temp, 118, false, false, true);
+    StartedSession session{temp,
+        {.model_loader = make_stub_model_loader({.collision_sphere = App::Omikron::CollisionSphere{
+                                                     .center = {.y = 8.0F}, .radius = 12.0F}})}};
+
+    REQUIRE(session.controller.tick().has_value());  // Accept 0x2F.
+    // Prepare AREA 222, run 0x47 (attaching SCENE 55) and run the SCENE event 1 in the same tick;
+    // its 0x48 must not destroy the executing context or the bytes it borrows.
+    const auto ticked{session.controller.tick()};
+    const std::string tick_error{ticked.has_value() ? std::string{} : ticked.error()};
+    REQUIRE_MESSAGE(ticked.has_value(), tick_error);
+
+    const App::RuntimeAreaSlot* const destination{session.controller.runtime_area_slot(1)};
+    REQUIRE(destination != nullptr);
+    CHECK_EQ(destination->primary_area_id, 222);
+    CHECK_FALSE(destination->scene.has_value());
+    CHECK_FALSE(destination->scene_script.has_value());
+    CHECK_EQ(destination->scene_id, -1);
+    CHECK_EQ(session.controller.area_mapping(222), std::optional<std::int32_t>{-1});
+    CHECK_EQ(session.controller.zone_contact_count(), 0U);
+    CHECK(session.controller.tick(1.0F / 30.0F).has_value());
+  }
+
+  TEST_CASE("a corrupt destination AREA record fails the transition without touching residency") {
+    const TempDirectory temp;
+    write_handoff_fixtures(temp);
+    std::vector<std::byte> area{make_handoff_area_archive(118, false, false)};
+    write_u32(area, (222U * 8U) + 4U, 0x00FFFFFFU);  // Record extends far past the archive.
+    write_bytes(temp.root() / "IAM" / "AREA", area);
+    StartedSession session{temp};
+
+    REQUIRE(session.controller.tick().has_value());  // Source accepts 0x2F.
+    REQUIRE(session.controller.area_transition_pending());
+    const auto failed{session.controller.tick()};
+    REQUIRE_FALSE(failed.has_value());
+    CHECK_FALSE(failed.error().empty());
+
+    // Nothing was destroyed or half-built: the source stays resident and current, and the
+    // destination slot and world context were never populated.
+    const App::RuntimeAreaSlot* const source{session.controller.runtime_area_slot(0)};
+    const App::RuntimeAreaSlot* const destination{session.controller.runtime_area_slot(1)};
+    REQUIRE(source != nullptr);
+    REQUIRE(destination != nullptr);
+    CHECK_EQ(source->primary_area_id, 118);
+    CHECK_FALSE(destination->primary.has_value());
+    CHECK_EQ(destination->primary_area_id, -1);
+    CHECK_EQ(session.manager.world_contexts()[1].residency, WorldSceneResidencyState::Free);
+    CHECK_EQ(session.manager.world_contexts()[0].residency, WorldSceneResidencyState::ResidentAttached);
+    CHECK_EQ(session.controller.active_area_slot(), 0U);
+
+    // The failure latches: the coordinator never silently restarts a failed transaction.
+    CHECK_FALSE(session.controller.tick().has_value());
+  }
+
+  TEST_CASE("a multi-step actor tick carries its accumulator across an event-9 body transfer") {
+    const TempDirectory temp;
+    write_handoff_fixtures(temp);
+    StartedSession session{temp,
+        {.model_loader = make_stub_model_loader(
+             {.collision_sphere = App::Omikron::CollisionSphere{.center = {.y = 8.0F}, .radius = 12.0F}})}};
+    App::ScenarioManager& manager{session.manager};
+    App::ScenarioStartupController& controller{session.controller};
+    App::ScenarioRuntime& source_runtime{session.world(0U)};
+
+    REQUIRE(controller.tick().has_value());  // Select body and accept 0x2F.
+    REQUIRE(controller.tick().has_value());  // Prepare target, then execute 0x47/0x49/0x30/0x03.
+    App::Character::RuntimeCharacter* source_character{source_runtime.character_runtime().find(136)};
+    REQUIRE(source_character != nullptr);
+    const App::Character::BodyIdentity body_identity{source_character->body_identity};
+    const App::Runtime::Vec3 placed{source_character->transform.translation};
+
+    App::ScenarioRuntime& destination_runtime{session.world(1U)};
+    App::Omikron::Model3DOData destination_decor{make_collision_decor(1000.0F, placed.y + 20.0F)};
+    for (std::size_t index{0}; index < 3U; ++index) {
+      destination_decor.vertices.at(index).position.x += placed.x;
+      destination_decor.vertices.at(index).position.z += placed.z;
+    }
+    destination_runtime.bind_decor_model(&destination_decor);
+    App::Character::PhysicalMotionService::synchronize(*source_character);
+    source_character->physical_motion.vertical_velocity = 0.0F;
+
+    // 3.5 logic steps in one call: the handoff happens on the first step, so the remaining steps
+    // must keep consuming the accumulator that travelled with the body.
+    constexpr float k_step{App::Character::PhysicalMotionService::K_LOGIC_STEP_SECONDS};
+    REQUIRE(controller.tick(3.5F * k_step).has_value());
+
+    REQUIRE(manager.controlled_character().has_value());
+    CHECK_EQ(manager.controlled_character()->world_scene_id, 1U);
+    const App::Character::RuntimeCharacter* const transferred{
+        destination_runtime.character_runtime().find_body(body_identity)};
+    REQUIRE(transferred != nullptr);
+    CHECK_EQ(transferred->ordinary_actor_service_generation, 3U);
+    CHECK(transferred->physical_motion.accumulator_seconds < k_step);
+    CHECK(transferred->physical_motion.accumulator_seconds == doctest::Approx(0.5F * k_step));
+    CHECK(source_runtime.character_runtime().find_body(body_identity) == nullptr);
+  }
+
   TEST_CASE("physical support commits logical AREA when body storage already matches destination") {
     const TempDirectory temp;
     write_handoff_fixtures(temp);
-    const ScopedGameDataRoot root{temp.root()};
-
-    App::ScenarioManager manager;
-    App::ScenarioStartupController controller;
-    REQUIRE(controller.initialize(manager).has_value());
+    StartedSession session{temp, {.model_loader = make_stub_model_loader({.collision_sphere = App::Omikron::CollisionSphere{.center = {.y = 8.0F}, .radius = 12.0F}})}};
+    App::ScenarioManager& manager{session.manager};
+    App::ScenarioStartupController& controller{session.controller};
     App::ScenarioRuntime* source_runtime{manager.world_runtime(0)};
     REQUIRE(source_runtime != nullptr);
-    install_resident_model_loader(source_runtime->character_runtime(),
-        [](const std::string_view name)
-            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
-          auto resource{std::make_shared<App::Character::ModelResource>()};
-          resource->name = name;
-          resource->groups.push_back(App::Omikron::MaterialGroup{});
-          resource->model.header.collision_sphere_count = 1U;
-          resource->model.header.collision_sphere_slots.at(0) =
-              App::Omikron::CollisionSphere{.center = {.y = 8.0F}, .radius = 12.0F};
-          return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
-        });
 
     REQUIRE(controller.tick().has_value());
     REQUIRE(controller.tick().has_value());
@@ -3360,24 +1830,11 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
   TEST_CASE("physical support matching logical current does not follow split body storage") {
     const TempDirectory temp;
     write_handoff_fixtures(temp, 9999);
-    const ScopedGameDataRoot root{temp.root()};
-
-    App::ScenarioManager manager;
-    App::ScenarioStartupController controller;
-    REQUIRE(controller.initialize(manager).has_value());
+    StartedSession session{temp, {.model_loader = make_stub_model_loader({.collision_sphere = App::Omikron::CollisionSphere{.center = {.y = 8.0F}, .radius = 12.0F}})}};
+    App::ScenarioManager& manager{session.manager};
+    App::ScenarioStartupController& controller{session.controller};
     App::ScenarioRuntime* source_runtime{manager.world_runtime(0)};
     REQUIRE(source_runtime != nullptr);
-    install_resident_model_loader(source_runtime->character_runtime(),
-        [](const std::string_view name)
-            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
-          auto resource{std::make_shared<App::Character::ModelResource>()};
-          resource->name = name;
-          resource->groups.push_back(App::Omikron::MaterialGroup{});
-          resource->model.header.collision_sphere_count = 1U;
-          resource->model.header.collision_sphere_slots.at(0) =
-              App::Omikron::CollisionSphere{.center = {.y = 8.0F}, .radius = 12.0F};
-          return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
-        });
 
     REQUIRE(controller.tick().has_value());
     REQUIRE(controller.tick().has_value());
@@ -3413,24 +1870,11 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
   TEST_CASE("slot1 AREA transition requester survives event-9 logical current handoff") {
     const TempDirectory temp;
     write_handoff_fixtures(temp, 118, true);
-    const ScopedGameDataRoot root{temp.root()};
-
-    App::ScenarioManager manager;
-    App::ScenarioStartupController controller;
-    REQUIRE(controller.initialize(manager).has_value());
+    StartedSession session{temp, {.model_loader = make_stub_model_loader({.collision_sphere = App::Omikron::CollisionSphere{.center = {.y = 8.0F}, .radius = 12.0F}})}};
+    App::ScenarioManager& manager{session.manager};
+    App::ScenarioStartupController& controller{session.controller};
     App::ScenarioRuntime* source_runtime{manager.world_runtime(0)};
     REQUIRE(source_runtime != nullptr);
-    install_resident_model_loader(source_runtime->character_runtime(),
-        [](const std::string_view name)
-            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
-          auto resource{std::make_shared<App::Character::ModelResource>()};
-          resource->name = name;
-          resource->groups.push_back(App::Omikron::MaterialGroup{});
-          resource->model.header.collision_sphere_count = 1U;
-          resource->model.header.collision_sphere_slots.at(0) =
-              App::Omikron::CollisionSphere{.center = {.y = 8.0F}, .radius = 12.0F};
-          return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
-        });
 
     REQUIRE(controller.tick().has_value());  // AREA118 requests AREA222.
     REQUIRE(controller.begin_tick(1.0F / 30.0F).has_value());
@@ -3477,21 +1921,11 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
   TEST_CASE("SelectCurrentCharacter changes body storage ownership but not logical current AREA") {
     const TempDirectory temp;
     write_handoff_fixtures(temp, 118, false, true);
-    const ScopedGameDataRoot root{temp.root()};
-
-    App::ScenarioManager manager;
-    App::ScenarioStartupController controller;
-    REQUIRE(controller.initialize(manager).has_value());
+    StartedSession session{temp, {.model_loader = make_stub_model_loader()}};
+    App::ScenarioManager& manager{session.manager};
+    App::ScenarioStartupController& controller{session.controller};
     App::ScenarioRuntime* source_runtime{manager.world_runtime(0)};
     REQUIRE(source_runtime != nullptr);
-    install_resident_model_loader(source_runtime->character_runtime(),
-        [](const std::string_view name)
-            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
-          auto resource{std::make_shared<App::Character::ModelResource>()};
-          resource->name = name;
-          resource->groups.push_back(App::Omikron::MaterialGroup{});
-          return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
-        });
 
     REQUIRE(controller.tick().has_value());
     const auto selected{controller.tick()};
@@ -3541,23 +1975,11 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
   TEST_CASE("explicit nonresident AREA release is a successful no-op") {
     const TempDirectory temp;
     write_handoff_fixtures(temp, 9999);
-    const ScopedGameDataRoot root{temp.root()};
-    App::ScenarioManager manager;
-    App::ScenarioStartupController controller;
-    REQUIRE(controller.initialize(manager).has_value());
+    StartedSession session{temp, {.model_loader = make_stub_model_loader({.collision_sphere = App::Omikron::CollisionSphere{.center = {.y = 8.0F}, .radius = 12.0F}})}};
+    App::ScenarioManager& manager{session.manager};
+    App::ScenarioStartupController& controller{session.controller};
     App::ScenarioRuntime* runtime{manager.world_runtime(0)};
     REQUIRE(runtime != nullptr);
-    install_resident_model_loader(runtime->character_runtime(),
-        [](const std::string_view name)
-            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
-          auto resource{std::make_shared<App::Character::ModelResource>()};
-          resource->name = name;
-          resource->groups.push_back(App::Omikron::MaterialGroup{});
-          resource->model.header.collision_sphere_count = 1U;
-          resource->model.header.collision_sphere_slots.at(0) =
-              App::Omikron::CollisionSphere{.center = {.y = 8.0F}, .radius = 12.0F};
-          return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
-        });
     REQUIRE(controller.tick().has_value());
     REQUIRE(controller.tick().has_value());
     CHECK(controller.area_script()->state() == AreaScriptState::k_ready);
@@ -3569,23 +1991,11 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
   TEST_CASE("minus one release still detaches the non-current resident AREA") {
     const TempDirectory temp;
     write_handoff_fixtures(temp, -1);
-    const ScopedGameDataRoot root{temp.root()};
-    App::ScenarioManager manager;
-    App::ScenarioStartupController controller;
-    REQUIRE(controller.initialize(manager).has_value());
+    StartedSession session{temp, {.model_loader = make_stub_model_loader({.collision_sphere = App::Omikron::CollisionSphere{.center = {.y = 8.0F}, .radius = 12.0F}})}};
+    App::ScenarioManager& manager{session.manager};
+    App::ScenarioStartupController& controller{session.controller};
     App::ScenarioRuntime* runtime{manager.world_runtime(0)};
     REQUIRE(runtime != nullptr);
-    install_resident_model_loader(runtime->character_runtime(),
-        [](const std::string_view name)
-            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
-          auto resource{std::make_shared<App::Character::ModelResource>()};
-          resource->name = name;
-          resource->groups.push_back(App::Omikron::MaterialGroup{});
-          resource->model.header.collision_sphere_count = 1U;
-          resource->model.header.collision_sphere_slots.at(0) =
-              App::Omikron::CollisionSphere{.center = {.y = 8.0F}, .radius = 12.0F};
-          return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
-        });
     REQUIRE(controller.tick().has_value());
     REQUIRE(controller.tick().has_value());
     CHECK(controller.area_script()->state() == AreaScriptState::k_ready);
@@ -3599,6 +2009,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
   TEST_CASE("Startup reaches the main menu through START, AREA 118 and interface 29") {
     const TempDirectory temp;
     write_boot_fixtures(temp);
+    // Inline: asserts the pre-tick state and installs its model loader only after those checks.
     const ScopedGameDataRoot root{temp.root()};
 
     App::ScenarioManager manager;
@@ -3684,22 +2095,7 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     write_boot_fixtures(temp);
     write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_complete_kayl_arrives_scx());
     write_bytes(temp.root() / "IAM" / "DIALOG", make_dialog_archive(272));
-    const ScopedGameDataRoot root{temp.root()};
-
-    App::ScenarioManager manager;
-    App::ScenarioStartupController controller;
-    REQUIRE(controller.initialize(manager).has_value());
-    controller.dispatcher().set_interface_open_sink(
-        [](const App::InterfaceOpenRequest& request)
-            -> std::expected<App::InterfaceHandle, std::string> {
-          return App::InterfaceHandle{.interface_id = request.interface_id, .generation = 1};
-        });
-
-    App::WorldSceneContext* context{manager.active_world_context()};
-    REQUIRE(context != nullptr);
-    REQUIRE(context->runtime != nullptr);
-    install_resident_model_loader(context->runtime->character_runtime(),
-        [](const std::string_view name)
+    StartedSession session{temp, {.model_loader = [](const std::string_view name)
             -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
           auto resource{std::make_shared<App::Character::ModelResource>()};
           resource->name = name;
@@ -3721,7 +2117,18 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
           resource->model.runtime_objects = {App::Omikron::Model3DOData::RuntimeObjectState{}};
           resource->groups.push_back(App::Omikron::MaterialGroup{});
           return std::shared_ptr<const App::Character::ModelResource>{std::move(resource)};
+        }}};
+    App::ScenarioManager& manager{session.manager};
+    App::ScenarioStartupController& controller{session.controller};
+    controller.dispatcher().set_interface_open_sink(
+        [](const App::InterfaceOpenRequest& request)
+            -> std::expected<App::InterfaceHandle, std::string> {
+          return App::InterfaceHandle{.interface_id = request.interface_id, .generation = 1};
         });
+
+    App::WorldSceneContext* context{manager.current_world_context()};
+    REQUIRE(context != nullptr);
+    REQUIRE(context->runtime != nullptr);
 
     REQUIRE(controller.tick().has_value());
     REQUIRE(controller
@@ -3816,10 +2223,9 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
         make_object_archive(141U, 7U, "ZVO M010 Agression", authored_text));
     write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
     write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_minimal_scx());
-    const ScopedGameDataRoot root{temp.root()};
-    App::ScenarioManager manager;
-    App::ScenarioStartupController controller;
-    REQUIRE(controller.initialize(manager).has_value());
+    StartedSession session{temp};
+    App::ScenarioManager& manager{session.manager};
+    App::ScenarioStartupController& controller{session.controller};
     REQUIRE(controller.tick().has_value());
 
     const auto voice{manager.world_presentation().take_voice_over()};
@@ -3855,10 +2261,9 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
           temp.root() / "IAM" / "OBJECT", make_object_archive(141U, 0U, "ZVOT Intro", "short"));
       write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
       write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_minimal_scx());
-      const ScopedGameDataRoot root{temp.root()};
-      App::ScenarioManager manager;
-      App::ScenarioStartupController controller;
-      REQUIRE(controller.initialize(manager).has_value());
+      StartedSession session{temp};
+      App::ScenarioManager& manager{session.manager};
+      App::ScenarioStartupController& controller{session.controller};
       REQUIRE(controller.tick().has_value());
       const auto voice{manager.world_presentation().take_voice_over()};
       REQUIRE(voice.has_value());
@@ -3875,10 +2280,9 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
       write_bytes(temp.root() / "IAM" / "AREA", make_object_activation_area_archive(0xFFFFU));
       write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
       write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_minimal_scx());
-      const ScopedGameDataRoot root{temp.root()};
-      App::ScenarioManager manager;
-      App::ScenarioStartupController controller;
-      REQUIRE(controller.initialize(manager).has_value());
+      StartedSession session{temp};
+      App::ScenarioManager& manager{session.manager};
+      App::ScenarioStartupController& controller{session.controller};
       REQUIRE(controller.tick().has_value());
       CHECK_EQ(manager.world_presentation().pending_voice_over_count(), 0U);
       CHECK_EQ(manager.world_presentation().pending_world_text_count(), 0U);
@@ -3893,10 +2297,9 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
           make_object_archive(141U, 0x10U, "NOT_A_VOICE", "not speech"));
       write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
       write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_minimal_scx());
-      const ScopedGameDataRoot root{temp.root()};
-      App::ScenarioManager manager;
-      App::ScenarioStartupController controller;
-      REQUIRE(controller.initialize(manager).has_value());
+      StartedSession session{temp};
+      App::ScenarioManager& manager{session.manager};
+      App::ScenarioStartupController& controller{session.controller};
       REQUIRE(controller.tick().has_value());
       CHECK_EQ(manager.world_presentation().pending_voice_over_count(), 0U);
       CHECK_EQ(manager.world_presentation().pending_world_text_count(), 0U);
@@ -3923,10 +2326,9 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
     write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_minimal_scx());
 
-    const ScopedGameDataRoot root{temp.root()};
-    App::ScenarioManager manager;
-    App::ScenarioStartupController controller;
-    REQUIRE(controller.initialize(manager).has_value());
+    StartedSession session{temp};
+    App::ScenarioManager& manager{session.manager};
+    App::ScenarioStartupController& controller{session.controller};
     REQUIRE(controller.tick().has_value());
 
     CHECK_EQ(controller.area_mapping(237), std::optional<std::int32_t>{57});

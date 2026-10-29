@@ -123,7 +123,7 @@ RuntimeTextLayout layout_runtime_text(const RuntimeTextDocument& document,
   std::vector<PendingGlyph> word;
   std::vector<PendingLine> lines;
 
-  const auto flush_word{[&]() {
+  const auto flush_word{[&] {
     // clang-analyzer loses track of local lambda reference captures here.
     // NOLINTNEXTLINE(clang-analyzer-core.NullDereference)
     append_word(line, word, lines, maximum_width, anchor_x, style.horizontal);

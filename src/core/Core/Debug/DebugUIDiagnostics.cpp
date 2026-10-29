@@ -222,7 +222,8 @@ void DebugUI::show_system_info() {
 
   const auto& metrics = Metrics::get();
 
-  auto show_section = [](const char* title, const std::flat_map<std::string, std::string>& info) {
+  const auto show_section = [](const char* title,
+                                const std::flat_map<std::string, std::string>& info) {
     if (ImGui::CollapsingHeader(title, ImGuiTreeNodeFlags_DefaultOpen)) {
       ImGui::Indent();
       for (const auto& [key, value] : info) {
@@ -327,7 +328,7 @@ void DebugUI::show_log() {
 
   // Clear button
   if (ImGui::Button("Clear")) {
-    if (auto sink = Log::get_debug_sink()) {
+    if (const auto sink = Log::get_debug_sink()) {
       sink->clear();
     }
   }
@@ -378,7 +379,7 @@ void DebugUI::show_log() {
   ImGui::BeginChild(
       "LogScrollRegion", ImVec2(0, -footer_height), 0, ImGuiWindowFlags_HorizontalScrollbar);
 
-  if (auto sink = Log::get_debug_sink()) {
+  if (const auto sink = Log::get_debug_sink()) {
     const auto entries = sink->get_entries();
     const auto visible_entries{entries | std::views::filter([this](const auto& entry) {
       return m_log_filter.matches(entry.level, entry.category, entry.line);

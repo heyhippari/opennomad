@@ -73,6 +73,8 @@ constexpr const char* automatic_heading_suppression_name(
       return "no forward collision";
     case Reason::k_spatial_heading_latch:
       return "previous spatial heading latch";
+    case Reason::k_jump_sequence:
+      return "jump sequence";
     case Reason::k_falling:
       return "falling";
     case Reason::k_mdrot:
@@ -90,7 +92,7 @@ constexpr const char* automatic_heading_suppression_name(
 void DebugUI::show_world_inspector() {
   ImGui::Begin("World Inspector", &m_show_world_inspector);
 
-  auto* view{dynamic_cast<Debug::SceneDebugView*>(m_context.scene)};
+  const auto* view{dynamic_cast<Debug::SceneDebugView*>(m_context.scene)};
   if (view == nullptr) {
     ImGui::TextUnformatted("The active scene exposes no 3D debug information.");
     ImGui::End();
@@ -102,7 +104,7 @@ void DebugUI::show_world_inspector() {
     const std::optional<ControlledCharacterRef> controlled{
         scenarios == nullptr ? std::nullopt : scenarios->controlled_character()};
     const WorldSceneContext* const active_world{
-        scenarios == nullptr ? nullptr : scenarios->active_world_context()};
+        scenarios == nullptr ? nullptr : scenarios->current_world_context()};
     ImGui::SeparatorText("Session character ownership");
     if (controlled.has_value()) {
       ImGui::Text("ControlledCharacterRef: character %d, body %llu, storage world scene %u",
@@ -158,6 +160,9 @@ void DebugUI::show_world_inspector() {
         world->legacy_composites);
     ImGui::Text("Display: clamped SDR + exact sRGB OETF");
     ImGui::Text("Groups: %zu", world->group_count);
+    ImGui::Text("Decor groups drawn / frustum-culled: %zu / %zu",
+        world->decor_groups_submitted,
+        world->decor_groups_culled);
     ImGui::Text("Materials: %zu", world->material_count);
     ImGui::Text("Bounds center: %.3f, %.3f, %.3f",
         static_cast<double>(world->bounds_center.at(0)),
@@ -648,9 +653,9 @@ void DebugUI::show_world_inspector() {
       if (character.has_controller) {
         ImGui::SeparatorText("CTL Controller");
         ImGui::Text("Control set: %s", character.ctl_control_set.c_str());
-        ImGui::Text("Enabled: %s, direct control: %s",
+        ImGui::Text("Enabled: %s, control suppressed: %s",
             character.ctl_enabled ? "yes" : "no",
-            character.ctl_direct_control ? "yes" : "no");
+            character.ctl_control_suppressed ? "yes" : "no");
         ImGui::Text("Move: %d (%s)",
             static_cast<int>(character.ctl_move_id.value_or(0)),
             character.ctl_move_name.c_str());

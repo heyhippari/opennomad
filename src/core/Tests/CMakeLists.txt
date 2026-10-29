@@ -32,6 +32,14 @@ add_executable(FrameTimingTest FrameTiming.spec.cpp $<TARGET_OBJECTS:TestRunner>
 add_test(NAME FrameTimingTest COMMAND FrameTimingTest)
 target_link_libraries(FrameTimingTest PRIVATE doctest::doctest Core)
 
+add_executable(AreaTransitionServiceTest AreaTransitionService.spec.cpp $<TARGET_OBJECTS:TestRunner>)
+add_test(NAME AreaTransitionServiceTest COMMAND AreaTransitionServiceTest)
+target_link_libraries(AreaTransitionServiceTest PRIVATE doctest::doctest Core)
+
+add_executable(ZoneContactServiceTest ZoneContactService.spec.cpp $<TARGET_OBJECTS:TestRunner>)
+add_test(NAME ZoneContactServiceTest COMMAND ZoneContactServiceTest)
+target_link_libraries(ZoneContactServiceTest PRIVATE doctest::doctest Core)
+
 add_executable(WorldCameraTest WorldCamera.spec.cpp $<TARGET_OBJECTS:TestRunner>)
 add_test(NAME WorldCameraTest COMMAND WorldCameraTest)
 target_link_libraries(WorldCameraTest PRIVATE doctest::doctest Core)
@@ -47,6 +55,10 @@ target_link_libraries(WorldFadeTest PRIVATE doctest::doctest Core)
 add_executable(WorldUvPhaseTest WorldUvPhase.spec.cpp $<TARGET_OBJECTS:TestRunner>)
 add_test(NAME WorldUvPhaseTest COMMAND WorldUvPhaseTest)
 target_link_libraries(WorldUvPhaseTest PRIVATE doctest::doctest Core)
+
+add_executable(DecorCullingTest DecorCulling.spec.cpp $<TARGET_OBJECTS:TestRunner>)
+add_test(NAME DecorCullingTest COMMAND DecorCullingTest)
+target_link_libraries(DecorCullingTest PRIVATE doctest::doctest Core)
 
 add_executable(RuntimeMathTest RuntimeMath.spec.cpp $<TARGET_OBJECTS:TestRunner>)
 add_test(NAME RuntimeMathTest COMMAND RuntimeMathTest)

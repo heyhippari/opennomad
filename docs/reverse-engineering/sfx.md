@@ -267,6 +267,33 @@ confirmed as nodes, then requests, then particles. A zero-delay GRID request can
 therefore create and service its particle in the same logical tick; rendering at
 60, 120, or 144 Hz does not increase emissions.
 
+**Confirmed — Runtime.** Runtime services nodes (`0x00451600`), static emitters
+(`0x0044FC30`) and requests (`0x0046DB80`) once per rendered frame and advances
+node clocks by the frame delta (`0x00450D60` adds `[0x004C30D8]`), so a long
+frame produces at most one emission per emitter. When one OpenNomad frame owes
+several logical steps, only the first may emit; catch-up steps still advance
+every clock, countdown and particle. Without this, a load hitch started several
+phase-aligned copies of the same sound in one mixer frame (IMPASSE's `burn` and
+`ttt` nodes, which authored-emit a sound every tick).
+
+## Static emitter distance gate
+
+**Confirmed — Runtime.** The static-emitter service `0x0044FC30` runs only
+while a decor is attached, and an emitter whose interval has elapsed emits only
+when the camera eye (`0x00446BC0`, camera `+0x14..+0x1C`) is strictly inside
+the scene far distance (`0x00440C30`, decor `+0x154`): `distance² < far²`.
+That far distance is the visibility preference in metres (default 50) scaled
+by 39.37 into inches. Out of range, the emitter's timers still run but nothing
+is emitted. OpenNomad publishes the world camera eye and far plane to every
+world runtime each frame; without a published camera the gate is open.
+
+Definition flag `0x4000` selects a further branch: while in range, the
+emitter starts one looping voice for the definition's sound (min 117 / max 390
+inches) and enqueues its requests with sound suppressed (`0x0046E3A0`
+descriptor `+0x10`); leaving range or expiring stops that voice. No retail
+SFX definition sets `0x4000` and no retail static emitter's definition carries
+a sound, so OpenNomad does not model this branch.
+
 ## GRID retail example
 
 **Confirmed — data.** `GRID.SFX` is 3164 bytes and contains 10 definitions, one

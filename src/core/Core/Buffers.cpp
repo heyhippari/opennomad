@@ -50,8 +50,6 @@ void VertexBuffer::upload(const std::span<const std::byte> data) {
 
 void VertexBuffer::update(
     const std::size_t offset_bytes, const std::span<const std::byte> data) const {
-  APP_PROFILE_FUNCTION();
-
   if (offset_bytes >= m_size || data.size_bytes() > m_size - offset_bytes) {
     return;  // Out-of-range updates are ignored; callers size the buffer first.
   }

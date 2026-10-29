@@ -404,6 +404,16 @@ class Model3DO {
       std::span<const Model3DOData::RuntimeObjectState> runtime_objects,
       std::span<const RawVertex> source_vertices);
 
+  /// Builds posed geometry for the meshes selected by `mesh_mask` (parallel to
+  /// meshes; nonzero selects). An empty mask selects every mesh. Each emitted
+  /// group is identical to the group with the same (mesh, material, flags) key
+  /// in a full build, so callers can patch previously built geometry in place.
+  [[nodiscard]] static std::expected<std::vector<MaterialGroup>, std::string> build_posed_geometry(
+      const Model3DOData& model,
+      std::span<const Model3DOData::RuntimeObjectState> runtime_objects,
+      std::span<const RawVertex> source_vertices,
+      std::span<const std::uint8_t> mesh_mask);
+
   /// Re-resolves Runtime object transforms from the current local/animation
   /// matrices while preserving serialized descriptor data.
   [[nodiscard]] static std::expected<void, std::string> resolve_runtime_transforms(

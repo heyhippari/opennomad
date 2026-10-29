@@ -41,18 +41,29 @@ TEST_SUITE("Core::Audio::LegacySpatializer") {
     CHECK_EQ(App::Audio::attenuation_gain(0.5F, 1.0F, 10.0F), doctest::Approx(1.0F));
   }
 
-  TEST_CASE("Attenuation is zero at and beyond the maximum distance") {
-    CHECK_EQ(App::Audio::attenuation_gain(10.0F, 1.0F, 10.0F), doctest::Approx(0.0F));
-    CHECK_EQ(App::Audio::attenuation_gain(20.0F, 1.0F, 10.0F), doctest::Approx(0.0F));
+  TEST_CASE("Attenuation follows DirectSound3D inverse-distance rolloff") {
+    CHECK_EQ(App::Audio::attenuation_gain(2.0F, 1.0F, 10.0F), doctest::Approx(0.5F));
+    CHECK_EQ(App::Audio::attenuation_gain(4.0F, 1.0F, 10.0F), doctest::Approx(0.25F));
+    // Runtime SFX emitter pair: 78/585 inches.
+    CHECK_EQ(App::Audio::attenuation_gain(156.0F, 78.0F, 585.0F), doctest::Approx(0.5F));
   }
 
-  TEST_CASE("Attenuation midpoint follows the linear curve") {
-    CHECK_EQ(App::Audio::attenuation_gain(5.5F, 1.0F, 10.0F), doctest::Approx(0.5F));
+  TEST_CASE("Attenuation holds at the maximum distance instead of reaching silence") {
+    CHECK_EQ(App::Audio::attenuation_gain(10.0F, 1.0F, 10.0F), doctest::Approx(0.1F));
+    CHECK_EQ(App::Audio::attenuation_gain(20.0F, 1.0F, 10.0F), doctest::Approx(0.1F));
+    CHECK_EQ(
+        App::Audio::attenuation_gain(5000.0F, 78.0F, 1170.0F), doctest::Approx(78.0F / 1170.0F));
   }
 
   TEST_CASE("Attenuation handles a degenerate min/max range safely") {
     CHECK_EQ(App::Audio::attenuation_gain(1.0F, 5.0F, 5.0F), doctest::Approx(1.0F));
-    CHECK_EQ(App::Audio::attenuation_gain(6.0F, 5.0F, 5.0F), doctest::Approx(0.0F));
+    CHECK_EQ(App::Audio::attenuation_gain(6.0F, 5.0F, 5.0F), doctest::Approx(1.0F));
+    CHECK_EQ(App::Audio::attenuation_gain(6.0F, 5.0F, 2.0F), doctest::Approx(1.0F));
+  }
+
+  TEST_CASE("Attenuation keeps the provisional linear curve for a nonpositive minimum") {
+    CHECK_EQ(App::Audio::attenuation_gain(15.0F, 0.0F, 30.0F), doctest::Approx(0.5F));
+    CHECK_EQ(App::Audio::attenuation_gain(30.0F, 0.0F, 30.0F), doctest::Approx(0.0F));
   }
 
   TEST_CASE("Pan favours left when the source is to listener-left") {

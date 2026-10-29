@@ -558,7 +558,7 @@ class ScriptRuntime {
 
   /// Finishes one whole pass, either completing the instance or restarting
   /// it at group zero with command-local mutable state reinitialised.
-  static void finish_script_pass(ScriptInstance& instance);
+  void finish_script_pass(ScriptInstance& instance);
 
   /// Restores debugger-visible runtime state to the serialized initial state.
   void reset_instance_to_initial_state(ScriptInstance& instance);
@@ -595,7 +595,10 @@ class ScriptRuntime {
 
   /// Stops the matching (soundId, owner) voice for every started audio
   /// command of an instance (replay/reset hook, called before the pool reset).
-  void reset_audio_commands(ScriptInstance& instance);
+  /// A script repeat passes `include_sync_sounds = false`: Runtime's PlaySound
+  /// reinitializer (0x004A0FB0) stops its voice, while PlaySyncSound's
+  /// (0x004A1100) only clears its latch.
+  void reset_audio_commands(ScriptInstance& instance, bool include_sync_sounds = true);
 
   /// Resolves (and caches) the runtime sprite of a command's argument 0.
   [[nodiscard]] std::expected<Sprite::SpriteHandle, std::string> resolve_sprite(

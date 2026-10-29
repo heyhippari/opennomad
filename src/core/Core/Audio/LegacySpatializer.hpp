@@ -20,14 +20,13 @@ namespace App::Audio {
 /// remains provisional; the value is isolated for correction.
 inline constexpr float k_doppler_speed_of_sound{429.0F};
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Behaviour inferred from the DirectSound/software fallback
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Compatibility distance-attenuation curve: full gain inside the minimum
-/// distance, zero gain at/outside the maximum distance, linear falloff
-/// between. Numerical parity with the original DirectSound path is
-/// provisional and deliberately not labelled exact.
+/// Distance-attenuation gain of Runtime's DirectSound3D path. The listener is
+/// configured at 0x0046D1C8 with distance factor 0.0254 (native inches) and
+/// rolloff factor 1.0, so the gain is `minimum / clamp(distance, minimum,
+/// maximum)`: full inside the minimum distance and held, not silenced, beyond
+/// the maximum. The ratio is unit-independent, so metres work unchanged.
+/// A nonpositive minimum has no recovered Runtime meaning and keeps a
+/// provisional linear falloff to zero at the maximum.
 [[nodiscard]] float attenuation_gain(
     float distance, float minimum_distance, float maximum_distance);
 

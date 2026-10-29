@@ -534,7 +534,7 @@ void AudioSystem::set_emitter_resolver(EmitterResolver resolver) {
 }
 
 void AudioSystem::stopped_callback(void* userdata, MIX_Track* /*track*/) {
-  auto* context{static_cast<SlotContext*>(userdata)};
+  const auto* context{static_cast<SlotContext*>(userdata)};
   context->system->m_stop_events.push(
       context->index, context->generation.load(std::memory_order_relaxed));
 }

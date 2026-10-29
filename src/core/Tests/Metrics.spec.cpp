@@ -61,7 +61,7 @@ TEST_SUITE("Core::Debug::Metrics") {
   }
 
   TEST_CASE("System info can be queried without crash") {
-    auto& metrics_ref = App::Debug::Metrics::get();
+    const auto& metrics_ref = App::Debug::Metrics::get();
 
     // These should just not throw (no GL context in test, so values may be "N/A").
     static_cast<void>(metrics_ref.opengl_info());

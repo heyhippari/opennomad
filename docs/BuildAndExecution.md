@@ -66,7 +66,7 @@ cmake --build --preset quality
 cmake --build --preset quality --target check-format
 ```
 
-`quality` requires clang-format and clang-tidy version `22.1.8`. This is checked at configure time; set
+`quality` requires clang-format and clang-tidy version `23.1.3`. This is checked at configure time; set
 `OPENNOMAD_CLANG_TOOLS_MAJOR` only for an intentional local toolchain-policy change. `format` modifies C++ files;
 `check-format` is the non-mutating validation target. Clang-tidy diagnostics are build failures.
 
