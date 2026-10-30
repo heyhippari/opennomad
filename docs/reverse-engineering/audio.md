@@ -516,22 +516,47 @@ This ordering is required for correct playback.
 
 ---
 
-# 20. OpenNomad music decoding policy
+# 20. Runtime music streaming and OpenNomad policy
 
-Current OpenNomad:
+**Confirmed — Runtime (disassembly).** Opcode `0x67` (`0x00404FB0`) skips a
+request equal to the current track (`0x004C013C`), otherwise calls
+`0x0041E110`, which stops the previous track (`0x0042C1B0`) and starts the new
+one through `0x0042BFD0`:
 
-```text
-reads entire ADP
-decodes entire track to S16LE PCM
-hands PCM to SDL3_mixer
-```
+1. `0x0042BFD0` reads the **whole compressed** `TRACKS\<id>.ADP` into memory
+   (`fseek(SEEK_END)`/`ftell`/`fread`/`fclose`).
+2. `0x0042BEC0` records the stream format (`0x4E9A1C = 2` channels,
+   `0x4E9A18 = 0x5622` = 22050 Hz, `0x4E9A24 = 30`) and `0x0042C300` creates a
+   DirectSound ring of `ceil(average bytes per second * 8.0)` rounded up to a
+   multiple of 4, i.e. **8 seconds of PCM**, pre-filled by the incremental
+   decoder `0x0042D960`.
+3. `timeBeginPeriod(15)` + `timeSetEvent(15 ms, periodic, 0x0042CC40)`. Each
+   tick reads the play cursor (`0x0046CB20`), locks only the bytes consumed
+   since its write cursor (`+0x70`, modulo ring size `+0x6C`), decodes that
+   many bytes into them, writes silence past the end of a non-looping track,
+   and unlocks (`0x0046C990`/`0x0046C9F0`). An `InterlockedExchange` flag
+   (`+0x9C`) prevents re-entry.
+4. Stop (`0x0042C1B0`) kills the timer, waits for an in-flight tick
+   (`InterlockedExchange` + `Sleep(100)`), releases the buffer and frees the
+   compressed file.
 
-This is a modern first implementation.
+So Runtime never decodes a whole track up front: it holds the compressed data
+and decodes in small slices as playback consumes them.
 
-It should not be documented as the original Runtime's buffering/streaming
-architecture.
+OBJECTS voice-overs use the same streamer. `0x0041B1F0` formats
+`VOICEOFF\%s` and calls `0x0042C870`, which runs the ring builder
+`0x0042C300` on a second state block (`0x004EA7D0`; music uses
+`0x004E9990`). Voice-over clips therefore decode while they play, independently
+of the music channel.
 
-The codec/output content can be faithful while playback ownership is modern.
+OpenNomad keeps the same split for both. `Audio::open_adp_stream` owns the
+compressed file and exposes it to SDL3_mixer as a seekable raw S16LE
+`SDL_IOStream` that decodes 4096-frame windows on demand
+(`MIX_SetTrackRawIOStream` loads raw IO on demand). Starting a track costs one
+file read; looping seeks rewind the IMA state. The DirectSound ring and the
+15 ms timer are replaced by the mixer's own pull, which is a modern playback
+owner with the same decode-as-consumed behavior. `VoiceOverPlayer` assigns the
+same kind of stream to its dedicated track.
 
 ---
 
@@ -1376,7 +1401,7 @@ Highest-value unresolved targets:
 8. full `hId` meaning;
 9. exact music operand B/C semantics;
 10. UI/I2D WAV playback subsystem;
-11. original music buffering/streaming strategy;
+11. ~~original music buffering/streaming strategy~~ (resolved: section 20);
 12. original master/music/SFX preference mapping.
 
 ---
@@ -1473,7 +1498,6 @@ Doppler interpretation
 sound flag 0x08
 hId source meaning
 music operands B/C
-original ADP streaming/buffering implementation
 ```
 
 The key rule is:

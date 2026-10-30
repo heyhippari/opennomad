@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <span>
 
@@ -55,6 +56,20 @@ void DecorCulling::rebuild(const Omikron::Model3DOData& model,
   m_spheres.assign(runtime_objects.size(), std::nullopt);
   for (std::size_t index{0}; index < runtime_objects.size(); ++index) {
     m_spheres.at(index) = object_sphere(model, runtime_objects, index);
+  }
+}
+
+void DecorCulling::refresh(const Omikron::Model3DOData& model,
+    const std::span<const Omikron::Model3DOData::RuntimeObjectState> runtime_objects,
+    const std::span<const std::uint8_t> changed) {
+  if (m_spheres.size() != runtime_objects.size() || changed.size() != runtime_objects.size()) {
+    rebuild(model, runtime_objects);
+    return;
+  }
+  for (std::size_t index{0}; index < runtime_objects.size(); ++index) {
+    if (changed[index] != 0U) {
+      m_spheres.at(index) = object_sphere(model, runtime_objects, index);
+    }
   }
 }
 

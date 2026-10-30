@@ -446,7 +446,11 @@ inline constexpr std::array<OptionsChoiceDefinition, 3> k_options_transition_sty
     {.runtime_string_index = -1, .raw_value = 1, .literal_label = "Classic"},
     {.runtime_string_index = -1, .raw_value = 2, .literal_label = "Reduced Motion"},
 }};
-inline constexpr std::array<OptionsRowDefinition, 4> k_options_enhancements_rows{{
+inline constexpr std::array<OptionsChoiceDefinition, 2> k_options_character_lighting_choices{{
+    {.runtime_string_index = -1, .raw_value = 0, .literal_label = "Original"},
+    {.runtime_string_index = -1, .raw_value = 1, .literal_label = "Per-Pixel"},
+}};
+inline constexpr std::array<OptionsRowDefinition, 6> k_options_enhancements_rows{{
     {.stable_id = "enhancements.title",
         .runtime_option_index = -1,
         .runtime_label_string_index = -1,
@@ -470,6 +474,26 @@ inline constexpr std::array<OptionsRowDefinition, 4> k_options_enhancements_rows
         .choices = std::span<const OptionsChoiceDefinition>{k_options_transition_style_choices},
         .default_choice = 0,
         .literal_label = "Menu Transitions",
+        .accent = false},
+    // Per-pixel Euclidean fog distance. Off reproduces Runtime's planar eye
+    // depth, which shifts the fog as the camera turns.
+    {.stable_id = "enhancements.radial_fog",
+        .runtime_option_index = -1,
+        .runtime_label_string_index = -1,
+        .kind = OptionsRowKind::k_enum,
+        .choices = std::span<const OptionsChoiceDefinition>{k_options_interpolation_choices},
+        .default_choice = 1,
+        .literal_label = "Radial Fog",
+        .accent = false},
+    // Original evaluates character lights per vertex like Runtime; Per-Pixel
+    // evaluates the same lights with interpolated normals.
+    {.stable_id = "enhancements.character_lighting",
+        .runtime_option_index = -1,
+        .runtime_label_string_index = -1,
+        .kind = OptionsRowKind::k_enum,
+        .choices = std::span<const OptionsChoiceDefinition>{k_options_character_lighting_choices},
+        .default_choice = 0,
+        .literal_label = "Character Lighting",
         .accent = false},
     {.stable_id = "enhancements.back",
         .runtime_option_index = 72,
@@ -703,7 +727,8 @@ static_assert(runtime_options_row_y(
                   4, k_options_game_rows.size(), OptionsInvocationMode::k_start_menu) == 380);
 
 static_assert(runtime_options_row_step(k_options_controls_rows.size()) == 65);
-static_assert(runtime_options_row_step(k_options_enhancements_rows.size()) == 86);
+// Six Enhancements rows share the root page's 52-unit step.
+static_assert(runtime_options_row_step(k_options_enhancements_rows.size()) == 52);
 static_assert(runtime_options_row_step(k_options_keyboard_categories_rows.size()) == 52);
 
 // Binding pages contain title + binding rows + Restore defaults + Back.

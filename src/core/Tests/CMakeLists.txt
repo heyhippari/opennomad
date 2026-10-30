@@ -60,6 +60,22 @@ add_executable(DecorCullingTest DecorCulling.spec.cpp $<TARGET_OBJECTS:TestRunne
 add_test(NAME DecorCullingTest COMMAND DecorCullingTest)
 target_link_libraries(DecorCullingTest PRIVATE doctest::doctest Core)
 
+add_executable(SkyTest Sky.spec.cpp $<TARGET_OBJECTS:TestRunner>)
+add_test(NAME SkyTest COMMAND SkyTest)
+target_link_libraries(SkyTest PRIVATE doctest::doctest Core)
+
+add_executable(WorldFogTest WorldFog.spec.cpp $<TARGET_OBJECTS:TestRunner>)
+add_test(NAME WorldFogTest COMMAND WorldFogTest)
+target_link_libraries(WorldFogTest PRIVATE doctest::doctest Core)
+
+add_executable(WorldLightingTest WorldLighting.spec.cpp $<TARGET_OBJECTS:TestRunner>)
+add_test(NAME WorldLightingTest COMMAND WorldLightingTest)
+target_link_libraries(WorldLightingTest PRIVATE doctest::doctest Core)
+
+add_executable(WorldShadersTest WorldShaders.spec.cpp $<TARGET_OBJECTS:TestRunner>)
+add_test(NAME WorldShadersTest COMMAND WorldShadersTest)
+target_link_libraries(WorldShadersTest PRIVATE doctest::doctest Core)
+
 add_executable(RuntimeMathTest RuntimeMath.spec.cpp $<TARGET_OBJECTS:TestRunner>)
 add_test(NAME RuntimeMathTest COMMAND RuntimeMathTest)
 target_link_libraries(RuntimeMathTest PRIVATE doctest::doctest Core)
@@ -155,6 +171,10 @@ target_link_libraries(FontFNTTest PRIVATE doctest::doctest Core)
 add_executable(QdAdpTest QdAdp.spec.cpp $<TARGET_OBJECTS:TestRunner>)
 add_test(NAME QdAdpTest COMMAND QdAdpTest)
 target_link_libraries(QdAdpTest PRIVATE doctest::doctest Core)
+
+add_executable(AdpStreamTest AdpStream.spec.cpp $<TARGET_OBJECTS:TestRunner>)
+add_test(NAME AdpStreamTest COMMAND AdpStreamTest)
+target_link_libraries(AdpStreamTest PRIVATE doctest::doctest Core)
 
 add_executable(SCXTest SCX.spec.cpp $<TARGET_OBJECTS:TestRunner>)
 add_test(NAME SCXTest COMMAND SCXTest)

@@ -106,6 +106,33 @@ TEST_SUITE("Core::Omikron::QdAdp") {
     CHECK_EQ(pcm.at(1), 0);
   }
 
+  TEST_CASE("mono decodes split mid-byte match one full decode") {
+    const std::vector<std::byte> file{make_adp(make_payload({0x22, 0x2A, 0x71}), 0)};
+    auto whole{QdAdpDecoder::create(std::span<const std::byte>{file})};
+    auto split{QdAdpDecoder::create(std::span<const std::byte>{file})};
+    REQUIRE(whole.has_value());
+    REQUIRE(split.has_value());
+
+    std::vector<std::int16_t> expected(6);
+    CHECK_EQ(whole->decode_frames(std::span<std::int16_t>{expected}), 6U);
+
+    // Odd chunks end mid-byte; the low nibble carries into the next call.
+    std::vector<std::int16_t> actual(6);
+    const std::span<std::int16_t> output{actual};
+    CHECK_EQ(split->decode_frames(output.subspan(0, 1)), 1U);
+    CHECK_EQ(split->decoded_frames(), 1U);
+    CHECK_EQ(split->decode_frames(output.subspan(1, 3)), 3U);
+    CHECK_EQ(split->decode_frames(output.subspan(4)), 2U);
+    CHECK(split->finished());
+    CHECK(actual == expected);
+
+    // Rewinding drops the carried nibble.
+    split->rewind();
+    std::vector<std::int16_t> first(1);
+    CHECK_EQ(split->decode_frames(std::span<std::int16_t>{first}), 1U);
+    CHECK_EQ(first.at(0), expected.at(0));
+  }
+
   TEST_CASE("positive and negative nibbles") {
     const std::vector<std::byte> file{make_adp(make_payload({0x22, 0x2A}), 0)};
     auto decoder{QdAdpDecoder::create(std::span<const std::byte>{file})};

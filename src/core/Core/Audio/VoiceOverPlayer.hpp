@@ -1,19 +1,18 @@
 #pragma once
 
-#include <SDL3/SDL_audio.h>
 #include <SDL3_mixer/SDL_mixer.h>
 
-#include <cstdint>
-#include <memory>
 #include <string>
-#include <vector>
+
+#include "Core/Audio/AdpStream.hpp"
 
 namespace App::Audio {
 
-/// Immutable decoded PCM backing retained while SDL_mixer reads it.
-using VoiceOverSamples = std::shared_ptr<const std::vector<std::int16_t>>;
-
 /// One dedicated, nonspatial, fire-and-forget OBJECTS voice-over lane.
+///
+/// Runtime 0x0041B1F0 starts VOICEOFF clips on a second instance of the music
+/// ring streamer (0x0042C870 -> 0x0042C300, state 0x004EA7D0), so clips are
+/// decoded while they play rather than up front.
 class VoiceOverPlayer {
  public:
   VoiceOverPlayer() = default;
@@ -25,7 +24,9 @@ class VoiceOverPlayer {
 
   void attach(MIX_Mixer* mixer);
   void shutdown();
-  [[nodiscard]] bool play(std::string display_name, SDL_AudioSpec spec, VoiceOverSamples samples);
+  /// Replaces the current clip with `stream`. SDL_mixer owns and closes
+  /// `stream.io`, including when this call fails.
+  [[nodiscard]] bool play(std::string display_name, AdpStream stream);
   void stop();
   void set_gain(float gain);
   [[nodiscard]] bool is_playing() const;
@@ -33,7 +34,6 @@ class VoiceOverPlayer {
  private:
   MIX_Mixer* m_mixer{nullptr};
   MIX_Track* m_track{nullptr};
-  VoiceOverSamples m_samples;
   std::string m_source_name;
   float m_gain{1.0F};
 };

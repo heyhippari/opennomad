@@ -43,6 +43,7 @@
 #include "Core/Script/AreaScriptRuntime.hpp"
 #include "Core/Script/ScriptRuntime.hpp"
 #include "Core/Startup/StartupTraceRecorder.hpp"
+#include "Core/WorldFog.hpp"
 #include "Core/WorldPresentation.hpp"
 
 namespace App {
@@ -147,6 +148,12 @@ std::expected<PreparedAreaWorld, std::string> prepare_area_world_context(Scenari
     return fail_after_world_load(
         fmt::format("AREA {} character materialization: {}", area_id, characters.error()));
   }
+
+  // Runtime 0x0040CB32: the AREA's fog colours, distance and environment
+  // word configure the resident scene's environment entry.
+  world.value()->environment = Fog::Environment{.colors = area_record.fog_colors(),
+      .distance_metres = area_record.fog_distance_metres(),
+      .day_cycle_owner = ((area_record.environment_flags() >> 16U) & 0xFFU) == 1U};
 
   return PreparedAreaWorld{.context = world.value(),
       .decor_path = std::move(decor_path),
@@ -431,6 +438,7 @@ std::expected<void, std::string> ScenarioStartupController::initialize_new_sessi
     }
     return std::expected<void, std::string>{std::unexpect, m_last_error};
   }
+  manager.world_presentation().apply_area_sky({}, prepared->sky_name);
   m_initial_world_scenario_path = prepared->scenario_path;
   m_initial_world_decor_path = prepared->decor_path.value_or(std::string{});
   if (m_initial_world_decor_path.empty()) {
@@ -1039,6 +1047,10 @@ std::expected<PreparedAreaSummary, std::string> ScenarioStartupController::prepa
     return std::expected<PreparedAreaSummary, std::string>{
         std::unexpect, std::move(prepared).error()};
   }
+  const std::optional<Omikron::IamAreaRecord>& current_area{
+      m_area_slots.at(m_residency.active_slot()).primary};
+  m_manager->world_presentation().apply_area_sky(
+      current_area.has_value() ? current_area->sky_3do_name() : std::string{}, prepared->sky_name);
   return PreparedAreaSummary{
       .characters = std::move(prepared->characters), .sky_name = std::move(prepared->sky_name)};
 }

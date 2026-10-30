@@ -1667,7 +1667,7 @@ shared 3DO hierarchy + 3DA playback -> pose character + apply root motion
 Both SCX functions supply a selected object binding, an animation-table index,
 mutable previous/current progress, and the body-animation vector. They share
 the same numeric 3DA channel-to-3DO-`script_id` binding, discrete rotation
-sampling, interval root-motion integration, posed geometry rebuild, and 30 Hz
+sampling, interval root-motion integration, object-transform update, and 30 Hz
 script progression.
 
 `SelectRelativeBodyAnimation` additionally supplies:
@@ -1780,7 +1780,7 @@ For a bound character:
 
 3. resulting delta is added to the character transform;
 4. Runtime-style 3DO hierarchy transforms are recomputed;
-5. posed geometry is rebuilt/rendered.
+5. presentation re-poses the geometry on demand (see renderer.md section 98).
 
 This is broadly aligned with the recovered Runtime flow.
 

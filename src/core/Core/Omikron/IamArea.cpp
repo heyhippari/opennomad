@@ -311,6 +311,22 @@ std::string IamAreaRecord::sky_3do_name() const {
   return name_at(k_offset_sky_3do_name);
 }
 
+std::array<std::uint32_t, IamAreaRecord::k_fog_color_count> IamAreaRecord::fog_colors() const {
+  std::array<std::uint32_t, k_fog_color_count> colors{};
+  for (std::size_t index{0}; index < colors.size(); ++index) {
+    colors.at(index) = read_u32_at(m_bytes, k_offset_fog_colors + (index * sizeof(std::uint32_t)));
+  }
+  return colors;
+}
+
+std::int32_t IamAreaRecord::fog_distance_metres() const {
+  return read_i32_at(m_bytes, k_offset_fog_distance);
+}
+
+std::uint32_t IamAreaRecord::environment_flags() const {
+  return read_u32_at(m_bytes, k_offset_environment_flags);
+}
+
 std::span<const std::byte> IamAreaRecord::bytecode_pool() const {
   constexpr std::size_t k_camera_table_index{6};
   const std::size_t start{bytecode_pool_offset()};

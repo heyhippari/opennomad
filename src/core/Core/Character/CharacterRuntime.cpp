@@ -120,6 +120,69 @@ void resolve_actor_object(ModelResource& resource) {
   resource.actor_object_index = actor_object_index(resource.model);
 }
 
+std::expected<void, std::string> validate_dialog_performance(
+    const Omikron::Model3DOData& model, const DialogPerformanceOverlay& overlay) {
+  if (overlay.object_rotations.size() != model.meshes.size() ||
+      overlay.root_object_index >= model.meshes.size()) {
+    return std::expected<void, std::string>{
+        std::unexpect, "dialogue object overlay does not match character model"};
+  }
+  if (!overlay.face_mesh_index.has_value()) {
+    return {};
+  }
+  const std::size_t face_index{overlay.face_mesh_index.value_or(0U)};
+  if (face_index >= model.meshes.size()) {
+    return std::expected<void, std::string>{
+        std::unexpect, "dialogue face mesh index is out of range"};
+  }
+  const Omikron::MeshDescriptor& face{model.meshes.at(face_index)};
+  if (face.vertex_count != overlay.face_vertices.size()) {
+    return std::expected<void, std::string>{
+        std::unexpect, "dialogue face vertex count does not match face mesh"};
+  }
+  if (face.vertex_base > model.vertices.size() ||
+      face.vertex_count > model.vertices.size() - face.vertex_base) {
+    return std::expected<void, std::string>{
+        std::unexpect, "dialogue face source vertex range is out of bounds"};
+  }
+  return {};
+}
+
+/// Composes a dialogue overlay over the live base pose in `objects` and the
+/// model's source `vertices`.
+std::expected<void, std::string> compose_dialog_performance(const Omikron::Model3DOData& model,
+    const DialogPerformanceOverlay& overlay,
+    std::vector<Omikron::Model3DOData::RuntimeObjectState>& objects,
+    std::vector<Omikron::RawVertex>& vertices) {
+  if (auto valid{validate_dialog_performance(model, overlay)}; !valid) {
+    return valid;
+  }
+  for (std::size_t index{0}; index < overlay.object_rotations.size(); ++index) {
+    if (overlay.object_rotations.at(index).has_value()) {
+      objects.at(index).animation_matrix =
+          App::Runtime::quaternion_matrix(overlay.object_rotations.at(index).value_or({}));
+    }
+  }
+  Omikron::Model3DOData::RuntimeObjectState& root{objects.at(overlay.root_object_index)};
+  root.local_offset.x += overlay.root_translation_delta.x;
+  root.local_offset.y += overlay.root_translation_delta.y;
+  root.local_offset.z += overlay.root_translation_delta.z;
+  if (auto resolved{Omikron::Model3DO::resolve_runtime_transforms(model, std::span{objects})};
+      !resolved) {
+    return resolved;
+  }
+
+  if (overlay.face_mesh_index.has_value()) {
+    const Omikron::MeshDescriptor& face{model.meshes.at(overlay.face_mesh_index.value_or(0U))};
+    for (std::size_t index{0}; index < overlay.face_vertices.size(); ++index) {
+      Omikron::RawVertex& vertex{vertices.at(face.vertex_base + index)};
+      vertex.position = overlay.face_vertices.at(index).position;
+      vertex.normal = overlay.face_vertices.at(index).normal;
+    }
+  }
+  return {};
+}
+
 }  // namespace
 
 std::optional<std::size_t> actor_object_index(const Omikron::Model3DOData& model) {
@@ -279,10 +342,22 @@ std::expected<std::shared_ptr<const ModelResource>, std::string> Runtime::load_m
     return std::expected<std::shared_ptr<const ModelResource>, std::string>{
         std::unexpect, fmt::format("character model '{}': {}", model_resource, model.error())};
   }
-  auto groups{Omikron::Model3DO::build_static_geometry(model.value())};
-  if (!groups) {
+  auto layout{Omikron::Model3DO::build_posed_layout(model.value())};
+  std::vector<Omikron::MaterialGroup> groups;
+  if (layout) {
+    if (auto posed{Omikron::Model3DO::apply_pose(model.value(),
+            layout.value(),
+            std::span<const Omikron::Model3DOData::RuntimeObjectState>{model->runtime_objects},
+            std::span<const Omikron::RawVertex>{model->vertices},
+            groups)};
+        !posed) {
+      layout = std::expected<Omikron::PosedGeometryLayout, std::string>{
+          std::unexpect, std::move(posed).error()};
+    }
+  }
+  if (!layout) {
     return std::expected<std::shared_ptr<const ModelResource>, std::string>{std::unexpect,
-        fmt::format("character model '{}' geometry: {}", model_resource, groups.error())};
+        fmt::format("character model '{}' geometry: {}", model_resource, layout.error())};
   }
 
   const std::filesystem::path texture_path{character_resource_path(model_resource, ".3DT")};
@@ -303,7 +378,18 @@ std::expected<std::shared_ptr<const ModelResource>, std::string> Runtime::load_m
   resource->resolved_model_path = model_file->resolved.string();
   resource->resolved_texture_path = texture_file->resolved.string();
   resource->model = std::move(model).value();
-  resource->groups = std::move(groups).value();
+  resource->groups = std::move(groups);
+  resource->posed_layout = std::move(layout).value();
+  resource->object_vertex_reach.assign(resource->model.meshes.size(), 0.0F);
+  for (const std::vector<Omikron::PosedCornerSource>& sources : resource->posed_layout.sources) {
+    for (const Omikron::PosedCornerSource& source : sources) {
+      const Omikron::Vec3& position{resource->model.vertices.at(source.vertex_index).position};
+      float& reach{resource->object_vertex_reach.at(source.object_index)};
+      reach = std::max(reach,
+          std::sqrt(
+              (position.x * position.x) + (position.y * position.y) + (position.z * position.z)));
+    }
+  }
   resource->images = std::move(images).value();
   resolve_actor_object(*resource);
   resolve_bounds(*resource);
@@ -844,59 +930,11 @@ std::expected<void, std::string> Runtime::apply_dialog_performance(
     return std::expected<void, std::string>{
         std::unexpect, "dialogue performance character is not loaded"};
   }
-  const Omikron::Model3DOData& model{character->model_resource->model};
-  if (overlay.object_rotations.size() != model.meshes.size() ||
-      overlay.root_object_index >= model.meshes.size()) {
-    return std::expected<void, std::string>{
-        std::unexpect, "dialogue object overlay does not match character model"};
+  if (auto valid{validate_dialog_performance(character->model_resource->model, overlay)}; !valid) {
+    return valid;
   }
-
-  std::vector<Omikron::Model3DOData::RuntimeObjectState> composed{character->runtime_objects};
-  for (std::size_t index{0}; index < overlay.object_rotations.size(); ++index) {
-    if (overlay.object_rotations.at(index).has_value()) {
-      composed.at(index).animation_matrix =
-          App::Runtime::quaternion_matrix(overlay.object_rotations.at(index).value_or({}));
-    }
-  }
-  Omikron::Model3DOData::RuntimeObjectState& root{composed.at(overlay.root_object_index)};
-  root.local_offset.x += overlay.root_translation_delta.x;
-  root.local_offset.y += overlay.root_translation_delta.y;
-  root.local_offset.z += overlay.root_translation_delta.z;
-  if (auto resolved{Omikron::Model3DO::resolve_runtime_transforms(model, std::span{composed})};
-      !resolved) {
-    return resolved;
-  }
-
-  std::vector<Omikron::RawVertex> vertices{model.vertices};
-  if (overlay.face_mesh_index.has_value()) {
-    const std::size_t face_index{overlay.face_mesh_index.value_or(0U)};
-    if (face_index >= model.meshes.size()) {
-      return std::expected<void, std::string>{
-          std::unexpect, "dialogue face mesh index is out of range"};
-    }
-    const Omikron::MeshDescriptor& face{model.meshes.at(face_index)};
-    if (face.vertex_count != overlay.face_vertices.size()) {
-      return std::expected<void, std::string>{
-          std::unexpect, "dialogue face vertex count does not match face mesh"};
-    }
-    if (face.vertex_base > vertices.size() ||
-        face.vertex_count > vertices.size() - face.vertex_base) {
-      return std::expected<void, std::string>{
-          std::unexpect, "dialogue face source vertex range is out of bounds"};
-    }
-    for (std::size_t index{0}; index < overlay.face_vertices.size(); ++index) {
-      Omikron::RawVertex& vertex{vertices.at(face.vertex_base + index)};
-      vertex.position = overlay.face_vertices.at(index).position;
-      vertex.normal = overlay.face_vertices.at(index).normal;
-    }
-  }
-  auto groups{Omikron::Model3DO::build_posed_geometry(model,
-      std::span<const Omikron::Model3DOData::RuntimeObjectState>{composed},
-      std::span<const Omikron::RawVertex>{vertices})};
-  if (!groups) {
-    return std::expected<void, std::string>{std::unexpect, std::move(groups).error()};
-  }
-  character->posed_groups = std::move(groups).value();
+  // The overlay composes over whichever base pose is live when presentation
+  // materializes the geometry.
   character->dialog_performance = std::move(overlay);
   character->pose_revision += 1U;
   return {};
@@ -909,13 +947,44 @@ void Runtime::clear_dialog_performance(const std::int16_t character_id) {
     return;
   }
   character->dialog_performance.reset();
-  auto groups{Omikron::Model3DO::build_posed_geometry(character->model_resource->model,
-      std::span<const Omikron::Model3DOData::RuntimeObjectState>{character->runtime_objects})};
-  if (!groups) {
-    return;
-  }
-  character->posed_groups = std::move(groups).value();
   character->pose_revision += 1U;
+}
+
+std::expected<void, std::string> materialize_posed_geometry(RuntimeCharacter& character) {
+  if (character.posed_groups_revision == character.pose_revision ||
+      character.model_resource == nullptr) {
+    return {};
+  }
+  APP_PROFILE_FUNCTION();
+
+  // Attempt each pose revision once; a failure keeps the previous geometry.
+  character.posed_groups_revision = character.pose_revision;
+  const ModelResource& resource{*character.model_resource};
+  if (resource.posed_layout.groups.empty()) {
+    // Resources without a resolved layout keep their assigned geometry.
+    return {};
+  }
+  const Omikron::Model3DOData& model{resource.model};
+  if (!character.dialog_performance.has_value()) {
+    return Omikron::Model3DO::apply_pose(model,
+        resource.posed_layout,
+        std::span<const Omikron::Model3DOData::RuntimeObjectState>{character.runtime_objects},
+        std::span<const Omikron::RawVertex>{model.vertices},
+        character.posed_groups);
+  }
+
+  std::vector<Omikron::Model3DOData::RuntimeObjectState> composed{character.runtime_objects};
+  std::vector<Omikron::RawVertex> vertices{model.vertices};
+  if (auto result{compose_dialog_performance(
+          model, character.dialog_performance.value(), composed, vertices)};
+      !result) {
+    return result;
+  }
+  return Omikron::Model3DO::apply_pose(model,
+      resource.posed_layout,
+      std::span<const Omikron::Model3DOData::RuntimeObjectState>{composed},
+      std::span<const Omikron::RawVertex>{vertices},
+      character.posed_groups);
 }
 
 }  // namespace App::Character

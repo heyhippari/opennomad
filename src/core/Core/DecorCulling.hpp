@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <span>
 #include <vector>
@@ -31,6 +32,12 @@ class DecorCulling {
   /// GL.
   void rebuild(const Omikron::Model3DOData& model,
       std::span<const Omikron::Model3DOData::RuntimeObjectState> runtime_objects);
+
+  /// Recomputes only the spheres whose `changed` entry is non-zero. Falls back to rebuild() when
+  /// the object count differs.
+  void refresh(const Omikron::Model3DOData& model,
+      std::span<const Omikron::Model3DOData::RuntimeObjectState> runtime_objects,
+      std::span<const std::uint8_t> changed);
 
   /// GL-space sphere that contains every vertex of the object, or nullopt when the object cannot be
   /// bounded safely (no radius, skinned, or no runtime state).

@@ -234,6 +234,10 @@ TEST_SUITE("Settings::GameSettings") {
     CHECK(k_options_controls_rows.at(3).literal_label == "Mouse");
     CHECK(k_options_enhancements_rows.at(1).literal_label == "Animation Interpolation");
     CHECK(k_options_enhancements_rows.at(2).literal_label == "Menu Transitions");
+    CHECK(k_options_enhancements_rows.at(3).literal_label == "Radial Fog");
+    CHECK(k_options_enhancements_rows.at(4).literal_label == "Character Lighting");
+    CHECK(k_options_enhancements_rows.at(4).default_choice == 0U);
+    CHECK(k_options_enhancements_rows.at(5).literal_label == "Back");
   }
 
   TEST_CASE("state graph derives semantic transition directions") {

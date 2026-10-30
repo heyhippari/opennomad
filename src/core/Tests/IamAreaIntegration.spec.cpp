@@ -67,4 +67,28 @@ TEST_CASE("[RETAIL] IAM/AREA archive and AREA 118 match recovered facts") {
   CHECK(area->character_by_id(136).has_value());
 }
 
+TEST_CASE("[RETAIL] AREA fog environment fields match Runtime's interpretation") {
+  const auto file{App::load_game_file("IAM/AREA")};
+  REQUIRE_MESSAGE(file.has_value(), file.error());
+  const App::Omikron::IamIndexedArchive archive{file->bytes};
+
+  const auto anekbah_bytes{archive.read_record(0U)};
+  REQUIRE_MESSAGE(anekbah_bytes.has_value(), anekbah_bytes.error());
+  const auto anekbah{App::Omikron::IamAreaRecord::load(anekbah_bytes.value())};
+  REQUIRE_MESSAGE(anekbah.has_value(), anekbah.error());
+  CHECK_EQ(anekbah->fog_colors(),
+      std::array<std::uint32_t, 4>{0xB1AB5FU, 0x8C6946U, 0x523A1BU, 0x1A1309U});
+  // Zero selects the Clip Distance preference; the high word marks the day-cycle owner.
+  CHECK_EQ(anekbah->fog_distance_metres(), 0);
+  CHECK_EQ(anekbah->environment_flags(), 0x00010001U);
+
+  const auto shooting_bytes{archive.read_record(59U)};
+  REQUIRE_MESSAGE(shooting_bytes.has_value(), shooting_bytes.error());
+  const auto shooting{App::Omikron::IamAreaRecord::load(shooting_bytes.value())};
+  REQUIRE_MESSAGE(shooting.has_value(), shooting.error());
+  CHECK_EQ(shooting->fog_colors().at(0), 0x4E4F1CU);
+  CHECK_EQ(shooting->fog_distance_metres(), 50);
+  CHECK_EQ(shooting->environment_flags(), 0U);
+}
+
 // NOLINTEND(misc-use-anonymous-namespace, cppcoreguidelines-avoid-do-while)

@@ -1074,12 +1074,7 @@ std::expected<void, std::string> CtlController::apply_animation_pose(
       !resolved) {
     return std::expected<void, std::string>{std::unexpect, std::move(resolved).error()};
   }
-  auto groups{Omikron::Model3DO::build_posed_geometry(model,
-      std::span<const Omikron::Model3DOData::RuntimeObjectState>{character.runtime_objects})};
-  if (!groups) {
-    return std::expected<void, std::string>{std::unexpect, std::move(groups).error()};
-  }
-  character.posed_groups = std::move(groups).value();
+  // Posed geometry is materialized by presentation (see RuntimeCharacter::posed_groups).
   character.pose_revision += 1U;
   character.pose_owner = PoseOwner::k_ctl_controller;
   return {};

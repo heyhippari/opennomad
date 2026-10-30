@@ -682,6 +682,64 @@ TEST_SUITE("Core::Omikron::Model3DO") {
     CHECK_FALSE(rejected.has_value());
   }
 
+  TEST_CASE("Reposing a cached layout matches a full posed build") {
+    Buffer file{make_header(1, 3, 2, 2, 0, 0, 0, 0, 0, 0, 10)};
+    append_material(file, "PORTAL");
+    append_vertex(file);
+    append_vertex(file);
+    append_degenerate_triangle(file);
+    append_degenerate_triangle(file);
+    append_mesh(file, 0, 10, -1, 1, 1, 0, 100.0F, -1, 11);
+    append_mesh(file, 0, 11, -1, 1, 1, 0, 200.0F, -1, -1, 0.0F);
+    append_mesh(file, 0, 12, -1, 0, 0, 0, 300.0F);
+
+    auto model{App::Omikron::Model3DO::load(file.data())};
+    REQUIRE(model.has_value());
+    const auto layout{App::Omikron::Model3DO::build_posed_layout(model.value())};
+    REQUIRE(layout.has_value());
+    REQUIRE_EQ(layout->sources.size(), layout->groups.size());
+
+    std::vector<App::Omikron::MaterialGroup> reposed;
+    for (const float offset : {0.0F, 35.0F}) {
+      model->runtime_objects.at(1).local_offset.x = 200.0F + offset;
+      REQUIRE(App::Omikron::Model3DO::resolve_runtime_transforms(
+          model.value(), std::span{model->runtime_objects})
+              .has_value());
+      const std::span<const App::Omikron::Model3DOData::RuntimeObjectState> objects{
+          model->runtime_objects};
+      const std::span<const App::Omikron::RawVertex> vertices{model->vertices};
+
+      const auto full{App::Omikron::Model3DO::build_posed_geometry(model.value(), objects)};
+      REQUIRE(full.has_value());
+      REQUIRE(App::Omikron::Model3DO::apply_pose(
+          model.value(), layout.value(), objects, vertices, reposed)
+              .has_value());
+      REQUIRE_EQ(reposed.size(), full->size());
+      for (std::size_t index{0}; index < full->size(); ++index) {
+        CHECK_EQ(reposed.at(index).mesh_index, full->at(index).mesh_index);
+        CHECK_EQ(reposed.at(index).indices, full->at(index).indices);
+        REQUIRE_EQ(reposed.at(index).vertices.size(), full->at(index).vertices.size());
+        for (std::size_t corner{0}; corner < full->at(index).vertices.size(); ++corner) {
+          CHECK_EQ(reposed.at(index).vertices.at(corner).position,
+              full->at(index).vertices.at(corner).position);
+          CHECK_EQ(reposed.at(index).vertices.at(corner).normal,
+              full->at(index).vertices.at(corner).normal);
+          CHECK_EQ(
+              reposed.at(index).vertices.at(corner).uv, full->at(index).vertices.at(corner).uv);
+        }
+      }
+    }
+    CHECK(reposed.at(1).vertices.at(0).position.at(0) == doctest::Approx(235.0F));
+
+    const std::vector<App::Omikron::RawVertex> missing_vertex{};
+    CHECK_FALSE(App::Omikron::Model3DO::apply_pose(model.value(),
+        layout.value(),
+        std::span<const App::Omikron::Model3DOData::RuntimeObjectState>{model->runtime_objects},
+        std::span<const App::Omikron::RawVertex>{missing_vertex},
+        reposed)
+            .has_value());
+  }
+
   TEST_CASE("Nested child siblings retain parent-relative bone offsets") {
     Buffer file{make_header(0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 10)};
     append_mesh(file, 0, 10, -1, 0, 0, 0, 100.0F, 11);
@@ -696,6 +754,42 @@ TEST_SUITE("Core::Omikron::Model3DO") {
     CHECK(model->runtime_objects.at(1).world_translation.x == doctest::Approx(110.0F));
     CHECK(model->runtime_objects.at(2).local_offset.x == doctest::Approx(20.0F));
     CHECK(model->runtime_objects.at(2).world_translation.x == doctest::Approx(120.0F));
+  }
+
+  TEST_CASE("Subtree resolution matches a full resolve and leaves other objects untouched") {
+    Buffer file{make_header(0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 10)};
+    append_mesh(file, 0, 10, -1, 0, 0, 0, 100.0F, 11);
+    append_mesh(file, 0, 11, 10, 0, 0, 0, 1000.0F, -1, 12, 10.0F);
+    append_mesh(file, 0, 12, 10, 0, 0, 0, 2000.0F, -1, -1, 20.0F);
+    append_mesh(file, 0, 13, -1, 0, 0, 0, 300.0F);
+
+    const auto model{App::Omikron::Model3DO::load(file.data())};
+    REQUIRE(model.has_value());
+    std::vector<App::Omikron::Model3DOData::RuntimeObjectState> subtree{model->runtime_objects};
+    subtree.at(0).local_offset.x = 150.0F;
+    subtree.at(3).local_offset.x = 999.0F;  // Unreachable: never resolved.
+    std::vector<App::Omikron::Model3DOData::RuntimeObjectState> full{subtree};
+
+    REQUIRE(App::Omikron::Model3DO::resolve_runtime_subtree(model.value(), std::span{subtree}, 0U)
+            .has_value());
+    REQUIRE(App::Omikron::Model3DO::resolve_runtime_transforms(model.value(), std::span{full})
+            .has_value());
+    for (std::size_t index{0}; index < full.size(); ++index) {
+      CHECK_EQ(subtree.at(index).world_translation.x, full.at(index).world_translation.x);
+      CHECK_EQ(subtree.at(index).world_matrix.values, full.at(index).world_matrix.values);
+    }
+    CHECK(subtree.at(2).world_translation.x == doctest::Approx(170.0F));
+
+    // Re-resolving a leaf leaves its siblings alone.
+    subtree.at(1).local_offset.x = 40.0F;
+    subtree.at(2).local_offset.x = 80.0F;
+    REQUIRE(App::Omikron::Model3DO::resolve_runtime_subtree(model.value(), std::span{subtree}, 1U)
+            .has_value());
+    CHECK(subtree.at(1).world_translation.x == doctest::Approx(190.0F));
+    CHECK(subtree.at(2).world_translation.x == doctest::Approx(170.0F));
+    CHECK_FALSE(
+        App::Omikron::Model3DO::resolve_runtime_subtree(model.value(), std::span{subtree}, 9U)
+            .has_value());
   }
 
   TEST_CASE("Rejects a cycle in the top-level sibling chain") {

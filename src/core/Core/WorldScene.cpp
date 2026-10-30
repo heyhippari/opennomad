@@ -37,10 +37,15 @@
 #include "Core/Scenario/ScenarioRuntime.hpp"
 #include "Core/Sfx/SfxRuntime.hpp"
 #include "Core/Shader.hpp"
+#include "Core/SkyRenderer.hpp"
 #include "Core/WorldCamera.hpp"
 #include "Core/WorldColorPipeline.hpp"
+#include "Core/WorldFog.hpp"
+#include "Core/WorldLighting.hpp"
 #include "Core/WorldPresentation.hpp"
 #include "Core/WorldRenderer.hpp"
+#include "Core/WorldShaderSet.hpp"
+#include "Settings/GameSettings.hpp"
 
 namespace App {
 
@@ -277,12 +282,19 @@ std::expected<std::unique_ptr<WorldScene>, std::string> WorldScene::create(
         std::unexpect, "world color pipeline: " + std::move(color_pipeline).error()};
   }
   scene->m_color_pipeline = std::move(color_pipeline).value();
+  auto world_shaders{WorldShaderSet::create()};
+  if (!world_shaders) {
+    return std::expected<std::unique_ptr<WorldScene>, std::string>{
+        std::unexpect, "world shaders: " + std::move(world_shaders).error()};
+  }
+  scene->m_world_shaders = std::move(world_shaders).value();
   return std::expected<std::unique_ptr<WorldScene>, std::string>{std::move(scene)};
 }
 
 WorldScene::WorldScene(ScenarioManager& scenarios, Interface::InterfaceManager& interfaces)
     : m_scenarios(&scenarios),
-      m_interfaces(interfaces) {
+      m_interfaces(interfaces),
+      m_game_settings(&interfaces.game_settings()) {
   m_camera.set_attachment_pose_provider(
       [this](
           const Character::BodyIdentity body_identity) -> std::optional<WorldCameraAttachmentPose> {
@@ -1191,7 +1203,7 @@ void WorldScene::update(const float delta_time, const Input::InputManager& input
       if (existing != m_attached_world_renderers.end()) {
         continue;
       }
-      auto renderer{WorldRenderer::create(*attached_context)};
+      auto renderer{WorldRenderer::create(*attached_context, *m_world_shaders)};
       if (!renderer) {
         App::Log::error(LogCategory::Renderer,
             "WorldScene: failed to build attached scene {} generation {}: {}",
@@ -1260,6 +1272,9 @@ void WorldScene::update(const float delta_time, const Input::InputManager& input
   m_letterbox.update(delta_time);
   m_world_text.update(delta_time);
   m_uv_phases.update(delta_time);
+  if (m_scenarios != nullptr) {
+    m_scenarios->world_presentation().day_clock().advance(delta_time);
+  }
 
   m_camera.update(delta_time);
   if (std::optional<WorldCameraOperationCompletion> completed{m_camera.take_completed_operation()};
@@ -1407,8 +1422,11 @@ void WorldScene::render() {
   m_color_pipeline_error.clear();
 
   // Canonical world color begins and remains scene-linear RGBA16F. The encoded
-  // clear setting is decoded once at this boundary.
-  m_color_pipeline->begin_scene(Renderer::clear_color());
+  // clear setting is decoded once at this boundary. Runtime clears with the
+  // fog colour (0x0090EFB0) whenever a world is resident.
+  const WorldFrameFog frame_fog{evaluate_frame_fog()};
+  m_camera.set_clip_distance_metres(frame_fog.far_metres);
+  m_color_pipeline->begin_scene(frame_fog.clear_color);
 
   // Scenario execution happens after WorldScene::update() in the frame, so
   // consume newly-emitted presentation commands again here. This lets opcode
@@ -1422,10 +1440,13 @@ void WorldScene::render() {
   consume_letterbox_commands();
   consume_object_presentation_commands();
 
+  render_sky(context);
+
   // A world context may be replaced between update and render; never
   // dereference a runtime cached by the renderer. If generation no longer
   // matches, skip one world frame and rebuild on the next update.
   bool world_renderable{false};
+  const bool per_pixel_lighting{per_pixel_character_lighting()};
   for (const AttachedWorldRenderer& attached_renderer : m_attached_world_renderers) {
     const WorldSceneContext* const attached_context{
         m_scenarios == nullptr ? nullptr
@@ -1436,10 +1457,13 @@ void WorldScene::render() {
         attached_renderer.renderer == nullptr) {
       continue;
     }
+    attached_renderer.renderer->set_per_pixel_lighting(per_pixel_lighting);
     attached_renderer.renderer->render(m_camera.camera(),
         attached_context->runtime.get(),
         static_cast<float>(m_uv_phases.u_phase()),
         static_cast<float>(m_uv_phases.v_phase()),
+        context_fog(*attached_context),
+        context_ambient(*attached_context),
         *m_color_pipeline);
     world_renderable = true;
   }
@@ -1489,6 +1513,117 @@ void WorldScene::render() {
       m_dialog_scroll.set_maximum(maximum_scroll);
     }
   }
+}
+
+void WorldScene::render_sky(const WorldSceneContext* const context) {
+  if (m_scenarios == nullptr) {
+    return;
+  }
+  const std::string& sky_name{m_scenarios->world_presentation().sky_name()};
+  if (sky_name.empty()) {
+    m_sky.reset();
+    m_failed_sky_name.clear();
+    return;
+  }
+  if ((m_sky == nullptr || m_sky->name() != sky_name) && sky_name != m_failed_sky_name) {
+    m_sky.reset();
+    auto sky{SkyRenderer::create(sky_name)};
+    if (sky) {
+      m_sky = std::move(sky).value();
+      m_failed_sky_name.clear();
+      App::Log::info(LogCategory::Renderer, "Sky renderer ready — sky={}", sky_name);
+    } else {
+      m_failed_sky_name = sky_name;
+      App::Log::warn(LogCategory::Renderer, "Sky '{}' unavailable: {}", sky_name, sky.error());
+    }
+  }
+
+  // Runtime 0x00420753: the sky is submitted only with the display-sky
+  // preference (OMK_SAVE +0x10), a resident scene and an active camera.
+  const bool display_sky{m_game_settings == nullptr ||
+                         m_game_settings->choice_raw_value("video.display_sky").value_or(1) != 0};
+  if (m_sky == nullptr || m_sky->name() != sky_name || !display_sky || context == nullptr ||
+      !m_camera.has_pose()) {
+    return;
+  }
+  // The sky is inserted into the current scene, so it uses that scene's fog.
+  m_sky->render(m_camera.camera(),
+      m_camera.pose().eye,
+      static_cast<float>(m_uv_phases.u_phase()),
+      static_cast<float>(m_uv_phases.v_phase()),
+      context_fog(*context),
+      context_ambient(*context));
+}
+
+Lighting::Ambient WorldScene::context_ambient(const WorldSceneContext& context) const {
+  // Context +0x1A0 starts from the decor's base light (0x0044E00D); the
+  // day-cycle owner rewrites it every frame (0x0041E7A0).
+  const float base_light{
+      context.decor_model.has_value() ? context.decor_model->header.base_light_level : 0.0F};
+  return Lighting::scene_ambient(
+      context.environment, base_light, m_scenarios->world_presentation().day_clock().value());
+}
+
+std::int32_t WorldScene::clip_distance_metres() const {
+  // OMK_SAVE +0x14 (0x0090E194), in metres.
+  const std::int32_t clip{m_game_settings == nullptr
+                              ? K_DEFAULT_CLIP_DISTANCE_METRES
+                              : m_game_settings->choice_raw_value("video.clipping_distance")
+                                    .value_or(K_DEFAULT_CLIP_DISTANCE_METRES)};
+  return clip > 0 ? clip : K_DEFAULT_CLIP_DISTANCE_METRES;
+}
+
+bool WorldScene::per_pixel_character_lighting() const {
+  return m_game_settings != nullptr &&
+         m_game_settings->choice_raw_value("enhancements.character_lighting").value_or(0) != 0;
+}
+
+Fog::ShaderFog WorldScene::context_fog(const WorldSceneContext& context) const {
+  const bool radial{m_game_settings == nullptr ||
+                    m_game_settings->choice_raw_value("enhancements.radial_fog").value_or(1) != 0};
+  return Fog::ShaderFog{.enabled = true,
+      .radial = radial,
+      .parameters = Fog::evaluate(context.environment,
+          m_scenarios->world_presentation().day_clock().value(),
+          clip_distance_metres())};
+}
+
+WorldScene::WorldFrameFog WorldScene::evaluate_frame_fog() const {
+  const std::int32_t clip{clip_distance_metres()};
+  WorldFrameFog frame{
+      .clear_color = Renderer::clear_color(), .far_metres = static_cast<float>(clip)};
+  if (m_scenarios == nullptr) {
+    return frame;
+  }
+  const std::int64_t clock{m_scenarios->world_presentation().day_clock().value()};
+
+  // Runtime 0x0041E7A0: a single day-cycle owner drives the clear colour;
+  // with none (or both) the current scene's colour is used.
+  const WorldSceneContext* owner{nullptr};
+  std::size_t owner_count{0};
+  std::int32_t far_metres{0};
+  for (const WorldSceneContext* attached : m_scenarios->attached_world_contexts()) {
+    if (attached == nullptr) {
+      continue;
+    }
+    far_metres = std::max(
+        far_metres, Fog::effective_distance_metres(attached->environment.distance_metres, clip));
+    if (attached->environment.day_cycle_owner) {
+      owner = attached;
+      ++owner_count;
+    }
+  }
+  const WorldSceneContext* const current{m_scenarios->current_world_context()};
+  const WorldSceneContext* const clear_source{owner_count == 1U ? owner : current};
+  if (clear_source != nullptr) {
+    const std::array<float, 3> color{
+        Fog::encoded_color(Fog::day_color(clear_source->environment.colors, clock))};
+    frame.clear_color = {color.at(0), color.at(1), color.at(2), 1.0F};
+  }
+  if (far_metres > 0) {
+    frame.far_metres = static_cast<float>(far_metres);
+  }
+  return frame;
 }
 
 void WorldScene::resize(const int width, const int height) {

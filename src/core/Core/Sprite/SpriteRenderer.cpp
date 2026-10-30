@@ -25,6 +25,8 @@
 #include "Core/Log.hpp"
 #include "Core/LogCategory.hpp"
 #include "Core/RuntimePresentation.hpp"
+#include "Core/WorldFog.hpp"
+#include "Core/WorldShaders.hpp"
 
 namespace App::Sprite {
 
@@ -36,26 +38,26 @@ layout(location = 0) in vec3 a_position;
 layout(location = 1) in vec2 a_uv;
 layout(location = 2) in vec4 a_tint;
 uniform mat4 u_mvp;
+uniform mat4 u_model_view;
 out vec2 v_uv;
 out vec4 v_tint;
+out vec3 v_view_position;
 void main() {
   gl_Position = u_mvp * vec4(a_position, 1.0);
+  v_view_position = (u_model_view * vec4(a_position, 1.0)).xyz;
   v_uv = a_uv;
   v_tint = a_tint;
 }
 )glsl"};
 
-constexpr std::string_view K_LEGACY_SPRITE_FRAGMENT_SHADER_SOURCE{R"glsl(
-#version 410 core
+/// Translucent (bucket 0x2000) sprites are never fogged by Runtime, so the
+/// legacy pass only has the far alpha fade.
+constexpr std::string_view K_LEGACY_SPRITE_FRAGMENT_BODY{R"glsl(
 in vec2 v_uv;
 in vec4 v_tint;
 uniform sampler2D u_texture0;
 uniform float u_cutout;      // 1 = discard fragments below the alpha threshold.
 uniform float u_grayscale;   // 1 = Rec.601 luminance conversion.
-uniform float u_fog_enabled; // 1 = linear fog between u_fog_start/end.
-uniform float u_fog_start;
-uniform float u_fog_end;
-uniform vec4 u_fog_color;
 uniform float u_premultiply_alpha;
 out vec4 fragment_color;
 void main() {
@@ -68,29 +70,18 @@ void main() {
     // Original luminance weights: Y = (299R + 587G + 114B) / 1000.
     color = vec3(dot(color, vec3(0.299, 0.587, 0.114)));
   }
-  if (u_fog_enabled > 0.5) {
-    // Provisional linear fog on window-space depth; the exact Runtime
-    // distance-fade equation is not reconstructed yet.
-    float depth = gl_FragCoord.z / gl_FragCoord.w;
-    float fog_factor = clamp(
-        (u_fog_end - depth) / max(u_fog_end - u_fog_start, 0.001), 0.0, 1.0);
-    color = mix(u_fog_color.rgb, color, fog_factor);
-  }
-  fragment_color = vec4(mix(color, color * texel.a, u_premultiply_alpha), texel.a);
+  float alpha = texel.a * runtime_far_fade();
+  fragment_color = vec4(mix(color, color * alpha, u_premultiply_alpha), alpha);
 }
 )glsl"};
 
-constexpr std::string_view K_MODERN_SPRITE_FRAGMENT_SHADER_SOURCE{R"glsl(
-#version 410 core
+/// Opaque sprite body; the Runtime fog stage is prepended by fogged_fragment_shader().
+constexpr std::string_view K_MODERN_SPRITE_FRAGMENT_BODY{R"glsl(
 in vec2 v_uv;
 in vec4 v_tint;
 uniform sampler2D u_texture0;
 uniform float u_cutout;
 uniform float u_grayscale;
-uniform float u_fog_enabled;
-uniform float u_fog_start;
-uniform float u_fog_end;
-uniform vec4 u_fog_color;
 uniform float u_premultiply_alpha;
 out vec4 fragment_color;
 float srgb_to_linear(float encoded) {
@@ -109,13 +100,7 @@ void main() {
   if (u_grayscale > 0.5) {
     color = vec3(dot(color, vec3(0.299, 0.587, 0.114)));
   }
-  if (u_fog_enabled > 0.5) {
-    float depth = gl_FragCoord.z / gl_FragCoord.w;
-    float fog_factor = clamp(
-        (u_fog_end - depth) / max(u_fog_end - u_fog_start, 0.001), 0.0, 1.0);
-    color = mix(u_fog_color.rgb, color, fog_factor);
-  }
-  fragment_color = vec4(color, texel.a);
+  fragment_color = vec4(apply_world_fog(color), texel.a);
 }
 )glsl"};
 
@@ -203,13 +188,13 @@ const char* skip_reason_name(const SpriteSkipReason reason) {
 std::expected<void, std::string> SpriteRenderer::initialize() {
   APP_PROFILE_FUNCTION();
 
-  auto modern_shader{
-      Shader::create(K_SPRITE_VERTEX_SHADER_SOURCE, K_MODERN_SPRITE_FRAGMENT_SHADER_SOURCE)};
+  auto modern_shader{Shader::create(
+      K_SPRITE_VERTEX_SHADER_SOURCE, fogged_fragment_shader(K_MODERN_SPRITE_FRAGMENT_BODY))};
   if (!modern_shader) {
     return std::expected<void, std::string>{std::unexpect, std::move(modern_shader).error()};
   }
-  auto legacy_shader{
-      Shader::create(K_SPRITE_VERTEX_SHADER_SOURCE, K_LEGACY_SPRITE_FRAGMENT_SHADER_SOURCE)};
+  auto legacy_shader{Shader::create(
+      K_SPRITE_VERTEX_SHADER_SOURCE, faded_fragment_shader(K_LEGACY_SPRITE_FRAGMENT_BODY))};
   if (!legacy_shader) {
     return std::expected<void, std::string>{std::unexpect, std::move(legacy_shader).error()};
   }
@@ -476,10 +461,7 @@ void SpriteRenderer::draw_commands(const SpritePass pass,
   shader.set_uniform_mat4("u_mvp", std::span<const GLfloat, 16>{glm::value_ptr(mvp), 16});
   shader.set_uniform_int("u_texture0", 0);
   shader.set_uniform_float("u_grayscale", m_grayscale ? 1.0F : 0.0F);
-  const bool fog_enabled{m_fog_end > m_fog_start};
-  shader.set_uniform_float("u_fog_start", m_fog_start);
-  shader.set_uniform_float("u_fog_end", m_fog_end);
-  shader.set_uniform_vec4("u_fog_color", std::span<const GLfloat, 4>{m_fog_color.data(), 4});
+  shader.set_uniform_mat4("u_model_view", std::span<const GLfloat, 16>{glm::value_ptr(view), 16});
 
   // Billboards face the camera exactly; culling only risks losing quads to
   // float error, so it is disabled for the sprite pass.
@@ -502,7 +484,13 @@ void SpriteRenderer::draw_commands(const SpritePass pass,
       apply_blend_function(state);
     }
     shader.set_uniform_float("u_cutout", state.cutout ? 1.0F : 0.0F);
-    shader.set_uniform_float("u_fog_enabled", (fog_enabled && state.fogged) ? 1.0F : 0.0F);
+    if (pass == SpritePass::k_opaque) {
+      Fog::ShaderFog command_fog{m_fog};
+      command_fog.enabled = command_fog.enabled && state.fogged;
+      Fog::apply_uniforms(shader,
+          command_fog,
+          command.pipeline_key.doubled_fog_range ? Fog::K_DOUBLED_RANGE_DEPTH_SCALE : 1.0F);
+    }
     const bool alpha_mode{command.pipeline_key.render_mode == SpriteRenderMode::k_alpha ||
                           command.pipeline_key.render_mode == SpriteRenderMode::k_alpha_cutout};
     if (pass == SpritePass::k_translucent) {
@@ -573,10 +561,8 @@ void SpriteRenderer::set_grayscale(const bool enabled) {
   m_grayscale = enabled;
 }
 
-void SpriteRenderer::set_fog(const float start, const float end, const std::array<float, 3> color) {
-  m_fog_start = start;
-  m_fog_end = end;
-  m_fog_color = color;
+void SpriteRenderer::set_fog(const Fog::ShaderFog& fog) {
+  m_fog = fog;
 }
 
 const SpriteQueueStats& SpriteRenderer::queue_stats() const {

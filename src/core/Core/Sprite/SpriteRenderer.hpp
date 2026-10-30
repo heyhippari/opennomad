@@ -24,6 +24,7 @@
 #include "Core/Sprite/SpriteResource.hpp"
 #include "Core/Texture.hpp"
 #include "Core/VertexArray.hpp"
+#include "Core/WorldFog.hpp"
 
 namespace App::Sprite {
 
@@ -147,9 +148,9 @@ class SpriteRenderer {
 
   /// Renderer-wide grayscale (Rec.601 luminance) for the sprite pass.
   void set_grayscale(bool enabled);
-  /// Linear fog bounds and colour; fog is disabled while end <= start.
-  /// Translucent sprites are never fogged (original runtime behaviour).
-  void set_fog(float start, float end, std::array<float, 3> color);
+  /// Runtime scene fog for opaque sprites. Translucent sprites are never
+  /// fogged (original runtime behaviour).
+  void set_fog(const Fog::ShaderFog& fog);
 
   [[nodiscard]] const SpriteQueueStats& queue_stats() const;
   [[nodiscard]] const std::vector<SpriteDrawCommand>& commands() const;
@@ -179,9 +180,7 @@ class SpriteRenderer {
   std::size_t m_skip_history_limit{128};
 
   bool m_grayscale{false};
-  float m_fog_start{0.0F};
-  float m_fog_end{0.0F};
-  std::array<float, 3> m_fog_color{1.0F, 1.0F, 1.0F};
+  Fog::ShaderFog m_fog;
 
   std::size_t m_vertex_buffer_capacity{0};
   /// True once the current queue's vertices are on the GPU (both passes

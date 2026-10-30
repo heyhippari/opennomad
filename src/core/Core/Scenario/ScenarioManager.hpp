@@ -19,6 +19,7 @@
 #include "Core/Omikron/Model3DO.hpp"
 #include "Core/Omikron/SCX.hpp"
 #include "Core/Omikron/SFX.hpp"
+#include "Core/WorldFog.hpp"
 #include "Core/WorldPresentation.hpp"
 
 namespace App::Script {
@@ -190,6 +191,11 @@ struct WorldSceneContext {
   /// resources). Owned here so each SCX slot keeps its own state; built
   /// transactionally before the context is installed.
   std::unique_ptr<ScenarioRuntime> runtime;
+
+  /// Fog/view-distance environment of the AREA that owns this context
+  /// (AREA +0x90..+0xB3, Runtime 0x0040CB32). Default-constructed contexts
+  /// have black fog at the Clip Distance preference.
+  Fog::Environment environment;
 };
 
 /// Represents one scenario slot (gameplay-mode or world-context) for

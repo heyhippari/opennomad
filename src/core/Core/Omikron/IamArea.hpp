@@ -81,6 +81,10 @@ class IamAreaRecord {
   static constexpr std::size_t k_offset_options_opt_name{0x73};
   static constexpr std::size_t k_offset_animation_ani_name{0x7C};
   static constexpr std::size_t k_offset_sky_3do_name{0x85};
+  static constexpr std::size_t k_offset_fog_colors{0x90};
+  static constexpr std::size_t k_offset_fog_distance{0xA0};
+  static constexpr std::size_t k_offset_environment_flags{0xB0};
+  static constexpr std::size_t k_fog_color_count{4};
 
   /// Parses an area record, validating the fixed header, bounded bytecode
   /// pool, record-relative event entries, and every known table span.
@@ -107,6 +111,20 @@ class IamAreaRecord {
   [[nodiscard]] std::string options_opt_name() const;
   [[nodiscard]] std::string animation_ani_name() const;
   [[nodiscard]] std::string sky_3do_name() const;
+
+  /// Four time-of-day fog colours (+0x90..+0x9F), packed 0x00RRGGBB. Runtime
+  /// 0x0041D380 copies them into the resident scene's environment entry; the
+  /// high byte is ignored.
+  [[nodiscard]] std::array<std::uint32_t, k_fog_color_count> fog_colors() const;
+
+  /// Fog/view distance in metres (+0xA0). Zero, or a value above the Clip
+  /// Distance preference, selects the preference (Runtime 0x0041D4D0).
+  [[nodiscard]] std::int32_t fog_distance_metres() const;
+
+  /// Environment word (+0xB0) passed to Runtime 0x0041D3F0: the high 16 bits
+  /// mark the day-cycle owner scene, the low 16 bits select a render-context
+  /// environment mode (1/2/3 set context flags 0x10000/0x20000/0x40000).
+  [[nodiscard]] std::uint32_t environment_flags() const;
 
   /// Compact bytecode pool `[table7 end, table6 offset)`. Camera table bytes
   /// are never part of this span.

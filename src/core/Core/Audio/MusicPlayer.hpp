@@ -20,13 +20,14 @@ struct MusicSource {
   SDL_IOStream* io{nullptr};
 };
 
-/// One fully decoded raw-PCM music source. The MusicPlayer takes ownership of
-/// `samples` and keeps the buffer alive for as long as SDL3_mixer may read it
-/// (the mixer input is an IOStream pointing into this buffer).
+/// One raw-PCM music source that SDL3_mixer reads on demand, such as a lazily
+/// decoded ADP track. The MusicPlayer assigns `io` with `closeio = true`, so
+/// SDL_mixer owns its cleanup exactly once.
 struct RawPcmMusicSource {
   std::string display_name;
   SDL_AudioSpec spec{};
-  std::vector<std::int16_t> samples;
+  SDL_IOStream* io{nullptr};
+  std::uint64_t total_frames{0};
 };
 
 /// Playback options for the generic streamed-music foundation. This is NOT
@@ -66,10 +67,8 @@ class MusicPlayer {
   /// nonseekable sources requested with looping or a loop start).
   [[nodiscard]] bool play(MusicSource source, const MusicPlayOptions& options);
 
-  /// Plays (or replaces) a fully decoded raw-PCM source. The samples are
-  /// owned here and fed to SDL3_mixer as a raw PCM IOStream; the previous
-  /// source's storage is released only after the mixer has dropped its old
-  /// input, so track replacement cannot touch freed memory.
+  /// Plays (or replaces) a raw-PCM source streamed from its IOStream. The
+  /// stream is closed by SDL_mixer, including when this call fails.
   [[nodiscard]] bool play_raw_pcm(RawPcmMusicSource source, const MusicPlayOptions& options);
 
   /// Stops music, fading out over `fade_out_ms` (converted to input frames).
@@ -96,10 +95,8 @@ class MusicPlayer {
   std::int64_t m_fade_in_ms{0};
   float m_gain{1.0F};
 
-  /// Owned raw PCM storage for the current source (valid while the mixer may
-  /// read the IOStream pointing into it).
-  std::vector<std::int16_t> m_raw_samples;
   SDL_AudioSpec m_raw_spec{};
+  std::uint64_t m_raw_total_frames{0};
   bool m_raw_active{false};
 };
 

@@ -188,6 +188,7 @@ std::expected<QdAdpDecoder, std::string> QdAdpDecoder::create(
 void QdAdpDecoder::rewind() {
   m_read_position = 0;
   m_decoded_frames = 0;
+  m_pending_mono_nibble.reset();
   m_channels.fill(QdImaChannelState{});
 }
 
@@ -230,8 +231,13 @@ std::size_t QdAdpDecoder::decode_frames(std::span<std::int16_t> interleaved_pcm)
   const std::size_t frames_to_decode{
       static_cast<std::size_t>(std::min<std::uint64_t>(remaining, capacity_frames))};
 
-  std::size_t out_sample{0};
-  for (std::size_t frame{0}; frame < frames_to_decode; ++frame) {
+  std::size_t decoded{0};
+  for (; decoded < frames_to_decode; ++decoded) {
+    if (channel_count == 1U && m_pending_mono_nibble.has_value()) {
+      interleaved_pcm[decoded] = decode_nibble(m_pending_mono_nibble.value(), 0);
+      m_pending_mono_nibble.reset();
+      continue;
+    }
     if (m_read_position >= m_file.payload().size()) {
       break;  // Truncated payload: stop rather than read past the end.
     }
@@ -239,16 +245,17 @@ std::size_t QdAdpDecoder::decode_frames(std::span<std::int16_t> interleaved_pcm)
     ++m_read_position;
 
     if (channel_count == 1U) {
-      interleaved_pcm[out_sample++] = decode_nibble(byte >> 4U, 0);
-      interleaved_pcm[out_sample++] = decode_nibble(byte & 0x0FU, 0);
+      // High nibble first; the low nibble is the next frame.
+      interleaved_pcm[decoded] = decode_nibble(byte >> 4U, 0);
+      m_pending_mono_nibble = static_cast<std::uint8_t>(byte & 0x0FU);
     } else {
-      interleaved_pcm[out_sample++] = decode_nibble(byte >> 4U, 0);
-      interleaved_pcm[out_sample++] = decode_nibble(byte & 0x0FU, 1);
+      interleaved_pcm[decoded * 2U] = decode_nibble(byte >> 4U, 0);
+      interleaved_pcm[(decoded * 2U) + 1U] = decode_nibble(byte & 0x0FU, 1);
     }
   }
 
-  m_decoded_frames += frames_to_decode;
-  return frames_to_decode;
+  m_decoded_frames += decoded;
+  return decoded;
 }
 
 }  // namespace App::Omikron

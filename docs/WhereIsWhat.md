@@ -48,6 +48,10 @@ Most implementation lives under `src/core/Core/`:
 | `Input/` | Semantic actions, device bindings, held state, and per-frame input resolution. |
 | `Debug/` | ImGui inspectors, metrics, in-app logging, startup traces, and profiling. |
 | `WorldScene.*`, `WorldRenderer.*`, `WorldCamera.*` | Stable presentation of all attached resident worlds, with current-world camera/debug state, effects, interfaces, and GPU resources. |
+| `SkyRenderer.*` | The session-global AREA sky 3DO, loaded from `MESHES/MISC` and drawn behind the world. |
+| `WorldFog.*`, `WorldShaders.hpp` | Runtime fog/view distance, day-cycle colour, the shared per-pixel fog shader stage and the world shader variant builder. |
+| `WorldShaderSet.*` | World programs shared by all attached renderers, including lazily built enhancement variants. |
+| `WorldLighting.*` | Runtime context ambient, day-cycle light, baked-colour clamp and explicit decor lights for characters. |
 | `ModelViewerScene.*` | Development-only free-flight renderer for inspecting standalone and embedded model resources. |
 | `RuntimeMath.*`, `RuntimePresentation.*` | Runtime-native math and the single Runtime-to-OpenGL presentation boundary. |
 | `Resources.hpp`, `Platform/*/Resources.cpp` | Packaged-resource and game-data path resolution. |

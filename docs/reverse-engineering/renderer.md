@@ -2132,8 +2132,8 @@ processing.
 The exact source-level names and equations across every backend remain
 incomplete.
 
-Do not substitute OpenNomad's current linear fog approximation into this
-Runtime documentation as though it were recovered.
+The recovered equations, the D3D table-fog states and the day-cycle colour
+are documented in [fog.md](fog.md).
 
 ---
 
@@ -2361,7 +2361,14 @@ The `0x68` light/object box and `0x0C` pair record schemas remain unresolved.
 
 ---
 
-# 81. Current OpenNomad lighting is not Runtime-exact
+# 81. Recovered lighting
+
+The baked clamp, the lit-instance light equation, light preparation and the
+day-cycle ambient are documented in [lighting.md](lighting.md). The text below
+describes the development `ModelViewerScene` light model, which is not the
+Runtime equation.
+
+## 81.1 ModelViewerScene lighting is not Runtime-exact
 
 `docs/Rendering.md` currently describes:
 
@@ -2800,20 +2807,22 @@ Runtime behavior.
 OpenNomad character runtime produces posed model geometry in Runtime-native
 space.
 
-`WorldRenderer` currently rebuilds/reuploads character `MaterialGroup` meshes
-when:
+**Confirmed — Runtime (disassembly).** The per-vertex transforms
+`0x00494E80`/`0x004947F0` have exactly one call site each, both inside the
+visible-scene submission `0x0048D7F0`. The scenario/animation step (`0x00469420`,
+`0x00469450`, `0x00442A00` coefficients) only updates object matrices; no
+vertex is transformed outside rendering.
 
-```text
-pose_revision
-```
+OpenNomad mirrors that split. Body animation and CTL service only re-resolve
+object transforms and advance `RuntimeCharacter::pose_revision`.
+`WorldRenderer::sync_character_models` calls
+`Character::materialize_posed_geometry` when the GPU copy is stale, which
+re-poses the model's cached `PosedGeometryLayout` (corner order, UVs, colours
+and indices resolved once per model) with `Model3DO::apply_pose` and composes
+any dialogue performance overlay over the live base pose. Characters in world
+runtimes that are not presented are never posed.
 
-changes.
-
-This is not how Runtime's CPU transform/bucket renderer represented animated
-characters.
-
-It is a modern implementation expedient and may later be optimized using GPU
-skinning/dynamic buffers.
+GPU skinning/dynamic buffers remain a possible further optimization.
 
 ---
 

@@ -369,14 +369,9 @@ void begin_body_animation(Character::RuntimeCharacter& character,
         body_animation_failure(
             Script::BodyAnimationApplyError::k_resource_resolution, std::move(resolved).error())};
   }
-  auto groups{Omikron::Model3DO::build_posed_geometry(model,
-      std::span<const Omikron::Model3DOData::RuntimeObjectState>{character.runtime_objects})};
-  if (!groups) {
-    return std::expected<void, BodyAnimationFailure>{std::unexpect,
-        body_animation_failure(
-            Script::BodyAnimationApplyError::k_resource_resolution, std::move(groups).error())};
-  }
-  character.posed_groups = std::move(groups).value();
+  // Runtime's animation step only updates object matrices; vertices are
+  // transformed when a visible scene is submitted (0x0048D7F0), so
+  // presentation materializes posed geometry on demand.
   character.pose_revision += 1U;
 
   Character::BodyAnimationPlayback& playback{character.body_animation};
@@ -1630,6 +1625,14 @@ void ScenarioRuntime::bind_decor_model(const Omikron::Model3DOData* const decor_
   m_decor_runtime_objects = decor_model == nullptr
                                 ? std::vector<Omikron::Model3DOData::RuntimeObjectState>{}
                                 : decor_model->runtime_objects;
+  if (decor_model != nullptr) {
+    if (auto resolved{Omikron::Model3DO::resolve_runtime_transforms(
+            *decor_model, std::span{m_decor_runtime_objects})};
+        !resolved) {
+      App::Log::warn(
+          LogCategory::Scenario, "decor runtime transforms unresolved: {}", resolved.error());
+    }
+  }
   m_decor_cameras =
       decor_model == nullptr ? std::vector<Omikron::CameraRecord>{} : decor_model->cameras;
   m_static_emitter_objects.clear();
@@ -1793,18 +1796,8 @@ ScenarioRuntime::move_object_on_path(const Script::MoveObjectOnPathRequest& requ
         move_object_on_path_failure(Script::MoveObjectOnPathApplyError::k_invalid_binding,
             fmt::format("decor binding A object '{}' does not exist", request.object_binding))};
   }
-  // The runtime state is copied from immutable 3DO defaults. Resolve it before
-  // extracting a parent pose: the selected child may be the first mutable
-  // command after decor binding, when its cached world fields have not yet
-  // been populated.
-  if (auto resolved{Omikron::Model3DO::resolve_runtime_transforms(
-          *m_decor_model, std::span{m_decor_runtime_objects})};
-      !resolved) {
-    return std::expected<Script::MoveObjectOnPathResult, Script::MoveObjectOnPathFailure>{
-        std::unexpect,
-        move_object_on_path_failure(Script::MoveObjectOnPathApplyError::k_resource_resolution,
-            std::move(resolved).error())};
-  }
+  // bind_decor_model() resolves the decor and every move re-resolves the moved
+  // subtree, so the parent pose read below is always current.
   auto sampled{subpath.sample_mode_1(request.current_parameter)};
   if (!sampled) {
     return std::expected<Script::MoveObjectOnPathResult, Script::MoveObjectOnPathFailure>{
@@ -1868,8 +1861,10 @@ ScenarioRuntime::move_object_on_path(const Script::MoveObjectOnPathRequest& requ
     object.local_matrix = Runtime::multiply(desired_world_matrix, inverse.value());
   }
   object.animation_matrix.reset();
-  if (auto resolved{Omikron::Model3DO::resolve_runtime_transforms(
-          *m_decor_model, std::span{m_decor_runtime_objects})};
+  // Only the moved object and its descendants change; a full decor resolve
+  // per command dominated city scenarios with many path movers.
+  if (auto resolved{Omikron::Model3DO::resolve_runtime_subtree(
+          *m_decor_model, std::span{m_decor_runtime_objects}, object_index)};
       !resolved) {
     return std::expected<Script::MoveObjectOnPathResult, Script::MoveObjectOnPathFailure>{
         std::unexpect,

@@ -1,5 +1,6 @@
 #include "Core/ViewFrustum.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -57,15 +58,12 @@ ViewFrustum ViewFrustum::from_clip_matrix(const std::span<const float, 16> clip_
 
 bool ViewFrustum::intersects(const BoundingSphere& sphere) const {
   const float reach{sphere.radius + K_ABSOLUTE_MARGIN + (K_RELATIVE_MARGIN * sphere.radius)};
-  for (const std::array<float, 4>& plane : m_planes) {
+  return std::ranges::none_of(m_planes, [&sphere, reach](const std::array<float, 4>& plane) {
     const float distance{(plane.at(0) * sphere.center.at(0)) + (plane.at(1) * sphere.center.at(1)) +
                          (plane.at(2) * sphere.center.at(2)) + plane.at(3)};
     // Written as a rejection so that NaN comparisons fall through to "visible".
-    if (distance < -reach) {
-      return false;
-    }
-  }
-  return true;
+    return distance < -reach;
+  });
 }
 
 }  // namespace App

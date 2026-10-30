@@ -44,98 +44,13 @@
 #include "Core/Vertex.hpp"
 #include "Core/ViewFrustum.hpp"
 #include "Core/WorldColorPipeline.hpp"
+#include "Core/WorldFog.hpp"
+#include "Core/WorldLighting.hpp"
+#include "Core/WorldShaderSet.hpp"
 
 namespace App {
 
 namespace {
-
-constexpr std::string_view K_WORLD_VERTEX_SHADER{R"glsl(
-#version 410 core
-layout(location = 0) in vec3 a_position;
-layout(location = 2) in vec2 a_uv;
-layout(location = 3) in vec4 a_color;
-
-uniform mat4 u_mvp;
-uniform vec2 u_uv_offset;
-
-out vec2 v_uv;
-out vec4 v_color;
-
-void main() {
-    v_uv = a_uv + u_uv_offset;
-    v_color = a_color;
-    gl_Position = u_mvp * vec4(a_position, 1.0);
-}
-)glsl"};
-
-constexpr std::string_view K_MODERN_WORLD_FRAGMENT_SHADER{R"glsl(
-#version 410 core
-in vec2 v_uv;
-in vec4 v_color;
-
-uniform sampler2D u_texture0;
-uniform float u_alpha_test;
-
-out vec4 frag_colour;
-
-float srgb_to_linear(float encoded) {
-    return encoded <= 0.04045 ? encoded / 12.92
-                              : pow((encoded + 0.055) / 1.055, 2.4);
-}
-
-void main() {
-    vec4 texel = texture(u_texture0, v_uv);
-    if (u_alpha_test > 0.5 && texel.a < 0.5) {
-        discard;
-    }
-    vec3 runtime_vertex = vec3(
-        srgb_to_linear(v_color.r),
-        srgb_to_linear(v_color.g),
-        srgb_to_linear(v_color.b));
-    frag_colour = vec4(texel.rgb * runtime_vertex, texel.a);
-}
-)glsl"};
-
-constexpr std::string_view K_LEGACY_WORLD_FRAGMENT_SHADER{R"glsl(
-#version 410 core
-in vec2 v_uv;
-in vec4 v_color;
-uniform sampler2D u_texture0;
-uniform float u_alpha_test;
-uniform float u_premultiply_alpha;
-out vec4 frag_colour;
-void main() {
-    vec4 texel = texture(u_texture0, v_uv);
-    if (u_alpha_test > 0.5 && texel.a < 0.5) {
-        discard;
-    }
-    vec4 source =
-        vec4(texel.rgb * v_color.rgb, texel.a);
-    frag_colour = vec4(mix(source.rgb, source.rgb * source.a, u_premultiply_alpha), source.a);
-}
-)glsl"};
-
-constexpr std::string_view K_WIREFRAME_VERTEX_SHADER{R"glsl(
-#version 410 core
-layout(location = 0) in vec3 a_position;
-
-uniform mat4 u_mvp;
-
-void main() {
-    gl_Position = u_mvp * vec4(a_position, 1.0);
-}
-)glsl"};
-
-constexpr std::string_view K_WIREFRAME_FRAGMENT_SHADER{R"glsl(
-#version 410 core
-uniform vec4 u_color;
-
-out vec4 frag_colour;
-
-void main() {
-    frag_colour = u_color;
-}
-)glsl"};
 
 constexpr std::array<GLfloat, 4> K_WIREFRAME_COLOR{0.15F, 0.95F, 1.0F, 0.9F};
 
@@ -198,6 +113,13 @@ struct DecorPoseGeometry {
   return DecorPoseGeometry{.bounds = bounds, .vertex_count = vertex_count};
 }
 
+/// Bucket 0x0800 (3DO flag bit 16) doubles the Runtime fog range.
+[[nodiscard]] float fog_depth_scale(const std::uint32_t flags) {
+  return Omikron::has_flag(flags, Omikron::MeshFlags::k_doubled_fog_range)
+             ? Fog::K_DOUBLED_RANGE_DEPTH_SCALE
+             : 1.0F;
+}
+
 bool is_blended(const Omikron::BlendMode mode) {
   return mode == Omikron::BlendMode::k_alpha_blend || mode == Omikron::BlendMode::k_additive ||
          mode == Omikron::BlendMode::k_subtractive;
@@ -223,6 +145,117 @@ bool is_blended(const Omikron::BlendMode mode) {
     return LegacyBlendOperator::k_darken;
   }
   return LegacyBlendOperator::k_alpha;
+}
+
+/// Sphere around every presentation-space vertex of an object model.
+[[nodiscard]] std::optional<BoundingSphere> model_bounds(
+    const std::span<const Omikron::MaterialGroup> groups) {
+  glm::vec3 minimum{std::numeric_limits<float>::max()};
+  glm::vec3 maximum{std::numeric_limits<float>::lowest()};
+  bool any{false};
+  for (const Omikron::MaterialGroup& group : groups) {
+    for (const Vertex& native_vertex : group.vertices) {
+      const glm::vec3 position{
+          glm::make_vec3(Runtime::Presentation::to_gl(native_vertex).position.data())};
+      minimum = glm::min(minimum, position);
+      maximum = glm::max(maximum, position);
+      any = true;
+    }
+  }
+  if (!any) {
+    return std::nullopt;
+  }
+  const glm::vec3 center{(minimum + maximum) * 0.5F};
+  float radius_squared{0.0F};
+  for (const Omikron::MaterialGroup& group : groups) {
+    for (const Vertex& native_vertex : group.vertices) {
+      const glm::vec3 offset{
+          glm::make_vec3(Runtime::Presentation::to_gl(native_vertex).position.data()) - center};
+      radius_squared = std::max(radius_squared, glm::dot(offset, offset));
+    }
+  }
+  const float radius{std::sqrt(radius_squared)};
+  BoundingSphere sphere{.radius = radius};
+  std::copy_n(glm::value_ptr(center), sphere.center.size(), sphere.center.begin());
+  if (!std::isfinite(radius) || !std::ranges::all_of(sphere.center, [](const float value) {
+        return std::isfinite(value);
+      })) {
+    return std::nullopt;
+  }
+  return sphere;
+}
+
+/// Lossless frustum test for one placed model; unbounded models are always drawn.
+[[nodiscard]] bool instance_visible(const std::optional<BoundingSphere>& local_bounds,
+    const glm::mat4& model,
+    const ViewFrustum& frustum) {
+  if (!local_bounds.has_value()) {
+    return true;
+  }
+  const glm::vec4 center{model * glm::vec4{glm::make_vec3(local_bounds->center.data()), 1.0F}};
+  const float scale{std::max({glm::length(glm::vec3{model[0]}),
+      glm::length(glm::vec3{model[1]}),
+      glm::length(glm::vec3{model[2]})})};
+  BoundingSphere sphere{.radius = local_bounds->radius * scale};
+  std::copy_n(glm::value_ptr(center), sphere.center.size(), sphere.center.begin());
+  if (!std::isfinite(sphere.radius) || !std::ranges::all_of(sphere.center, [](const float value) {
+        return std::isfinite(value);
+      })) {
+    return true;
+  }
+  return frustum.intersects(sphere);
+}
+
+/// Frobenius norm: an upper bound of how far a matrix can stretch a vector.
+[[nodiscard]] float stretch_bound(const Runtime::Matrix3& matrix) {
+  float sum{0.0F};
+  for (const float value : matrix.values) {
+    sum += value * value;
+  }
+  return std::sqrt(sum);
+}
+
+[[nodiscard]] float max_abs_scale(const Runtime::Vec3& scale) {
+  return std::max({std::abs(scale.x), std::abs(scale.y), std::abs(scale.z)});
+}
+
+/// Lossless frustum test for one character. Every posed corner lies within
+/// reach * |object scale| * |object matrix| * |presentation| of its owning
+/// object's presented origin, so a character is skipped only when all of
+/// those spheres are outside the view volume. Dialogue face overrides replace
+/// source vertices, so overlaid characters are never culled.
+[[nodiscard]] bool character_visible(
+    const Character::RuntimeCharacter& character, const ViewFrustum& frustum) {
+  if (character.model_resource == nullptr || character.dialog_performance.has_value()) {
+    return true;
+  }
+  const std::vector<float>& reach{character.model_resource->object_vertex_reach};
+  if (reach.size() != character.runtime_objects.size()) {
+    return true;
+  }
+  const Runtime::Transform presentation{character.presentation_transform()};
+  const float presentation_stretch{
+      stretch_bound(presentation.matrix) * max_abs_scale(presentation.scale)};
+  for (std::size_t index{0}; index < reach.size(); ++index) {
+    if (!(reach.at(index) > 0.0F)) {
+      continue;
+    }
+    const Omikron::Model3DOData::RuntimeObjectState& object{character.runtime_objects.at(index)};
+    const Runtime::Vec3 center{Runtime::Presentation::to_gl(
+        Runtime::transform_point(object.world_translation, presentation))};
+    const BoundingSphere sphere{.center = {center.x, center.y, center.z},
+        .radius = reach.at(index) * max_abs_scale(object.scale) *
+                  stretch_bound(object.world_matrix) * presentation_stretch};
+    if (!std::isfinite(sphere.radius) || !std::ranges::all_of(sphere.center, [](const float value) {
+          return std::isfinite(value);
+        })) {
+      return true;
+    }
+    if (frustum.intersects(sphere)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 [[nodiscard]] GameColorTextureUsage texture_usage(const unsigned char bits) {
@@ -325,7 +358,7 @@ std::expected<std::vector<GameColorTexture>, std::string> load_decor_textures(
 }  // namespace
 
 std::expected<std::unique_ptr<WorldRenderer>, std::string> WorldRenderer::create(
-    WorldSceneContext& context) {
+    WorldSceneContext& context, WorldShaderSet& shaders) {
   APP_PROFILE_FUNCTION();
 
   if (!context.decor_model.has_value()) {
@@ -334,29 +367,23 @@ std::expected<std::unique_ptr<WorldRenderer>, std::string> WorldRenderer::create
   }
 
   const Omikron::Model3DOData& model{context.decor_model.value()};
-  auto groups{
-      context.runtime != nullptr && context.runtime->decor_model() == &model
-          ? Omikron::Model3DO::build_posed_geometry(model, context.runtime->decor_runtime_objects())
-          : Omikron::Model3DO::build_static_geometry(model)};
-  if (!groups) {
+  // The layout is resolved once and kept for later decor pose patches.
+  auto layout{Omikron::Model3DO::build_posed_layout(model)};
+  if (!layout) {
     return std::expected<std::unique_ptr<WorldRenderer>, std::string>{
-        std::unexpect, std::move(groups).error()};
+        std::unexpect, std::move(layout).error()};
   }
-
-  auto modern_shader{Shader::create(K_WORLD_VERTEX_SHADER, K_MODERN_WORLD_FRAGMENT_SHADER)};
-  if (!modern_shader) {
+  std::expected<std::vector<Omikron::MaterialGroup>, std::string> groups{};
+  if (auto posed{Omikron::Model3DO::apply_pose(model,
+          layout.value(),
+          context.runtime != nullptr && context.runtime->decor_model() == &model
+              ? context.runtime->decor_runtime_objects()
+              : std::span<const Omikron::Model3DOData::RuntimeObjectState>{model.runtime_objects},
+          std::span<const Omikron::RawVertex>{model.vertices},
+          groups.value())};
+      !posed) {
     return std::expected<std::unique_ptr<WorldRenderer>, std::string>{
-        std::unexpect, std::move(modern_shader).error()};
-  }
-  auto legacy_shader{Shader::create(K_WORLD_VERTEX_SHADER, K_LEGACY_WORLD_FRAGMENT_SHADER)};
-  if (!legacy_shader) {
-    return std::expected<std::unique_ptr<WorldRenderer>, std::string>{
-        std::unexpect, std::move(legacy_shader).error()};
-  }
-  auto wireframe_shader{Shader::create(K_WIREFRAME_VERTEX_SHADER, K_WIREFRAME_FRAGMENT_SHADER)};
-  if (!wireframe_shader) {
-    return std::expected<std::unique_ptr<WorldRenderer>, std::string>{
-        std::unexpect, std::move(wireframe_shader).error()};
+        std::unexpect, std::move(posed).error()};
   }
 
   auto textures{load_decor_textures(context, model, groups.value())};
@@ -367,10 +394,11 @@ std::expected<std::unique_ptr<WorldRenderer>, std::string> WorldRenderer::create
 
   // NOLINTNEXTLINE(cppcoreguidelines-owning-memory) -- private constructor.
   auto renderer{std::unique_ptr<WorldRenderer>{new WorldRenderer()}};
-  renderer->m_modern_shader = std::make_unique<Shader>(std::move(modern_shader).value());
-  renderer->m_legacy_shader = std::make_unique<Shader>(std::move(legacy_shader).value());
-  renderer->m_wireframe_shader = std::make_unique<Shader>(std::move(wireframe_shader).value());
+  renderer->m_shaders = &shaders;
   renderer->m_textures = std::move(textures).value();
+  renderer->m_lights = Lighting::prepare_all(model);
+  renderer->m_decor_layout = std::move(layout).value();
+  renderer->m_decor_layout_model = &model;
   renderer->m_decor_pose_revision =
       context.runtime != nullptr ? context.runtime->decor_pose_revision() : 0U;
 
@@ -434,6 +462,7 @@ std::expected<std::unique_ptr<WorldRenderer>, std::string> WorldRenderer::create
         0.5F * std::sqrt((extent_x * extent_x) + (extent_y * extent_y) + (extent_z * extent_z)),
         1.0F);
   }
+  renderer->rebuild_opaque_draw_order();
   renderer->index_decor_groups(model,
       groups.value(),
       context.runtime != nullptr && context.runtime->decor_model() == &model
@@ -540,7 +569,8 @@ bool WorldRenderer::patch_decor_model(const ScenarioRuntime& runtime) {
       model.skin_parent_index.size() != objects.size()) {
     return false;
   }
-  std::vector<std::uint8_t> changed(objects.size(), 0U);
+  std::vector<std::uint8_t>& changed{m_changed_objects};
+  changed.assign(objects.size(), 0U);
   bool any_changed{false};
   for (std::size_t index{0}; index < objects.size(); ++index) {
     if (!same_world_transform(
@@ -553,7 +583,8 @@ bool WorldRenderer::patch_decor_model(const ScenarioRuntime& runtime) {
     return true;
   }
   // Skinned corners resolve against the skin parent's transform.
-  std::vector<std::uint8_t> mesh_mask{changed};
+  std::vector<std::uint8_t>& mesh_mask{m_changed_mesh_mask};
+  mesh_mask.assign(changed.begin(), changed.end());
   for (std::size_t index{0}; index < objects.size(); ++index) {
     const std::int32_t skin_parent{model.skin_parent_index.at(index)};
     if (skin_parent >= 0 && changed.at(static_cast<std::size_t>(skin_parent)) != 0U) {
@@ -561,25 +592,43 @@ bool WorldRenderer::patch_decor_model(const ScenarioRuntime& runtime) {
     }
   }
 
-  auto groups{Omikron::Model3DO::build_posed_geometry(
-      model, objects, std::span<const Omikron::RawVertex>{model.vertices}, mesh_mask)};
-  if (!groups) {
-    App::Log::warn(LogCategory::Renderer, "World decor pose patch failed: {}", groups.error());
-    return true;
+  // The decor's corner layout is pose-independent; resolve it once and only
+  // re-pose the groups of changed meshes.
+  if (m_decor_layout_model != &model) {
+    auto layout{Omikron::Model3DO::build_posed_layout(model)};
+    if (!layout) {
+      App::Log::warn(LogCategory::Renderer, "World decor pose layout failed: {}", layout.error());
+      return true;
+    }
+    m_decor_layout = std::move(layout).value();
+    m_decor_layout_model = &model;
   }
 
   std::vector<std::pair<std::size_t, std::vector<Vertex>>> updates;
-  updates.reserve(groups->size());
-  for (const Omikron::MaterialGroup& group : groups.value()) {
+  for (std::size_t group_index{0}; group_index < m_decor_layout.groups.size(); ++group_index) {
+    const Omikron::MaterialGroup& group{m_decor_layout.groups.at(group_index)};
+    if (group.mesh_index >= mesh_mask.size() || mesh_mask.at(group.mesh_index) == 0U) {
+      continue;
+    }
     const auto found{
         m_decor_group_index.find(std::tuple{group.mesh_index, group.material_id, group.flags})};
     if (found == m_decor_group_index.end() ||
         m_meshes.at(found->second).vertex_count() != group.vertices.size()) {
       return false;
     }
+    if (auto posed{Omikron::Model3DO::pose_group(model,
+            m_decor_layout,
+            group_index,
+            objects,
+            std::span<const Omikron::RawVertex>{model.vertices},
+            m_decor_pose_scratch)};
+        !posed) {
+      App::Log::warn(LogCategory::Renderer, "World decor pose patch failed: {}", posed.error());
+      return true;
+    }
     std::vector<Vertex> presentation_vertices;
-    presentation_vertices.reserve(group.vertices.size());
-    for (const Vertex& vertex : group.vertices) {
+    presentation_vertices.reserve(m_decor_pose_scratch.size());
+    for (const Vertex& vertex : m_decor_pose_scratch) {
       const Vertex presentation{Runtime::Presentation::to_gl(vertex)};
       if (!std::ranges::all_of(presentation.position, [](const float coordinate) {
             return std::isfinite(coordinate);
@@ -597,8 +646,13 @@ bool WorldRenderer::patch_decor_model(const ScenarioRuntime& runtime) {
   for (const auto& [index, vertices] : updates) {
     static_cast<void>(m_meshes.at(index).update_vertices(vertices));
   }
-  m_decor_posed_objects.assign(objects.begin(), objects.end());
-  m_decor_culling.rebuild(model, objects);
+  for (std::size_t index{0}; index < objects.size(); ++index) {
+    if (changed.at(index) != 0U) {
+      m_decor_posed_objects.at(index) = objects.subspan(index, 1U).front();
+    }
+  }
+  // A sphere depends only on its own object's transform (skinned objects stay unbounded).
+  m_decor_culling.refresh(model, objects, changed);
   return true;
 }
 
@@ -655,27 +709,105 @@ void WorldRenderer::sync_decor_model(const ScenarioRuntime& runtime) {
     m_meshes.emplace_back(presentation_vertices, group.indices);
   }
   index_decor_groups(*runtime.decor_model(), groups.value(), runtime.decor_runtime_objects());
+  rebuild_opaque_draw_order();
   m_decor_pose_bounds = geometry->bounds;
   m_decor_pose_vertex_count = geometry->vertex_count;
   m_decor_pose_revision = runtime.decor_pose_revision();
+}
+
+void WorldRenderer::begin_world_pass(
+    const Shader& shader, const glm::mat4& mvp, const glm::mat4& view, const bool legacy_effect) {
+  shader.bind();
+  m_bound_shader = &shader;
+  m_bound_texture = 0;
+  shader.set_uniform_mat4("u_mvp", std::span<const GLfloat, 16>{glm::value_ptr(mvp), 16});
+  shader.set_uniform_mat4("u_model_view", std::span<const GLfloat, 16>{glm::value_ptr(view), 16});
+  apply_baked_lighting(shader);
+  shader.set_uniform_int("u_texture0", 0);
+  if (legacy_effect) {
+    Fog::apply_far_fade_uniforms(shader, m_frame_fog);
+  } else {
+    Fog::apply_uniforms(shader, m_frame_fog);
+  }
+}
+
+void WorldRenderer::bind_world_shader(const Shader& shader) {
+  if (m_bound_shader != &shader) {
+    shader.bind();
+    m_bound_shader = &shader;
+  }
+}
+
+void WorldRenderer::bind_world_texture(const Texture2D& texture) {
+  if (m_bound_texture != texture.id()) {
+    texture.bind(0);
+    m_bound_texture = texture.id();
+  }
+}
+
+const WorldRenderer::WorldUniforms& WorldRenderer::world_uniforms(const Shader& shader) const {
+  for (const auto& [program, uniforms] : m_world_uniforms) {
+    if (program == &shader) {
+      return uniforms;
+    }
+  }
+  WorldUniforms uniforms{.mvp = shader.uniform("u_mvp"),
+      .model_view = shader.uniform("u_model_view"),
+      .lighting_mode = shader.uniform("u_lighting_mode"),
+      .ambient_floor = shader.uniform("u_ambient_floor"),
+      .ambient_ceiling = shader.uniform("u_ambient_ceiling"),
+      .light_count = shader.uniform("u_light_count"),
+      .uv_offset = shader.uniform("u_uv_offset"),
+      .alpha_test = shader.uniform("u_alpha_test"),
+      .premultiply_alpha = shader.uniform("u_premultiply_alpha"),
+      .far_fade_depth_scale = shader.uniform("u_far_fade_depth_scale"),
+      .fog_depth_scale = shader.uniform("u_fog_depth_scale"),
+      .light_direction = {},
+      .light_scale = {},
+      .light_color = {}};
+  for (std::size_t index{0}; index < Lighting::K_MAX_NODE_LIGHTS; ++index) {
+    const std::string suffix{"[" + std::to_string(index) + "]"};
+    uniforms.light_direction.at(index) = shader.uniform("u_light_direction" + suffix);
+    uniforms.light_scale.at(index) = shader.uniform("u_light_scale" + suffix);
+    uniforms.light_color.at(index) = shader.uniform("u_light_color" + suffix);
+  }
+  return m_world_uniforms.emplace_back(&shader, uniforms).second;
+}
+
+void WorldRenderer::apply_group_uniforms(const Shader& shader,
+    const std::uint32_t flags,
+    const Omikron::BlendMode mode,
+    const float uv_phase_u,
+    const float uv_phase_v,
+    const bool legacy_effect) const {
+  const WorldUniforms& uniforms{world_uniforms(shader)};
+  const std::array<float, 2> uv_offset{Omikron::uv_scroll_offset(flags, uv_phase_u, uv_phase_v)};
+  shader.set_uniform_vec2(uniforms.uv_offset, std::span<const GLfloat, 2>{uv_offset});
+  shader.set_uniform_float(
+      uniforms.alpha_test, mode == Omikron::BlendMode::k_alpha_test ? 1.0F : 0.0F);
+  if (legacy_effect) {
+    shader.set_uniform_float(
+        uniforms.premultiply_alpha, mode == Omikron::BlendMode::k_alpha_blend ? 1.0F : 0.0F);
+    shader.set_uniform_float(uniforms.far_fade_depth_scale, fog_depth_scale(flags));
+  } else {
+    shader.set_uniform_float(uniforms.fog_depth_scale, fog_depth_scale(flags));
+  }
 }
 
 void WorldRenderer::draw_group(const std::size_t index,
     const float uv_phase_u,
     const float uv_phase_v,
     const bool legacy_effect) {
-  const Shader& shader{legacy_effect ? *m_legacy_shader : *m_modern_shader};
-  shader.bind();
-  const std::array<float, 2> uv_offset{
-      Omikron::uv_scroll_offset(m_group_flags.at(index), uv_phase_u, uv_phase_v)};
-  shader.set_uniform_vec2("u_uv_offset", std::span<const GLfloat, 2>{uv_offset});
-  const Omikron::BlendMode mode{m_group_modes.at(index)};
-
-  shader.set_uniform_float("u_alpha_test", mode == Omikron::BlendMode::k_alpha_test ? 1.0F : 0.0F);
-  if (legacy_effect) {
-    shader.set_uniform_float(
-        "u_premultiply_alpha", mode == Omikron::BlendMode::k_alpha_blend ? 1.0F : 0.0F);
-  }
+  // begin_world_pass() has already written the decor transforms, baked
+  // lighting and frame fog on this shader.
+  const Shader& shader{legacy_effect ? m_shaders->legacy() : m_shaders->modern()};
+  bind_world_shader(shader);
+  apply_group_uniforms(shader,
+      m_group_flags.at(index),
+      m_group_modes.at(index),
+      uv_phase_u,
+      uv_phase_v,
+      legacy_effect);
 
   const std::size_t material{static_cast<std::size_t>(m_group_material_ids.at(index))};
   const Texture2D* texture{
@@ -683,9 +815,23 @@ void WorldRenderer::draw_group(const std::size_t index,
   if (texture == nullptr) {
     return;
   }
-  texture->bind(0);
-  shader.set_uniform_int("u_texture0", 0);
+  bind_world_texture(*texture);
   m_meshes.at(index).draw();
+}
+
+void WorldRenderer::rebuild_opaque_draw_order() {
+  m_opaque_draw_order.clear();
+  for (std::size_t index{0}; index < m_meshes.size() && index < m_group_modes.size(); ++index) {
+    if (!is_blended(m_group_modes.at(index))) {
+      m_opaque_draw_order.push_back(index);
+    }
+  }
+  // Depth-tested opaque/cutout draws are order-independent; grouping by
+  // material lets consecutive draws reuse the bound texture.
+  std::ranges::stable_sort(
+      m_opaque_draw_order, [this](const std::size_t lhs, const std::size_t rhs) {
+        return m_group_material_ids.at(lhs) < m_group_material_ids.at(rhs);
+      });
 }
 
 bool WorldRenderer::update_character_meshes(
@@ -714,9 +860,18 @@ bool WorldRenderer::update_character_meshes(
   return true;
 }
 
-void WorldRenderer::sync_character_models(const ScenarioRuntime& runtime) {
-  for (const Character::RuntimeCharacter& character : runtime.character_runtime().characters()) {
-    if (!character.renderable() || character.model_resource == nullptr ||
+bool WorldRenderer::character_presented(const std::size_t character_index) const {
+  return character_index < m_character_visible.size() &&
+         m_character_visible.at(character_index) != 0U;
+}
+
+void WorldRenderer::sync_character_models(ScenarioRuntime& runtime) {
+  const std::span<const Character::RuntimeCharacter> characters{
+      runtime.character_runtime().characters()};
+  for (std::size_t character_index{0}; character_index < characters.size(); ++character_index) {
+    const Character::RuntimeCharacter& character{characters.subspan(character_index, 1U).front()};
+    // Off-screen characters are neither uploaded nor posed this frame.
+    if (!character_presented(character_index) || character.model_resource == nullptr ||
         std::ranges::contains(m_failed_character_models, character.model_resource_name)) {
       continue;
     }
@@ -765,6 +920,18 @@ void WorldRenderer::sync_character_models(const ScenarioRuntime& runtime) {
     if (gpu.pose_revision == character.pose_revision) {
       continue;
     }
+    // Runtime transforms a character's vertices only while submitting it, so
+    // the pose is materialized here once per presented revision.
+    if (Character::RuntimeCharacter* const live{
+            runtime.character_runtime().find_body(character.body_identity)};
+        live != nullptr) {
+      if (auto posed{Character::materialize_posed_geometry(*live)}; !posed) {
+        App::Log::warn(LogCategory::Renderer,
+            "Character model '{}' pose failed: {}",
+            character.model_resource_name,
+            posed.error());
+      }
+    }
     // Animation re-poses every frame; reuse the GPU buffers when the group
     // layout is unchanged instead of recreating every VAO/VBO.
     if (update_character_meshes(gpu, character.posed_groups)) {
@@ -799,21 +966,36 @@ void WorldRenderer::sync_character_models(const ScenarioRuntime& runtime) {
 
 void WorldRenderer::sync_object_models(const ScenarioRuntime& runtime) {
   const auto placements{runtime.object_placement_runtime().placements()};
-  std::erase_if(m_object_models, [placements](const auto& entry) {
-    return std::ranges::none_of(placements,
-        [instance_id = entry.first](const ObjectPlacement::RuntimePlacement& placement) {
-          return placement.instance_id == instance_id;
-        });
+  m_live_object_ids.clear();
+  for (const ObjectPlacement::RuntimePlacement& placement : placements) {
+    m_live_object_ids.insert(placement.instance_id);
+  }
+  std::erase_if(m_object_models, [this](const auto& entry) {
+    return !m_live_object_ids.contains(entry.first);
+  });
+  std::erase_if(m_object_models_by_resource, [](const auto& entry) {
+    return entry.second.expired();
   });
 
   for (const ObjectPlacement::RuntimePlacement& placement : placements) {
     if (!placement.renderable() || placement.model_resource == nullptr ||
-        std::ranges::contains(m_failed_object_models, placement.model_resource_name) ||
-        m_object_models.contains(placement.instance_id)) {
+        m_object_models.contains(placement.instance_id) ||
+        std::ranges::contains(m_failed_object_models, placement.model_resource_name)) {
       continue;
     }
 
-    auto gpu{std::make_unique<ObjectGpuModel>()};
+    // Placements of one model resource share its textures and buffers; only
+    // the per-instance transform differs at draw time.
+    const ObjectPlacement::ModelResource* const resource_key{placement.model_resource.get()};
+    if (const auto shared{m_object_models_by_resource.find(resource_key)};
+        shared != m_object_models_by_resource.end()) {
+      if (auto existing{shared->second.lock()}) {
+        m_object_models.emplace(placement.instance_id, std::move(existing));
+        continue;
+      }
+    }
+
+    auto gpu{std::make_shared<ObjectGpuModel>()};
     gpu->resource = placement.model_resource;
 
     std::vector<unsigned char> usage_bits(placement.model_resource->images.size(), 0U);
@@ -860,6 +1042,7 @@ void WorldRenderer::sync_object_models(const ScenarioRuntime& runtime) {
       gpu->group_flags.push_back(group.flags);
       gpu->group_modes.push_back(Omikron::blend_mode(group.flags));
     }
+    gpu->local_bounds = model_bounds(placement.model_resource->groups);
 
     App::Log::debug(LogCategory::Renderer,
         "Object placement renderer ready — model={} instance={} object={} groups={} materials={}",
@@ -868,12 +1051,13 @@ void WorldRenderer::sync_object_models(const ScenarioRuntime& runtime) {
         placement.object_id,
         gpu->meshes.size(),
         gpu->textures.size());
+    m_object_models_by_resource.insert_or_assign(resource_key, gpu);
     m_object_models.emplace(placement.instance_id, std::move(gpu));
   }
 }
 
 void WorldRenderer::draw_character_group(const Character::RuntimeCharacter& character,
-    const Camera& camera,
+    const InstanceMatrices& matrices,
     const std::size_t group_index,
     const float uv_phase_u,
     const float uv_phase_v,
@@ -887,25 +1071,20 @@ void WorldRenderer::draw_character_group(const Character::RuntimeCharacter& char
     return;
   }
 
-  const glm::mat4 view{glm::make_mat4(camera.get_view_matrix().data())};
-  const glm::mat4 projection{glm::make_mat4(camera.get_projection_matrix().data())};
-  const glm::mat4 model{Runtime::Presentation::to_gl(character.presentation_transform())};
-  const glm::mat4 mvp{projection * view * model};
-  const Shader& shader{legacy_effect ? *m_legacy_shader : *m_modern_shader};
-  shader.bind();
-  shader.set_uniform_mat4("u_mvp", std::span<const GLfloat, 16>{glm::value_ptr(mvp), 16});
-
-  const std::array<float, 2> uv_offset{
-      Omikron::uv_scroll_offset(gpu.group_flags.at(group_index), uv_phase_u, uv_phase_v)};
-  shader.set_uniform_vec2("u_uv_offset", std::span<const GLfloat, 2>{uv_offset});
-
-  const Omikron::BlendMode mode{gpu.group_modes.at(group_index)};
-
-  shader.set_uniform_float("u_alpha_test", mode == Omikron::BlendMode::k_alpha_test ? 1.0F : 0.0F);
-  if (legacy_effect) {
-    shader.set_uniform_float(
-        "u_premultiply_alpha", mode == Omikron::BlendMode::k_alpha_blend ? 1.0F : 0.0F);
-  }
+  const Shader& shader{legacy_effect ? m_shaders->legacy() : *m_character_shader};
+  bind_world_shader(shader);
+  const WorldUniforms& uniforms{world_uniforms(shader)};
+  shader.set_uniform_mat4(
+      uniforms.mvp, std::span<const GLfloat, 16>{glm::value_ptr(matrices.mvp), 16});
+  shader.set_uniform_mat4(
+      uniforms.model_view, std::span<const GLfloat, 16>{glm::value_ptr(matrices.model_view), 16});
+  apply_actor_lighting(shader, character, group_index, matrices.to_model);
+  apply_group_uniforms(shader,
+      gpu.group_flags.at(group_index),
+      gpu.group_modes.at(group_index),
+      uv_phase_u,
+      uv_phase_v,
+      legacy_effect);
 
   const std::int32_t material_id{gpu.group_material_ids.at(group_index)};
   if (material_id < 0 || static_cast<std::size_t>(material_id) >= gpu.textures.size()) {
@@ -916,13 +1095,12 @@ void WorldRenderer::draw_character_group(const Character::RuntimeCharacter& char
   if (texture == nullptr) {
     return;
   }
-  texture->bind(0);
-  shader.set_uniform_int("u_texture0", 0);
+  bind_world_texture(*texture);
   gpu.meshes.at(group_index).draw();
 }
 
 void WorldRenderer::draw_object_group(const ObjectPlacement::RuntimePlacement& placement,
-    const Camera& camera,
+    const InstanceMatrices& matrices,
     const std::size_t group_index,
     const float uv_phase_u,
     const float uv_phase_v,
@@ -933,25 +1111,18 @@ void WorldRenderer::draw_object_group(const ObjectPlacement::RuntimePlacement& p
   }
   ObjectGpuModel& gpu{*found->second};
 
-  const glm::mat4 view{glm::make_mat4(camera.get_view_matrix().data())};
-  const glm::mat4 projection{glm::make_mat4(camera.get_projection_matrix().data())};
-  const glm::mat4 model{Runtime::Presentation::to_gl(placement.transform)};
-  const glm::mat4 mvp{projection * view * model};
-  const Shader& shader{legacy_effect ? *m_legacy_shader : *m_modern_shader};
-  shader.bind();
-  shader.set_uniform_mat4("u_mvp", std::span<const GLfloat, 16>{glm::value_ptr(mvp), 16});
-
-  const std::array<float, 2> uv_offset{
-      Omikron::uv_scroll_offset(gpu.group_flags.at(group_index), uv_phase_u, uv_phase_v)};
-  shader.set_uniform_vec2("u_uv_offset", std::span<const GLfloat, 2>{uv_offset});
-
-  const Omikron::BlendMode mode{gpu.group_modes.at(group_index)};
-
-  shader.set_uniform_float("u_alpha_test", mode == Omikron::BlendMode::k_alpha_test ? 1.0F : 0.0F);
-  if (legacy_effect) {
-    shader.set_uniform_float(
-        "u_premultiply_alpha", mode == Omikron::BlendMode::k_alpha_blend ? 1.0F : 0.0F);
-  }
+  const Shader& shader{legacy_effect ? m_shaders->legacy() : m_shaders->modern()};
+  bind_world_shader(shader);
+  shader.set_uniform_mat4("u_mvp", std::span<const GLfloat, 16>{glm::value_ptr(matrices.mvp), 16});
+  shader.set_uniform_mat4(
+      "u_model_view", std::span<const GLfloat, 16>{glm::value_ptr(matrices.model_view), 16});
+  apply_baked_lighting(shader);
+  apply_group_uniforms(shader,
+      gpu.group_flags.at(group_index),
+      gpu.group_modes.at(group_index),
+      uv_phase_u,
+      uv_phase_v,
+      legacy_effect);
 
   const std::int32_t material_id{gpu.group_material_ids.at(group_index)};
   if (material_id < 0 || static_cast<std::size_t>(material_id) >= gpu.textures.size()) {
@@ -962,24 +1133,74 @@ void WorldRenderer::draw_object_group(const ObjectPlacement::RuntimePlacement& p
   if (texture == nullptr) {
     return;
   }
-  texture->bind(0);
-  shader.set_uniform_int("u_texture0", 0);
+  bind_world_texture(*texture);
   gpu.meshes.at(group_index).draw();
+}
+
+void WorldRenderer::apply_baked_lighting(const Shader& shader) const {
+  shader.set_uniform_int("u_lighting_mode", 1);
+  shader.set_uniform_uint("u_ambient_floor", m_frame_ambient.floor);
+  shader.set_uniform_uint("u_ambient_ceiling", m_frame_ambient.ceiling);
+  shader.set_uniform_int("u_light_count", 0);
+}
+
+void WorldRenderer::apply_actor_lighting(const Shader& shader,
+    const Character::RuntimeCharacter& character,
+    const std::size_t group_index,
+    const glm::mat3& to_model) const {
+  const WorldUniforms& uniforms{world_uniforms(shader)};
+  shader.set_uniform_int(uniforms.lighting_mode, 2);
+  shader.set_uniform_uint(uniforms.ambient_floor, m_frame_ambient.floor);
+  shader.set_uniform_uint(uniforms.ambient_ceiling, m_frame_ambient.ceiling);
+
+  // Runtime pairs a lit instance with every light whose shape box overlaps
+  // the actor box, then attenuates per node by the node's distance.
+  int light_count{0};
+  if (group_index < character.posed_groups.size()) {
+    const Omikron::MaterialGroup& group{character.posed_groups.at(group_index)};
+    const bool lit_surface{(group.flags & Lighting::K_UNLIT_MESH_FLAGS) == 0U};
+    if (lit_surface && group.mesh_index < character.runtime_objects.size()) {
+      const Runtime::Transform presentation{character.presentation_transform()};
+      const Runtime::Vec3 node_position{Runtime::transform_point(
+          character.runtime_objects.at(group.mesh_index).world_translation, presentation)};
+      const Lighting::NodeLightSet selected{Lighting::select_node_lights(m_lights,
+          character.transform.translation,
+          character.actor_spatial_radius().value_or(0.0F),
+          node_position)};
+      for (const Lighting::NodeLight& node_light : selected.active()) {
+        const Lighting::LightSource& light{m_lights.at(node_light.light_index)};
+        const Runtime::Vec3 gl_direction{Runtime::Presentation::to_gl(light.direction)};
+        const glm::vec3 direction{
+            glm::normalize(to_model * glm::vec3{gl_direction.x, gl_direction.y, gl_direction.z})};
+        const std::array<float, 3> color{static_cast<float>((light.color_rgb >> 16U) & 0xFFU),
+            static_cast<float>((light.color_rgb >> 8U) & 0xFFU),
+            static_cast<float>(light.color_rgb & 0xFFU)};
+        const auto slot{static_cast<std::size_t>(light_count)};
+        shader.set_uniform_vec3(uniforms.light_direction.at(slot),
+            std::span<const GLfloat, 3>{glm::value_ptr(direction), 3});
+        shader.set_uniform_float(uniforms.light_scale.at(slot), node_light.scale);
+        shader.set_uniform_vec3(uniforms.light_color.at(slot), std::span<const GLfloat, 3>{color});
+        ++light_count;
+      }
+    }
+  }
+  shader.set_uniform_int(uniforms.light_count, light_count);
 }
 
 void WorldRenderer::render_geometry_wireframe(
     const Camera& camera, const ScenarioRuntime* const runtime) {
-  if (m_wireframe_shader == nullptr) {
+  if (m_shaders == nullptr) {
     return;
   }
+  const Shader& wireframe{m_shaders->wireframe()};
 
   const glm::mat4 view{glm::make_mat4(camera.get_view_matrix().data())};
   const glm::mat4 projection{glm::make_mat4(camera.get_projection_matrix().data())};
   const glm::mat4 identity{1.0F};
   glm::mat4 mvp{projection * view * identity};
 
-  m_wireframe_shader->bind();
-  m_wireframe_shader->set_uniform_vec4("u_color", std::span<const GLfloat, 4>{K_WIREFRAME_COLOR});
+  wireframe.bind();
+  wireframe.set_uniform_vec4("u_color", std::span<const GLfloat, 4>{K_WIREFRAME_COLOR});
 
   glEnable(GL_BLEND);
   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -988,8 +1209,7 @@ void WorldRenderer::render_geometry_wireframe(
   glDisable(GL_CULL_FACE);
   glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
 
-  m_wireframe_shader->set_uniform_mat4(
-      "u_mvp", std::span<const GLfloat, 16>{glm::value_ptr(mvp), 16});
+  wireframe.set_uniform_mat4("u_mvp", std::span<const GLfloat, 16>{glm::value_ptr(mvp), 16});
   for (const Mesh& mesh : m_meshes) {
     mesh.draw();
   }
@@ -1002,8 +1222,7 @@ void WorldRenderer::render_geometry_wireframe(
       }
       const glm::mat4 character_model{Runtime::Presentation::to_gl(character.transform)};
       mvp = projection * view * character_model;
-      m_wireframe_shader->set_uniform_mat4(
-          "u_mvp", std::span<const GLfloat, 16>{glm::value_ptr(mvp), 16});
+      wireframe.set_uniform_mat4("u_mvp", std::span<const GLfloat, 16>{glm::value_ptr(mvp), 16});
       for (const Mesh& mesh : found->second->meshes) {
         mesh.draw();
       }
@@ -1016,8 +1235,7 @@ void WorldRenderer::render_geometry_wireframe(
       }
       const glm::mat4 object_model{Runtime::Presentation::to_gl(placement.transform)};
       mvp = projection * view * object_model;
-      m_wireframe_shader->set_uniform_mat4(
-          "u_mvp", std::span<const GLfloat, 16>{glm::value_ptr(mvp), 16});
+      wireframe.set_uniform_mat4("u_mvp", std::span<const GLfloat, 16>{glm::value_ptr(mvp), 16});
       for (const Mesh& mesh : found->second->meshes) {
         mesh.draw();
       }
@@ -1035,12 +1253,19 @@ void WorldRenderer::render(const Camera& camera,
     ScenarioRuntime* const runtime,
     const float uv_phase_u,
     const float uv_phase_v,
+    const Fog::ShaderFog& fog,
+    const Lighting::Ambient& ambient,
     WorldColorPipeline& color_pipeline) {
   APP_PROFILE_FUNCTION();
+  m_frame_fog = fog;
+  m_frame_ambient = ambient;
 
-  if (m_modern_shader == nullptr || m_legacy_shader == nullptr) {
+  if (m_shaders == nullptr) {
     return;
   }
+  const Shader* const per_pixel_shader{
+      m_per_pixel_lighting ? m_shaders->per_pixel_modern() : nullptr};
+  m_character_shader = per_pixel_shader != nullptr ? per_pixel_shader : &m_shaders->modern();
 
   const glm::mat4 view{glm::make_mat4(camera.get_view_matrix().data())};
   const glm::mat4 projection{glm::make_mat4(camera.get_projection_matrix().data())};
@@ -1060,28 +1285,47 @@ void WorldRenderer::render(const Camera& camera,
         camera.get_far_plane());
   }
 
+  const ViewFrustum frustum{
+      ViewFrustum::from_clip_matrix(std::span<const float, 16>{glm::value_ptr(mvp), 16})};
+  m_character_visible.clear();
+  if (runtime != nullptr) {
+    for (const Character::RuntimeCharacter& character : runtime->character_runtime().characters()) {
+      m_character_visible.push_back(
+          character.renderable() && character_visible(character, frustum) ? 1U : 0U);
+    }
+  }
+
   if (runtime != nullptr) {
     sync_decor_model(*runtime);
     sync_character_models(*runtime);
     sync_object_models(*runtime);
   }
 
-  const auto configure_world_shader = [&](Shader& shader) {
-    shader.bind();
-    shader.set_uniform_mat4("u_mvp", std::span<const GLfloat, 16>{glm::value_ptr(mvp), 16});
+  const auto instance_matrices = [&](const glm::mat4& model, const bool lit) {
+    InstanceMatrices matrices{.model_view = view * model};
+    matrices.mvp = projection * matrices.model_view;
+    if (lit) {
+      matrices.to_model = glm::inverse(glm::mat3(model));
+    }
+    return matrices;
   };
-  configure_world_shader(*m_modern_shader);
+  const auto character_gpu = [this](const Character::RuntimeCharacter& character,
+                                 const std::size_t character_index) -> const CharacterGpuModel* {
+    if (!character_presented(character_index)) {
+      return nullptr;
+    }
+    const auto found{m_character_models.find(character.instance_id)};
+    return found == m_character_models.end() ? nullptr : found->second.get();
+  };
 
   // Lossless view-frustum culling of decor: Runtime draws everything inside the view volume, so
   // only objects whose broadphase sphere is entirely outside it are skipped.
-  const ViewFrustum frustum{
-      ViewFrustum::from_clip_matrix(std::span<const float, 16>{glm::value_ptr(mvp), 16})};
-  std::vector<std::uint8_t> group_visible(m_meshes.size(), 1U);
+  m_group_visible.assign(m_meshes.size(), 1U);
   m_decor_cull_stats = DecorCullStats{.groups_total = m_meshes.size()};
   if (m_group_mesh_index.size() == m_meshes.size()) {
-    for (std::size_t index{0}; index < group_visible.size(); ++index) {
+    for (std::size_t index{0}; index < m_group_visible.size(); ++index) {
       if (!m_decor_culling.object_visible(m_group_mesh_index.at(index), frustum)) {
-        group_visible.at(index) = 0U;
+        m_group_visible.at(index) = 0U;
         ++m_decor_cull_stats.groups_culled;
       }
     }
@@ -1089,140 +1333,156 @@ void WorldRenderer::render(const Camera& camera,
   m_decor_cull_stats.groups_submitted =
       m_decor_cull_stats.groups_total - m_decor_cull_stats.groups_culled;
 
-  // Opaque and cutout geometry first.
-  glDisable(GL_BLEND);
-  glDepthMask(GL_TRUE);
-  for (std::size_t index{0}; index < m_meshes.size(); ++index) {
-    if (group_visible.at(index) != 0U && !is_blended(m_group_modes.at(index))) {
-      draw_group(index, uv_phase_u, uv_phase_v, false);
-    }
-  }
+  // Placed objects get the same lossless sphere test; their transforms are
+  // computed once here for both passes.
+  m_visible_objects.clear();
   if (runtime != nullptr) {
-    for (const Character::RuntimeCharacter& character : runtime->character_runtime().characters()) {
-      const auto found{m_character_models.find(character.instance_id)};
-      if (!character.renderable() || found == m_character_models.end()) {
-        continue;
-      }
-      for (std::size_t index{0}; index < found->second->meshes.size(); ++index) {
-        if (!is_blended(found->second->group_modes.at(index))) {
-          draw_character_group(character, camera, index, uv_phase_u, uv_phase_v, false);
-        }
-      }
-    }
-
     for (const ObjectPlacement::RuntimePlacement& placement :
         runtime->object_placement_runtime().placements()) {
       const auto found{m_object_models.find(placement.instance_id)};
       if (!placement.renderable() || found == m_object_models.end()) {
         continue;
       }
-      for (std::size_t index{0}; index < found->second->meshes.size(); ++index) {
-        if (!is_blended(found->second->group_modes.at(index))) {
-          draw_object_group(placement, camera, index, uv_phase_u, uv_phase_v, false);
+      const glm::mat4 model{Runtime::Presentation::to_gl(placement.transform)};
+      if (instance_visible(found->second->local_bounds, model, frustum)) {
+        m_visible_objects.push_back(
+            VisibleObject{.placement = &placement, .matrices = instance_matrices(model, false)});
+      }
+    }
+  }
+
+  // Opaque and cutout geometry first.
+  glDisable(GL_BLEND);
+  glDepthMask(GL_TRUE);
+  begin_world_pass(m_shaders->modern(), mvp, view, false);
+  for (const std::size_t index : m_opaque_draw_order) {
+    if (index < m_group_visible.size() && m_group_visible.at(index) != 0U) {
+      draw_group(index, uv_phase_u, uv_phase_v, false);
+    }
+  }
+  if (runtime != nullptr) {
+    if (m_character_shader != &m_shaders->modern()) {
+      // The per-pixel program needs the frame fog and sampler of its own.
+      begin_world_pass(*m_character_shader, mvp, view, false);
+    }
+    const std::span<const Character::RuntimeCharacter> characters{
+        runtime->character_runtime().characters()};
+    for (std::size_t character_index{0}; character_index < characters.size(); ++character_index) {
+      const Character::RuntimeCharacter& character{characters.subspan(character_index, 1U).front()};
+      const CharacterGpuModel* const gpu{character_gpu(character, character_index)};
+      if (gpu == nullptr) {
+        continue;
+      }
+      const InstanceMatrices matrices{instance_matrices(
+          Runtime::Presentation::to_gl(character.presentation_transform()), true)};
+      for (std::size_t index{0}; index < gpu->meshes.size(); ++index) {
+        if (!is_blended(gpu->group_modes.at(index))) {
+          draw_character_group(character, matrices, index, uv_phase_u, uv_phase_v, false);
+        }
+      }
+    }
+
+    for (const VisibleObject& visible : m_visible_objects) {
+      const ObjectGpuModel& gpu{*m_object_models.at(visible.placement->instance_id)};
+      for (std::size_t index{0}; index < gpu.meshes.size(); ++index) {
+        if (!is_blended(gpu.group_modes.at(index))) {
+          draw_object_group(
+              *visible.placement, visible.matrices, index, uv_phase_u, uv_phase_v, false);
         }
       }
     }
   }
   if (runtime != nullptr && m_sprite_renderer.valid()) {
+    m_sprite_renderer.set_fog(fog);
     m_sprite_renderer.draw_modern_opaque(view, projection, runtime->sprite_textures());
   }
 
   // Transparent decor is sorted by group centre, matching ModelViewerScene's
   // established pass ordering.
-  std::vector<std::size_t> blended;
-  blended.reserve(m_meshes.size());
+  m_blended_groups.clear();
   for (std::size_t index{0}; index < m_meshes.size(); ++index) {
-    if (group_visible.at(index) != 0U && is_blended(m_group_modes.at(index))) {
-      blended.push_back(index);
+    if (m_group_visible.at(index) != 0U && is_blended(m_group_modes.at(index))) {
+      m_blended_groups.push_back(index);
     }
   }
-  std::ranges::stable_sort(blended, [this, &eye](const std::size_t lhs, const std::size_t rhs) {
-    const glm::vec3 lhs_offset{glm::make_vec3(m_group_centers.at(lhs).data()) - eye};
-    const glm::vec3 rhs_offset{glm::make_vec3(m_group_centers.at(rhs).data()) - eye};
-    return glm::dot(lhs_offset, lhs_offset) > glm::dot(rhs_offset, rhs_offset);
-  });
+  std::ranges::stable_sort(
+      m_blended_groups, [this, &eye](const std::size_t lhs, const std::size_t rhs) {
+        const glm::vec3 lhs_offset{glm::make_vec3(m_group_centers.at(lhs).data()) - eye};
+        const glm::vec3 rhs_offset{glm::make_vec3(m_group_centers.at(rhs).data()) - eye};
+        return glm::dot(lhs_offset, lhs_offset) > glm::dot(rhs_offset, rhs_offset);
+      });
 
   std::size_t begin{0};
-  while (begin < blended.size()) {
-    const LegacyBlendOperator blend_operator{legacy_operator(m_group_modes.at(blended.at(begin)))};
+  while (begin < m_blended_groups.size()) {
+    const LegacyBlendOperator blend_operator{
+        legacy_operator(m_group_modes.at(m_blended_groups.at(begin)))};
     std::size_t end{begin + 1U};
-    while (end < blended.size() &&
-           legacy_operator(m_group_modes.at(blended.at(end))) == blend_operator) {
+    while (end < m_blended_groups.size() &&
+           legacy_operator(m_group_modes.at(m_blended_groups.at(end))) == blend_operator) {
       ++end;
     }
     color_pipeline.composite_legacy_stage(blend_operator, end - begin, [&] {
-      configure_world_shader(*m_legacy_shader);
+      begin_world_pass(m_shaders->legacy(), mvp, view, true);
       for (std::size_t offset{begin}; offset < end; ++offset) {
-        draw_group(blended.at(offset), uv_phase_u, uv_phase_v, true);
+        draw_group(m_blended_groups.at(offset), uv_phase_u, uv_phase_v, true);
       }
     });
     begin = end;
   }
 
+  // Composites each contiguous run of same-operator blended groups of one
+  // character or placement, in model group order.
+  const auto composite_blended_runs = [&](const std::vector<Omikron::BlendMode>& modes,
+                                          const auto& draw) {
+    std::size_t run_begin{0};
+    while (run_begin < modes.size()) {
+      while (run_begin < modes.size() && !is_blended(modes.at(run_begin))) {
+        ++run_begin;
+      }
+      if (run_begin == modes.size()) {
+        break;
+      }
+      const LegacyBlendOperator blend_operator{legacy_operator(modes.at(run_begin))};
+      std::size_t run_end{run_begin + 1U};
+      while (run_end < modes.size() && is_blended(modes.at(run_end)) &&
+             legacy_operator(modes.at(run_end)) == blend_operator) {
+        ++run_end;
+      }
+      color_pipeline.composite_legacy_stage(blend_operator, run_end - run_begin, [&] {
+        begin_world_pass(m_shaders->legacy(), mvp, view, true);
+        for (std::size_t index{run_begin}; index < run_end; ++index) {
+          draw(index);
+        }
+      });
+      run_begin = run_end;
+    }
+  };
+
   if (runtime != nullptr) {
-    for (const Character::RuntimeCharacter& character : runtime->character_runtime().characters()) {
-      const auto found{m_character_models.find(character.instance_id)};
-      if (!character.renderable() || found == m_character_models.end()) {
+    const std::span<const Character::RuntimeCharacter> characters{
+        runtime->character_runtime().characters()};
+    for (std::size_t character_index{0}; character_index < characters.size(); ++character_index) {
+      const Character::RuntimeCharacter& character{characters.subspan(character_index, 1U).front()};
+      const CharacterGpuModel* const gpu{character_gpu(character, character_index)};
+      if (gpu == nullptr ||
+          std::ranges::none_of(gpu->group_modes, [](const Omikron::BlendMode mode) {
+            return is_blended(mode);
+          })) {
         continue;
       }
-      std::size_t character_begin{0};
-      while (character_begin < found->second->meshes.size()) {
-        while (character_begin < found->second->meshes.size() &&
-               !is_blended(found->second->group_modes.at(character_begin))) {
-          ++character_begin;
-        }
-        if (character_begin == found->second->meshes.size()) {
-          break;
-        }
-        const LegacyBlendOperator blend_operator{
-            legacy_operator(found->second->group_modes.at(character_begin))};
-        std::size_t character_end{character_begin + 1U};
-        while (character_end < found->second->meshes.size() &&
-               is_blended(found->second->group_modes.at(character_end)) &&
-               legacy_operator(found->second->group_modes.at(character_end)) == blend_operator) {
-          ++character_end;
-        }
-        color_pipeline.composite_legacy_stage(blend_operator, character_end - character_begin, [&] {
-          configure_world_shader(*m_legacy_shader);
-          for (std::size_t index{character_begin}; index < character_end; ++index) {
-            draw_character_group(character, camera, index, uv_phase_u, uv_phase_v, true);
-          }
-        });
-        character_begin = character_end;
-      }
+      const InstanceMatrices matrices{instance_matrices(
+          Runtime::Presentation::to_gl(character.presentation_transform()), true)};
+      composite_blended_runs(gpu->group_modes, [&](const std::size_t index) {
+        draw_character_group(character, matrices, index, uv_phase_u, uv_phase_v, true);
+      });
     }
 
-    for (const ObjectPlacement::RuntimePlacement& placement :
-        runtime->object_placement_runtime().placements()) {
-      const auto found{m_object_models.find(placement.instance_id)};
-      if (!placement.renderable() || found == m_object_models.end()) {
-        continue;
-      }
-      std::size_t object_begin{0};
-      while (object_begin < found->second->meshes.size()) {
-        while (object_begin < found->second->meshes.size() &&
-               !is_blended(found->second->group_modes.at(object_begin))) {
-          ++object_begin;
-        }
-        if (object_begin == found->second->meshes.size()) {
-          break;
-        }
-        const LegacyBlendOperator blend_operator{
-            legacy_operator(found->second->group_modes.at(object_begin))};
-        std::size_t object_end{object_begin + 1U};
-        while (object_end < found->second->meshes.size() &&
-               is_blended(found->second->group_modes.at(object_end)) &&
-               legacy_operator(found->second->group_modes.at(object_end)) == blend_operator) {
-          ++object_end;
-        }
-        color_pipeline.composite_legacy_stage(blend_operator, object_end - object_begin, [&] {
-          configure_world_shader(*m_legacy_shader);
-          for (std::size_t index{object_begin}; index < object_end; ++index) {
-            draw_object_group(placement, camera, index, uv_phase_u, uv_phase_v, true);
-          }
-        });
-        object_begin = object_end;
-      }
+    for (const VisibleObject& visible : m_visible_objects) {
+      const ObjectGpuModel& gpu{*m_object_models.at(visible.placement->instance_id)};
+      composite_blended_runs(gpu.group_modes, [&](const std::size_t index) {
+        draw_object_group(
+            *visible.placement, visible.matrices, index, uv_phase_u, uv_phase_v, true);
+      });
     }
   }
   if (runtime != nullptr && m_sprite_renderer.valid()) {
@@ -1234,6 +1494,8 @@ void WorldRenderer::render(const Camera& camera,
     }
   }
 
+  m_bound_shader = nullptr;
+  m_bound_texture = 0;
   color_pipeline.bind_current_scene();
   Shader::unbind();
 }

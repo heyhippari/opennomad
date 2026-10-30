@@ -46,6 +46,13 @@ struct ModelResource {
   /// top-level sibling chain. Descendants are not candidates.
   std::optional<std::size_t> actor_object_index;
   std::vector<Omikron::MaterialGroup> groups;
+  /// Pose-independent corner layout of `groups`; posing only rewrites
+  /// positions and normals.
+  Omikron::PosedGeometryLayout posed_layout;
+  /// Per runtime object, the largest source-vertex distance from that object's
+  /// origin among the corners it poses (0 when it poses none). Presentation
+  /// uses it to bound every vertex the character can show.
+  std::vector<float> object_vertex_reach;
   std::vector<Omikron::Texture3DTImage> images;
   App::Runtime::Vec3 bounds_center{};
   float bounds_radius{0.0F};
@@ -204,8 +211,14 @@ struct RuntimeCharacter {
   std::shared_ptr<const ModelResource> model_resource;
   std::vector<Omikron::Model3DOData::RuntimeObjectState> runtime_objects;
   std::vector<BodyAnimationObjectPose> object_poses;
+  /// Presentation geometry cache. Runtime transforms vertices only while
+  /// submitting a visible scene (0x0048D7F0 -> 0x00494E80/0x004947F0); the
+  /// scenario tick only updates object matrices and advances `pose_revision`.
+  /// materialize_posed_geometry() refreshes this on demand.
   std::vector<Omikron::MaterialGroup> posed_groups;
   std::uint64_t pose_revision{0};
+  /// `pose_revision` that `posed_groups` was last materialized for.
+  std::uint64_t posed_groups_revision{0};
   /// Advances once for each OpenNomad ordinary fixed actor step that reaches
   /// the ordinary spatial-service publication boundary (native state-1 ->
   /// 0x00467770). Structured body animation may mutate `transform.translation`
@@ -256,6 +269,12 @@ struct RuntimeCharacter {
            !posed_groups.empty();
   }
 };
+
+/// Rebuilds `character.posed_groups` from its live object transforms and any
+/// dialogue performance overlay when `pose_revision` changed since the last
+/// build. Called by presentation, never by the scenario tick.
+[[nodiscard]] std::expected<void, std::string> materialize_posed_geometry(
+    RuntimeCharacter& character);
 
 struct MaterializedCharacterResult {
   BodyIdentity body_identity{0};

@@ -254,6 +254,15 @@ std::expected<Application, std::string> Application::create(const std::string& t
       {Settings::SettingChoice{.label = "Off", .raw_value = 0},
           Settings::SettingChoice{.label = "On", .raw_value = 1}},
       1U);
+  game_settings->ensure_choice("enhancements.radial_fog",
+      {Settings::SettingChoice{.label = "Off", .raw_value = 0},
+          Settings::SettingChoice{.label = "On", .raw_value = 1}},
+      1U);
+  // OpenNomad-only; persisted in settings.cfg, never in OMK_SAVE.
+  game_settings->ensure_choice("enhancements.character_lighting",
+      {Settings::SettingChoice{.label = "Original", .raw_value = 0},
+          Settings::SettingChoice{.label = "Per-Pixel", .raw_value = 1}},
+      0U);
   game_settings->ensure_choice("enhancements.menu_transition_style",
       {Settings::SettingChoice{.label = "Modern", .raw_value = 0},
           Settings::SettingChoice{.label = "Classic", .raw_value = 1},

@@ -25,6 +25,7 @@
 #include <utility>
 #include <vector>
 
+#include "Core/Audio/AdpStream.hpp"
 #include "Core/Audio/AudioTypes.hpp"
 #include "Core/Audio/DialogVoicePlayer.hpp"
 #include "Core/Audio/LegacySpatializer.hpp"
@@ -35,7 +36,6 @@
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Log.hpp"
 #include "Core/LogCategory.hpp"
-#include "Core/Omikron/QdAdp.hpp"
 #include "Core/Resources.hpp"
 
 namespace App::Audio {
@@ -421,24 +421,13 @@ std::expected<void, std::string> AudioSystem::play_voice_over(std::string relati
   if (!file) {
     return std::expected<void, std::string>{std::unexpect, file.error()};
   }
-  auto decoder{Omikron::QdAdpDecoder::create(std::span<const std::byte>{file.value()})};
-  if (!decoder) {
-    return std::expected<void, std::string>{std::unexpect, decoder.error()};
+  // Runtime streams VOICEOFF clips like music (see VoiceOverPlayer).
+  auto stream{open_adp_stream(std::move(file).value())};
+  if (!stream) {
+    return std::expected<void, std::string>{
+        std::unexpect, fmt::format("{}: {}", relative_path, stream.error())};
   }
-  const std::size_t sample_count{
-      decoder->total_frames() * static_cast<std::uint64_t>(decoder->channels())};
-  auto samples{std::make_shared<std::vector<std::int16_t>>(sample_count)};
-  const std::size_t decoded{decoder->decode_frames(std::span<std::int16_t>{*samples})};
-  if (decoded != decoder->total_frames()) {
-    return std::expected<void, std::string>{std::unexpect,
-        fmt::format(
-            "{} decoded {} of {} ADP frames", relative_path, decoded, decoder->total_frames())};
-  }
-  SDL_AudioSpec spec{};
-  spec.format = SDL_AUDIO_S16LE;
-  spec.channels = decoder->channels();
-  spec.freq = decoder->sample_rate();
-  if (!m_voice_over.play(std::move(relative_path), spec, std::move(samples))) {
+  if (!m_voice_over.play(std::move(relative_path), stream.value())) {
     return std::expected<void, std::string>{
         std::unexpect, fmt::format("OBJECTS voice-over playback failed: {}", SDL_GetError())};
   }
@@ -835,39 +824,26 @@ std::expected<void, std::string> AudioSystem::play_music_track(const MusicTrackR
     return std::expected<void, std::string>{std::unexpect, file.error()};
   }
 
-  auto decoder{Omikron::QdAdpDecoder::create(std::span<const std::byte>{file.value()})};
-  if (!decoder) {
-    m_music_load_error = decoder.error();
-    App::Log::error(LogCategory::Music, "{}", decoder.error());
-    return std::expected<void, std::string>{std::unexpect, decoder.error()};
+  // Runtime holds the compressed track and decodes it incrementally while it
+  // plays (see AdpStream); never decode the whole track up front.
+  auto stream{open_adp_stream(std::move(file).value())};
+  if (!stream) {
+    m_music_load_error = stream.error();
+    App::Log::error(LogCategory::Music, "{}", stream.error());
+    return std::expected<void, std::string>{std::unexpect, stream.error()};
   }
 
   App::Log::debug(LogCategory::Audio,
-      "ADP {} — {} ch, {} Hz, {} frames",
+      "ADP {} — {} ch, {} Hz, {} frames (streamed)",
       relative_path,
-      decoder->channels(),
-      decoder->sample_rate(),
-      decoder->total_frames());
+      stream->spec.channels,
+      stream->spec.freq,
+      stream->total_frames);
 
-  // First vertical slice: decode the complete track to interleaved S16 PCM
-  // and hand it to the mixer (incremental streaming is a later milestone).
-  const std::size_t sample_count{
-      decoder->total_frames() * static_cast<std::uint64_t>(decoder->channels())};
-  std::vector<std::int16_t> pcm;
-  pcm.resize(sample_count);
-  const std::size_t decoded{decoder->decode_frames(std::span<std::int16_t>{pcm})};
-  if (decoded != decoder->total_frames()) {
-    m_music_load_error = fmt::format("decoded {} of {} frames", decoded, decoder->total_frames());
-    App::Log::error(LogCategory::Music, "{}", m_music_load_error);
-    return std::expected<void, std::string>{std::unexpect, m_music_load_error};
-  }
-
-  SDL_AudioSpec spec{};
-  spec.format = SDL_AUDIO_S16LE;
-  spec.channels = decoder->channels();
-  spec.freq = decoder->sample_rate();
-
-  RawPcmMusicSource source{.display_name = relative_path, .spec = spec, .samples = std::move(pcm)};
+  RawPcmMusicSource source{.display_name = relative_path,
+      .spec = stream->spec,
+      .io = stream->io,
+      .total_frames = stream->total_frames};
   const MusicPlayOptions options{.loop = request.loop};
 
   const bool replacing{m_current_track_id.has_value() && m_music.is_playing()};

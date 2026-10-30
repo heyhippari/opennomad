@@ -13,6 +13,8 @@
 #include "Core/Interface/InterfacePresenter.hpp"
 #include "Core/Scene.hpp"
 #include "Core/WorldCamera.hpp"
+#include "Core/WorldFog.hpp"
+#include "Core/WorldLighting.hpp"
 #include "Core/WorldPresentation.hpp"
 
 namespace App {
@@ -23,6 +25,12 @@ class WorldFadeRenderer;
 class WorldLetterboxRenderer;
 class WorldColorPipeline;
 class WorldRenderer;
+class WorldShaderSet;
+class SkyRenderer;
+
+namespace Settings {
+class GameSettings;
+}
 
 namespace Interface {
 class InterfaceManager;
@@ -90,14 +98,39 @@ class WorldScene final : public Scene, public Debug::SceneDebugView {
   void service_camera_completion(const WorldSceneContext* context);
   void service_structured_camera_release(const WorldSceneContext* context);
   void update_audio_listener(const WorldSceneContext* context);
+  /// Keeps the global sky renderer in step with the selected sky and draws it
+  /// behind the attached worlds.
+  void render_sky(const WorldSceneContext* context);
+
+  /// Frame-wide fog consequences: Runtime's clear colour and the camera far
+  /// plane, which equals the furthest attached fog end (context +0x154).
+  struct WorldFrameFog {
+    std::array<float, 4> clear_color{};
+    float far_metres{0.0F};
+  };
+  [[nodiscard]] WorldFrameFog evaluate_frame_fog() const;
+  [[nodiscard]] Fog::ShaderFog context_fog(const WorldSceneContext& context) const;
+  [[nodiscard]] Lighting::Ambient context_ambient(const WorldSceneContext& context) const;
+  /// Clip Distance preference in metres.
+  [[nodiscard]] std::int32_t clip_distance_metres() const;
+  /// Character Lighting enhancement: per-pixel instead of Runtime's per-vertex.
+  [[nodiscard]] bool per_pixel_character_lighting() const;
+  static constexpr std::int32_t K_DEFAULT_CLIP_DISTANCE_METRES{50};
   [[nodiscard]] bool update_dialog_input(float delta_time, const Input::InputManager& input);
 
   ScenarioManager* m_scenarios{nullptr};
   Interface::InterfacePresenter m_interfaces;
+  /// Programs shared by every attached renderer; declared first so it outlives them.
+  std::unique_ptr<WorldShaderSet> m_world_shaders;
   std::vector<AttachedWorldRenderer> m_attached_world_renderers;
   std::unique_ptr<WorldFadeRenderer> m_fade_renderer;
   std::unique_ptr<WorldLetterboxRenderer> m_letterbox_renderer;
   std::unique_ptr<WorldColorPipeline> m_color_pipeline;
+  /// Runtime keeps one session-global sky object, independent of world contexts.
+  std::unique_ptr<SkyRenderer> m_sky;
+  /// Sky name whose load failed; retried only after the selection changes.
+  std::string m_failed_sky_name;
+  const Settings::GameSettings* m_game_settings{nullptr};
   WorldCameraSystem m_camera;
   /// Session-global overlays. World-context changes must not reset these;
   /// only m_presentation_reset_observer may apply the explicit session epoch.

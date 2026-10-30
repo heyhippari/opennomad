@@ -2,7 +2,11 @@
 
 #include <glad/glad.h>
 
+#include <algorithm>
+#include <array>
+#include <bit>
 #include <cstddef>
+#include <cstdint>
 #include <expected>
 #include <optional>
 #include <span>
@@ -124,74 +128,161 @@ GLuint Shader::program_id() const {
   return m_program_id;
 }
 
-std::optional<GLint> Shader::uniform_location(const std::string_view name) const {
-  const std::string key{name};
-  if (const auto it{m_uniform_cache.find(key)}; it != m_uniform_cache.end()) {
-    return it->second;
+Shader::UniformSlot* Shader::uniform_slot(const std::string_view name) const {
+  auto found{m_uniform_cache.find(name)};
+  if (found == m_uniform_cache.end()) {
+    const std::string key{name};
+    const GLint location{glGetUniformLocation(m_program_id, key.c_str())};
+    found = m_uniform_cache.emplace(key, UniformSlot{.location = location}).first;
   }
+  return found->second.location == -1 ? nullptr : &found->second;
+}
 
-  const GLint location{glGetUniformLocation(m_program_id, key.c_str())};
-  m_uniform_cache.emplace(key, location);
-  if (location == -1) {
+std::optional<GLint> Shader::changed_location(
+    const std::string_view name, const std::span<const std::uint32_t> bits) const {
+  return changed_location(uniform_slot(name), bits);
+}
+
+std::optional<GLint> Shader::changed_location(
+    UniformSlot* const slot, const std::span<const std::uint32_t> bits) {
+  if (slot == nullptr) {
     return std::nullopt;
   }
-  return location;
+  const auto cached{std::span{slot->value}.first(bits.size())};
+  if (slot->has_value && std::ranges::equal(cached, bits)) {
+    return std::nullopt;
+  }
+  std::ranges::copy(bits, cached.begin());
+  slot->has_value = true;
+  return slot->location;
 }
+
+namespace {
+
+template <std::size_t N>
+[[nodiscard]] std::array<std::uint32_t, N> float_bits(const std::span<const GLfloat, N> value) {
+  std::array<std::uint32_t, N> bits{};
+  std::ranges::transform(value, bits.begin(), [](const GLfloat component) {
+    return std::bit_cast<std::uint32_t>(component);
+  });
+  return bits;
+}
+
+}  // namespace
 
 void Shader::set_uniform_mat4(
     const std::string_view name, const std::span<const GLfloat, 16> value) const {
-  if (const auto loc{uniform_location(name)}) {
-    glUniformMatrix4fv(*loc, 1, GL_FALSE, value.data());
+  if (const UniformSlot* const slot{uniform_slot(name)}) {
+    glUniformMatrix4fv(slot->location, 1, GL_FALSE, value.data());
   }
 }
 
 void Shader::set_uniform_mat3(
     const std::string_view name, const std::span<const GLfloat, 9> value) const {
-  if (const auto loc{uniform_location(name)}) {
-    glUniformMatrix3fv(*loc, 1, GL_FALSE, value.data());
+  if (const UniformSlot* const slot{uniform_slot(name)}) {
+    glUniformMatrix3fv(slot->location, 1, GL_FALSE, value.data());
   }
 }
 
 void Shader::set_uniform_vec4(
     const std::string_view name, const std::span<const GLfloat, 4> value) const {
-  if (const auto loc{uniform_location(name)}) {
+  if (const auto loc{changed_location(name, float_bits(value))}) {
     glUniform4fv(*loc, 1, value.data());
   }
 }
 
 void Shader::set_uniform_vec3(
     const std::string_view name, const std::span<const GLfloat, 3> value) const {
-  if (const auto loc{uniform_location(name)}) {
+  if (const auto loc{changed_location(name, float_bits(value))}) {
     glUniform3fv(*loc, 1, value.data());
   }
 }
 
 void Shader::set_uniform_vec2(
     const std::string_view name, const std::span<const GLfloat, 2> value) const {
-  if (const auto loc{uniform_location(name)}) {
+  if (const auto loc{changed_location(name, float_bits(value))}) {
     glUniform2fv(*loc, 1, value.data());
   }
 }
 
 void Shader::set_uniform_float(const std::string_view name, const float value) const {
-  if (const auto loc{uniform_location(name)}) {
+  const std::array<std::uint32_t, 1> bits{std::bit_cast<std::uint32_t>(value)};
+  if (const auto loc{changed_location(name, bits)}) {
     glUniform1f(*loc, value);
   }
 }
 
 void Shader::set_uniform_int(const std::string_view name, const int value) const {
-  if (const auto loc{uniform_location(name)}) {
+  const std::array<std::uint32_t, 1> bits{std::bit_cast<std::uint32_t>(value)};
+  if (const auto loc{changed_location(name, bits)}) {
     glUniform1i(*loc, value);
+  }
+}
+
+void Shader::set_uniform_uint(const std::string_view name, const GLuint value) const {
+  const std::array<std::uint32_t, 1> bits{value};
+  if (const auto loc{changed_location(name, bits)}) {
+    glUniform1ui(*loc, value);
+  }
+}
+
+Shader::UniformRef Shader::uniform(const std::string_view name) const {
+  return UniformRef{uniform_slot(name), m_program_id};
+}
+
+Shader::UniformSlot* Shader::owned_slot(const UniformRef uniform) const {
+  return uniform.m_program == m_program_id ? uniform.m_slot : nullptr;
+}
+
+void Shader::set_uniform_mat4(
+    const UniformRef uniform, const std::span<const GLfloat, 16> value) const {
+  if (const UniformSlot* const slot{owned_slot(uniform)}) {
+    glUniformMatrix4fv(slot->location, 1, GL_FALSE, value.data());
+  }
+}
+
+void Shader::set_uniform_vec3(
+    const UniformRef uniform, const std::span<const GLfloat, 3> value) const {
+  if (const auto loc{changed_location(owned_slot(uniform), float_bits(value))}) {
+    glUniform3fv(*loc, 1, value.data());
+  }
+}
+
+void Shader::set_uniform_vec2(
+    const UniformRef uniform, const std::span<const GLfloat, 2> value) const {
+  if (const auto loc{changed_location(owned_slot(uniform), float_bits(value))}) {
+    glUniform2fv(*loc, 1, value.data());
+  }
+}
+
+void Shader::set_uniform_float(const UniformRef uniform, const float value) const {
+  const std::array<std::uint32_t, 1> bits{std::bit_cast<std::uint32_t>(value)};
+  if (const auto loc{changed_location(owned_slot(uniform), bits)}) {
+    glUniform1f(*loc, value);
+  }
+}
+
+void Shader::set_uniform_int(const UniformRef uniform, const int value) const {
+  const std::array<std::uint32_t, 1> bits{std::bit_cast<std::uint32_t>(value)};
+  if (const auto loc{changed_location(owned_slot(uniform), bits)}) {
+    glUniform1i(*loc, value);
+  }
+}
+
+void Shader::set_uniform_uint(const UniformRef uniform, const GLuint value) const {
+  const std::array<std::uint32_t, 1> bits{value};
+  if (const auto loc{changed_location(owned_slot(uniform), bits)}) {
+    glUniform1ui(*loc, value);
   }
 }
 
 void Shader::set_uniform_block_binding(
     const std::string_view name, const GLuint binding_point) const {
-  const std::string key{name};
   GLuint block_index{GL_INVALID_INDEX};
-  if (const auto found{m_block_cache.find(key)}; found != m_block_cache.end()) {
+  if (const auto found{m_block_cache.find(name)}; found != m_block_cache.end()) {
     block_index = found->second;
   } else {
+    const std::string key{name};
     block_index = glGetUniformBlockIndex(m_program_id, key.c_str());
     m_block_cache.emplace(key, block_index);
   }

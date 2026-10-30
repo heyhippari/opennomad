@@ -27,6 +27,11 @@ enum MeshFlags : std::uint32_t {
   k_alpha_blending = 1U << 12,
   k_additive = 1U << 13,
   k_subtractive = 1U << 14,
+  /// Runtime polygon submission (0x004951C0) selects bucket 0x0800, the
+  /// doubled fog range.
+  k_doubled_fog_range = 1U << 16,
+  /// Runtime polygon submission skips the far-depth triangle cull.
+  k_no_far_cull = 1U << 17,
   k_mirror = 1U << 20,
   k_fps_arm = 1U << 21,
   k_face_morph = 1U << 22,
@@ -374,6 +379,23 @@ struct MaterialGroup {
   std::vector<std::uint32_t> indices;
 };
 
+/// Source of one emitted corner: the runtime object whose transform poses it
+/// and the global 3DO vertex it reads.
+struct PosedCornerSource {
+  std::uint32_t object_index{0};
+  std::uint32_t vertex_index{0};
+};
+
+/// Pose-independent part of posed geometry: group order, corner order, UVs,
+/// colours and indices, plus the source of every corner. Built once per model;
+/// Model3DO::apply_pose() then only rewrites positions and normals.
+struct PosedGeometryLayout {
+  /// Groups whose positions/normals are unposed source data.
+  std::vector<MaterialGroup> groups;
+  /// Parallel to `groups`; each entry is parallel to that group's vertices.
+  std::vector<std::vector<PosedCornerSource>> sources;
+};
+
 /// Decoder for Omikron: The Nomad Soul .3DO model files.
 ///
 /// Runtime.exe behavior is authoritative. The reference Blender importer is
@@ -414,6 +436,29 @@ class Model3DO {
       std::span<const RawVertex> source_vertices,
       std::span<const std::uint8_t> mesh_mask);
 
+  /// Resolves the pose-independent corner layout that build_posed_geometry()
+  /// emits for the meshes selected by `mesh_mask` (empty selects every mesh).
+  [[nodiscard]] static std::expected<PosedGeometryLayout, std::string> build_posed_layout(
+      const Model3DOData& model, std::span<const std::uint8_t> mesh_mask = {});
+
+  /// Writes the posed positions and normals of `layout` into `groups`,
+  /// replacing `groups` with the layout's groups first when their shape
+  /// differs. The result equals build_posed_geometry() for the same inputs.
+  [[nodiscard]] static std::expected<void, std::string> apply_pose(const Model3DOData& model,
+      const PosedGeometryLayout& layout,
+      std::span<const Model3DOData::RuntimeObjectState> runtime_objects,
+      std::span<const RawVertex> source_vertices,
+      std::vector<MaterialGroup>& groups);
+
+  /// Writes the posed vertices of one layout group into `vertices`, copying
+  /// the layout group first when the size differs.
+  [[nodiscard]] static std::expected<void, std::string> pose_group(const Model3DOData& model,
+      const PosedGeometryLayout& layout,
+      std::size_t group_index,
+      std::span<const Model3DOData::RuntimeObjectState> runtime_objects,
+      std::span<const RawVertex> source_vertices,
+      std::vector<Vertex>& vertices);
+
   /// Re-resolves Runtime object transforms from the current local/animation
   /// matrices while preserving serialized descriptor data.
   [[nodiscard]] static std::expected<void, std::string> resolve_runtime_transforms(
@@ -423,6 +468,14 @@ class Model3DO {
   /// hierarchy.
   [[nodiscard]] static std::expected<void, std::string> resolve_runtime_transforms(
       const Model3DOData& model, std::span<Model3DOData::RuntimeObjectState> runtime_objects);
+
+  /// Re-resolves one object and its descendants, assuming every ancestor is
+  /// already resolved. Equivalent to resolve_runtime_transforms() when only
+  /// that object's local state changed.
+  [[nodiscard]] static std::expected<void, std::string> resolve_runtime_subtree(
+      const Model3DOData& model,
+      std::span<Model3DOData::RuntimeObjectState> runtime_objects,
+      std::size_t object_index);
 
  private:
   static void read_header(BinaryReader& reader, Header& header);

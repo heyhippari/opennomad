@@ -64,6 +64,20 @@ The current world pass:
 - draws opaque/cutout decor, characters, and sprites first with depth writes enabled; and
 - draws translucent groups and sprites afterwards with depth writes disabled.
 
+World geometry follows Runtime's vertex lighting: decor, placed objects and the sky clamp their baked colours
+between the context ambient floor and ceiling, characters start from the ambient floor and add the decor's explicit
+lights, and the outdoor day cycle drives both bounds. Opaque geometry is fogged per pixel and alpha-blended geometry
+fades out over the last 5 % of the view distance. See
+[lighting](reverse-engineering/lighting.md) and [fog](reverse-engineering/fog.md).
+
+The world programs live in one `WorldShaderSet` owned by `WorldScene` and shared by every attached `WorldRenderer`, so
+an area build no longer compiles shaders. OpenNomad enhancements are compile-time variants of the same sources
+(`WorldShaderOptions`, inserted as `#define`s after `#version`); the default options produce the original sources
+exactly, and variants compile on first use. The **Character Lighting** enhancement (`enhancements.character_lighting`,
+default Original) draws opaque and cutout character groups with the `PER_PIXEL_LIGHTING` variant: the vertex stage
+keeps only the ambient floor and the fragment stage evaluates the same lights, scales and saturating integer terms
+with the interpolated normal restored to its authored length. Blended character groups keep vertex lighting.
+
 Decor transparency is sorted back-to-front by material-group centre. Missing or invalid decor textures fall back to a
 white texture and produce a diagnostic instead of invalid OpenGL access.
 

@@ -20,6 +20,7 @@ add_library(${NAME} STATIC
   Core/Audio/LegacySpatializer.hpp Core/Audio/LegacySpatializer.cpp
   Core/Audio/VoicePool.hpp Core/Audio/VoicePool.cpp
   Core/Audio/SoundResourceCache.hpp Core/Audio/SoundResourceCache.cpp
+  Core/Audio/AdpStream.hpp Core/Audio/AdpStream.cpp
   Core/Audio/MusicPlayer.hpp Core/Audio/MusicPlayer.cpp
   Core/Audio/DialogVoiceCodec.hpp Core/Audio/DialogVoiceCodec.cpp
   Core/Audio/DialogVoicePlayer.hpp Core/Audio/DialogVoicePlayer.cpp
@@ -62,6 +63,11 @@ add_library(${NAME} STATIC
   Core/WorldPresentation.hpp
   Core/WorldCamera.hpp Core/WorldCamera.cpp
   Core/WorldRenderer.hpp Core/WorldRenderer.cpp
+  Core/WorldShaders.hpp
+  Core/SkyRenderer.hpp Core/SkyRenderer.cpp
+  Core/WorldFog.hpp Core/WorldFog.cpp
+  Core/WorldLighting.hpp Core/WorldLighting.cpp
+  Core/WorldShaderSet.hpp Core/WorldShaderSet.cpp
   Core/ModelViewerScene.hpp Core/ModelViewerScene.cpp
   Core/WorldScene.hpp Core/WorldScene.cpp
   Core/WorldColorPipeline.hpp Core/WorldColorPipeline.cpp

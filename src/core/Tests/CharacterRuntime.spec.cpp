@@ -199,6 +199,9 @@ std::shared_ptr<const App::Character::ModelResource> fake_morph_resource(
   auto groups{App::Omikron::Model3DO::build_static_geometry(model)};
   REQUIRE(groups.has_value());
   resource->groups = std::move(groups).value();
+  auto layout{App::Omikron::Model3DO::build_posed_layout(model)};
+  REQUIRE(layout.has_value());
+  resource->posed_layout = std::move(layout).value();
   return resource;
 }
 
@@ -886,6 +889,7 @@ TEST_SUITE("Core::Character::Runtime") {
         {.position = {12.0F, 0.0F, 0.0F}, .normal = {0.0F, 0.0F, 1.0F}}};
     REQUIRE(runtime.apply_dialog_performance(310, std::move(overlay)).has_value());
     CHECK_EQ(character->model_resource->model.vertices.at(0).position.x, immutable_position);
+    REQUIRE(App::Character::materialize_posed_geometry(*character).has_value());
     REQUIRE_FALSE(character->posed_groups.empty());
     CHECK_EQ(character->posed_groups.at(0).vertices.at(0).position.at(0), 19.0F);
 
@@ -895,8 +899,49 @@ TEST_SUITE("Core::Character::Runtime") {
             .has_value());
     runtime.clear_dialog_performance(310);
     CHECK_FALSE(character->dialog_performance.has_value());
+    REQUIRE(App::Character::materialize_posed_geometry(*character).has_value());
     CHECK_EQ(character->posed_groups.at(0).vertices.at(0).position.at(0), 20.0F);
   }
+  TEST_CASE("posed geometry is materialized on demand once per pose revision") {
+    const App::Omikron::IamAreaRecord area{make_area()};
+    App::Character::Runtime runtime{
+        [](const std::string_view name)
+            -> std::expected<std::shared_ptr<const App::Character::ModelResource>, std::string> {
+          return fake_morph_resource(name);
+        }};
+    REQUIRE(runtime
+            .activate(118,
+                area,
+                App::Script::AreaCharacterActivationRequest{
+                    .character_id = 310, .apply_area_transform = true})
+            .has_value());
+    App::Character::RuntimeCharacter* character{runtime.find(310)};
+    REQUIRE(character != nullptr);
+    REQUIRE(App::Character::materialize_posed_geometry(*character).has_value());
+    CHECK_EQ(character->posed_groups_revision, character->pose_revision);
+
+    // A pose change (as a body-animation or CTL tick makes) only updates
+    // object matrices and the revision; geometry follows on materialization.
+    character->runtime_objects.at(0).local_offset.x = 5.0F;
+    REQUIRE(App::Omikron::Model3DO::resolve_runtime_transforms(
+        character->model_resource->model, std::span{character->runtime_objects})
+            .has_value());
+    character->pose_revision += 1U;
+    const float stale_x{character->posed_groups.at(0).vertices.at(0).position.at(0)};
+    REQUIRE(App::Character::materialize_posed_geometry(*character).has_value());
+    const float posed_x{character->posed_groups.at(0).vertices.at(0).position.at(0)};
+    CHECK_EQ(posed_x, doctest::Approx(stale_x + 5.0F));
+    CHECK_EQ(character->posed_groups_revision, character->pose_revision);
+
+    // An unchanged revision does not rebuild.
+    character->runtime_objects.at(0).local_offset.x = 50.0F;
+    REQUIRE(App::Omikron::Model3DO::resolve_runtime_transforms(
+        character->model_resource->model, std::span{character->runtime_objects})
+            .has_value());
+    REQUIRE(App::Character::materialize_posed_geometry(*character).has_value());
+    CHECK_EQ(character->posed_groups.at(0).vertices.at(0).position.at(0), posed_x);
+  }
+
   TEST_CASE("body transfer succeeds for an equal canonical ID held by a distinct target body") {
     const App::Omikron::IamAreaRecord area{make_area()};
     const App::GameState state{make_game_state()};

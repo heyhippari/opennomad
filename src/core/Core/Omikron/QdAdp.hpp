@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <optional>
 #include <span>
 #include <string>
 
@@ -112,6 +113,9 @@ class QdAdpDecoder {
   QdAdpFile m_file;
   std::size_t m_read_position{0};
   std::uint64_t m_decoded_frames{0};
+  /// Mono packs two frames per byte; a decode ending mid-byte keeps the low
+  /// nibble here for the next call.
+  std::optional<std::uint8_t> m_pending_mono_nibble;
   std::array<QdImaChannelState, 2> m_channels{};
 };
 

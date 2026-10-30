@@ -1303,7 +1303,10 @@ Current structural decode:
 | `0x28` | 4 | `f32` | unknown |
 | `0x2C` | 4 | bytes | colour in `B,G,R,A` file order |
 | `0x30..0xEF` | `6 * 0x20` | repeated blocks | each begins with a `float3`, followed by 20 unknown bytes |
-| `0xF0..0x12F` | `0x40` | bytes | unknown tail |
+| `0xF0..0x12F` | `0x40` | bytes | zero on disk; Runtime stores outer² at `+0xF0` and inner² at `+0xF4` |
+
+Runtime (`0x00493C30`) overwrites `+0x70` with `normalize(point[1] − point[0])`. The direction derivation and the
+`+0x18` outer / `+0x1C` inner radius roles are confirmed; see [lighting.md](lighting.md).
 
 Current OpenNomad use interprets:
 
@@ -1344,6 +1347,8 @@ Preserve the entire 32-bit flag word. Only some bits are currently understood.
 | 12 | `0x00001000` | alpha blend | Partially Runtime-confirmed; parser changes runtime alpha state |
 | 13 | `0x00002000` | additive | Importer-derived/render-mode working name |
 | 14 | `0x00004000` | subtractive | Importer-derived/render-mode working name |
+| 16 | `0x00010000` | doubled fog range | **Confirmed — Runtime**; submission selects bucket `0x0800` (set on the sky root, see [sky.md](sky.md)) |
+| 17 | `0x00020000` | no far cull | **Confirmed — Runtime**; submission skips the far-depth triangle cull (set on the sky root) |
 | 20 | `0x00100000` | mirror | Partially Runtime-confirmed; parser stores a flagged object in special global mirror state |
 | 21 | `0x00200000` | FPS arm | Importer-derived |
 | 22 | `0x00400000` | face morph | Importer-derived/plausible |

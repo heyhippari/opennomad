@@ -6,6 +6,7 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -149,6 +150,43 @@ TEST_SUITE("Core::DecorCulling") {
     objects.front().world_translation = {0.0F, 0.0F, 50.0F};  // Runtime +Z forward => GL -Z
     culling.rebuild(model, objects);
     CHECK(culling.object_visible(0U, frustum));
+  }
+
+  TEST_CASE("Refresh recomputes only the objects marked as changed") {
+    App::Omikron::Model3DOData model;
+    model.meshes = {make_mesh(5.0F), make_mesh(5.0F)};
+    model.skin_parent_index = {-1, -1};
+    std::vector<App::Omikron::Model3DOData::RuntimeObjectState> objects(2U);
+    objects.at(0).world_translation = {0.0F, 0.0F, 5000.0F};
+    objects.at(1).world_translation = {0.0F, 0.0F, 5000.0F};
+    DecorCulling culling;
+    culling.rebuild(model, objects);
+    const ViewFrustum frustum{make_frustum({0.0F, 0.0F, 0.0F}, {0.0F, 0.0F, -1.0F})};
+
+    objects.at(0).world_translation = {0.0F, 0.0F, 50.0F};
+    objects.at(1).world_translation = {0.0F, 0.0F, 50.0F};
+    const std::array<std::uint8_t, 2> changed{1U, 0U};
+    culling.refresh(model, objects, changed);
+    CHECK(culling.object_visible(0U, frustum));
+    CHECK_FALSE(culling.object_visible(1U, frustum));
+  }
+
+  TEST_CASE("Refresh falls back to a full rebuild when the object count changes") {
+    App::Omikron::Model3DOData model;
+    model.meshes = {make_mesh(5.0F), make_mesh(5.0F)};
+    model.skin_parent_index = {-1, -1};
+    std::vector<App::Omikron::Model3DOData::RuntimeObjectState> objects(1U);
+    objects.front().world_translation = {0.0F, 0.0F, 5000.0F};
+    DecorCulling culling;
+    culling.rebuild(model, objects);
+
+    objects.resize(2U);
+    objects.at(1).world_translation = {0.0F, 0.0F, 50.0F};
+    const std::array<std::uint8_t, 2> changed{0U, 0U};
+    culling.refresh(model, objects, changed);
+    REQUIRE_EQ(culling.object_count(), 2U);
+    const ViewFrustum frustum{make_frustum({0.0F, 0.0F, 0.0F}, {0.0F, 0.0F, -1.0F})};
+    CHECK(culling.object_visible(1U, frustum));
   }
 }
 

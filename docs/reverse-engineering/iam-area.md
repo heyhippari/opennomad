@@ -626,7 +626,8 @@ The remaining:
 0x26 bytes
 ```
 
-of the fixed header are still only partially understood.
+of the fixed header are still only partially understood. `+0x90..+0xA3` and `+0xB0` are the fog environment;
+see [fog.md](fog.md).
 
 Retail corpus analysis shows that several fields are clearly authored
 configuration rather than random padding.
@@ -3158,7 +3159,11 @@ typedef struct SerializedAreaHeader {
     char animationAniName[9];       // +0x7C
     char sky3doName[9];             // +0x85
 
-    uint8_t unknown8E[0x26];        // +0x8E..+0xB3
+    uint8_t unknown8E[2];           // +0x8E..+0x8F
+    uint32_t fogColor[4];           // +0x90  0x00RRGGBB per day phase (fog.md)
+    int32_t fogDistanceMetres;      // +0xA0  0 = Clip Distance preference
+    uint8_t unknownA4[0x0C];        // +0xA4..+0xAF
+    uint32_t environmentFlags;      // +0xB0  high word: day-cycle owner
 } SerializedAreaHeader;             // 0xB4
 
 #pragma pack(pop)
@@ -3548,7 +3553,7 @@ AREA 118 Introduction Kay'l
   -> AREA 222 Anekbah Impasse
      model3doName = AIMPASSE
      scenarioScxName = IMPASSE
-     sky3doName = ASKY (preserved diagnostically; no sky renderer yet)
+     sky3doName = ASKY (see sky.md)
 ```
 
 The following authored operations complete the handoff:

@@ -219,9 +219,9 @@ void DialogPerformanceRuntime::tick(const float real_delta_seconds,
 
   if (!m_clock.active()) {
     // Runtime's 3DM teardown restores facial vertices but does not restore
-    // object matrices. OpenNomad's SCX body animation rebuilds posed_groups
-    // every tick, so re-compose the final body-only sample after that base
-    // update to reproduce the native held pose.
+    // object matrices. OpenNomad's SCX body animation replaces the base
+    // object matrices every tick, so keep re-applying the final body-only
+    // sample over that base to reproduce the native held pose.
     const std::optional<std::size_t> held_frame{m_current_frame};
     if (m_holding_final_pose && held_frame.has_value()) {
       apply_frame(held_frame.value(), false);

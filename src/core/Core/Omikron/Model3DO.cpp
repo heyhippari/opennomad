@@ -52,6 +52,39 @@ void read_raw_array(BinaryReader& reader, std::array<std::byte, Size>& target) {
   }
 }
 
+/// Composes one object's world transform from its local state and its
+/// parent's already resolved world transform. `index` and the parent index
+/// must be valid for `runtime_objects`.
+void resolve_object_world(const Model3DOData& model,
+    const std::span<Model3DOData::RuntimeObjectState> runtime_objects,
+    const std::size_t index) {
+  // std::span has no bounds-checked at(); callers validate the size and index.
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
+  Model3DOData::RuntimeObjectState& object{runtime_objects[index]};
+  Runtime::Matrix3 effective_local{object.local_matrix};
+  if (object.animation_matrix.has_value()) {
+    effective_local = Runtime::multiply(effective_local, object.animation_matrix.value());
+  }
+
+  const std::int32_t parent_index{model.hierarchy_parent_index.at(index)};
+  if (parent_index < 0) {
+    object.world_matrix = effective_local;
+    object.world_translation = object.local_offset;
+    return;
+  }
+  const Model3DOData::RuntimeObjectState& parent{
+      // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
+      runtime_objects[static_cast<std::size_t>(parent_index)]};
+  const Runtime::Transform composed{Runtime::compose(
+      Runtime::Transform{
+          .matrix = effective_local, .translation = object.local_offset, .scale = object.scale},
+      Runtime::Transform{.matrix = parent.world_matrix,
+          .translation = parent.world_translation,
+          .scale = parent.scale})};
+  object.world_matrix = composed.matrix;
+  object.world_translation = composed.translation;
+}
+
 }  // namespace
 
 std::expected<Model3DOData, std::string> Model3DO::load(const std::span<const std::byte> data) {
@@ -356,30 +389,7 @@ std::expected<void, std::string> Model3DO::resolve_runtime_transforms(
       visit_state.at(index) = 1U;
       // std::span has no bounds-checked at(); the size and traversal index are validated above.
       // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
-      Model3DOData::RuntimeObjectState& object{runtime_objects[index]};
-      Runtime::Matrix3 effective_local{object.local_matrix};
-      if (object.animation_matrix.has_value()) {
-        effective_local = Runtime::multiply(effective_local, object.animation_matrix.value());
-      }
-
-      const std::int32_t parent_index{model.hierarchy_parent_index.at(index)};
-      if (parent_index < 0) {
-        object.world_matrix = effective_local;
-        object.world_translation = object.local_offset;
-      } else {
-        const Model3DOData::RuntimeObjectState& parent{
-            // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
-            runtime_objects[static_cast<std::size_t>(parent_index)]};
-        const Runtime::Transform composed{
-            Runtime::compose(Runtime::Transform{.matrix = effective_local,
-                                 .translation = object.local_offset,
-                                 .scale = object.scale},
-                Runtime::Transform{.matrix = parent.world_matrix,
-                    .translation = parent.world_translation,
-                    .scale = parent.scale})};
-        object.world_matrix = composed.matrix;
-        object.world_translation = composed.translation;
-      }
+      resolve_object_world(model, runtime_objects, index);
 
       if (auto result{visit_siblings(
               model.hierarchy_first_child_index.at(index), static_cast<std::int32_t>(index))};
@@ -455,6 +465,52 @@ std::expected<void, std::string> Model3DO::resolve_runtime_transforms(
   return {};
 }
 
+std::expected<void, std::string> Model3DO::resolve_runtime_subtree(const Model3DOData& model,
+    const std::span<Model3DOData::RuntimeObjectState> runtime_objects,
+    const std::size_t object_index) {
+  if (runtime_objects.size() != model.meshes.size() ||
+      model.hierarchy_parent_index.size() != model.meshes.size() ||
+      model.hierarchy_first_child_index.size() != model.meshes.size() ||
+      model.hierarchy_next_sibling_index.size() != model.meshes.size()) {
+    return std::expected<void, std::string>{
+        std::unexpect, "3DO runtime objects do not match the model hierarchy"};
+  }
+  if (object_index >= model.meshes.size()) {
+    return std::expected<void, std::string>{
+        std::unexpect, "3DO subtree root is outside the mesh table"};
+  }
+  // The full resolver only visits objects reachable from the root chain.
+  if (object_index < model.hierarchy_reachable.size() &&
+      model.hierarchy_reachable.at(object_index) == 0U) {
+    return {};
+  }
+
+  resolve_object_world(model, runtime_objects, object_index);
+  std::vector<std::size_t> stack;
+  if (const std::int32_t child{model.hierarchy_first_child_index.at(object_index)}; child != -1) {
+    stack.push_back(static_cast<std::size_t>(child));
+  }
+  std::size_t steps{0};
+  while (!stack.empty()) {
+    const std::size_t index{stack.back()};
+    stack.pop_back();
+    // Parents are resolved before their children are pushed, so depth-first
+    // order matches the full resolver. A malformed loop must not hang.
+    if (index >= model.meshes.size() || ++steps > model.meshes.size()) {
+      return std::expected<void, std::string>{
+          std::unexpect, "malformed 3DO hierarchy below the resolved subtree"};
+    }
+    resolve_object_world(model, runtime_objects, index);
+    if (const std::int32_t sibling{model.hierarchy_next_sibling_index.at(index)}; sibling != -1) {
+      stack.push_back(static_cast<std::size_t>(sibling));
+    }
+    if (const std::int32_t child{model.hierarchy_first_child_index.at(index)}; child != -1) {
+      stack.push_back(static_cast<std::size_t>(child));
+    }
+  }
+  return {};
+}
+
 std::expected<std::vector<MaterialGroup>, std::string> Model3DO::build_static_geometry(
     const Model3DOData& model) {
   return build_posed_geometry(
@@ -481,28 +537,38 @@ std::expected<std::vector<MaterialGroup>, std::string> Model3DO::build_posed_geo
     const std::span<const std::uint8_t> mesh_mask) {
   APP_PROFILE_FUNCTION();
 
-  if (model.meshes.empty()) {
+  auto layout{build_posed_layout(model, mesh_mask)};
+  if (!layout) {
     return std::expected<std::vector<MaterialGroup>, std::string>{
+        std::unexpect, std::move(layout).error()};
+  }
+  std::vector<MaterialGroup> groups;
+  if (auto posed{apply_pose(model, layout.value(), runtime_objects, source_vertices, groups)};
+      !posed) {
+    return std::expected<std::vector<MaterialGroup>, std::string>{
+        std::unexpect, std::move(posed).error()};
+  }
+  return groups;
+}
+
+std::expected<PosedGeometryLayout, std::string> Model3DO::build_posed_layout(
+    const Model3DOData& model, const std::span<const std::uint8_t> mesh_mask) {
+  APP_PROFILE_FUNCTION();
+
+  if (model.meshes.empty()) {
+    return std::expected<PosedGeometryLayout, std::string>{
         std::unexpect, "model contains no meshes"};
   }
   if (model.materials.empty()) {
-    return std::expected<std::vector<MaterialGroup>, std::string>{
+    return std::expected<PosedGeometryLayout, std::string>{
         std::unexpect, "model contains no material descriptors"};
   }
-  if (runtime_objects.size() != model.meshes.size()) {
-    return std::expected<std::vector<MaterialGroup>, std::string>{
-        std::unexpect, "posed Runtime object count does not match the model hierarchy"};
-  }
-  if (source_vertices.size() != model.vertices.size()) {
-    return std::expected<std::vector<MaterialGroup>, std::string>{
-        std::unexpect, "posed source vertex count does not match the model"};
-  }
   if (!mesh_mask.empty() && mesh_mask.size() != model.meshes.size()) {
-    return std::expected<std::vector<MaterialGroup>, std::string>{
+    return std::expected<PosedGeometryLayout, std::string>{
         std::unexpect, "posed mesh mask size does not match the model hierarchy"};
   }
 
-  std::vector<MaterialGroup> groups;
+  PosedGeometryLayout layout;
   using MaterialKey = std::tuple<std::size_t, std::int32_t, std::uint32_t>;
   std::flat_map<MaterialKey, std::size_t> group_by_material;
   std::flat_set<std::int32_t> clamped_materials;
@@ -522,22 +588,24 @@ std::expected<std::vector<MaterialGroup>, std::string> Model3DO::build_posed_geo
 
   const auto group_for_material = [&](const std::size_t mesh_index,
                                       const std::int32_t material_id,
-                                      const std::uint32_t render_flags) -> MaterialGroup& {
+                                      const std::uint32_t render_flags) -> std::size_t {
     const MaterialKey key{mesh_index, material_id, render_flags};
     const auto found{group_by_material.find(key)};
     if (found != group_by_material.end()) {
-      return groups.at(found->second);
+      return found->second;
     }
-    group_by_material.emplace(key, groups.size());
-    groups.push_back(MaterialGroup{.mesh_index = mesh_index,
+    const std::size_t group_index{layout.groups.size()};
+    group_by_material.emplace(key, group_index);
+    layout.groups.push_back(MaterialGroup{.mesh_index = mesh_index,
         .material_id = material_id,
         .flags = render_flags,
         .vertices = {},
         .indices = {}});
-    return groups.at(groups.size() - 1U);
+    layout.sources.emplace_back();
+    return group_index;
   };
 
-  const auto emit_corner = [&](MaterialGroup& group,
+  const auto emit_corner = [&](const std::size_t group_index,
                                const Material& material,
                                const std::size_t vertex_owner_index,
                                const std::size_t vertex_index,
@@ -554,28 +622,16 @@ std::expected<std::vector<MaterialGroup>, std::string> Model3DO::build_posed_geo
     }
 
     const std::size_t global_index{vertex_owner.vertex_base + vertex_index};
-    if (global_index >= source_vertices.size()) {
+    if (global_index >= model.vertices.size()) {
       return std::expected<void, std::string>{std::unexpect,
           fmt::format(
-              "vertex index {} out of range ({} vertices)", global_index, source_vertices.size())};
+              "vertex index {} out of range ({} vertices)", global_index, model.vertices.size())};
     }
 
-    const RawVertex& raw{source_vertices.subspan(global_index, 1U).front()};
-    if (vertex_owner_index >= runtime_objects.size()) {
-      return std::expected<void, std::string>{
-          std::unexpect, "3DO vertex owner has no Runtime object transform"};
-    }
-    const Model3DOData::RuntimeObjectState& object{
-        runtime_objects.subspan(vertex_owner_index, 1U).front()};
-    const Runtime::Transform transform{.matrix = object.world_matrix,
-        .translation = object.world_translation,
-        .scale = object.scale};
-    const Vec3 position{Runtime::transform_point(raw.position, transform)};
-    const Vec3 normal{Runtime::transform_vector(raw.normal, object.world_matrix)};
-
+    const RawVertex& raw{model.vertices.at(global_index)};
     Vertex vertex{};
-    vertex.position = {position.x, position.y, position.z};
-    vertex.normal = {normal.x, normal.y, normal.z};
+    vertex.position = {raw.position.x, raw.position.y, raw.position.z};
+    vertex.normal = {raw.normal.x, raw.normal.y, raw.normal.z};
     constexpr float byte_to_float{1.0F / 255.0F};
     vertex.color = {
         static_cast<float>(raw.color_bgra.at(2)) * byte_to_float,
@@ -587,8 +643,12 @@ std::expected<std::vector<MaterialGroup>, std::string> Model3DO::build_posed_geo
       vertex.uv = {static_cast<float>(texture_u) / static_cast<float>(material.width),
           static_cast<float>(texture_v) / static_cast<float>(material.height)};
     }
+    MaterialGroup& group{layout.groups.at(group_index)};
     group.vertices.push_back(vertex);
     group.indices.push_back(static_cast<std::uint32_t>(group.vertices.size() - 1U));
+    layout.sources.at(group_index)
+        .push_back(PosedCornerSource{.object_index = static_cast<std::uint32_t>(vertex_owner_index),
+            .vertex_index = static_cast<std::uint32_t>(global_index)});
     return {};
   };
 
@@ -622,12 +682,12 @@ std::expected<std::vector<MaterialGroup>, std::string> Model3DO::build_posed_geo
     for (const Triangle& triangle : polygons.triangles) {
       const std::int32_t material_id{resolve_material(triangle.material_id)};
       const Material& material{model.materials.at(static_cast<std::size_t>(material_id))};
-      MaterialGroup& group{
+      const std::size_t group{
           group_for_material(mesh_index, material_id, static_cast<std::uint32_t>(mesh.flags))};
       for (std::size_t corner{0}; corner < triangle.vertices.size(); ++corner) {
         const TriangleVertexRef& reference{triangle.vertices.at(corner)};
         if (reference.parented && !skin_parent_mesh_index.has_value()) {
-          return std::expected<std::vector<MaterialGroup>, std::string>{std::unexpect,
+          return std::expected<PosedGeometryLayout, std::string>{std::unexpect,
               fmt::format("mesh '{}' contains a parented triangle vertex but has no skin parent",
                   mesh.name)};
         }
@@ -640,8 +700,7 @@ std::expected<std::vector<MaterialGroup>, std::string> Model3DO::build_posed_geo
             triangle.uv.at(corner * 2U),
             triangle.uv.at((corner * 2U) + 1U))};
         if (!result) {
-          return std::expected<std::vector<MaterialGroup>, std::string>{
-              std::unexpect, result.error()};
+          return std::expected<PosedGeometryLayout, std::string>{std::unexpect, result.error()};
         }
       }
     }
@@ -649,7 +708,7 @@ std::expected<std::vector<MaterialGroup>, std::string> Model3DO::build_posed_geo
     for (const Rectangle& rectangle : polygons.rectangles) {
       const std::int32_t material_id{resolve_material(rectangle.material_id)};
       const Material& material{model.materials.at(static_cast<std::size_t>(material_id))};
-      MaterialGroup& group{
+      const std::size_t group{
           group_for_material(mesh_index, material_id, static_cast<std::uint32_t>(mesh.flags))};
 
       // Each quad becomes two triangles: (0, 1, 2) and (0, 2, 3).
@@ -660,34 +719,125 @@ std::expected<std::vector<MaterialGroup>, std::string> Model3DO::build_posed_geo
       };
       const auto first{emit(rectangle.vertices.at(0), rectangle.uv.at(0), rectangle.uv.at(1))};
       if (!first) {
-        return std::expected<std::vector<MaterialGroup>, std::string>{std::unexpect, first.error()};
+        return std::expected<PosedGeometryLayout, std::string>{std::unexpect, first.error()};
       }
       const auto second{emit(rectangle.vertices.at(1), rectangle.uv.at(2), rectangle.uv.at(3))};
       if (!second) {
-        return std::expected<std::vector<MaterialGroup>, std::string>{
-            std::unexpect, second.error()};
+        return std::expected<PosedGeometryLayout, std::string>{std::unexpect, second.error()};
       }
       const auto third{emit(rectangle.vertices.at(2), rectangle.uv.at(4), rectangle.uv.at(5))};
       if (!third) {
-        return std::expected<std::vector<MaterialGroup>, std::string>{std::unexpect, third.error()};
+        return std::expected<PosedGeometryLayout, std::string>{std::unexpect, third.error()};
       }
       const auto fourth{emit(rectangle.vertices.at(0), rectangle.uv.at(0), rectangle.uv.at(1))};
       if (!fourth) {
-        return std::expected<std::vector<MaterialGroup>, std::string>{
-            std::unexpect, fourth.error()};
+        return std::expected<PosedGeometryLayout, std::string>{std::unexpect, fourth.error()};
       }
       const auto fifth{emit(rectangle.vertices.at(2), rectangle.uv.at(4), rectangle.uv.at(5))};
       if (!fifth) {
-        return std::expected<std::vector<MaterialGroup>, std::string>{std::unexpect, fifth.error()};
+        return std::expected<PosedGeometryLayout, std::string>{std::unexpect, fifth.error()};
       }
       const auto sixth{emit(rectangle.vertices.at(3), rectangle.uv.at(6), rectangle.uv.at(7))};
       if (!sixth) {
-        return std::expected<std::vector<MaterialGroup>, std::string>{std::unexpect, sixth.error()};
+        return std::expected<PosedGeometryLayout, std::string>{std::unexpect, sixth.error()};
       }
     }
   }
 
-  return groups;
+  return layout;
+}
+
+std::expected<void, std::string> Model3DO::apply_pose(const Model3DOData& model,
+    const PosedGeometryLayout& layout,
+    const std::span<const Model3DOData::RuntimeObjectState> runtime_objects,
+    const std::span<const RawVertex> source_vertices,
+    std::vector<MaterialGroup>& groups) {
+  APP_PROFILE_FUNCTION();
+
+  if (runtime_objects.size() != model.meshes.size()) {
+    return std::expected<void, std::string>{
+        std::unexpect, "posed Runtime object count does not match the model hierarchy"};
+  }
+  if (source_vertices.size() != model.vertices.size()) {
+    return std::expected<void, std::string>{
+        std::unexpect, "posed source vertex count does not match the model"};
+  }
+  if (layout.sources.size() != layout.groups.size()) {
+    return std::expected<void, std::string>{
+        std::unexpect, "posed geometry layout sources do not match its groups"};
+  }
+
+  bool same_shape{groups.size() == layout.groups.size()};
+  for (std::size_t index{0}; same_shape && index < groups.size(); ++index) {
+    same_shape = groups.at(index).vertices.size() == layout.groups.at(index).vertices.size() &&
+                 groups.at(index).material_id == layout.groups.at(index).material_id &&
+                 groups.at(index).flags == layout.groups.at(index).flags &&
+                 groups.at(index).mesh_index == layout.groups.at(index).mesh_index;
+  }
+  if (!same_shape) {
+    groups = layout.groups;
+  }
+
+  for (std::size_t group_index{0}; group_index < groups.size(); ++group_index) {
+    if (auto posed{pose_group(model,
+            layout,
+            group_index,
+            runtime_objects,
+            source_vertices,
+            groups.at(group_index).vertices)};
+        !posed) {
+      return posed;
+    }
+  }
+  return {};
+}
+
+std::expected<void, std::string> Model3DO::pose_group(const Model3DOData& model,
+    const PosedGeometryLayout& layout,
+    const std::size_t group_index,
+    const std::span<const Model3DOData::RuntimeObjectState> runtime_objects,
+    const std::span<const RawVertex> source_vertices,
+    std::vector<Vertex>& vertices) {
+  if (runtime_objects.size() != model.meshes.size() ||
+      source_vertices.size() != model.vertices.size()) {
+    return std::expected<void, std::string>{
+        std::unexpect, "posed objects or source vertices do not match the model"};
+  }
+  if (group_index >= layout.groups.size() || group_index >= layout.sources.size() ||
+      layout.sources.at(group_index).size() != layout.groups.at(group_index).vertices.size()) {
+    return std::expected<void, std::string>{
+        std::unexpect, "posed geometry layout sources do not match its groups"};
+  }
+  const std::vector<PosedCornerSource>& sources{layout.sources.at(group_index)};
+  if (vertices.size() != sources.size()) {
+    vertices = layout.groups.at(group_index).vertices;
+  }
+  for (std::size_t corner{0}; corner < sources.size(); ++corner) {
+    const PosedCornerSource source{sources.at(corner)};
+    if (source.object_index >= runtime_objects.size() ||
+        source.vertex_index >= source_vertices.size()) {
+      return std::expected<void, std::string>{
+          std::unexpect, "posed geometry layout references a missing object or vertex"};
+    }
+    const Model3DOData::RuntimeObjectState& object{
+        runtime_objects.subspan(source.object_index, 1U).front()};
+    const RawVertex& raw{source_vertices.subspan(source.vertex_index, 1U).front()};
+    // Runtime::transform_point/transform_vector, unrolled: this loop runs for
+    // every presented corner each frame.
+    const auto [m00, m01, m02, m10, m11, m12, m20, m21, m22]{object.world_matrix.values};
+    const float px{raw.position.x * object.scale.x};
+    const float py{raw.position.y * object.scale.y};
+    const float pz{raw.position.z * object.scale.z};
+    const Vec3& normal{raw.normal};
+    Vertex& vertex{vertices.at(corner)};
+    vertex.position = {(px * m00) + (py * m10) + (pz * m20) + object.world_translation.x,
+        (px * m01) + (py * m11) + (pz * m21) + object.world_translation.y,
+        (px * m02) + (py * m12) + (pz * m22) + object.world_translation.z};
+    vertex.normal = {(normal.x * m00) + (normal.y * m10) + (normal.z * m20),
+        (normal.x * m01) + (normal.y * m11) + (normal.z * m21),
+        (normal.x * m02) + (normal.y * m12) + (normal.z * m22)};
+  }
+  return {};
 }
 
 void Model3DO::read_header(BinaryReader& reader, Header& header) {

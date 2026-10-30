@@ -8,11 +8,13 @@
 #include <deque>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include "Core/Character/CharacterRuntime.hpp"
 #include "Core/Interface/RuntimeText.hpp"
 #include "Core/RuntimeMath.hpp"
+#include "Core/WorldFog.hpp"
 
 namespace App {
 
@@ -571,6 +573,35 @@ class WorldPresentationState {
     return m_reset_generation;
   }
 
+  /// Applies Runtime's single global sky ownership when an AREA starts loading
+  /// into a resident slot. A destination sky name replaces the selection
+  /// (Runtime 0x0040C990 -> 0x0041D1A0, which keeps an already-loaded sky of
+  /// the same name). Without one, the selection is released only when the
+  /// current AREA declares no sky either (0x00402B70 -> 0x0041D320); otherwise
+  /// the previous sky is preserved.
+  void apply_area_sky(
+      const std::string_view current_area_sky, const std::string_view destination_area_sky) {
+    if (!destination_area_sky.empty()) {
+      m_sky_name = destination_area_sky;
+    } else if (current_area_sky.empty()) {
+      m_sky_name.clear();
+    }
+  }
+
+  /// Selected `MESHES/MISC` sky 3DO stem, or empty when no sky is resident.
+  [[nodiscard]] const std::string& sky_name() const {
+    return m_sky_name;
+  }
+
+  /// Session game clock driving the time-of-day fog colours. New sessions
+  /// start at Runtime's new-game value.
+  [[nodiscard]] Fog::DayClock& day_clock() {
+    return m_day_clock;
+  }
+  [[nodiscard]] const Fog::DayClock& day_clock() const {
+    return m_day_clock;
+  }
+
   void clear() {
     m_camera_commands.clear();
     m_camera_completions.clear();
@@ -578,6 +609,8 @@ class WorldPresentationState {
     m_letterbox_commands.clear();
     m_voice_over_commands.clear();
     m_world_text_commands.clear();
+    m_sky_name.clear();
+    m_day_clock.set(Fog::K_NEW_GAME_CLOCK);
     ++m_reset_generation;
   }
 
@@ -588,6 +621,8 @@ class WorldPresentationState {
   std::deque<WorldLetterboxCommand> m_letterbox_commands;
   std::deque<WorldVoiceOverCommand> m_voice_over_commands;
   std::deque<WorldTextCommand> m_world_text_commands;
+  std::string m_sky_name;
+  Fog::DayClock m_day_clock;
   std::uint64_t m_reset_generation{0};
 };
 

@@ -109,44 +109,31 @@ bool MusicPlayer::play(MusicSource source, const MusicPlayOptions& options) {
 }
 
 bool MusicPlayer::play_raw_pcm(RawPcmMusicSource source, const MusicPlayOptions& options) {
+  if (source.io == nullptr) {
+    App::Log::error(
+        LogCategory::Audio, "raw PCM music source '{}' has no stream", source.display_name);
+    return false;
+  }
   if (m_mixer == nullptr || m_track == nullptr) {
     App::Log::error(LogCategory::Audio, "music play unavailable (mixer/track missing)");
-    return false;
-  }
-  if (source.samples.empty()) {
-    App::Log::error(LogCategory::Audio, "raw PCM music source '{}' is empty", source.display_name);
-    return false;
-  }
-
-  // Build the new IOStream from the caller's buffer BEFORE replacing the
-  // track input. Only after MIX_SetTrackRawIOStream has synchronously closed
-  // the previous input is it safe to release the old PCM storage.
-  const std::size_t byte_size{source.samples.size() * sizeof(std::int16_t)};
-  SDL_IOStream* io{SDL_IOFromConstMem(source.samples.data(), byte_size)};
-  if (io == nullptr) {
-    App::Log::error(LogCategory::Audio,
-        "SDL_IOFromConstMem failed for '{}': {}",
-        source.display_name,
-        SDL_GetError());
+    SDL_CloseIO(source.io);
     return false;
   }
 
   // Stop playback and replace the input; this closes the previous IOStream.
+  // The raw input is loaded on demand, so the mixer pulls PCM from `io` as it
+  // plays. With closeio, SDL_mixer also closes `io` when this call fails.
   MIX_StopTrack(m_track, 0);
-  if (!MIX_SetTrackRawIOStream(m_track, io, &source.spec, /*closeio=*/true)) {
+  if (!MIX_SetTrackRawIOStream(m_track, source.io, &source.spec, /*closeio=*/true)) {
     App::Log::error(LogCategory::Audio,
         "MIX_SetTrackRawIOStream failed for '{}': {}",
         source.display_name,
         SDL_GetError());
-    SDL_CloseIO(io);
     return false;
   }
 
-  // The old input is gone: it is now safe to replace the owned PCM storage.
-  // std::vector move keeps the buffer pointer, so `io` still points at valid
-  // memory owned here.
-  m_raw_samples = std::move(source.samples);
   m_raw_spec = source.spec;
+  m_raw_total_frames = source.total_frames;
   m_raw_active = true;
   m_source_name = std::move(source.display_name);
 
@@ -181,7 +168,7 @@ bool MusicPlayer::play_raw_pcm(RawPcmMusicSource source, const MusicPlayOptions&
       m_loop,
       m_raw_spec.channels,
       m_raw_spec.freq,
-      m_raw_samples.size() / static_cast<std::size_t>(m_raw_spec.channels));
+      m_raw_total_frames);
   return true;
 }
 
@@ -252,9 +239,7 @@ MusicDebugInfo MusicPlayer::debug_info() const {
   if (m_raw_active) {
     info.channels = m_raw_spec.channels;
     info.sample_rate = m_raw_spec.freq;
-    if (m_raw_spec.channels > 0) {
-      info.total_frames = m_raw_samples.size() / static_cast<std::size_t>(m_raw_spec.channels);
-    }
+    info.total_frames = m_raw_total_frames;
   }
   if (m_track != nullptr) {
     const Sint64 remaining{MIX_GetTrackRemaining(m_track)};
