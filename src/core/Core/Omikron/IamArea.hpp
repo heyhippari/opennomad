@@ -83,6 +83,10 @@ class IamAreaRecord {
   static constexpr std::size_t k_offset_sky_3do_name{0x85};
   static constexpr std::size_t k_offset_fog_colors{0x90};
   static constexpr std::size_t k_offset_fog_distance{0xA0};
+  static constexpr std::size_t k_offset_male_passer_variants{0xA4};
+  static constexpr std::size_t k_offset_female_passer_variants{0xA8};
+  static constexpr std::size_t k_offset_slider_variants{0xAC};
+  static constexpr std::size_t k_offset_moto_variants{0xAE};
   static constexpr std::size_t k_offset_environment_flags{0xB0};
   static constexpr std::size_t k_fog_color_count{4};
 
@@ -125,6 +129,18 @@ class IamAreaRecord {
   /// mark the day-cycle owner scene, the low 16 bits select a render-context
   /// environment mode (1/2/3 set context flags 0x10000/0x20000/0x40000).
   [[nodiscard]] std::uint32_t environment_flags() const;
+
+  /// Passerby model-variant bitmasks (+0xA4 male, +0xA8 female). Bit N enables
+  /// entry N of Runtime's built-in passerby model tables (0x004C25B8 and
+  /// 0x004C2738); Runtime 0x0040E990/0x0040E950 read them when the AREA's
+  /// trajectory network is loaded.
+  [[nodiscard]] std::uint32_t male_passer_variants() const;
+  [[nodiscard]] std::uint32_t female_passer_variants() const;
+  /// Vehicle model-variant masks (+0xAC `sli_fn`, +0xAE `moto`, both `i16`)
+  /// read by Runtime 0x0040EA10/0x0040E9D0. Runtime always enables `sli_fn`
+  /// entry 0 in addition to the authored bits.
+  [[nodiscard]] std::uint16_t slider_variants() const;
+  [[nodiscard]] std::uint16_t moto_variants() const;
 
   /// Compact bytecode pool `[table7 end, table6 offset)`. Camera table bytes
   /// are never part of this span.

@@ -137,6 +137,20 @@ std::expected<std::unique_ptr<SkyRenderer>, std::string> SkyRenderer::create(
     }
     renderer->m_textures.push_back(std::move(texture).value());
   }
+  // 0x0041D280 reads material 0's texture page; the copy is sampled by both
+  // the opaque and the blended world programs.
+  if (const std::vector<Omikron::Texture3DTImage>& sky_images{images.value()};
+      !sky_images.empty() && sky_images.front().width != 0U && sky_images.front().height != 0U) {
+    const Omikron::Texture3DTImage& image{sky_images.front()};
+    auto environment{GameColorTexture::create(static_cast<int>(image.width),
+        static_cast<int>(image.height),
+        std::span<const std::uint8_t>{image.rgba8},
+        GameColorTextureUsage::k_both)};
+    if (!environment) {
+      return Result{std::unexpect, std::move(environment).error()};
+    }
+    renderer->m_environment_texture = std::move(environment).value();
+  }
   for (const Omikron::MaterialGroup& group : groups.value()) {
     std::vector<Vertex> presentation_vertices;
     presentation_vertices.reserve(group.vertices.size());

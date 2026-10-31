@@ -19,6 +19,13 @@ namespace App {
 ///      vertex keeps only the floor and forwards the normal; the fragment
 ///      stage adds the same terms per pixel.
 ///
+/// `u_environment_mapped` (mesh flag bit 26, 0x004947F0/0x00494E80) adds
+/// Runtime's spherical environment coordinates: each axis is
+/// `asin(n) * 2 / pi + phase * 2.5 + 0.5`, with n the view-space normal in
+/// Runtime's camera basis (+X right, +Y down) and phase the global UV-scroll
+/// phase of that axis. The fragment stage modulates by the environment
+/// texture (Direct3D stage 1, 0x00460FCB).
+///
 /// With `CUBIC_VERTEX_COLOR` the outputs, renamed `vertex_*` and joined by the
 /// VertexColorSlopes stream, feed K_WORLD_CUBIC_COLOR_GEOMETRY_SHADER, which
 /// re-emits them under their usual names.
@@ -32,6 +39,9 @@ layout(location = 3) in vec4 a_color;
 uniform mat4 u_mvp;
 uniform mat4 u_model_view;
 uniform vec2 u_uv_offset;
+
+uniform int u_environment_mapped;
+uniform vec2 u_environment_phase;
 
 uniform int u_lighting_mode;
 uniform uint u_ambient_floor;
@@ -47,12 +57,14 @@ layout(location = 5) in vec3 a_color_slope_previous;
 out vec2 vertex_uv;
 out vec4 vertex_color;
 out vec3 vertex_view_position;
+out vec2 vertex_environment_uv;
 out vec3 vertex_color_slope_next;
 out vec3 vertex_color_slope_previous;
 #else
 out vec2 v_uv;
 out vec4 v_color;
 out vec3 v_view_position;
+out vec2 v_environment_uv;
 #endif
 #ifdef PER_PIXEL_LIGHTING
 out vec3 v_normal;
@@ -91,9 +103,20 @@ vec4 runtime_vertex_color() {
     return a_color;
 }
 
+vec2 runtime_environment_uv() {
+    if (u_environment_mapped == 0) {
+        return vec2(0.0);
+    }
+    // GL eye space is Runtime camera space with Y and Z negated.
+    vec3 normal = mat3(u_model_view) * a_normal;
+    vec2 runtime_normal = clamp(vec2(normal.x, -normal.y), -1.0, 1.0);
+    return asin(runtime_normal) * (2.0 / 3.14159265358979) + u_environment_phase * 2.5 + 0.5;
+}
+
 void main() {
 #ifdef CUBIC_VERTEX_COLOR
     vertex_uv = a_uv + u_uv_offset;
+    vertex_environment_uv = runtime_environment_uv();
     vertex_color = runtime_vertex_color();
     vertex_view_position = (u_model_view * vec4(a_position, 1.0)).xyz;
     vertex_color_slope_next = a_color_slope_next;
@@ -102,6 +125,7 @@ void main() {
     v_uv = a_uv + u_uv_offset;
     v_color = runtime_vertex_color();
     v_view_position = (u_model_view * vec4(a_position, 1.0)).xyz;
+    v_environment_uv = runtime_environment_uv();
 #endif
 #ifdef PER_PIXEL_LIGHTING
     v_normal = a_normal;
@@ -131,12 +155,14 @@ layout(triangle_strip, max_vertices = 3) out;
 in vec2 vertex_uv[];
 in vec4 vertex_color[];
 in vec3 vertex_view_position[];
+in vec2 vertex_environment_uv[];
 in vec3 vertex_color_slope_next[];
 in vec3 vertex_color_slope_previous[];
 
 out vec2 v_uv;
 out vec4 v_color;
 out vec3 v_view_position;
+out vec2 v_environment_uv;
 out vec3 v_barycentric;
 flat out vec3 v_color_controls[10];
 
@@ -178,6 +204,7 @@ void main() {
         v_uv = vertex_uv[k];
         v_color = vertex_color[k];
         v_view_position = vertex_view_position[k];
+        v_environment_uv = vertex_environment_uv[k];
         v_barycentric = vec3(k == 0 ? 1.0 : 0.0, k == 1 ? 1.0 : 0.0, k == 2 ? 1.0 : 0.0);
         for (int index = 0; index < 10; ++index) {
             v_color_controls[index] = controls[index];
@@ -271,8 +298,11 @@ float runtime_far_fade() {
 inline constexpr std::string_view K_MODERN_WORLD_FRAGMENT_BODY{R"glsl(
 in vec2 v_uv;
 in vec4 v_color;
+in vec2 v_environment_uv;
 
 uniform sampler2D u_texture0;
+uniform sampler2D u_texture1;
+uniform int u_environment_mapped;
 uniform float u_alpha_test;
 
 out vec4 frag_colour;
@@ -351,7 +381,12 @@ void main() {
         srgb_to_linear(vertex_color.r),
         srgb_to_linear(vertex_color.g),
         srgb_to_linear(vertex_color.b));
-    frag_colour = vec4(apply_world_fog(texel.rgb * runtime_vertex), texel.a);
+    vec3 color = texel.rgb * runtime_vertex;
+    if (u_environment_mapped != 0) {
+        // Stage 1: MODULATE(environment texture, current); alpha stays stage 0's.
+        color *= texture(u_texture1, v_environment_uv).rgb;
+    }
+    frag_colour = vec4(apply_world_fog(color), texel.a);
 }
 )glsl"};
 

@@ -551,6 +551,59 @@ std::expected<std::vector<MaterialGroup>, std::string> Model3DO::build_posed_geo
   return groups;
 }
 
+std::vector<std::size_t> Model3DO::subtree_preorder(
+    const Model3DOData& model, const std::size_t root) {
+  const std::size_t count{model.meshes.size()};
+  if (root >= count || model.hierarchy_first_child_index.size() != count ||
+      model.hierarchy_next_sibling_index.size() != count) {
+    return {};
+  }
+  std::vector<std::size_t> order;
+  std::vector<std::uint8_t> visited(count, 0U);
+  // Each stack entry is an object whose subtree is still to be emitted; the
+  // root's own siblings are not part of its subtree.
+  std::vector<std::size_t> pending{root};
+  while (!pending.empty()) {
+    const std::size_t index{pending.back()};
+    pending.pop_back();
+    if (visited.at(index) != 0U) {
+      return {};
+    }
+    visited.at(index) = 1U;
+    order.push_back(index);
+    if (index != root) {
+      const std::int32_t sibling{model.hierarchy_next_sibling_index.at(index)};
+      if (sibling >= 0 && std::cmp_less(sibling, count)) {
+        pending.push_back(static_cast<std::size_t>(sibling));
+      }
+    }
+    const std::int32_t child{model.hierarchy_first_child_index.at(index)};
+    if (child >= 0 && std::cmp_less(child, count)) {
+      pending.push_back(static_cast<std::size_t>(child));
+    }
+  }
+  return order;
+}
+
+std::vector<std::uint8_t> Model3DO::subtree_mask(
+    const Model3DOData& model, const std::size_t root) {
+  std::vector<std::uint8_t> mask(model.meshes.size(), 0U);
+  for (const std::size_t index : subtree_preorder(model, root)) {
+    mask.at(index) = 1U;
+  }
+  return mask;
+}
+
+std::vector<std::size_t> Model3DO::parentless_objects(const Model3DOData& model) {
+  std::vector<std::size_t> roots;
+  for (std::size_t index{0}; index < model.hierarchy_parent_index.size(); ++index) {
+    if (model.hierarchy_parent_index.at(index) == -1) {
+      roots.push_back(index);
+    }
+  }
+  return roots;
+}
+
 std::expected<PosedGeometryLayout, std::string> Model3DO::build_posed_layout(
     const Model3DOData& model, const std::span<const std::uint8_t> mesh_mask) {
   APP_PROFILE_FUNCTION();

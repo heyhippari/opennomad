@@ -21,6 +21,7 @@
 #include "Core/Audio/AudioTypes.hpp"
 #include "Core/Character/CharacterRuntime.hpp"
 #include "Core/Character/CtlController.hpp"
+#include "Core/Crowd/CrowdRuntime.hpp"
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Debug/SceneDebugView.hpp"
 #include "Core/Dialog/DialogRuntime.hpp"
@@ -1186,6 +1187,7 @@ void WorldScene::update(const float delta_time, const Input::InputManager& input
 
   WorldSceneContext* context{nullptr};
   if (m_scenarios != nullptr) {
+    m_scenarios->set_street_activity(street_activity());
     context = m_scenarios->current_world_context();
     const std::vector<WorldSceneContext*> attached{m_scenarios->attached_world_contexts()};
     std::erase_if(m_attached_world_renderers, [&attached](const AttachedWorldRenderer& observed) {
@@ -1448,6 +1450,7 @@ void WorldScene::render() {
   bool world_renderable{false};
   const bool per_pixel_lighting{per_pixel_character_lighting()};
   const bool cubic_decor_colors{cubic_decor_lighting()};
+  const std::uint8_t passerby_detail{detail_level()};
   for (const AttachedWorldRenderer& attached_renderer : m_attached_world_renderers) {
     const WorldSceneContext* const attached_context{
         m_scenarios == nullptr ? nullptr
@@ -1460,6 +1463,11 @@ void WorldScene::render() {
     }
     attached_renderer.renderer->set_per_pixel_lighting(per_pixel_lighting);
     attached_renderer.renderer->set_cubic_decor_colors(cubic_decor_colors);
+    attached_renderer.renderer->set_detail_level(passerby_detail);
+    // The sky texture doubles as the environment map even when the sky itself
+    // is hidden by the display-sky preference.
+    attached_renderer.renderer->set_environment_texture(
+        m_sky != nullptr ? m_sky->environment_texture() : nullptr);
     attached_renderer.renderer->render(m_camera.camera(),
         attached_context->runtime.get(),
         static_cast<float>(m_uv_phases.u_phase()),
@@ -1583,6 +1591,22 @@ bool WorldScene::per_pixel_character_lighting() const {
 bool WorldScene::cubic_decor_lighting() const {
   return m_game_settings != nullptr &&
          m_game_settings->choice_raw_value("enhancements.decor_lighting").value_or(0) != 0;
+}
+
+std::uint8_t WorldScene::street_activity() const {
+  const std::int32_t value{m_game_settings == nullptr
+                               ? Crowd::K_DEFAULT_STREET_ACTIVITY
+                               : m_game_settings->choice_raw_value("video.street_activity")
+                                     .value_or(Crowd::K_DEFAULT_STREET_ACTIVITY)};
+  return static_cast<std::uint8_t>(std::clamp(value, 0, 4));
+}
+
+std::uint8_t WorldScene::detail_level() const {
+  const std::int32_t value{m_game_settings == nullptr
+                               ? Crowd::K_DEFAULT_DETAIL_LEVEL
+                               : m_game_settings->choice_raw_value("video.detail_level")
+                                     .value_or(Crowd::K_DEFAULT_DETAIL_LEVEL)};
+  return static_cast<std::uint8_t>(std::clamp(value, 0, 2));
 }
 
 Fog::ShaderFog WorldScene::context_fog(const WorldSceneContext& context) const {

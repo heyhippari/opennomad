@@ -91,6 +91,29 @@ TEST_SUITE("Core::WorldShaders") {
     }
     CHECK(App::K_WORLD_CUBIC_COLOR_GEOMETRY_SHADER.starts_with("\n#version 410 core\n"));
   }
+
+  TEST_CASE("Every world program carries Runtime's environment-map stage") {
+    // Spherical coordinates from the view-space normal (0x004947F0) and a
+    // stage-1 modulate by the environment texture (0x00460FCB).
+    for (const std::string_view symbol : {"uniform int u_environment_mapped;",
+             "uniform vec2 u_environment_phase;",
+             "out vec2 v_environment_uv;",
+             "out vec2 vertex_environment_uv;",
+             "asin(runtime_normal) * (2.0 / 3.14159265358979) + u_environment_phase * 2.5 + 0.5",
+             "vec2(normal.x, -normal.y)"}) {
+      CHECK(App::K_WORLD_VERTEX_SHADER.find(symbol) != std::string_view::npos);
+    }
+    for (const std::string_view symbol :
+        {"in vec2 vertex_environment_uv[];", "out vec2 v_environment_uv;"}) {
+      CHECK(App::K_WORLD_CUBIC_COLOR_GEOMETRY_SHADER.find(symbol) != std::string_view::npos);
+    }
+    for (const std::string_view symbol : {"in vec2 v_environment_uv;",
+             "uniform sampler2D u_texture1;",
+             "uniform int u_environment_mapped;",
+             "color *= texture(u_texture1, v_environment_uv).rgb;"}) {
+      CHECK(App::K_MODERN_WORLD_FRAGMENT_BODY.find(symbol) != std::string_view::npos);
+    }
+  }
 }
 
 // NOLINTEND(misc-use-anonymous-namespace, cppcoreguidelines-avoid-do-while)

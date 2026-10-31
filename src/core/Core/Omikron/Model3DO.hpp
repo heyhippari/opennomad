@@ -436,6 +436,20 @@ class Model3DO {
       std::span<const RawVertex> source_vertices,
       std::span<const std::uint8_t> mesh_mask);
 
+  /// `root` followed by its descendants in Runtime instance order: an object,
+  /// then its first-child subtree, then its next sibling's (0x0048D7F0).
+  /// Empty when `root` is out of range or the hierarchy is cyclic.
+  [[nodiscard]] static std::vector<std::size_t> subtree_preorder(
+      const Model3DOData& model, std::size_t root);
+
+  /// Mesh mask (parallel to meshes) selecting `root` and its descendants.
+  [[nodiscard]] static std::vector<std::uint8_t> subtree_mask(
+      const Model3DOData& model, std::size_t root);
+
+  /// Descriptors without a hierarchy parent, in serialized order. Runtime
+  /// 0x00437DA0 collects these as an instanced model's level-of-detail roots.
+  [[nodiscard]] static std::vector<std::size_t> parentless_objects(const Model3DOData& model);
+
   /// Resolves the pose-independent corner layout that build_posed_geometry()
   /// emits for the meshes selected by `mesh_mask` (empty selects every mesh).
   [[nodiscard]] static std::expected<PosedGeometryLayout, std::string> build_posed_layout(

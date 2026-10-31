@@ -116,10 +116,6 @@ void resolve_bounds(ModelResource& resource) {
       0.5F * std::sqrt((extent_x * extent_x) + (extent_y * extent_y) + (extent_z * extent_z));
 }
 
-void resolve_actor_object(ModelResource& resource) {
-  resource.actor_object_index = actor_object_index(resource.model);
-}
-
 std::expected<void, std::string> validate_dialog_performance(
     const Omikron::Model3DOData& model, const DialogPerformanceOverlay& overlay) {
   if (overlay.object_rotations.size() != model.meshes.size() ||
@@ -342,7 +338,16 @@ std::expected<std::shared_ptr<const ModelResource>, std::string> Runtime::load_m
     return std::expected<std::shared_ptr<const ModelResource>, std::string>{
         std::unexpect, fmt::format("character model '{}': {}", model_resource, model.error())};
   }
-  auto layout{Omikron::Model3DO::build_posed_layout(model.value())};
+  // Runtime presents a character through its actor+0x08 object only: later
+  // instances of a shared model clone just that subtree (0x00437850). Other
+  // top-level trees, such as the passerby models' lower levels of detail, are
+  // never drawn for an actor.
+  const std::optional<std::size_t> actor_object{actor_object_index(model.value())};
+  const std::vector<std::uint8_t> presented_mask{
+      actor_object.has_value()
+          ? Omikron::Model3DO::subtree_mask(model.value(), actor_object.value())
+          : std::vector<std::uint8_t>{}};
+  auto layout{Omikron::Model3DO::build_posed_layout(model.value(), presented_mask)};
   std::vector<Omikron::MaterialGroup> groups;
   if (layout) {
     if (auto posed{Omikron::Model3DO::apply_pose(model.value(),
@@ -391,7 +396,7 @@ std::expected<std::shared_ptr<const ModelResource>, std::string> Runtime::load_m
     }
   }
   resource->images = std::move(images).value();
-  resolve_actor_object(*resource);
+  resource->actor_object_index = actor_object;
   resolve_bounds(*resource);
   return std::shared_ptr<const ModelResource>{std::move(resource)};
 }

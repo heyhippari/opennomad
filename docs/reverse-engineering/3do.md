@@ -987,6 +987,14 @@ sibling chain.
 OpenNomad represents these identities as `Model3DOData::root_mesh_index` and
 `ModelResource::actor_object_index`, respectively. They are not aliases.
 
+Only the representative's subtree is ever presented for an actor: further
+instances of a shared model clone just `actor+0x08` (`0x00437850`). The
+passerby models (`PSH_FN`, `FSH_FN`, `KSH_FN` and their `*1` variants) carry four
+complete skeletons as top-level siblings, one per level of detail, serialized
+about 80 inches apart along X. Drawing every top-level tree therefore shows the
+lower levels trailing behind the character. The crowd system selects among
+those trees by camera depth; see [crowd.md](crowd.md).
+
 Character registration in Runtime's native spatial system uses the object at
 `actor+0x08`. Candidate queries read that runtime object's authored
 bounding-sphere radius at `+0x58` and construct dynamic axis bounds from live
@@ -1355,7 +1363,7 @@ Preserve the entire 32-bit flag word. Only some bits are currently understood.
 | 23 | `0x00800000` | invisible | Strongly plausible; treated as non-rendered |
 | 24 | `0x01000000` | UV scroll/translate U | **Confirmed — Runtime** |
 | 25 | `0x02000000` | UV scroll/translate V | **Confirmed — Runtime** |
-| 26 | `0x04000000` | environment mapped | Importer-derived; independent Runtime semantics incomplete |
+| 26 | `0x04000000` | environment mapped | **Confirmed — Runtime**: spherical map of the sky's first texture, see [renderer.md](renderer.md) §76 |
 | 27 | `0x08000000` | underwater | Importer-derived |
 | 29 | `0x20000000` | water surface / special transparent surface | Strong Runtime side effects; semantic name still partly historical |
 | 30 | `0x40000000` | water-related unknown | Importer-derived |
@@ -1883,7 +1891,6 @@ Still unresolved:
 - full mesh-flag map;
 - exact original Direct3D blend-state mapping;
 - full mirror implementation;
-- exact environment-map semantics for bit 26;
 - exact water/underwater interactions;
 - vertex `+0x18`;
 - vertex colour alpha semantics;

@@ -20,6 +20,7 @@
 #include "Core/Audio/AudioSystem.hpp"
 #include "Core/Audio/AudioTypes.hpp"
 #include "Core/Character/CharacterRuntime.hpp"
+#include "Core/Crowd/CrowdRuntime.hpp"
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Dialog/DialogRuntime.hpp"
 #include "Core/GameDataLoader.hpp"
@@ -147,6 +148,31 @@ std::expected<PreparedAreaWorld, std::string> prepare_area_world_context(Scenari
   if (!characters) {
     return fail_after_world_load(
         fmt::format("AREA {} character materialization: {}", area_id, characters.error()));
+  }
+
+  // AREA preload stages 8/9 (0x0040CA41/0x0040CAAA): the ANI bank and the
+  // trajectory network. Runtime keeps one crowd, so populating this AREA's
+  // releases any other resident world's passersby first (0x0041B420).
+  if (auto population{Crowd::load_area_population(
+          area_record, manager.street_activity(), runtime->character_runtime().model_loader())};
+      !population) {
+    App::Log::warn(LogCategory::Scenario,
+        "AREA {} passerby crowd unavailable: {}",
+        area_id,
+        population.error());
+  } else if (population->has_value()) {
+    for (ScenarioRuntime* const resident : manager.resident_world_runtimes()) {
+      if (resident != runtime) {
+        resident->crowd_runtime().clear();
+      }
+    }
+    if (auto populated{runtime->crowd_runtime().populate(std::move(population.value().value()))};
+        !populated) {
+      App::Log::warn(LogCategory::Scenario,
+          "AREA {} passerby crowd unavailable: {}",
+          area_id,
+          populated.error());
+    }
   }
 
   // Runtime 0x0040CB32: the AREA's fog colours, distance and environment

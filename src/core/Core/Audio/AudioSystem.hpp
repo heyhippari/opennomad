@@ -107,6 +107,10 @@ class AudioSystem {
   // --- Listener / emitters ---
 
   void set_listener(const AudioListenerState& listener);
+  /// Last listener state, in metres.
+  [[nodiscard]] const AudioListenerState& listener() const {
+    return m_listener;
+  }
   /// Registers the owner-position resolver for one scenario identity
   /// (`AudioOwnerToken::scenario`). Every resident scenario keeps its own, so
   /// one world registering never invalidates another world's attached voices.

@@ -38,6 +38,7 @@ add_library(${NAME} STATIC
   Core/Dialog/DialogRuntime.hpp Core/Dialog/DialogRuntime.cpp
   Core/Dialog/DialogPerformanceRuntime.hpp Core/Dialog/DialogPerformanceRuntime.cpp
   Core/Character/CharacterRuntime.hpp Core/Character/CharacterRuntime.cpp
+  Core/Crowd/CrowdRuntime.hpp Core/Crowd/CrowdRuntime.cpp
   Core/Character/CtlController.hpp Core/Character/CtlController.cpp
   Core/Character/HorizontalCollisionQuery.hpp Core/Character/HorizontalCollisionQuery.cpp
   Core/Character/PhysicalMotionService.hpp Core/Character/PhysicalMotionService.cpp
@@ -81,6 +82,8 @@ add_library(${NAME} STATIC
   Core/Omikron/FontFNT.hpp Core/Omikron/FontFNT.cpp
   Core/Omikron/Animation3DA.hpp Core/Omikron/Animation3DA.cpp
   Core/Omikron/Path3DP.hpp Core/Omikron/Path3DP.cpp
+  Core/Omikron/TrajectoryOpt.hpp Core/Omikron/TrajectoryOpt.cpp
+  Core/Omikron/AnimationBankAni.hpp Core/Omikron/AnimationBankAni.cpp
   Core/Omikron/Model3DO.hpp Core/Omikron/Model3DO.cpp
   Core/Omikron/ThreeDM.hpp Core/Omikron/ThreeDM.cpp
   Core/Omikron/Texture3DT.hpp Core/Omikron/Texture3DT.cpp

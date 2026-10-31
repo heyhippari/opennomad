@@ -392,6 +392,8 @@ Defaults:
 ```
 
 The first two are renderer/configuration inputs. Their precise settings-dialog semantics are still open.
+`0x0090E726` is Crowd Density (0..4): the passerby spawn spacing is multiplied by `5 - value`. `0x0090E727` is Detail
+Level (0..2): the instance renderer skips `1 - value` leading levels of detail. See [crowd.md](crowd.md).
 
 ## Version handling
 

@@ -40,6 +40,7 @@ Most implementation lives under `src/core/Core/`:
 | `Script/` | Immutable script definitions, mutable SCX and AREA VM state, opcode metadata, waits, and presentation requests. |
 | `Omikron/` | Bounds-checked readers for original formats including 3DO, 3DT, 3DA, 3DP, SCX, IAM, BMP, and QD ADP. |
 | `Character/` | Runtime character identity, AREA presence/transforms, body resources, and CPU-side posed geometry. |
+| `Crowd/` | Street crowd: OPT network population, passersby (walking, junctions, idle activities), slider traffic and LOD prototypes. |
 | `Sprite/` | Runtime-style sprite instances, stable handles, frame resolution, draw queues, and billboard rendering. |
 | `Interface/` | Generic I2D interface registry, runtime instances, focus/residency, fonts, timelines, and rendering. |
 | `Audio/` | SDL3_mixer device ownership, voices, resource cache, music, and the Runtime-style software spatializer. |

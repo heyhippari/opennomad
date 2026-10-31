@@ -4,6 +4,7 @@
 #include <deque>
 #include <expected>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -82,6 +83,13 @@ class SkyRenderer {
     return m_name;
   }
 
+  /// Environment-map texture: Runtime copies the sky model's first texture
+  /// page into a separate texture when the sky loads (0x0041D28A ->
+  /// 0x004641E0). Null when the sky has no textures.
+  [[nodiscard]] const GameColorTexture* environment_texture() const {
+    return m_environment_texture ? &*m_environment_texture : nullptr;
+  }
+
  private:
   SkyRenderer() = default;
 
@@ -91,6 +99,7 @@ class SkyRenderer {
   std::vector<std::int32_t> m_group_material_ids;
   std::vector<std::uint32_t> m_group_flags;
   std::vector<GameColorTexture> m_textures;
+  std::optional<GameColorTexture> m_environment_texture;
 };
 
 }  // namespace App

@@ -327,6 +327,22 @@ std::uint32_t IamAreaRecord::environment_flags() const {
   return read_u32_at(m_bytes, k_offset_environment_flags);
 }
 
+std::uint32_t IamAreaRecord::male_passer_variants() const {
+  return read_u32_at(m_bytes, k_offset_male_passer_variants);
+}
+
+std::uint32_t IamAreaRecord::female_passer_variants() const {
+  return read_u32_at(m_bytes, k_offset_female_passer_variants);
+}
+
+std::uint16_t IamAreaRecord::slider_variants() const {
+  return read_u16_at(m_bytes, k_offset_slider_variants);
+}
+
+std::uint16_t IamAreaRecord::moto_variants() const {
+  return read_u16_at(m_bytes, k_offset_moto_variants);
+}
+
 std::span<const std::byte> IamAreaRecord::bytecode_pool() const {
   constexpr std::size_t k_camera_table_index{6};
   const std::size_t start{bytecode_pool_offset()};

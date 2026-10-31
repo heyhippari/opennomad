@@ -609,7 +609,7 @@ model3doName      = ANEKBAH
 scenarioScxName   = ANEKBAH
 mapMptName        = empty
 optionsOptName    = ANEKBAH
-animationAniName  = PASSANTH
+animationAniName  = PASSANTH   (passerby animation bank, see crowd.md)
 sky3doName        = ASKY
 ```
 
@@ -627,7 +627,8 @@ The remaining:
 ```
 
 of the fixed header are still only partially understood. `+0x90..+0xA3` and `+0xB0` are the fog environment;
-see [fog.md](fog.md).
+see [fog.md](fog.md). `+0xA4`/`+0xA8` (`u32`) are the male/female passerby model-variant masks and `+0xAC`/`+0xAE`
+(`i16`) the slider variant masks; see [crowd.md](crowd.md).
 
 Retail corpus analysis shows that several fields are clearly authored
 configuration rather than random padding.
@@ -3162,7 +3163,10 @@ typedef struct SerializedAreaHeader {
     uint8_t unknown8E[2];           // +0x8E..+0x8F
     uint32_t fogColor[4];           // +0x90  0x00RRGGBB per day phase (fog.md)
     int32_t fogDistanceMetres;      // +0xA0  0 = Clip Distance preference
-    uint8_t unknownA4[0x0C];        // +0xA4..+0xAF
+    uint32_t malePasserVariants;    // +0xA4  bit N enables built-in male model N (crowd.md)
+    uint32_t femalePasserVariants;  // +0xA8  bit N enables built-in female model N
+    int16_t sliderVariants;         // +0xAC  slider models (bit 0 forced on)
+    int16_t sliderVariantsB;        // +0xAE  second slider table
     uint32_t environmentFlags;      // +0xB0  high word: day-cycle owner
 } SerializedAreaHeader;             // 0xB4
 

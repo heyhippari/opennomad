@@ -118,6 +118,21 @@ class WorldRenderer {
   void set_cubic_decor_colors(bool enabled) {
     m_cubic_decor_colors = enabled;
   }
+  /// Detail Level preference (0..2, Runtime 0x0090E727) that biases each
+  /// passerby's level of detail.
+  void set_detail_level(std::uint8_t detail_level) {
+    m_detail_level = detail_level;
+  }
+  /// Environment texture for mesh flag bit 26: Runtime copies the AREA sky's
+  /// first texture page into it when the sky loads (0x0041D28A ->
+  /// 0x004641E0). Null disables environment mapping.
+  void set_environment_texture(const GameColorTexture* texture) {
+    m_environment_texture = texture;
+  }
+  /// Passersby posed and submitted by the most recent render().
+  [[nodiscard]] std::size_t crowd_visible_count() const {
+    return m_crowd_visible_count;
+  }
 
  private:
   WorldRenderer() = default;
@@ -137,14 +152,36 @@ class WorldRenderer {
       const Shader& shader, const glm::mat4& mvp, const glm::mat4& view, bool legacy_effect);
   void bind_world_shader(const Shader& shader);
   void bind_world_texture(const Texture2D& texture);
+  /// Environment mapping is active for a bit-26 group only with an
+  /// environment texture and Detail Level >= 1 (Runtime 0x00464610 also
+  /// requires renderer mode 0, the Direct3D path OpenNomad reproduces).
+  [[nodiscard]] bool environment_mapping_active(std::uint32_t flags) const;
   /// Group uniforms that vary per draw; unchanged values are skipped by Shader.
+  /// Also binds the environment texture to unit 1 for bit-26 groups.
   void apply_group_uniforms(const Shader& shader,
       std::uint32_t flags,
       Omikron::BlendMode mode,
       float uv_phase_u,
       float uv_phase_v,
-      bool legacy_effect) const;
+      bool legacy_effect);
   void draw_group(std::size_t index, float uv_phase_u, float uv_phase_v, bool legacy_effect);
+  struct CharacterGpuModel;
+  /// Lighting inputs of one lit (character-path) instance.
+  struct LitInstance {
+    std::span<const Omikron::MaterialGroup> groups;
+    std::span<const Omikron::Model3DOData::RuntimeObjectState> objects;
+    Runtime::Transform presentation{};
+    Runtime::Vec3 actor_position{};
+    float actor_radius{0.0F};
+  };
+  void draw_lit_group(const CharacterGpuModel& gpu,
+      std::span<const GameColorTexture> textures,
+      const LitInstance& lit,
+      const InstanceMatrices& matrices,
+      std::size_t group_index,
+      float uv_phase_u,
+      float uv_phase_v,
+      bool legacy_effect);
   void draw_character_group(const Character::RuntimeCharacter& character,
       const InstanceMatrices& matrices,
       std::size_t group_index,
@@ -166,11 +203,16 @@ class WorldRenderer {
   void apply_baked_lighting(const Shader& shader) const;
   /// Runtime lit-instance path for one character node group.
   void apply_actor_lighting(const Shader& shader,
-      const Character::RuntimeCharacter& character,
+      const LitInstance& lit,
       std::size_t group_index,
       const glm::mat3& to_model) const;
   void render_geometry_wireframe(const Camera& camera, const ScenarioRuntime* runtime);
   void sync_character_models(ScenarioRuntime& runtime);
+  /// Selects, poses and uploads every visible passerby's level of detail.
+  void sync_crowd(const ScenarioRuntime& runtime,
+      const glm::mat4& view,
+      const glm::mat4& projection,
+      const ViewFrustum& frustum);
   /// True when the character at `character_index` is renderable and may be
   /// inside this frame's view volume.
   [[nodiscard]] bool character_presented(std::size_t character_index) const;
@@ -204,6 +246,25 @@ class WorldRenderer {
 
   [[nodiscard]] static bool update_character_meshes(
       CharacterGpuModel& gpu, std::span<const Omikron::MaterialGroup> groups);
+  /// Replaces `gpu`'s meshes with `groups` when the layout changed.
+  static void rebuild_character_meshes(
+      CharacterGpuModel& gpu, std::span<const Omikron::MaterialGroup> groups);
+
+  /// Textures shared by every passerby of one crowd prototype.
+  struct CrowdPrototypeGpu {
+    std::shared_ptr<const Character::ModelResource> resource;
+    std::vector<GameColorTexture> textures;
+  };
+  /// One passerby's posed level of detail.
+  struct CrowdInstanceGpu {
+    bool visible{false};
+    std::size_t prototype{0};
+    std::vector<Omikron::Model3DOData::RuntimeObjectState> objects;
+    std::vector<Omikron::MaterialGroup> groups;
+    CharacterGpuModel model;
+    LitInstance lit;
+    InstanceMatrices matrices;
+  };
 
   /// Fog of the frame being rendered; blended groups are never fogged.
   Fog::ShaderFog m_frame_fog;
@@ -249,6 +310,15 @@ class WorldRenderer {
   bool m_decor_color_slopes_ready{false};
   bool m_decor_color_slopes_failed{false};
   std::unordered_map<std::size_t, std::unique_ptr<CharacterGpuModel>> m_character_models;
+  /// Parallel to the rendered crowd's prototypes; rebuilt when they change.
+  std::deque<CrowdPrototypeGpu> m_crowd_prototypes;
+  bool m_crowd_prototypes_failed{false};
+  /// Parallel to the rendered crowd's passersby.
+  std::deque<CrowdInstanceGpu> m_crowd_instances;
+  std::size_t m_crowd_visible_count{0};
+  std::uint8_t m_detail_level{1};
+  const GameColorTexture* m_environment_texture{nullptr};
+  GLuint m_bound_environment_texture{0};
   std::vector<std::string> m_failed_character_models;
   /// Placement instance id to its GPU model. Placements of the same model
   /// resource share one ObjectGpuModel (textures and buffers).
@@ -283,6 +353,8 @@ class WorldRenderer {
     Shader::UniformRef premultiply_alpha;
     Shader::UniformRef far_fade_depth_scale;
     Shader::UniformRef fog_depth_scale;
+    Shader::UniformRef environment_mapped;
+    Shader::UniformRef environment_phase;
     std::array<Shader::UniformRef, Lighting::K_MAX_NODE_LIGHTS> light_direction;
     std::array<Shader::UniformRef, Lighting::K_MAX_NODE_LIGHTS> light_scale;
     std::array<Shader::UniformRef, Lighting::K_MAX_NODE_LIGHTS> light_color;

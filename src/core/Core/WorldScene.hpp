@@ -117,6 +117,9 @@ class WorldScene final : public Scene, public Debug::SceneDebugView {
   [[nodiscard]] bool per_pixel_character_lighting() const;
   /// Decor Lighting enhancement: cubic instead of Runtime's linear baked colours.
   [[nodiscard]] bool cubic_decor_lighting() const;
+  /// Crowd Density (OMK_SAVE 0x0090E726) and Detail Level (0x0090E727).
+  [[nodiscard]] std::uint8_t street_activity() const;
+  [[nodiscard]] std::uint8_t detail_level() const;
   static constexpr std::int32_t K_DEFAULT_CLIP_DISTANCE_METRES{50};
   [[nodiscard]] bool update_dialog_input(float delta_time, const Input::InputManager& input);
 

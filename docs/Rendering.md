@@ -94,8 +94,9 @@ Decor transparency is sorted back-to-front by material-group centre. Missing or 
 white texture and produce a diagnostic instead of invalid OpenGL access.
 
 The development `ModelViewerScene` contains richer experimental passes for mirrors, environment mapping, explicit
-model lights, and reflection rendering. `WorldRenderer` currently diagnoses mirror/environment flags but uses its base
-textured pass for them. Documentation should not imply that a model-viewer experiment is already part of the runtime
+model lights, and reflection rendering. `WorldRenderer` implements Runtime's environment mapping (mesh flag bit 26:
+the AREA sky's first texture, spherically mapped and multiplied over the base colour; see
+[renderer.md](reverse-engineering/renderer.md) §76) but still uses its base textured pass for mirrors. Documentation should not imply that a model-viewer experiment is already part of the runtime
 world renderer.
 
 ## Game-data resources

@@ -2243,23 +2243,36 @@ Keep modern mirror implementation and Runtime evidence separate.
 
 # 76. Environment mapping
 
-Current OpenNomad model-viewer code includes a procedural cubemap presentation
-for the field currently called:
+**Confirmed — Runtime.** Mesh flag bit 26 (`0x04000000`) is a spherical environment map multiplied over the
+lit/baked base colour.
+
+Gate (`0x00464610`): renderer mode `0x0053ADF0 == 0` and Detail Level (`0x0090E727`) `>= 1`; the Direct3D backend
+additionally needs the validated stage-1 capability `0x0053ADE8`.
+
+Texture: when an AREA sky loads (`0x0041D1A0`), `0x0041D28A` passes the sky model's material-0 texture page to
+`0x004641E0`, which copies it into a separate texture `0x0053AE00`. The sky texture is therefore the environment, also
+when the display-sky preference hides the sky itself.
+
+Coordinates (vertex transforms `0x004947F0` at `0x00494A1E`, and `0x00494E80`), per vertex, with `n` the object
+normal and `M` the object-to-camera rotation (Runtime camera space, +X right, +Y down):
 
 ```text
-environment_mapped
+u = asin(n . M[:,0]) * 2/pi + [0x00907304] * 2.5 + 0.5      (0x004BCE38 = 2/pi, 0x004BCE40 = 2.5, 0x004BCE48 = -0.5)
+v = asin(n . M[:,1]) * 2/pi + [0x00907300] * 2.5 + 0.5
 ```
 
-The `Model3DO.hpp` source itself labels this name:
+`0x00907304`/`0x00907300` are the global U/V scroll phases also used by bits 24/25. The transformed vertex stores
+them at `+0x24/+0x28`.
 
-```text
-importer-derived
-```
+Submission (`0x004951C0`) copies them into the face record's second coordinate set (`+0x10/+0x14` per corner) and
+ORs bucket bit `0x40`. The Direct3D flush (`0x00460B80`, `0x00460FCB`) then binds `0x0053AE00` to stage 1 with
+`TEXCOORDINDEX = 1`, `COLOROP = MODULATE`, `COLORARG1 = TEXTURE`, `COLORARG2 = CURRENT`; alpha comes from stage 0.
 
-Therefore this is **not** authoritative Runtime behavior yet.
+OpenNomad: the world vertex stage computes the coordinates from the GL eye-space normal (Runtime camera = GL eye with
+Y and Z negated) and the opaque and blended fragment stages modulate by the sky's first texture, bound to unit 1.
 
-Do not use the modern chrome/cubemap shader as evidence for the original
-material operation.
+Bit 27 together with bit 26 also perturbs the baked colour with a per-vertex wobble table (`0x004DDBB0`,
+`0x006A2CE0`); that is not reproduced. The importer-era cubemap in `ModelViewerScene` remains a development tool.
 
 ---
 

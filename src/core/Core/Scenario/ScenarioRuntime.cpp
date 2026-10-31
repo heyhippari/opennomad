@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <filesystem>
 #include <iterator>
 #include <limits>
 #include <memory>
@@ -21,7 +22,10 @@
 #include "Core/Audio/AudioSystem.hpp"
 #include "Core/Audio/AudioTypes.hpp"
 #include "Core/Character/CharacterRuntime.hpp"
+#include "Core/Crowd/CrowdRuntime.hpp"
 #include "Core/Debug/Instrumentor.hpp"
+#include "Core/FrameTiming.hpp"
+#include "Core/GameDataLoader.hpp"
 #include "Core/Log.hpp"
 #include "Core/LogCategory.hpp"
 #include "Core/Object/ObjectPlacementRuntime.hpp"
@@ -400,8 +404,10 @@ ScenarioRuntime::~ScenarioRuntime() {
   // SFX teardown calls back into this runtime to destroy its owned handles;
   // do it while the SpritePool and the complete Host object are still alive.
   m_sfx_runtime.reset();
+  stop_slider_engines();
   if (m_audio != nullptr) {
     m_audio->clear_emitter_resolver(this);
+    m_audio->clear_emitter_resolver(&m_crowd_runtime);
   }
 }
 
@@ -622,6 +628,97 @@ void ScenarioRuntime::tick(const float real_delta_seconds) {
   if (m_sfx_runtime != nullptr) {
     m_sfx_runtime->tick(real_delta_seconds);
   }
+  // Runtime 0x004200F0 services the crowd (0x00454BB0) with the frame's
+  // effective delta in 30 Hz units.
+  m_crowd_runtime.tick(real_delta_seconds * FrameTiming::k_delta_units_per_second);
+  service_slider_engines();
+}
+
+void ScenarioRuntime::stop_slider_engines() {
+  if (m_audio != nullptr) {
+    for (const std::optional<Audio::VoiceHandle>& voice : m_slider_engine_voices) {
+      if (voice.has_value()) {
+        static_cast<void>(m_audio->stop_voice(*voice));
+      }
+    }
+  }
+  m_slider_engine_voices.clear();
+}
+
+void ScenarioRuntime::service_slider_engines() {
+  // Runtime 0x00456B40: a looping engine sound follows each slider while the
+  // listener is within 585 inches of it.
+  constexpr float k_audible_distance{585.0F};
+  constexpr float k_minimum_distance{39.0F};
+  constexpr std::string_view k_engine_sound{"SOUNDS/sliderm01.wav"};
+  if (m_slider_engine_generation != m_crowd_runtime.generation()) {
+    stop_slider_engines();
+    m_slider_engine_generation = m_crowd_runtime.generation();
+  }
+  const std::span<const Crowd::Agent> agents{m_crowd_runtime.agents()};
+  if (m_audio == nullptr || agents.empty() || agents.back().kind != Crowd::AgentKind::k_slider) {
+    return;
+  }
+  if (!m_slider_engine_sound.has_value() && !m_slider_engine_sound_failed) {
+    auto file{load_game_file(std::filesystem::path{k_engine_sound})};
+    auto loaded{
+        file ? m_audio->load_sound(
+                   std::string{k_engine_sound}, m_scenario_name, 0U, "sliderm01", 0U, file->bytes)
+             : std::expected<Audio::SoundResourceId, std::string>{std::unexpect, file.error()}};
+    if (!loaded) {
+      m_slider_engine_sound_failed = true;
+      App::Log::warn(LogCategory::Audio, "slider engine sound unavailable: {}", loaded.error());
+      return;
+    }
+    m_slider_engine_sound = loaded.value();
+  }
+  if (!m_slider_engine_sound.has_value()) {
+    return;
+  }
+  const Audio::SoundResourceId engine_sound{*m_slider_engine_sound};
+  m_slider_engine_voices.resize(agents.size());
+
+  const Audio::Vec3& listener{m_audio->listener().position};
+  const Runtime::Vec3 listener_inches{.x = Runtime::metres_to_inches(listener.at(0)),
+      .y = Runtime::metres_to_inches(listener.at(1)),
+      .z = Runtime::metres_to_inches(listener.at(2))};
+  for (std::size_t index{0}; index < agents.size(); ++index) {
+    const Crowd::Agent& slider{agents[index]};
+    std::optional<Audio::VoiceHandle>& voice{m_slider_engine_voices.at(index)};
+    if (slider.kind != Crowd::AgentKind::k_slider) {
+      continue;
+    }
+    const float dx{listener_inches.x - slider.position.x};
+    const float dy{listener_inches.y - slider.position.y};
+    const float dz{listener_inches.z - slider.position.z};
+    const float distance{std::sqrt((dx * dx) + (dy * dy) + (dz * dz))};
+    if (voice.has_value()) {
+      // The resolver keeps an audible voice on the slider each frame.
+      if (distance > k_audible_distance) {
+        static_cast<void>(m_audio->stop_voice(*voice));
+        voice.reset();
+      }
+      continue;
+    }
+    if (distance >= k_audible_distance) {
+      continue;
+    }
+    Audio::SoundPlayRequest request;
+    request.resource = engine_sound;
+    request.loop = true;
+    request.emitter = Audio::SoundEmitterState{
+        .position = {slider.position.x, slider.position.y, slider.position.z},
+        .velocity = {0.0F, 0.0F, 0.0F},
+        .minimum_distance = k_minimum_distance,
+        .maximum_distance = k_audible_distance};
+    request.owner = Audio::AudioOwnerToken{.scenario = &m_crowd_runtime,
+        .object_index = static_cast<std::uint32_t>(index),
+        .generation = m_crowd_runtime.generation()};
+    request.sound_name = "sliderm01";
+    if (auto played{play_sound(request)}; played.has_value()) {
+      voice = played.value();
+    }
+  }
 }
 
 Sfx::Runtime* ScenarioRuntime::sfx_runtime() {
@@ -657,6 +754,14 @@ ObjectPlacement::Runtime& ScenarioRuntime::object_placement_runtime() {
 
 const ObjectPlacement::Runtime& ScenarioRuntime::object_placement_runtime() const {
   return m_object_placement_runtime;
+}
+
+Crowd::Runtime& ScenarioRuntime::crowd_runtime() {
+  return m_crowd_runtime;
+}
+
+const Crowd::Runtime& ScenarioRuntime::crowd_runtime() const {
+  return m_crowd_runtime;
 }
 
 Sprite::SpritePool& ScenarioRuntime::sprite_pool() {
@@ -1889,6 +1994,20 @@ void ScenarioRuntime::set_audio_system(Audio::AudioSystem* const audio) {
   if (m_audio == nullptr) {
     return;
   }
+  // Slider engine voices follow their slider; a repopulated crowd invalidates
+  // them through the generation.
+  m_audio->set_emitter_resolver(
+      &m_crowd_runtime, [this](const Audio::AudioOwnerToken& owner) -> std::optional<Audio::Vec3> {
+        const std::span<const Crowd::Agent> agents{m_crowd_runtime.agents()};
+        if (owner.generation != m_crowd_runtime.generation() ||
+            owner.object_index >= agents.size()) {
+          return std::nullopt;
+        }
+        const Runtime::Vec3& position{agents[owner.object_index].position};
+        return Audio::Vec3{Runtime::inches_to_metres(position.x),
+            Runtime::inches_to_metres(position.y),
+            Runtime::inches_to_metres(position.z)};
+      });
   // The emitter resolver maps an owner token back to the decor object it
   // names. It is re-resolved by the audio system once per real frame; the
   // decor binding generation makes a rebound decor detectably invalid.

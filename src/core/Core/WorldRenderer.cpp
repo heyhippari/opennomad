@@ -18,6 +18,7 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -26,6 +27,7 @@
 #include <vector>
 
 #include "Core/Camera.hpp"
+#include "Core/Crowd/CrowdRuntime.hpp"
 #include "Core/CubicVertexColor.hpp"
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/DecorCulling.hpp"
@@ -34,6 +36,7 @@
 #include "Core/LogCategory.hpp"
 #include "Core/Mesh.hpp"
 #include "Core/Object/ObjectPlacementRuntime.hpp"
+#include "Core/Omikron/Animation3DA.hpp"
 #include "Core/Omikron/Model3DO.hpp"
 #include "Core/Omikron/Texture3DT.hpp"
 #include "Core/Reflection.hpp"
@@ -448,9 +451,8 @@ std::expected<std::unique_ptr<WorldRenderer>, std::string> WorldRenderer::create
     }
     renderer->m_group_centers.push_back(center);
 
-    special_flags_seen = special_flags_seen ||
-                         Omikron::has_flag(group.flags, Omikron::MeshFlags::k_mirror) ||
-                         Omikron::has_flag(group.flags, Omikron::MeshFlags::k_environment_mapped);
+    special_flags_seen =
+        special_flags_seen || Omikron::has_flag(group.flags, Omikron::MeshFlags::k_mirror);
   }
 
   if (has_vertices) {
@@ -480,8 +482,8 @@ std::expected<std::unique_ptr<WorldRenderer>, std::string> WorldRenderer::create
 
   if (special_flags_seen) {
     App::Log::debug(LogCategory::Renderer,
-        "WorldRenderer: mirror/environment flags currently use the base textured pass; "
-        "specialized ModelViewer passes remain to be extracted into the shared renderer");
+        "WorldRenderer: mirror flags currently use the base textured pass; the specialized "
+        "ModelViewer mirror pass remains to be extracted into the shared renderer");
   }
 
   if (context.runtime != nullptr) {
@@ -726,10 +728,12 @@ void WorldRenderer::begin_world_pass(
   shader.bind();
   m_bound_shader = &shader;
   m_bound_texture = 0;
+  m_bound_environment_texture = 0;
   shader.set_uniform_mat4("u_mvp", std::span<const GLfloat, 16>{glm::value_ptr(mvp), 16});
   shader.set_uniform_mat4("u_model_view", std::span<const GLfloat, 16>{glm::value_ptr(view), 16});
   apply_baked_lighting(shader);
   shader.set_uniform_int("u_texture0", 0);
+  shader.set_uniform_int("u_texture1", 1);
   if (legacy_effect) {
     Fog::apply_far_fade_uniforms(shader, m_frame_fog);
   } else {
@@ -768,6 +772,8 @@ const WorldRenderer::WorldUniforms& WorldRenderer::world_uniforms(const Shader& 
       .premultiply_alpha = shader.uniform("u_premultiply_alpha"),
       .far_fade_depth_scale = shader.uniform("u_far_fade_depth_scale"),
       .fog_depth_scale = shader.uniform("u_fog_depth_scale"),
+      .environment_mapped = shader.uniform("u_environment_mapped"),
+      .environment_phase = shader.uniform("u_environment_phase"),
       .light_direction = {},
       .light_scale = {},
       .light_color = {}};
@@ -785,7 +791,7 @@ void WorldRenderer::apply_group_uniforms(const Shader& shader,
     const Omikron::BlendMode mode,
     const float uv_phase_u,
     const float uv_phase_v,
-    const bool legacy_effect) const {
+    const bool legacy_effect) {
   const WorldUniforms& uniforms{world_uniforms(shader)};
   const std::array<float, 2> uv_offset{Omikron::uv_scroll_offset(flags, uv_phase_u, uv_phase_v)};
   shader.set_uniform_vec2(uniforms.uv_offset, std::span<const GLfloat, 2>{uv_offset});
@@ -798,6 +804,27 @@ void WorldRenderer::apply_group_uniforms(const Shader& shader,
   } else {
     shader.set_uniform_float(uniforms.fog_depth_scale, fog_depth_scale(flags));
   }
+
+  const bool environment{environment_mapping_active(flags)};
+  shader.set_uniform_int(uniforms.environment_mapped, environment ? 1 : 0);
+  if (!environment) {
+    return;
+  }
+  const std::array<float, 2> phase{uv_phase_u, uv_phase_v};
+  shader.set_uniform_vec2(uniforms.environment_phase, std::span<const GLfloat, 2>{phase});
+  const Texture2D* const texture{
+      legacy_effect ? m_environment_texture->legacy_effect() : m_environment_texture->modern()};
+  if (texture != nullptr && m_bound_environment_texture != texture->id()) {
+    texture->bind(1);
+    m_bound_environment_texture = texture->id();
+    // Keep unit 0 current for the base texture binds that follow.
+    glActiveTexture(GL_TEXTURE0);
+  }
+}
+
+bool WorldRenderer::environment_mapping_active(const std::uint32_t flags) const {
+  return m_environment_texture != nullptr && m_detail_level >= 1U &&
+         Omikron::has_flag(flags, Omikron::MeshFlags::k_environment_mapped);
 }
 
 void WorldRenderer::draw_group(const std::size_t index,
@@ -902,6 +929,26 @@ bool WorldRenderer::update_character_meshes(
   return true;
 }
 
+void WorldRenderer::rebuild_character_meshes(
+    CharacterGpuModel& gpu, const std::span<const Omikron::MaterialGroup> groups) {
+  gpu.meshes.clear();
+  gpu.group_material_ids.clear();
+  gpu.group_flags.clear();
+  gpu.group_modes.clear();
+  std::vector<Vertex> presentation_vertices;
+  for (const Omikron::MaterialGroup& group : groups) {
+    presentation_vertices.clear();
+    presentation_vertices.reserve(group.vertices.size());
+    for (const Vertex& vertex : group.vertices) {
+      presentation_vertices.push_back(Runtime::Presentation::to_gl(vertex));
+    }
+    gpu.meshes.emplace_back(presentation_vertices, group.indices);
+    gpu.group_material_ids.push_back(group.material_id);
+    gpu.group_flags.push_back(group.flags);
+    gpu.group_modes.push_back(Omikron::blend_mode(group.flags));
+  }
+}
+
 bool WorldRenderer::character_presented(const std::size_t character_index) const {
   return character_index < m_character_visible.size() &&
          m_character_visible.at(character_index) != 0U;
@@ -980,21 +1027,7 @@ void WorldRenderer::sync_character_models(ScenarioRuntime& runtime) {
       gpu.pose_revision = character.pose_revision;
       continue;
     }
-    gpu.meshes.clear();
-    gpu.group_material_ids.clear();
-    gpu.group_flags.clear();
-    gpu.group_modes.clear();
-    for (const Omikron::MaterialGroup& group : character.posed_groups) {
-      std::vector<Vertex> presentation_vertices;
-      presentation_vertices.reserve(group.vertices.size());
-      for (const Vertex& vertex : group.vertices) {
-        presentation_vertices.push_back(Runtime::Presentation::to_gl(vertex));
-      }
-      gpu.meshes.emplace_back(presentation_vertices, group.indices);
-      gpu.group_material_ids.push_back(group.material_id);
-      gpu.group_flags.push_back(group.flags);
-      gpu.group_modes.push_back(Omikron::blend_mode(group.flags));
-    }
+    rebuild_character_meshes(gpu, character.posed_groups);
     gpu.pose_revision = character.pose_revision;
 
     App::Log::debug(LogCategory::Renderer,
@@ -1098,6 +1131,152 @@ void WorldRenderer::sync_object_models(const ScenarioRuntime& runtime) {
   }
 }
 
+void WorldRenderer::sync_crowd(const ScenarioRuntime& runtime,
+    const glm::mat4& view,
+    const glm::mat4& projection,
+    const ViewFrustum& frustum) {
+  APP_PROFILE_FUNCTION();
+  const Crowd::Runtime& crowd{runtime.crowd_runtime()};
+  const std::span<const Crowd::Prototype> prototypes{crowd.prototypes()};
+  const std::span<const Crowd::Agent> pedestrians{crowd.agents()};
+  m_crowd_visible_count = 0;
+
+  const bool same_prototypes{
+      m_crowd_prototypes.size() == prototypes.size() && std::ranges::equal(
+                                                            m_crowd_prototypes,
+                                                            prototypes,
+                                                            {},
+                                                            [](const CrowdPrototypeGpu& gpu) {
+                                                              return gpu.resource.get();
+                                                            },
+                                                            [](const Crowd::Prototype& prototype) {
+                                                              return prototype.resource.get();
+                                                            })};
+  if (!same_prototypes) {
+    m_crowd_prototypes.clear();
+    m_crowd_instances.clear();
+    m_crowd_prototypes_failed = false;
+    for (const Crowd::Prototype& prototype : prototypes) {
+      const Character::ModelResource& resource{*prototype.resource};
+      std::vector<unsigned char> usage_bits(resource.images.size(), 0U);
+      for (const Omikron::PosedGeometryLayout& layout : prototype.level_layouts) {
+        for (const Omikron::MaterialGroup& group : layout.groups) {
+          if (group.material_id >= 0 && std::cmp_less(group.material_id, usage_bits.size())) {
+            usage_bits.at(static_cast<std::size_t>(group.material_id)) |=
+                static_cast<unsigned char>(is_blended(Omikron::blend_mode(group.flags)) ? 2U : 1U);
+          }
+        }
+      }
+      CrowdPrototypeGpu gpu{.resource = prototype.resource, .textures = {}};
+      for (std::size_t image_index{0}; image_index < resource.images.size(); ++image_index) {
+        const Omikron::Texture3DTImage& image{resource.images.at(image_index)};
+        auto texture{GameColorTexture::create(static_cast<int>(image.width),
+            static_cast<int>(image.height),
+            std::span<const std::uint8_t>{image.rgba8},
+            texture_usage(usage_bits.at(image_index)))};
+        if (!texture) {
+          App::Log::warn(LogCategory::Renderer,
+              "Passerby model '{}' texture upload failed: {}",
+              resource.name,
+              texture.error());
+          m_crowd_prototypes_failed = true;
+          break;
+        }
+        gpu.textures.push_back(std::move(texture).value());
+      }
+      m_crowd_prototypes.push_back(std::move(gpu));
+    }
+  }
+  if (m_crowd_prototypes_failed) {
+    m_crowd_instances.clear();
+    return;
+  }
+  m_crowd_instances.resize(pedestrians.size());
+
+  for (std::size_t index{0}; index < pedestrians.size(); ++index) {
+    const Crowd::Agent& pedestrian{pedestrians[index]};
+    CrowdInstanceGpu& instance{m_crowd_instances.at(index)};
+    instance.visible = false;
+    const Crowd::Prototype& prototype{prototypes[pedestrian.prototype]};
+    // Passersby are animated by their ANI node; vehicles have no animation.
+    const Omikron::Animation3DA* const animation{crowd.animation(pedestrian)};
+    if (animation == nullptr && pedestrian.kind == Crowd::AgentKind::k_passer) {
+      continue;
+    }
+    const Runtime::Vec3 gl_position{Runtime::Presentation::to_gl(pedestrian.instance)};
+    const glm::vec4 eye_position{
+        view * glm::vec4{gl_position.x, gl_position.y, gl_position.z, 1.0F}};
+    // Runtime culls the instance by its root sphere; a passerby's root sits at
+    // the pelvis, so twice its radius bounds the whole body.
+    const BoundingSphere sphere{.center = {gl_position.x, gl_position.y, gl_position.z},
+        .radius = prototype.root_radius * 2.0F};
+    if (!frustum.intersects(sphere)) {
+      continue;
+    }
+
+    // Runtime 0x0048D7F0: choose the level by camera depth, then bind each
+    // object of that level to channel (script ID - level * level size).
+    const std::size_t level{Crowd::select_level_of_detail(prototype.level_roots.size(),
+        prototype.first_level,
+        prototype.switch_depths,
+        m_detail_level,
+        -eye_position[2])};
+    const Omikron::Model3DOData& model{prototype.resource->model};
+    const std::vector<std::size_t>& level_objects{prototype.level_objects.at(level)};
+    const std::uint32_t channel_offset{static_cast<std::uint32_t>(
+        (level - prototype.first_level) * prototype.level_objects.front().size())};
+    instance.objects = model.runtime_objects;
+    for (const std::size_t object_index : animation == nullptr
+                                              ? std::span<const std::size_t>{}
+                                              : std::span<const std::size_t>{level_objects}) {
+      const std::uint32_t script_id{model.meshes.at(object_index).script_id};
+      if (script_id < channel_offset) {
+        continue;
+      }
+      const Omikron::Animation3DAChannel* const channel{
+          animation->channel_by_id(script_id - channel_offset)};
+      const std::optional<Runtime::Quaternion> rotation{
+          channel == nullptr ? std::nullopt : channel->sample_rotation(pedestrian.progress)};
+      if (rotation.has_value()) {
+        instance.objects.at(object_index).animation_matrix =
+            Runtime::quaternion_matrix(rotation.value());
+      }
+    }
+    // The level root takes the instance position (Runtime writes it into the
+    // root's serialized position before submitting the subtree).
+    instance.objects.at(level_objects.front()).local_offset = {};
+    if (const auto resolved{Omikron::Model3DO::resolve_runtime_transforms(model, instance.objects)};
+        !resolved) {
+      continue;
+    }
+    if (const auto posed{Omikron::Model3DO::apply_pose(model,
+            prototype.level_layouts.at(level),
+            instance.objects,
+            model.vertices,
+            instance.groups)};
+        !posed) {
+      continue;
+    }
+    if (!update_character_meshes(instance.model, instance.groups)) {
+      rebuild_character_meshes(instance.model, instance.groups);
+    }
+
+    instance.prototype = pedestrian.prototype;
+    instance.lit = LitInstance{.groups = instance.groups,
+        .objects = instance.objects,
+        .presentation =
+            Runtime::Transform{.matrix = pedestrian.facing, .translation = pedestrian.instance},
+        .actor_position = pedestrian.instance,
+        .actor_radius = prototype.root_radius};
+    const glm::mat4 model_matrix{Runtime::Presentation::to_gl(instance.lit.presentation)};
+    instance.matrices.model_view = view * model_matrix;
+    instance.matrices.mvp = projection * instance.matrices.model_view;
+    instance.matrices.to_model = glm::inverse(glm::mat3(model_matrix));
+    instance.visible = true;
+    ++m_crowd_visible_count;
+  }
+}
+
 void WorldRenderer::draw_character_group(const Character::RuntimeCharacter& character,
     const InstanceMatrices& matrices,
     const std::size_t group_index,
@@ -1108,7 +1287,24 @@ void WorldRenderer::draw_character_group(const Character::RuntimeCharacter& char
   if (found == m_character_models.end()) {
     return;
   }
-  CharacterGpuModel& gpu{*found->second};
+  const CharacterGpuModel& gpu{*found->second};
+  const LitInstance lit{.groups = character.posed_groups,
+      .objects = character.runtime_objects,
+      .presentation = character.presentation_transform(),
+      .actor_position = character.transform.translation,
+      .actor_radius = character.actor_spatial_radius().value_or(0.0F)};
+  draw_lit_group(
+      gpu, gpu.textures, lit, matrices, group_index, uv_phase_u, uv_phase_v, legacy_effect);
+}
+
+void WorldRenderer::draw_lit_group(const CharacterGpuModel& gpu,
+    const std::span<const GameColorTexture> textures,
+    const LitInstance& lit,
+    const InstanceMatrices& matrices,
+    const std::size_t group_index,
+    const float uv_phase_u,
+    const float uv_phase_v,
+    const bool legacy_effect) {
   if (group_index >= gpu.meshes.size()) {
     return;
   }
@@ -1120,7 +1316,7 @@ void WorldRenderer::draw_character_group(const Character::RuntimeCharacter& char
       uniforms.mvp, std::span<const GLfloat, 16>{glm::value_ptr(matrices.mvp), 16});
   shader.set_uniform_mat4(
       uniforms.model_view, std::span<const GLfloat, 16>{glm::value_ptr(matrices.model_view), 16});
-  apply_actor_lighting(shader, character, group_index, matrices.to_model);
+  apply_actor_lighting(shader, lit, group_index, matrices.to_model);
   apply_group_uniforms(shader,
       gpu.group_flags.at(group_index),
       gpu.group_modes.at(group_index),
@@ -1129,10 +1325,10 @@ void WorldRenderer::draw_character_group(const Character::RuntimeCharacter& char
       legacy_effect);
 
   const std::int32_t material_id{gpu.group_material_ids.at(group_index)};
-  if (material_id < 0 || static_cast<std::size_t>(material_id) >= gpu.textures.size()) {
+  if (material_id < 0 || static_cast<std::size_t>(material_id) >= textures.size()) {
     return;
   }
-  const GameColorTexture& color_texture{gpu.textures.at(static_cast<std::size_t>(material_id))};
+  const GameColorTexture& color_texture{textures[static_cast<std::size_t>(material_id)]};
   const Texture2D* texture{legacy_effect ? color_texture.legacy_effect() : color_texture.modern()};
   if (texture == nullptr) {
     return;
@@ -1187,7 +1383,7 @@ void WorldRenderer::apply_baked_lighting(const Shader& shader) const {
 }
 
 void WorldRenderer::apply_actor_lighting(const Shader& shader,
-    const Character::RuntimeCharacter& character,
+    const LitInstance& lit,
     const std::size_t group_index,
     const glm::mat3& to_model) const {
   const WorldUniforms& uniforms{world_uniforms(shader)};
@@ -1198,17 +1394,14 @@ void WorldRenderer::apply_actor_lighting(const Shader& shader,
   // Runtime pairs a lit instance with every light whose shape box overlaps
   // the actor box, then attenuates per node by the node's distance.
   int light_count{0};
-  if (group_index < character.posed_groups.size()) {
-    const Omikron::MaterialGroup& group{character.posed_groups.at(group_index)};
+  if (group_index < lit.groups.size()) {
+    const Omikron::MaterialGroup& group{lit.groups[group_index]};
     const bool lit_surface{(group.flags & Lighting::K_UNLIT_MESH_FLAGS) == 0U};
-    if (lit_surface && group.mesh_index < character.runtime_objects.size()) {
-      const Runtime::Transform presentation{character.presentation_transform()};
+    if (lit_surface && group.mesh_index < lit.objects.size()) {
       const Runtime::Vec3 node_position{Runtime::transform_point(
-          character.runtime_objects.at(group.mesh_index).world_translation, presentation)};
-      const Lighting::NodeLightSet selected{Lighting::select_node_lights(m_lights,
-          character.transform.translation,
-          character.actor_spatial_radius().value_or(0.0F),
-          node_position)};
+          lit.objects[group.mesh_index].world_translation, lit.presentation)};
+      const Lighting::NodeLightSet selected{Lighting::select_node_lights(
+          m_lights, lit.actor_position, lit.actor_radius, node_position)};
       for (const Lighting::NodeLight& node_light : selected.active()) {
         const Lighting::LightSource& light{m_lights.at(node_light.light_index)};
         const Runtime::Vec3 gl_direction{Runtime::Presentation::to_gl(light.direction)};
@@ -1341,6 +1534,7 @@ void WorldRenderer::render(const Camera& camera,
     sync_decor_model(*runtime);
     sync_character_models(*runtime);
     sync_object_models(*runtime);
+    sync_crowd(*runtime, view, projection, frustum);
   }
   // After the decor sync, which may rebuild the meshes the slopes live on.
   const Shader* const cubic_shader{
@@ -1430,6 +1624,23 @@ void WorldRenderer::render(const Camera& camera,
       for (std::size_t index{0}; index < gpu->meshes.size(); ++index) {
         if (!is_blended(gpu->group_modes.at(index))) {
           draw_character_group(character, matrices, index, uv_phase_u, uv_phase_v, false);
+        }
+      }
+    }
+    for (const CrowdInstanceGpu& instance : m_crowd_instances) {
+      if (!instance.visible) {
+        continue;
+      }
+      for (std::size_t index{0}; index < instance.model.meshes.size(); ++index) {
+        if (!is_blended(instance.model.group_modes.at(index))) {
+          draw_lit_group(instance.model,
+              m_crowd_prototypes.at(instance.prototype).textures,
+              instance.lit,
+              instance.matrices,
+              index,
+              uv_phase_u,
+              uv_phase_v,
+              false);
         }
       }
     }
@@ -1526,6 +1737,24 @@ void WorldRenderer::render(const Camera& camera,
           Runtime::Presentation::to_gl(character.presentation_transform()), true)};
       composite_blended_runs(gpu->group_modes, [&](const std::size_t index) {
         draw_character_group(character, matrices, index, uv_phase_u, uv_phase_v, true);
+      });
+    }
+    for (const CrowdInstanceGpu& instance : m_crowd_instances) {
+      if (!instance.visible ||
+          std::ranges::none_of(instance.model.group_modes, [](const Omikron::BlendMode mode) {
+            return is_blended(mode);
+          })) {
+        continue;
+      }
+      composite_blended_runs(instance.model.group_modes, [&](const std::size_t index) {
+        draw_lit_group(instance.model,
+            m_crowd_prototypes.at(instance.prototype).textures,
+            instance.lit,
+            instance.matrices,
+            index,
+            uv_phase_u,
+            uv_phase_v,
+            true);
       });
     }
 

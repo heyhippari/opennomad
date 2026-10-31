@@ -305,6 +305,9 @@ class Runtime {
   /// Replaces the CPU model loader. Intended for embedding/tests before any
   /// character resources are materialized; already-cached resources remain.
   void set_model_loader(ModelLoader model_loader);
+  [[nodiscard]] const ModelLoader& model_loader() const {
+    return m_model_loader;
+  }
 
   /// Replaces the CTL bank loader. Intended for embedding/tests before any
   /// controller is created; already-cached banks remain shared.
@@ -415,9 +418,12 @@ class Runtime {
   /// Removes only the dialogue overlay and rebuilds the current base pose.
   void clear_dialog_performance(std::int16_t character_id);
 
- private:
+  /// Loads MESHES/PERSOS/<name>.3DO/.3DT as an actor presents it: only the
+  /// actor-representative subtree is posed. Default production loader.
   [[nodiscard]] static std::expected<std::shared_ptr<const ModelResource>, std::string>
   load_model_resource(std::string_view model_resource);
+
+ private:
   [[nodiscard]] static std::expected<std::shared_ptr<const Omikron::CtlControlSet>, std::string>
   load_ctl_bank(std::string_view control_set_name);
 

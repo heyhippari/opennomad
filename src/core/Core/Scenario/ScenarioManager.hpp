@@ -405,6 +405,15 @@ class ScenarioManager {
   /// Injects the audio system for scenario-owned voice lifecycle management.
   void set_audio_system(Audio::AudioSystem* audio_system);
 
+  /// Crowd Density preference (0..4, Runtime 0x0090E726). Runtime reads it
+  /// when an AREA's trajectory network is populated, not afterwards.
+  void set_street_activity(std::uint8_t street_activity) {
+    m_street_activity = street_activity;
+  }
+  [[nodiscard]] std::uint8_t street_activity() const {
+    return m_street_activity;
+  }
+
   /// Hook applied to every world runtime immediately after it is created and
   /// before `load_world_context` returns it, i.e. before the session preloads
   /// AREA characters into it. Lets embedders (and focused tests) inject model
@@ -506,6 +515,7 @@ class ScenarioManager {
   std::optional<std::uint64_t> m_dialog_camera_generation;
 
   Audio::AudioSystem* m_audio_system{nullptr};  ///< Non-owning.
+  std::uint8_t m_street_activity{3};
   WorldRuntimeConfigurator m_world_runtime_configurator;
 
   /// Normalizes legacy Windows separators to the portable form.

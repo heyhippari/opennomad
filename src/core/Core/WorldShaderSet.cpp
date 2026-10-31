@@ -19,7 +19,10 @@ namespace {
 constexpr std::string_view K_LEGACY_WORLD_FRAGMENT_BODY{R"glsl(
 in vec2 v_uv;
 in vec4 v_color;
+in vec2 v_environment_uv;
 uniform sampler2D u_texture0;
+uniform sampler2D u_texture1;
+uniform int u_environment_mapped;
 uniform float u_alpha_test;
 uniform float u_premultiply_alpha;
 out vec4 frag_colour;
@@ -28,8 +31,11 @@ void main() {
     if (u_alpha_test > 0.5 && texel.a < 0.5) {
         discard;
     }
-    vec4 source =
-        vec4(texel.rgb * v_color.rgb, texel.a * runtime_far_fade());
+    vec3 color = texel.rgb * v_color.rgb;
+    if (u_environment_mapped != 0) {
+        color *= texture(u_texture1, v_environment_uv).rgb;
+    }
+    vec4 source = vec4(color, texel.a * runtime_far_fade());
     frag_colour = vec4(mix(source.rgb, source.rgb * source.a, u_premultiply_alpha), source.a);
 }
 )glsl"};

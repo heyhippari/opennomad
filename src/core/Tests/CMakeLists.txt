@@ -332,6 +332,10 @@ add_executable(LogCategoryTest LogCategory.spec.cpp $<TARGET_OBJECTS:TestRunner>
 add_test(NAME LogCategoryTest COMMAND LogCategoryTest)
 target_link_libraries(LogCategoryTest PRIVATE doctest::doctest Core)
 
+add_executable(CrowdTest Crowd.spec.cpp $<TARGET_OBJECTS:TestRunner>)
+add_test(NAME CrowdTest COMMAND CrowdTest)
+target_link_libraries(CrowdTest PRIVATE doctest::doctest Core)
+
 # Integration tests read original game data from disk (never committed) and
 # are only registered when explicitly enabled. At runtime the tests locate
 # the game data through the OPENNOMAD_GAME_DATA_ROOT environment variable.
@@ -369,6 +373,11 @@ if(OPENNOMAD_GAME_DATA_TESTS)
       GameDataSpriteIntegration.spec.cpp $<TARGET_OBJECTS:TestRunner>)
   add_test(NAME GameDataSpriteIntegrationTest COMMAND GameDataSpriteIntegrationTest)
   target_link_libraries(GameDataSpriteIntegrationTest PRIVATE doctest::doctest Core)
+
+  add_executable(CrowdIntegrationTest
+      CrowdIntegration.spec.cpp $<TARGET_OBJECTS:TestRunner>)
+  add_test(NAME CrowdIntegrationTest COMMAND CrowdIntegrationTest)
+  target_link_libraries(CrowdIntegrationTest PRIVATE doctest::doctest Core)
 
   add_executable(QdAdpIntegrationTest
       QdAdpIntegration.spec.cpp $<TARGET_OBJECTS:TestRunner>)

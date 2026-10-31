@@ -15,6 +15,7 @@
 
 #include "Core/Audio/AudioTypes.hpp"
 #include "Core/Character/CharacterRuntime.hpp"
+#include "Core/Crowd/CrowdRuntime.hpp"
 #include "Core/Object/ObjectPlacementRuntime.hpp"
 #include "Core/Omikron/Animation3DA.hpp"
 #include "Core/Omikron/IamArea.hpp"
@@ -151,6 +152,9 @@ class ScenarioRuntime final : public Script::ScriptWorld, private Sfx::Host {
 
   [[nodiscard]] ObjectPlacement::Runtime& object_placement_runtime();
   [[nodiscard]] const ObjectPlacement::Runtime& object_placement_runtime() const;
+  /// Passerby crowd of this world's AREA trajectory network, if any.
+  [[nodiscard]] Crowd::Runtime& crowd_runtime();
+  [[nodiscard]] const Crowd::Runtime& crowd_runtime() const;
 
   // --- Sprite instances -----------------------------------------------------
 
@@ -275,6 +279,10 @@ class ScenarioRuntime final : public Script::ScriptWorld, private Sfx::Host {
   [[nodiscard]] const Audio::AudioSystem* audio_system() const;
 
  private:
+  /// Starts, keeps or stops each slider's engine loop by listener distance.
+  void service_slider_engines();
+  void stop_slider_engines();
+
   [[nodiscard]] std::expected<std::size_t, std::string> resolve_sfx_sprite_id(
       std::uint16_t authored_sprite_id) const override;
   [[nodiscard]] std::expected<Sfx::SpawnedSprite, std::string> spawn_sfx_sprite(
@@ -327,6 +335,7 @@ class ScenarioRuntime final : public Script::ScriptWorld, private Sfx::Host {
   std::array<float, 3> m_world_anchor{0.0F, 0.0F, 0.0F};  ///< Runtime XYZ inches.
 
   Character::Runtime m_character_runtime;
+  Crowd::Runtime m_crowd_runtime;
   BodyLocator m_body_locator;
   ObjectPlacement::Runtime m_object_placement_runtime;
   std::vector<std::unique_ptr<const Omikron::Animation3DA>> m_animation_resources;
@@ -352,6 +361,12 @@ class ScenarioRuntime final : public Script::ScriptWorld, private Sfx::Host {
   std::vector<Audio::SoundResourceId> m_sound_resources;
   /// Non-owning audio subsystem injected by the application.
   Audio::AudioSystem* m_audio{nullptr};
+  /// Slider engine loop (Runtime 0x00456B40): `SOUNDS/sliderm01.wav`, one
+  /// voice per slider within range, keyed by crowd agent index.
+  std::optional<Audio::SoundResourceId> m_slider_engine_sound;
+  bool m_slider_engine_sound_failed{false};
+  std::vector<std::optional<Audio::VoiceHandle>> m_slider_engine_voices;
+  std::uint32_t m_slider_engine_generation{0};
   /// One-shot guard for the XYZ-pool fallback diagnostic (POC).
   bool m_xyz_fallback_logged{false};
   const Omikron::Model3DOData* m_decor_model{nullptr};
