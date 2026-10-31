@@ -41,6 +41,8 @@ struct RuntimeTextLayout {
   std::vector<RuntimePositionedGlyph> glyphs;
   std::vector<RuntimeTextLayoutLine> lines;
   std::vector<std::size_t> format_boundary_source_offsets;
+  /// Runtime formatter result: lowest advanced line position minus the region top.
+  float measured_height{0.0F};
 };
 
 struct RuntimeTextLayoutOptions {
@@ -58,8 +60,17 @@ struct RuntimeTextLayoutOptions {
   float bottom{476.0F};
 };
 
+/// Lays out authored text like Runtime's formatter (0x0043F3E0): every line is
+/// placed independently at the current cursor, `{X}` moves the left-aligned
+/// origin and cursor, and line breaks advance by 120% of the current font's
+/// line height.
 [[nodiscard]] RuntimeTextLayout layout_runtime_text(const RuntimeTextDocument& document,
     const RuntimeTextMetrics& metrics,
     const RuntimeTextLayoutOptions& options = {});
+
+/// Lays out IAM/OBJECT world text in Runtime's bottom-anchored, left-aligned
+/// VOIXOFF region with 16-unit margins.
+[[nodiscard]] RuntimeTextLayout layout_runtime_world_text(
+    const RuntimeTextDocument& document, const RuntimeTextMetrics& metrics);
 
 }  // namespace App::Interface

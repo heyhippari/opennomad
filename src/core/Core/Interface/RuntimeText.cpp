@@ -117,38 +117,35 @@ RuntimeTextDocument parse_runtime_text(
       }
       continue;
     }
-    if (!command_mode) {
-      if (byte == '{') {
-        command_mode = true;
-        ++offset;
-      } else if (byte == '[') {
+    // Runtime 0x0043F567 tests braces and brackets before the command
+    // dispatch, so a stray '}' outside a command block is swallowed (retail
+    // credits author "{f1}}") and brackets keep counting inside one.
+    if (byte == '{' || byte == '}') {
+      command_mode = byte == '{';
+      ++offset;
+      continue;
+    }
+    if (byte == '[' || byte == ']') {
+      if (byte == '[') {
         ++span_ordinal;
-        RuntimeTextEvent event;
-        event.type = RuntimeTextEventType::k_selectable_span_begin;
-        event.source_offset = offset++;
-        event.source_length = 1;
-        event.span_ordinal = span_ordinal;
-        events.push_back(std::move(event));
-      } else if (byte == ']') {
-        RuntimeTextEvent event;
-        event.type = RuntimeTextEventType::k_selectable_span_end;
-        event.source_offset = offset++;
-        event.source_length = 1;
-        event.span_ordinal = span_ordinal;
-        events.push_back(std::move(event));
-      } else if (byte == '\r') {
+      }
+      RuntimeTextEvent event;
+      event.type = byte == '[' ? RuntimeTextEventType::k_selectable_span_begin
+                               : RuntimeTextEventType::k_selectable_span_end;
+      event.source_offset = offset++;
+      event.source_length = 1;
+      event.span_ordinal = span_ordinal;
+      events.push_back(std::move(event));
+      continue;
+    }
+    if (!command_mode) {
+      if (byte == '\r') {
         ++offset;
       } else if (byte == '\n') {
         append_simple_event(events, RuntimeTextEventType::k_line_break, offset++);
       } else {
         append_text_byte(events, byte, offset++);
       }
-      continue;
-    }
-
-    if (byte == '}') {
-      command_mode = false;
-      ++offset;
       continue;
     }
 

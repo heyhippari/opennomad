@@ -259,6 +259,16 @@ struct WorldVoiceOverCommand {
   std::string audio_path;
 };
 
+/// Runtime's single OBJECTS image slot (0x0093072C). Every OBJECTS
+/// activation releases the current image (0x00404672); a type-0x10 object then
+/// loads `IMAGES/<stem>.BMP` (0x004046B5). An empty path only releases.
+struct WorldImageCommand {
+  std::uint32_t scene_id{0};
+  std::uint32_t scene_generation{0};
+  std::int16_t object_id{0};
+  std::string image_path;
+};
+
 enum class TextPresentationRole : std::uint8_t {
   k_unknown,
   k_spoken_subtitle,
@@ -491,6 +501,10 @@ class WorldPresentationState {
     m_world_text_commands.push_back(std::move(command));
   }
 
+  void enqueue_world_image(WorldImageCommand command) {
+    m_world_image_commands.push_back(std::move(command));
+  }
+
   [[nodiscard]] std::optional<WorldCameraCommand> take_camera() {
     if (m_camera_commands.empty()) {
       return std::nullopt;
@@ -545,6 +559,15 @@ class WorldPresentationState {
     return command;
   }
 
+  [[nodiscard]] std::optional<WorldImageCommand> take_world_image() {
+    if (m_world_image_commands.empty()) {
+      return std::nullopt;
+    }
+    WorldImageCommand command{std::move(m_world_image_commands.front())};
+    m_world_image_commands.pop_front();
+    return command;
+  }
+
   [[nodiscard]] std::size_t pending_camera_count() const {
     return m_camera_commands.size();
   }
@@ -565,6 +588,9 @@ class WorldPresentationState {
   }
   [[nodiscard]] std::size_t pending_world_text_count() const {
     return m_world_text_commands.size();
+  }
+  [[nodiscard]] std::size_t pending_world_image_count() const {
+    return m_world_image_commands.size();
   }
 
   /// Monotonic epoch incremented only at the global presentation/session
@@ -609,6 +635,7 @@ class WorldPresentationState {
     m_letterbox_commands.clear();
     m_voice_over_commands.clear();
     m_world_text_commands.clear();
+    m_world_image_commands.clear();
     m_sky_name.clear();
     m_day_clock.set(Fog::K_NEW_GAME_CLOCK);
     ++m_reset_generation;
@@ -621,6 +648,7 @@ class WorldPresentationState {
   std::deque<WorldLetterboxCommand> m_letterbox_commands;
   std::deque<WorldVoiceOverCommand> m_voice_over_commands;
   std::deque<WorldTextCommand> m_world_text_commands;
+  std::deque<WorldImageCommand> m_world_image_commands;
   std::string m_sky_name;
   Fog::DayClock m_day_clock;
   std::uint64_t m_reset_generation{0};

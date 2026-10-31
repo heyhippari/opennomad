@@ -1020,6 +1020,7 @@ void WorldScene::synchronize_presentation_reset() {
   }
   if (m_presentation_reset_observer.synchronize(
           m_scenarios->world_presentation().reset_generation(), m_fade, m_letterbox, m_camera)) {
+    m_interfaces.clear_world_image();
     App::Log::debug(LogCategory::Renderer,
         "WorldScene: reset session-global fade, letterbox and camera presentation for epoch {}",
         m_presentation_reset_observer.observed_generation());
@@ -1110,6 +1111,23 @@ void WorldScene::consume_object_presentation_commands() {
           "WorldScene: discarded stale OBJECTS world text for scene={} generation={}",
           command->scene_id,
           command->scene_generation);
+    }
+  }
+  while (std::optional<WorldImageCommand> command{
+      m_scenarios->world_presentation().take_world_image()}) {
+    if (resident_owner(command->scene_id, command->scene_generation) == nullptr) {
+      App::Log::debug(LogCategory::Renderer,
+          "WorldScene: discarded stale OBJECTS image for scene={} generation={}",
+          command->scene_id,
+          command->scene_generation);
+      continue;
+    }
+    if (auto shown{m_interfaces.set_world_image(command->image_path)}; !shown) {
+      App::Log::warn(LogCategory::Renderer,
+          "OBJECTS {} image '{}' unavailable: {}",
+          command->object_id,
+          command->image_path,
+          shown.error());
     }
   }
 }
@@ -1254,6 +1272,7 @@ void WorldScene::update(const float delta_time, const Input::InputManager& input
             context->generation);
 
         m_world_text.reset();
+        m_interfaces.clear_world_image();
 
         m_observed_scene_id = context->scene_id;
         m_observed_generation = context->generation;
@@ -1261,6 +1280,7 @@ void WorldScene::update(const float delta_time, const Input::InputManager& input
       }
     } else if (m_world_observed) {
       m_world_text.reset();
+      m_interfaces.clear_world_image();
       m_world_observed = false;
     }
   }
@@ -1501,6 +1521,9 @@ void WorldScene::render() {
         m_letterbox.current_bar_height(static_cast<float>(m_width), static_cast<float>(m_height)),
         static_cast<float>(m_height));
   }
+
+  // The OBJECTS image is a queued 2D blit above the world and cinematic mask.
+  m_interfaces.render_world_image(m_width, m_height);
 
   // I2D is always the final scene layer. Interface 29's full-screen bump
   // background therefore covers the world while the main menu is active,

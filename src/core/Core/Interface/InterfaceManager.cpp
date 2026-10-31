@@ -718,6 +718,44 @@ void InterfaceManager::render_world_text(const RuntimeTextDocument& document,
       document, presentation_time_ms, m_fonts, pixel_width, pixel_height, counters);
 }
 
+std::expected<void, std::string> InterfaceManager::set_world_image(
+    const std::string& relative_path) {
+  m_world_image.reset();
+  if (relative_path.empty()) {
+    return {};
+  }
+  auto file{read_file(relative_path)};
+  if (!file) {
+    return std::expected<void, std::string>{std::unexpect, std::move(file).error()};
+  }
+  auto bmp{Omikron::BmpImageDecoder::load(std::span<const std::byte>{file.value()})};
+  if (!bmp) {
+    return std::expected<void, std::string>{
+        std::unexpect, fmt::format("{}: {}", relative_path, bmp.error())};
+  }
+  auto texture{Texture2D::create(bmp->width,
+      bmp->height,
+      std::span<const std::uint8_t>{bmp->rgba8},
+      k_legacy_effect_texture_policy.encoding,
+      k_legacy_effect_texture_policy.filter)};
+  if (!texture) {
+    return std::expected<void, std::string>{
+        std::unexpect, fmt::format("{}: {}", relative_path, texture.error())};
+  }
+  m_world_image.emplace(std::move(texture).value());
+  App::Log::debug(
+      LogCategory::I2D, "world image: {} ({}x{})", relative_path, bmp->width, bmp->height);
+  return {};
+}
+
+void InterfaceManager::render_world_image(const int pixel_width, const int pixel_height) {
+  if (m_renderer == nullptr || !m_world_image.has_value()) {
+    return;
+  }
+  Debug::I2DCounters counters;
+  m_renderer->render_world_image(m_world_image.value(), pixel_width, pixel_height, counters);
+}
+
 void InterfaceManager::set_background_interpolated(const bool interpolated) {
   for (const auto& instance : m_instances) {
     if (instance->background != nullptr) {

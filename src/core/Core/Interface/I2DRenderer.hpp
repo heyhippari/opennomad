@@ -94,6 +94,12 @@ class I2DRenderer {
       int pixel_height,
       Debug::I2DCounters& counters);
 
+  /// Draws an OBJECTS image like Runtime mode 0x0A (0x00466F1E): stretched to
+  /// the screen when it fits, otherwise aspect-fitted and centred, with the
+  /// loader's black source colour key (0x00428E86).
+  void render_world_image(
+      const Texture2D& image, int pixel_width, int pixel_height, Debug::I2DCounters& counters);
+
  private:
   /// One contiguous run of quads sharing a texture and source-key state.
   struct DrawCommand {

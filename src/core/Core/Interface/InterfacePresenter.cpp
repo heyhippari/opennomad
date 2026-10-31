@@ -2,6 +2,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <expected>
+#include <string>
 
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Dialog/DialogRuntime.hpp"
@@ -56,6 +58,26 @@ void InterfacePresenter::render_world_text(const RuntimeTextDocument& document,
     const int pixel_height) {
   if (m_manager != nullptr) {
     m_manager->render_world_text(document, presentation_time_ms, pixel_width, pixel_height);
+  }
+}
+
+std::expected<void, std::string> InterfacePresenter::set_world_image(
+    const std::string& relative_path) {
+  if (m_manager == nullptr) {
+    return std::expected<void, std::string>{std::unexpect, "no interface manager"};
+  }
+  return m_manager->set_world_image(relative_path);
+}
+
+void InterfacePresenter::clear_world_image() {
+  if (m_manager != nullptr) {
+    m_manager->clear_world_image();
+  }
+}
+
+void InterfacePresenter::render_world_image(const int pixel_width, const int pixel_height) {
+  if (m_manager != nullptr) {
+    m_manager->render_world_image(pixel_width, pixel_height);
   }
 }
 

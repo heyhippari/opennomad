@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstddef>
+#include <expected>
+#include <string>
 #include <string_view>
 
 #include "Core/Dialog/DialogRuntime.hpp"
@@ -44,6 +46,14 @@ class InterfacePresenter {
       std::uint64_t presentation_time_ms,
       int pixel_width,
       int pixel_height);
+
+  /// Replaces the OBJECTS image slot; an empty path only releases it.
+  [[nodiscard]] std::expected<void, std::string> set_world_image(const std::string& relative_path);
+
+  /// Releases the OBJECTS image slot.
+  void clear_world_image();
+
+  void render_world_image(int pixel_width, int pixel_height);
 
  private:
   InterfaceManager* m_manager{nullptr};

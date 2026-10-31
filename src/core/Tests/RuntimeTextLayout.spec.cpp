@@ -31,10 +31,12 @@ TEST_SUITE("Core::Interface::RuntimeTextLayout") {
   }
 
   TEST_CASE("applies alignment absolute position and mode 0x10 boundary") {
+    // Runtime right-aligns against the region's right bound; {X} only moves
+    // the cursor (and the left-aligned origin).
     const auto right{App::Interface::layout_runtime_text(
         App::Interface::parse_runtime_text("{X090058}{D}AB"), fixed_metrics)};
-    CHECK(right.glyphs.at(0).x == doctest::Approx(556.0F));
-    CHECK(right.glyphs.at(0).y == doctest::Approx(272.4F));
+    CHECK(right.glyphs.at(0).x == doctest::Approx(588.0F));
+    CHECK(right.glyphs.at(0).y == doctest::Approx(278.4F));
 
     const auto forced_left{App::Interface::layout_runtime_text(
         App::Interface::parse_runtime_text("{F}AB"), fixed_metrics)};
@@ -61,6 +63,57 @@ TEST_SUITE("Core::Interface::RuntimeTextLayout") {
         App::Interface::parse_runtime_text(" A"), fixed_metrics, options)};
     REQUIRE_EQ(leading_space.glyphs.size(), 2);
     CHECK_EQ(leading_space.glyphs.front().text_byte, ' ');
+  }
+
+  TEST_CASE("places each credit line at its own absolute origin") {
+    App::Interface::RuntimeTextLayoutOptions options;
+    options.left = 16.0F;
+    options.right = 624.0F;
+    options.top = 0.0F;
+    options.bottom = 480.0F;
+    options.initial_style.horizontal = App::Interface::RuntimeHorizontalMode::k_left;
+    options.initial_style.vertical = App::Interface::RuntimeVerticalMode::k_top;
+    const auto layout{App::Interface::layout_runtime_text(
+        App::Interface::parse_runtime_text(
+            "{X010030}{f1}Written\r\n{X020035}{f3}David\r\nCAGE\r\n{X050050}{D}Right"),
+        fixed_metrics,
+        options)};
+    REQUIRE_EQ(layout.lines.size(), 4);
+    CHECK(layout.lines.at(0).x == doctest::Approx(64.0F));
+    CHECK(layout.lines.at(0).y == doctest::Approx(144.0F));
+    CHECK(layout.lines.at(1).x == doctest::Approx(128.0F));
+    CHECK(layout.lines.at(1).y == doctest::Approx(168.0F));
+    // A line break keeps the {X} origin and advances by 120% of 12 units.
+    CHECK(layout.lines.at(2).x == doctest::Approx(128.0F));
+    CHECK(layout.lines.at(2).y == doctest::Approx(182.0F));
+    CHECK(layout.lines.at(3).x == doctest::Approx(624.0F - 50.0F));
+    CHECK(layout.lines.at(3).y == doctest::Approx(240.0F));
+  }
+
+  TEST_CASE("bottom-anchors plain world text in the VOIXOFF region") {
+    const auto layout{App::Interface::layout_runtime_world_text(
+        App::Interface::parse_runtime_text("AB\nCD"), fixed_metrics)};
+    REQUIRE_EQ(layout.lines.size(), 2);
+    CHECK_EQ(layout.glyphs.at(0).style.font_key, 'V');
+    CHECK(layout.lines.at(0).x == doctest::Approx(16.0F));
+    // Two 14-unit advances measured, then placed 16 units above the bottom.
+    CHECK(layout.lines.at(0).y == doctest::Approx(480.0F - 28.0F - 16.0F));
+    CHECK(layout.lines.at(1).y == doctest::Approx(480.0F - 14.0F - 16.0F));
+  }
+
+  TEST_CASE("wraps at the last space and resumes after it") {
+    App::Interface::RuntimeTextLayoutOptions options;
+    options.left = 0.0F;
+    options.right = 55.0F;
+    options.top = 0.0F;
+    options.initial_style.horizontal = App::Interface::RuntimeHorizontalMode::k_left;
+    options.initial_style.vertical = App::Interface::RuntimeVerticalMode::k_top;
+    const auto layout{App::Interface::layout_runtime_text(
+        App::Interface::parse_runtime_text("AA BB CC"), fixed_metrics, options)};
+    REQUIRE_EQ(layout.lines.size(), 2);
+    CHECK_EQ(layout.lines.at(0).glyph_count, 2);
+    CHECK_EQ(layout.lines.at(1).glyph_count, 5);
+    CHECK(layout.lines.at(1).y == doctest::Approx(14.0F));
   }
 
   TEST_CASE("applies selected style only to the selected flat span") {

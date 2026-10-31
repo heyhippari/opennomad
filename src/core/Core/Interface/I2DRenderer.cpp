@@ -763,7 +763,7 @@ void I2DRenderer::render_world_text(const RuntimeTextDocument& document,
     return;
   }
   const I2DPresentationTransform transform{make_presentation_transform(pixel_width, pixel_height)};
-  const RuntimeTextLayout layout{layout_runtime_text(
+  const RuntimeTextLayout layout{layout_runtime_world_text(
       document, [&fonts, &transform](const std::uint8_t font_key, const std::uint8_t text_byte) {
         const FontResource* font{
             fonts.ensure_font(static_cast<char>(font_key), transform.pixels_per_reference_unit)};
@@ -821,6 +821,66 @@ void I2DRenderer::render_world_text(const RuntimeTextDocument& document,
       counters.quads += 1U;
     }
   }
+  flush();
+  counters.draw_calls += m_commands.size();
+  glDisable(GL_BLEND);
+  glEnable(GL_CULL_FACE);
+  glEnable(GL_DEPTH_TEST);
+  Shader::unbind();
+  Texture2D::unbind();
+  VertexArray::unbind();
+}
+
+void I2DRenderer::render_world_image(const Texture2D& image,
+    const int pixel_width,
+    const int pixel_height,
+    Debug::I2DCounters& counters) {
+  if (!m_initialized || pixel_width <= 0 || pixel_height <= 0 || image.width() <= 0 ||
+      image.height() <= 0) {
+    return;
+  }
+  const I2DPresentationTransform transform{make_presentation_transform(pixel_width, pixel_height)};
+  const auto image_width{static_cast<float>(image.width())};
+  const auto image_height{static_cast<float>(image.height())};
+  float x0{0.0F};
+  float y0{0.0F};
+  float x1{k_reference_width};
+  float y1{k_reference_height};
+  if (image.width() > pixel_width || image.height() > pixel_height) {
+    // Larger than the screen: Runtime scales by the smaller ratio and centres.
+    const float scale{std::min(static_cast<float>(pixel_width) / image_width,
+                          static_cast<float>(pixel_height) / image_height) /
+                      transform.pixels_per_reference_unit};
+    const float width{image_width * scale};
+    const float height{image_height * scale};
+    x0 = (k_reference_width - width) * 0.5F;
+    y0 = (k_reference_height - height) * 0.5F;
+    x1 = x0 + width;
+    y1 = y0 + height;
+  }
+  glViewport(0, 0, pixel_width, pixel_height);
+  glDisable(GL_DEPTH_TEST);
+  glDisable(GL_CULL_FACE);
+  glEnable(GL_BLEND);
+  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+  m_shader->bind();
+  m_shader->set_uniform_mat4(
+      "u_mvp", std::span<const GLfloat, 16>{glm::value_ptr(transform.projection), 16});
+  m_shader->set_uniform_int("u_texture0", 0);
+  reset();
+  // BmpImage rows are bottom-up, so the top edge samples v = 1.
+  push_quad(image,
+      x0,
+      y0,
+      x1,
+      y1,
+      0.0F,
+      1.0F,
+      1.0F,
+      0.0F,
+      std::array<float, 4>{1.0F, 1.0F, 1.0F, 1.0F},
+      I2DBlitOptions{.source_colour_key = std::array<float, 3>{0.0F, 0.0F, 0.0F}});
+  counters.quads += 1U;
   flush();
   counters.draw_calls += m_commands.size();
   glDisable(GL_BLEND);

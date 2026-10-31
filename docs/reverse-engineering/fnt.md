@@ -1,7 +1,7 @@
 # Retail FNT bitmap fonts and Runtime text-control grammar
 
 > **Status:** reverse-engineering reference for OpenNomad  
-> **Last updated:** 2026-08-27
+> **Last updated:** 2026-10-31
 >
 > This document describes both the retail `.FNT` bitmap-font format and the
 > inline text-control language interpreted by the Windows retail Runtime. The
@@ -1329,9 +1329,71 @@ leaving unclassified credits and overlays faithful.
 
 ---
 
+## 27. Line placement and world-text region
+
+**Status:** Confirmed — Runtime (`0x0043F3E0`, `0x0041E040`, `0x004208E6`).
+
+The formatter does not lay text out as one block. It buffers glyphs for the
+current line and places that buffer when a line break, a wrap, the terminating
+NUL, or a change of the alignment bits (`0x1C1E`) occurs. The buffer is placed
+at the *current* cursor using the alignment that was active while it was
+buffered (`0x0043FBF5`, jump table `0x0043FE74`/`0x0043FE88`):
+
+```text
+G / F (0x02 / 0x10):  line_x = origin_x          (origin_x starts at left, {X} replaces it)
+D     (0x04):         line_x = right - line_width
+C     (0x08):         line_x = left + (right - line_width - left) / 2
+```
+
+`{X}` therefore only moves the left-aligned origin and the cursor `y`; right
+and centred lines ignore its `x`. `{X}` does not flush pending text, and it can
+only lower `left`/`top` (used for centring and for the returned height). The
+wrap width is `right - left` of the caller's region, fixed before any `{X}`.
+
+Line breaks, wraps and the terminating NUL advance the cursor by
+`line_height(current font) * 120 / 100` (integer) and keep `origin_x`; an
+alignment-change flush does not advance. `H` resets `top` and the cursor to 0;
+`L` starts at `bottom - line_height`; `M` at `(bottom - line_height - top) / 2 + top`.
+The formatter returns the lowest advanced cursor minus `top`.
+
+Word wrap remembers the last space of the line (buffer position and the source
+byte after it). On overflow it truncates the line at that space and re-reads the
+source after it; an overflowing space without a remembered one just breaks; a
+single word wider than the region overflows. (Runtime never clears the
+remembered space between lines; OpenNomad deliberately resets it per line.)
+
+`{`, `}`, `[`, `]` are tested before the command dispatch, so a stray `}`
+outside a command block is swallowed. Retail credits rely on this:
+IAM/OBJECT 720 and 749 author `{f1}}Original ...`.
+
+IAM/OBJECT world text (`0x0041E040` measure, `0x004208E6` draw) uses
+`left = 16`, `right = width - 16`, `bottom = height`, font `V`, white, left
+alignment and no vertical mode. The measure pass runs with `top = 0`; the draw
+pass uses `top = height - measured - 16`, so plain subtitles sit left-aligned
+above the bottom edge, while credits position every line with `{X}`.
+
+## 28. Type 0x10 OBJECTS images
+
+**Status:** Confirmed — Runtime (`0x004045E3`, `0x00466F1E`, `0x004810D0`).
+
+Every OBJECTS activation first releases the single image slot `0x0093072C`. A
+type-0x10 record then loads `IMAGES\<stem>.BMP` (`0x0040BB40` appends `.BMP`)
+through `0x00428A20`, whose DirectDraw surface gets a black `DDCKEY_SRCBLT`
+key (`0x00428E86`), and switches the game mode to `0x0A`. No voice-over is
+played; the authored text is still submitted. The intro credits use object 715
+(`ZVOG001`, the *The Nomad Soul* logo, 640x480).
+
+Mode `0x0A` queues a source-keyed blit (`0x004287A0(rect, image, 1, 3)`, bit 0 =
+`DDBLT_KEYSRC`) every frame: an image that fits the framebuffer is stretched to
+the whole screen; a larger one is scaled by the smaller ratio and centred. The
+image remains until the next OBJECTS activation (or a key press handled by mode
+`0x0A`, not yet modelled in OpenNomad).
+
+---
+
 # Remaining unknowns
 
-## 27. `F` source-level mnemonic
+## 29. `F` source-level mnemonic
 
 Runtime behavior is recovered:
 
@@ -1346,7 +1408,7 @@ semantically neutral in documentation/code naming unless another source (IAM
 editor documentation, debug string, symbol, or authored use) establishes the
 original concept.
 
-## 28. `E` intended feature
+## 30. `E` intended feature
 
 Runtime faithfully carries the `E` byte through style initialization,
 selected-span save/alternate/restore, and inline updates, but this retail
@@ -1362,7 +1424,7 @@ store it as auxiliary style state
 produce no visual effect in this Runtime build
 ```
 
-## 29. `g` historical purpose
+## 31. `g` historical purpose
 
 Lowercase `g` is explicitly recognized but is a no-op in the retail executable.
 Its historical purpose, if any, is unknown.

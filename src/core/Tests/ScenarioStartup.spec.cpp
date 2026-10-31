@@ -2232,6 +2232,10 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
     REQUIRE(voice.has_value());
     CHECK_EQ(voice->object_id, 141);
     CHECK_EQ(voice->audio_path, "VOICEOFF/ZVO M010 Agression.ADP");
+    // Every activation releases Runtime's single OBJECTS image slot.
+    const auto image{manager.world_presentation().take_world_image()};
+    REQUIRE(image.has_value());
+    CHECK(image->image_path.empty());
     const auto world_text{manager.world_presentation().take_world_text()};
     REQUIRE(world_text.has_value());
     CHECK_EQ(world_text->document.authored_bytes(), authored_text);
@@ -2288,13 +2292,13 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
       CHECK_EQ(manager.world_presentation().pending_world_text_count(), 0U);
     }
 
-    SUBCASE("type 0x10 is not treated as voice-over") {
+    SUBCASE("type 0x10 presents IMAGES/<stem>.BMP instead of a voice-over") {
       const TempDirectory temp;
       write_bytes(temp.root() / "IAM" / "START", make_start());
       write_bytes(temp.root() / "IAM" / "GLOBAL", App::Tests::make_empty_iam_global());
       write_bytes(temp.root() / "IAM" / "AREA", make_object_activation_area_archive(141U));
       write_bytes(temp.root() / "IAM" / "OBJECT",
-          make_object_archive(141U, 0x10U, "NOT_A_VOICE", "not speech"));
+          make_object_archive(141U, 0x10U, "ZVOG001", "{X030040}{f3}"));
       write_bytes(temp.root() / "SCPTDATA" / "aventure.scx", make_minimal_scx());
       write_bytes(temp.root() / "SCPTDATA" / "GRID.SCX", make_minimal_scx());
       StartedSession session{temp};
@@ -2302,7 +2306,14 @@ TEST_SUITE("Core::Scenario::ScenarioStartupController") {
       App::ScenarioStartupController& controller{session.controller};
       REQUIRE(controller.tick().has_value());
       CHECK_EQ(manager.world_presentation().pending_voice_over_count(), 0U);
-      CHECK_EQ(manager.world_presentation().pending_world_text_count(), 0U);
+      const auto image{manager.world_presentation().take_world_image()};
+      REQUIRE(image.has_value());
+      CHECK_EQ(image->object_id, 141);
+      CHECK_EQ(image->image_path, "IMAGES/ZVOG001.BMP");
+      // Runtime still submits the (invisible) authored text for image objects.
+      const auto world_text{manager.world_presentation().take_world_text()};
+      REQUIRE(world_text.has_value());
+      CHECK(world_text->provenance.audio_resource.empty());
     }
   }
 

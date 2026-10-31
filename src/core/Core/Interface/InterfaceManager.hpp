@@ -205,6 +205,18 @@ class InterfaceManager {
       int pixel_width,
       int pixel_height);
 
+  /// Replaces Runtime's single OBJECTS image slot with the BMP at
+  /// `relative_path`; an empty path only releases the current image.
+  [[nodiscard]] std::expected<void, std::string> set_world_image(const std::string& relative_path);
+
+  /// Releases the OBJECTS image slot.
+  void clear_world_image() {
+    m_world_image.reset();
+  }
+
+  /// Draws the current OBJECTS image, if any, as a source-keyed full-screen blit.
+  void render_world_image(int pixel_width, int pixel_height);
+
   /// Creates a state owned by `instance`; returns its address (nullptr when
   /// the allocation fails).
   [[nodiscard]] I2DState* create_state(InterfaceInstance& instance);
@@ -322,6 +334,8 @@ class InterfaceManager {
   /// even though Application closes completed interfaces before render().
   std::optional<InterfacePresentationOverlay> m_completion_overlay_latch;
   std::optional<ActiveStateTransition> m_active_transition;
+  /// Runtime 0x0093072C: the image presented by a type-0x10 OBJECTS record.
+  std::optional<Texture2D> m_world_image;
 };
 
 /// Looks up a descriptor in the static interface registry.

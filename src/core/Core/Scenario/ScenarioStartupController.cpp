@@ -2258,29 +2258,27 @@ std::expected<void, std::string> ScenarioStartupController::present_compact_obje
         std::unexpect, fmt::format("IAM/OBJECT {}: {}", request.object_id, object.error())};
   }
 
-  // Runtime branches only on type 0x10, which owns the distinct IMAGES path.
-  // Every other object type continues through the recovered VOICEOFF/subtitle
-  // presentation path; do not narrow that retail behavior to an invented
-  // "voice-over type 0".
-  constexpr std::uint16_t k_image_type{0x10U};
-  if (object->object_type() == k_image_type) {
-    App::Log::debug(LogCategory::Scenario,
-        "OBJECTS ID {} type {:#x} uses the deferred IMAGES presentation path",
-        request.object_id,
-        object->object_type());
-    record("AreaScript.ObjectActivateUnsupported",
-        fmt::format("id={} type={:#x} path=IMAGES", request.object_id, object->object_type()));
-    return {};
-  }
-
   const WorldSceneContext* context{m_manager->current_world_context()};
   if (context == nullptr) {
     return std::expected<void, std::string>{
         std::unexpect, "OBJECTS activation has no active world presentation context"};
   }
+  // Runtime 0x00404672 releases the single OBJECTS image on every activation
+  // and branches only on type 0x10, which loads IMAGES/<stem>.BMP instead of a
+  // voice-over. Every other object type continues through the recovered
+  // VOICEOFF/subtitle path; do not narrow that retail behavior to an invented
+  // "voice-over type 0". All types then submit their text (0x0041E040).
+  constexpr std::uint16_t k_image_type{0x10U};
+  const bool image_object{object->object_type() == k_image_type};
   const std::string& stem{object->audio_stem()};
+  m_manager->world_presentation().enqueue_world_image(
+      WorldImageCommand{.scene_id = context->scene_id,
+          .scene_generation = context->generation,
+          .object_id = request.object_id,
+          .image_path =
+              image_object && !stem.empty() ? fmt::format("IMAGES/{}.BMP", stem) : std::string{}});
   std::optional<std::string> audio_path;
-  if (!stem.empty()) {
+  if (!image_object && !stem.empty()) {
     audio_path = stem.starts_with("ZVOT") || stem.starts_with("ZVOP")
                      ? "VOICEOFF/JINGOFF3.ADP"
                      : fmt::format("VOICEOFF/{}.ADP", stem);
@@ -2308,15 +2306,17 @@ std::expected<void, std::string> ScenarioStartupController::present_compact_obje
           .modernization_policy = TextModernizationPolicy::k_faithful_only},
       .duration_ms = world_text_duration_ms});
   record("AreaScript.ObjectActivate",
-      fmt::format("id={} type={:#x} voice={} worldTextMs={}",
+      fmt::format("id={} type={:#x} voice={} image={} worldTextMs={}",
           request.object_id,
           object->object_type(),
           audio_path.value_or("<none>"),
+          image_object ? std::string_view{stem} : std::string_view{"<none>"},
           world_text_duration_ms));
   App::Log::debug(LogCategory::Scenario,
-      "OBJECTS ID {} voice-over '{}' world-text={} ms",
+      "OBJECTS ID {} voice-over '{}' image '{}' world-text={} ms",
       request.object_id,
       audio_path.value_or("<none>"),
+      image_object ? std::string_view{stem} : std::string_view{"<none>"},
       world_text_duration_ms);
   return {};
 }

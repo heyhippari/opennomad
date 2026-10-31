@@ -151,6 +151,12 @@ TEST_SUITE("Core::Interface::RuntimeText") {
     CHECK_EQ(events_of_type(lines, RuntimeTextEventType::k_line_break).size(), 1);
   }
 
+  TEST_CASE("swallows a stray closing brace outside a command block") {
+    // Retail credits (IAM/OBJECT 720 and 749) author "{f1}}Original ...".
+    const auto document{App::Interface::parse_runtime_text("{X015065}{f1}}Original")};
+    CHECK_EQ(App::Interface::runtime_text_plain_bytes(document), "Original");
+  }
+
   TEST_CASE("truncated controls degrade safely and deterministically") {
     constexpr std::array<std::string_view, 6> malformed{
         "{", "{f", "{E", "{I255", "{X050", "[unterminated"};
