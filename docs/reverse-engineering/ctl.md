@@ -697,8 +697,8 @@ state: each scenario update clears the scene's selected camera, services
 structured scripts (active `Script_SelectCamera` / camera-editing commands
 republish), and publishes the result to the live camera controller. A script
 that stopped publishing leaves no stale selection. The camera controller
-logically switches mode 13 to mode 0 (the normal automatic player camera;
-its follow mathematics are Phase 4.3) only when **all** of these hold:
+switches mode 13 to mode 0 (the automatic player camera, see
+[`camera.md`](camera.md)) only when **all** of these hold:
 
 - the structured camera source ended (none published this frame),
 - the camera controller mode is 13,

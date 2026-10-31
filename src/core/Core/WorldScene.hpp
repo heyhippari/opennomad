@@ -79,6 +79,9 @@ class WorldScene final : public Scene, public Debug::SceneDebugView {
 
   void synchronize_presentation_reset();
   void consume_camera_commands();
+  /// Applies Runtime's mode-0 automatic camera to the controlled character.
+  /// Returns false when no controlled character is resident.
+  bool apply_player_camera();
   /// One attached world's renderer, keyed by exact (scene, generation). A null renderer records a
   /// failed build so it is attempted only once per generation.
   struct AttachedWorldRenderer {

@@ -175,6 +175,13 @@ Matrix3 euler_rotation_degrees(const Vec3& degrees) {
       degrees.z * k_degrees_to_radians);
 }
 
+Matrix3 camera_euler_rotation_degrees(const Vec3& degrees) {
+  constexpr float k_degrees_to_radians{std::numbers::pi_v<float> / 180.0F};
+  return multiply(multiply(rotation_x(degrees.x * k_degrees_to_radians),
+                      rotation_y(degrees.y * k_degrees_to_radians)),
+      rotation_z(degrees.z * k_degrees_to_radians));
+}
+
 Matrix3 additive_euler_orientation(const Matrix3& base, const Vec3& additive_degrees) {
   if (additive_degrees.x == 0.0F && additive_degrees.y == 0.0F && additive_degrees.z == 0.0F) {
     return base;

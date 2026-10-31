@@ -253,6 +253,55 @@ TEST_SUITE("Core::Character::SweptSphereQuery") {
     CHECK(hit->world_normal.x == doctest::Approx(0.0F));
     CHECK(hit->world_normal.y == doctest::Approx(1.0F));
   }
+
+  TEST_CASE("camera segment query crosses polygons from either side and keeps the nearest") {
+    App::Omikron::Model3DOData model{floor_model(true)};
+    add_ceiling(model, -40.0F);
+
+    const auto downward_hit{App::Character::SweptSphereQuery::find_segment(model,
+        model.runtime_objects,
+        {.x = 1.0F, .y = -60.0F, .z = 2.0F},
+        {.x = 1.0F, .y = 20.0F, .z = 2.0F},
+        0U)};
+    REQUIRE(downward_hit.has_value());
+    CHECK_EQ(downward_hit->object_index, 1U);
+    CHECK(downward_hit->world_point.y == doctest::Approx(-40.0F));
+    CHECK(downward_hit->parameter == doctest::Approx(0.25F));
+
+    // The floor faces up (-Y) and is crossed from its back side here.
+    const auto upward_hit{App::Character::SweptSphereQuery::find_segment(model,
+        model.runtime_objects,
+        {.x = 1.0F, .y = 20.0F, .z = 2.0F},
+        {.x = 1.0F, .y = -20.0F, .z = 2.0F},
+        0U)};
+    REQUIRE(upward_hit.has_value());
+    CHECK_EQ(upward_hit->object_index, 0U);
+    CHECK(upward_hit->world_point.y == doctest::Approx(0.0F));
+  }
+
+  TEST_CASE("camera segment query needs a strict crossing and honours excluded flags") {
+    App::Omikron::Model3DOData model{floor_model(true)};
+    add_ceiling(model, -40.0F, 0x00800000U);
+
+    CHECK_FALSE(App::Character::SweptSphereQuery::find_segment(model,
+        model.runtime_objects,
+        {.x = 1.0F, .y = -10.0F, .z = 2.0F},
+        {.x = 1.0F, .y = -1.0F, .z = 2.0F},
+        0U)
+            .has_value());
+    CHECK_FALSE(App::Character::SweptSphereQuery::find_segment(model,
+        model.runtime_objects,
+        {.x = 30.0F, .y = -10.0F, .z = 2.0F},
+        {.x = 30.0F, .y = 10.0F, .z = 2.0F},
+        0U)
+            .has_value());
+    CHECK_FALSE(App::Character::SweptSphereQuery::find_segment(model,
+        model.runtime_objects,
+        {.x = 1.0F, .y = -60.0F, .z = 2.0F},
+        {.x = 1.0F, .y = -20.0F, .z = 2.0F},
+        0x00800041U)
+            .has_value());
+  }
 }
 
 // NOLINTEND(bugprone-unchecked-optional-access)

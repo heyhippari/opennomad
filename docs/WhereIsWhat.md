@@ -49,6 +49,7 @@ Most implementation lives under `src/core/Core/`:
 | `Input/` | Semantic actions, device bindings, held state, and per-frame input resolution. |
 | `Debug/` | ImGui inspectors, metrics, in-app logging, startup traces, and profiling. |
 | `WorldScene.*`, `WorldRenderer.*`, `WorldCamera.*` | Stable presentation of all attached resident worlds, with current-world camera/debug state, effects, interfaces, and GPU resources. |
+| `WorldCameraFollow.*` | Runtime camera-object follow update: attached-endpoint easing, adventure line-of-sight pull-in, mode-0 player camera (see [camera.md](reverse-engineering/camera.md)). |
 | `SkyRenderer.*` | The session-global AREA sky 3DO, loaded from `MESHES/MISC` and drawn behind the world. |
 | `WorldFog.*`, `WorldShaders.hpp` | Runtime fog/view distance, day-cycle colour, the shared per-pixel fog shader stage and the world shader variant builder. |
 | `CubicVertexColor.*` | Per-corner colour slope ratios for the Decor Lighting (cubic baked colour) enhancement. |

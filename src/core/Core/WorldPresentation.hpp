@@ -53,10 +53,18 @@ class WorldUvPhaseState {
 /// One requested live Runtime character attachment pose supplied across the
 /// narrow gameplay-to-presentation capability boundary.
 struct WorldCameraAttachmentPose {
+  /// Native actor +0xF4/+0xF8/+0xFC position.
   Runtime::Vec3 translation{};
-  /// Native +0x1A0/+0x1A4/+0x1A8 principal actor orientation. AREA 222
-  /// cameras 4290/4291/4292 use selector 0 for both eye and target.
-  Runtime::Matrix3 principal_orientation{};
+  /// Native +0x1A0/+0x1A4/+0x1A8 principal actor Euler degrees. Selector 0
+  /// camera endpoints rotate their offsets by these angles (AREA 222 cameras
+  /// 4290/4291/4292 use selector 0 for both eye and target).
+  Runtime::Vec3 principal_orientation_degrees{};
+  /// Native actor +0x114: lowest collision-sphere extent below the origin.
+  /// The adventure follow camera derives its head-height offsets from it.
+  float body_bottom{0.0F};
+  /// Native actor dispatcher state +0x194. States 11, 13 and 14 select the
+  /// fight camera setup instead of the adventure follow camera.
+  std::int32_t adventure_mode{0};
 };
 
 /// Stable actor identities retained by an attached camera command.

@@ -63,6 +63,7 @@ add_library(${NAME} STATIC
   Core/Scene.hpp
   Core/WorldPresentation.hpp
   Core/WorldCamera.hpp Core/WorldCamera.cpp
+  Core/WorldCameraFollow.hpp Core/WorldCameraFollow.cpp
   Core/WorldRenderer.hpp Core/WorldRenderer.cpp
   Core/WorldShaders.hpp
   Core/CubicVertexColor.hpp Core/CubicVertexColor.cpp

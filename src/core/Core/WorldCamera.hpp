@@ -7,6 +7,7 @@
 
 #include "Core/Camera.hpp"
 #include "Core/RuntimeMath.hpp"
+#include "Core/WorldCameraFollow.hpp"
 #include "Core/WorldPresentation.hpp"
 
 namespace App {
@@ -29,6 +30,16 @@ class WorldCameraSystem {
   using AttachmentPoseProvider = std::function<std::optional<WorldCameraAttachmentPose>(
       Character::BodyIdentity body_identity)>;
   using ControllerPoseProvider = std::function<std::optional<WorldCameraPose>()>;
+  using SegmentQueryProvider = WorldCameraFollow::SegmentQuery;
+
+  /// Runtime mode-0 automatic player camera preset (table 0x004C20C8 entry
+  /// 0): the eye trails 3 m behind the actor's rotated origin, the target is
+  /// the origin, horizontal FOV 75, eased over 3/8/8 frames.
+  static constexpr Runtime::Vec3 K_PLAYER_CAMERA_EYE_OFFSET{
+      .x = 0.0F, .y = 0.0F, .z = Runtime::metres_to_inches(-3.0F)};
+  static constexpr std::int32_t K_PLAYER_CAMERA_FOV_DEGREES{75};
+  static constexpr std::array<std::uint16_t, 4> K_PLAYER_CAMERA_EASING_FRAMES{3U, 8U, 8U, 0U};
+
   WorldCameraSystem() = default;
 
   void set_aspect_ratio(float aspect_ratio);
@@ -38,16 +49,18 @@ class WorldCameraSystem {
   /// Supplies Runtime's live controller source (global 0x009103D4 equivalent).
   /// Controller mode 13 copies this pose every presentation update.
   void set_controller_pose_provider(ControllerPoseProvider provider);
+  /// Supplies the decor line-of-sight query used by the adventure follow
+  /// camera (Runtime 0x00444810). Without it no occlusion is detected.
+  void set_segment_query_provider(SegmentQueryProvider provider);
   /// Clears the current scripted/fallback pose while preserving projection
   /// settings such as the current aspect ratio.
   void reset();
 
   /// Logical ownership release of controller mode 13 (the structured/
   /// cinematic camera owner) when the structured script no longer publishes
-  /// a camera. The last valid pose is retained only as a presentation
-  /// fallback until the real automatic player camera exists (Phase 4.3);
-  /// the logical controller becomes mode 0 / automatic-pending and no longer
-  /// claims a scripted source.
+  /// a camera. The logical controller becomes mode 0 and no longer claims a
+  /// scripted source; the last pose stays until the caller applies
+  /// `player_camera_command`, as Runtime 0x004200F0 does in the same frame.
   void release_structured_controller();
 
   /// Legacy [Preferences] autocameraplayer gate (retail default "0").
@@ -73,8 +86,16 @@ class WorldCameraSystem {
   void set_fallback_pose(const std::array<float, 3>& center, float radius);
 
   /// Starts/snap-applies one authored camera, or switches the recovered native
-  /// camera controller when command.kind == k_controller_mode.
+  /// camera controller when command.kind == k_controller_mode. Authored
+  /// commands with camera_type 0 are the automatic player camera.
   void apply_command(const WorldCameraCommand& command);
+
+  /// Builds the Runtime mode-0 request (0x00414BF0 with mode 0) that attaches
+  /// the automatic player camera to participant A, applied without a
+  /// transition.
+  [[nodiscard]] static WorldCameraCommand player_camera_command(std::uint32_t scene_id,
+      std::uint32_t scene_generation,
+      const WorldCameraAttachmentParticipants& participants);
 
   /// Advances an active interpolation using real display-frame seconds.
   void update(float delta_seconds);
@@ -123,16 +144,22 @@ class WorldCameraSystem {
   [[nodiscard]] const Runtime::CameraView& runtime_view() const {
     return m_runtime_view;
   }
+  [[nodiscard]] const WorldCameraFollow& follow() const {
+    return m_follow;
+  }
 
  private:
   void apply_controller_mode(const WorldCameraCommand& command);
   void complete_active_operation();
   void commit_pose();
-  [[nodiscard]] WorldCameraPose resolve_command_pose(const WorldCameraCommand& command) const;
-  [[nodiscard]] Runtime::Vec3 resolve_attachment_point(const WorldCameraCommand& command,
-      const std::array<std::int32_t, 3>& serialized,
-      std::int16_t selector,
-      const Runtime::Vec3& absolute_fallback) const;
+  /// Re-arms the follow state for a newly applied command and returns its
+  /// first evaluated pose.
+  [[nodiscard]] WorldCameraPose start_follow(const WorldCameraCommand& command);
+  /// Advances the follow state of the current command by `delta_seconds`.
+  [[nodiscard]] WorldCameraPose advance_follow(
+      const WorldCameraCommand& command, float delta_seconds);
+  [[nodiscard]] std::optional<WorldCameraEndpointSource> resolve_endpoint_source(
+      const WorldCameraCommand& command, std::int16_t selector) const;
   [[nodiscard]] static WorldCameraPose interpolate(
       const WorldCameraPose& from, const WorldCameraPose& to, float amount);
 
@@ -163,8 +190,10 @@ class WorldCameraSystem {
   std::optional<WorldCameraOperationCompletion> m_active_operation;
   std::optional<WorldCameraOperationCompletion> m_completed_operation;
   std::optional<WorldCameraCommand> m_last_command;
+  WorldCameraFollow m_follow;
   AttachmentPoseProvider m_attachment_pose_provider;
   ControllerPoseProvider m_controller_pose_provider;
+  SegmentQueryProvider m_segment_query_provider;
 };
 
 }  // namespace App

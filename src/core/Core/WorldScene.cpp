@@ -21,6 +21,8 @@
 #include "Core/Audio/AudioTypes.hpp"
 #include "Core/Character/CharacterRuntime.hpp"
 #include "Core/Character/CtlController.hpp"
+#include "Core/Character/PhysicalMotionService.hpp"
+#include "Core/Character/SweptSphereQuery.hpp"
 #include "Core/Crowd/CrowdRuntime.hpp"
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/Debug/SceneDebugView.hpp"
@@ -307,8 +309,42 @@ WorldScene::WorldScene(ScenarioManager& scenarios, Interface::InterfaceManager& 
         if (!located.has_value()) {
           return std::nullopt;
         }
-        return WorldCameraAttachmentPose{.translation = located->character->transform.translation,
-            .principal_orientation = located->character->principal_orientation()};
+        const Character::RuntimeCharacter& character{*located->character};
+        const auto extents{Character::PhysicalMotionService::body_vertical_extents(
+            character.model_resource == nullptr
+                ? std::span<const Omikron::CollisionSphere>{}
+                : character.model_resource->model.header.collision_spheres())};
+        return WorldCameraAttachmentPose{.translation = character.transform.translation,
+            .principal_orientation_degrees = character.principal_orientation_degrees,
+            .body_bottom = extents.has_value() ? extents->bottom : 0.0F,
+            .adventure_mode = character.adventure_mode};
+      });
+
+  // Runtime's camera line of sight (0x00444810) walks every resident decor
+  // (0x004430A0) and skips objects flagged 0x41 or 0x800000 (0x00444460).
+  m_camera.set_segment_query_provider(
+      [this](const Runtime::Vec3& start, const Runtime::Vec3& end) -> std::optional<Runtime::Vec3> {
+        if (m_scenarios == nullptr) {
+          return std::nullopt;
+        }
+        constexpr std::uint32_t k_camera_excluded_object_flags{0x00800041U};
+        std::optional<Character::SegmentHit> nearest;
+        for (const WorldSceneContext* context : m_scenarios->attached_world_contexts()) {
+          if (context == nullptr || context->runtime == nullptr ||
+              context->runtime->decor_model() == nullptr) {
+            continue;
+          }
+          const std::optional<Character::SegmentHit> hit{
+              Character::SweptSphereQuery::find_segment(*context->runtime->decor_model(),
+                  context->runtime->decor_runtime_objects(),
+                  start,
+                  end,
+                  k_camera_excluded_object_flags)};
+          if (hit.has_value() && (!nearest.has_value() || hit->parameter < nearest->parameter)) {
+            nearest = hit;
+          }
+        }
+        return nearest.has_value() ? std::optional{nearest->world_point} : std::nullopt;
       });
 
   // Runtime publishes the scene's currently selected named 3DO camera through
@@ -1232,10 +1268,10 @@ void WorldScene::update(const float delta_time, const Input::InputManager& input
             renderer.error());
         // Remember the failure for this exact (scene, generation) so the build is not retried
         // (and logged) every frame; the entry is dropped when the generation leaves the chain.
-        m_attached_world_renderers.push_back(AttachedWorldRenderer{
-            .scene_id = attached_context->scene_id,
-            .generation = attached_context->generation,
-            .renderer = nullptr});
+        m_attached_world_renderers.push_back(
+            AttachedWorldRenderer{.scene_id = attached_context->scene_id,
+                .generation = attached_context->generation,
+                .renderer = nullptr});
         continue;
       }
       renderer.value()->set_geometry_wireframe(m_geometry_wireframe_enabled);
@@ -1310,12 +1346,10 @@ void WorldScene::update(const float delta_time, const Input::InputManager& input
   }
 
   // Runtime's structured camera is frame-published: ownership of controller
-  // mode 13 logically releases to mode 0 (automatic player camera; the actual
-  // follow mathematics are Phase 4.3) only when no structured script
-  // republished a camera this frame AND the legacy [Preferences]
-  // autocameraplayer gate is enabled AND a current player character exists.
-  // The renderer keeps the last valid pose as a presentation fallback inside
-  // release_structured_controller.
+  // mode 13 releases to the mode-0 automatic player camera only when no
+  // structured script republished a camera this frame AND the legacy
+  // [Preferences] autocameraplayer gate is enabled AND a current player
+  // character exists (0x004200F0 -> 0x00414BF0 mode 0, no transition).
   if (m_camera.active_controller_mode() == 13U) {
     const WorldSceneContext* const publisher{
         m_scenarios == nullptr ? nullptr : m_scenarios->attached_world_head_context()};
@@ -1328,8 +1362,22 @@ void WorldScene::update(const float delta_time, const Input::InputManager& input
     if (m_camera.should_release_structured_controller(
             structured_published, player_character_exists)) {
       m_camera.release_structured_controller();
+      apply_player_camera();
       App::Log::debug(LogCategory::Renderer,
           "structured camera source ended — camera controller released to mode 0");
+    }
+  }
+
+  // Runtime 0x004187B0 also falls back to the player camera once the resident
+  // scene slot that issued the active authored camera stops being resident.
+  if (const std::optional<WorldCameraCommand>& active{m_camera.last_command()};
+      m_scenarios != nullptr && active.has_value() && active->camera_type != 0U &&
+      m_scenarios->find_world_context(active->scene_id, active->scene_generation) == nullptr) {
+    const std::uint16_t lost_camera_id{active->camera_id};
+    if (apply_player_camera()) {
+      App::Log::debug(LogCategory::Renderer,
+          "camera {} lost its resident scene — player camera",
+          lost_camera_id);
     }
   }
 
@@ -1370,6 +1418,26 @@ void WorldScene::update(const float delta_time, const Input::InputManager& input
   } else {
     m_interfaces.update(delta_time, input);
   }
+}
+
+bool WorldScene::apply_player_camera() {
+  if (m_scenarios == nullptr) {
+    return false;
+  }
+  const std::optional<ControlledCharacterRef> controlled{m_scenarios->controlled_character()};
+  const WorldSceneContext* const world{
+      controlled.has_value() ? m_scenarios->find_world_context(controlled->world_scene_id)
+                             : nullptr};
+  if (!controlled.has_value() || world == nullptr) {
+    return false;
+  }
+  m_camera.apply_command(WorldCameraSystem::player_camera_command(world->scene_id,
+      world->generation,
+      WorldCameraAttachmentParticipants{.participant_a_body_identity = controlled->body_identity,
+          .participant_b_body_identity = std::nullopt,
+          .participant_a_character_id = controlled->character_id,
+          .participant_b_character_id = -1}));
+  return true;
 }
 
 void WorldScene::consume_camera_commands() {

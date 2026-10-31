@@ -11,6 +11,8 @@ namespace App::Character {
 namespace {
 
 constexpr float K_GEOMETRY_EPSILON{1.0e-5F};
+/// Runtime 0x004BC410: segment length and plane-parallel rejection epsilon.
+constexpr float K_SEGMENT_EPSILON{1.0e-4F};
 
 [[nodiscard]] Runtime::Vec3 add(const Runtime::Vec3& first, const Runtime::Vec3& second) {
   return {.x = first.x + second.x, .y = first.y + second.y, .z = first.z + second.z};
@@ -286,6 +288,92 @@ void consider_polygon(const std::array<Runtime::Vec3, Size>& vertices,
   return dot(closest, closest) > reach * reach;
 }
 
+/// Resolves every triangle and rectangle of one object into world space and
+/// passes its vertices and world face normal to `visit`. Polygons whose
+/// corners or normal cannot be resolved are skipped.
+template <typename Visitor>
+void for_each_world_polygon(const Omikron::Model3DOData& model,
+    const std::span<const Omikron::Model3DOData::RuntimeObjectState> runtime_objects,
+    const std::size_t object_index,
+    const Visitor& visit) {
+  const auto& object{runtime_objects[object_index]};
+  const Omikron::MeshPolygons& polygons{model.polygons.at(object_index)};
+  for (const Omikron::Triangle& triangle : polygons.triangles) {
+    std::array<Runtime::Vec3, 3> vertices{};
+    bool valid{true};
+    for (std::size_t corner{0}; corner < vertices.size(); ++corner) {
+      const Omikron::TriangleVertexRef& reference{triangle.vertices.at(corner)};
+      std::size_t owner_index{object_index};
+      if (reference.parented) {
+        if (object_index >= model.skin_parent_index.size() ||
+            model.skin_parent_index.at(object_index) < 0) {
+          valid = false;
+          break;
+        }
+        owner_index = static_cast<std::size_t>(model.skin_parent_index.at(object_index));
+      }
+      const auto vertex{resolve_vertex(model, runtime_objects, owner_index, reference.index)};
+      if (!vertex.has_value()) {
+        valid = false;
+        break;
+      }
+      vertices.at(corner) = vertex.value();
+    }
+    const auto normal{transform_normal(triangle.face_normal, object)};
+    if (valid && normal.has_value()) {
+      visit(vertices, normal.value());
+    }
+  }
+  for (const Omikron::Rectangle& rectangle : polygons.rectangles) {
+    std::array<Runtime::Vec3, 4> vertices{};
+    bool valid{true};
+    for (std::size_t corner{0}; corner < vertices.size(); ++corner) {
+      const auto vertex{
+          resolve_vertex(model, runtime_objects, object_index, rectangle.vertices.at(corner))};
+      if (!vertex.has_value()) {
+        valid = false;
+        break;
+      }
+      vertices.at(corner) = vertex.value();
+    }
+    const auto normal{transform_normal(rectangle.face_normal, object)};
+    if (valid && normal.has_value()) {
+      visit(vertices, normal.value());
+    }
+  }
+}
+
+/// Runtime 0x00444BB0: two-sided segment/polygon test. The segment must
+/// strictly cross the polygon plane; the nearest crossing parameter wins.
+template <std::size_t Size>
+void consider_segment_polygon(const std::array<Runtime::Vec3, Size>& vertices,
+    const Runtime::Vec3& normal,
+    const std::size_t object_index,
+    const Runtime::Vec3& start,
+    const Runtime::Vec3& delta,
+    std::optional<SegmentHit>& best) {
+  const float normal_speed{dot(normal, delta)};
+  if (std::abs(normal_speed) <= K_SEGMENT_EPSILON) {
+    return;
+  }
+  const float start_side{dot(normal, subtract(start, vertices.front()))};
+  const float end_side{start_side + normal_speed};
+  if (normal_speed < 0.0F ? (start_side < 0.0F || end_side > 0.0F)
+                          : (start_side >= 0.0F || end_side <= 0.0F)) {
+    return;
+  }
+  const float parameter{-start_side / normal_speed};
+  if (best.has_value() && parameter >= best->parameter) {
+    return;
+  }
+  const Runtime::Vec3 point{add(start, scale(delta, parameter))};
+  // The winding test is orientation-independent once the plane normal is
+  // fixed, so the same containment check serves both crossing directions.
+  if (point_in_polygon(point, normal, vertices)) {
+    best = SegmentHit{.object_index = object_index, .world_point = point, .parameter = parameter};
+  }
+}
+
 }  // namespace
 
 std::optional<SweptSphereHit> SweptSphereQuery::find(const Omikron::Model3DOData& model,
@@ -319,51 +407,42 @@ std::optional<SweptSphereHit> SweptSphereQuery::find_in_object(const Omikron::Mo
     return std::nullopt;
   }
 
-  const auto& object{runtime_objects[object_index]};
   std::optional<SweptSphereHit> best;
-  const Omikron::MeshPolygons& polygons{model.polygons.at(object_index)};
-  for (const Omikron::Triangle& triangle : polygons.triangles) {
-    std::array<Runtime::Vec3, 3> vertices{};
-    bool valid{true};
-    for (std::size_t corner{0}; corner < vertices.size(); ++corner) {
-      const Omikron::TriangleVertexRef& reference{triangle.vertices.at(corner)};
-      std::size_t owner_index{object_index};
-      if (reference.parented) {
-        if (object_index >= model.skin_parent_index.size() ||
-            model.skin_parent_index.at(object_index) < 0) {
-          valid = false;
-          break;
-        }
-        owner_index = static_cast<std::size_t>(model.skin_parent_index.at(object_index));
-      }
-      const auto vertex{resolve_vertex(model, runtime_objects, owner_index, reference.index)};
-      if (!vertex.has_value()) {
-        valid = false;
-        break;
-      }
-      vertices.at(corner) = vertex.value();
-    }
-    const auto normal{transform_normal(triangle.face_normal, object)};
-    if (valid && normal.has_value()) {
-      consider_polygon(vertices, normal.value(), object_index, query, best);
-    }
+  for_each_world_polygon(
+      model, runtime_objects, object_index, [&](const auto& vertices, const Runtime::Vec3& normal) {
+        consider_polygon(vertices, normal, object_index, query, best);
+      });
+  return best;
+}
+
+std::optional<SegmentHit> SweptSphereQuery::find_segment(const Omikron::Model3DOData& model,
+    const std::span<const Omikron::Model3DOData::RuntimeObjectState> runtime_objects,
+    const Runtime::Vec3& start,
+    const Runtime::Vec3& end,
+    const std::uint32_t excluded_object_flags) {
+  const Runtime::Vec3 delta{subtract(end, start)};
+  const float length{std::sqrt(dot(delta, delta))};
+  // 0x00444810 rejects a segment no longer than 0.0001 in.
+  if (!std::isfinite(length) || length <= K_SEGMENT_EPSILON) {
+    return std::nullopt;
   }
-  for (const Omikron::Rectangle& rectangle : polygons.rectangles) {
-    std::array<Runtime::Vec3, 4> vertices{};
-    bool valid{true};
-    for (std::size_t corner{0}; corner < vertices.size(); ++corner) {
-      const auto vertex{
-          resolve_vertex(model, runtime_objects, object_index, rectangle.vertices.at(corner))};
-      if (!vertex.has_value()) {
-        valid = false;
-        break;
-      }
-      vertices.at(corner) = vertex.value();
+  const SweptSphereQueryInput bounds{
+      .start = start, .direction = scale(delta, 1.0F / length), .max_distance = length};
+
+  std::optional<SegmentHit> best;
+  const std::size_t object_count{
+      std::min({model.meshes.size(), model.polygons.size(), runtime_objects.size()})};
+  for (std::size_t object_index{0}; object_index < object_count; ++object_index) {
+    if ((model.meshes.at(object_index).flags & excluded_object_flags) != 0U ||
+        outside_swept_bounds(model, runtime_objects[object_index], object_index, bounds)) {
+      continue;
     }
-    const auto normal{transform_normal(rectangle.face_normal, object)};
-    if (valid && normal.has_value()) {
-      consider_polygon(vertices, normal.value(), object_index, query, best);
-    }
+    for_each_world_polygon(model,
+        runtime_objects,
+        object_index,
+        [&](const auto& vertices, const Runtime::Vec3& normal) {
+          consider_segment_polygon(vertices, normal, object_index, start, delta, best);
+        });
   }
   return best;
 }

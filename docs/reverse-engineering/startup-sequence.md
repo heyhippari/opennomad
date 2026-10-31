@@ -3082,9 +3082,9 @@ mechanisms, not intro-specific shortcuts:
    animation as the base pose, so the completed cinematic pose stops owning
    the character naturally;
 5. the structured cinematic camera is frame-published state: once its script
-   stops republishing a named 3DO camera, controller mode 13 logically
-   releases to mode 0 (the automatic player camera; follow mathematics are a
-   later phase).
+   stops republishing a named 3DO camera, controller mode 13 releases to
+   mode 0 (the automatic player camera; see [camera.md](camera.md)) when the
+   `autocameraplayer` preference allows it.
 
 See [ctl.md](ctl.md) for the CTL format, controller state machine, callbacks,
 and recovered addresses.

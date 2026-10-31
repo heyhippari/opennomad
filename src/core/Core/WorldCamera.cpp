@@ -52,6 +52,26 @@ void WorldCameraSystem::set_controller_pose_provider(ControllerPoseProvider prov
   m_controller_pose_provider = std::move(provider);
 }
 
+void WorldCameraSystem::set_segment_query_provider(SegmentQueryProvider provider) {
+  m_segment_query_provider = std::move(provider);
+}
+
+WorldCameraCommand WorldCameraSystem::player_camera_command(const std::uint32_t scene_id,
+    const std::uint32_t scene_generation,
+    const WorldCameraAttachmentParticipants& participants) {
+  return WorldCameraCommand{.scene_id = scene_id,
+      .scene_generation = scene_generation,
+      .attachment_participants = participants,
+      // The preset table holds Runtime float inches; there is no serialized
+      // AREA vector for this camera.
+      .runtime_eye = K_PLAYER_CAMERA_EYE_OFFSET,
+      .camera_type = 0U,
+      .horizontal_fov_degrees = K_PLAYER_CAMERA_FOV_DEGREES,
+      .target_attachment_selector = 0,
+      .eye_attachment_selector = 0,
+      .tail_fields = K_PLAYER_CAMERA_EASING_FRAMES};
+}
+
 void WorldCameraSystem::reset() {
   m_current = WorldCameraPose{};
   m_transition_start = WorldCameraPose{};
@@ -68,6 +88,7 @@ void WorldCameraSystem::reset() {
   m_active_operation.reset();
   m_completed_operation.reset();
   m_last_command.reset();
+  m_follow = WorldCameraFollow{};
 }
 
 void WorldCameraSystem::set_fallback_pose(const std::array<float, 3>& center, const float radius) {
@@ -95,7 +116,7 @@ void WorldCameraSystem::apply_command(const WorldCameraCommand& command) {
     return;
   }
 
-  const WorldCameraPose requested{resolve_command_pose(command)};
+  const WorldCameraPose requested{start_follow(command)};
 
   m_last_command = command;
   m_active_camera_id = command.camera_id;
@@ -207,7 +228,7 @@ void WorldCameraSystem::update(const float delta_seconds) {
   }
 
   if (m_last_command.has_value()) {
-    m_transition_target = resolve_command_pose(m_last_command.value());
+    m_transition_target = advance_follow(m_last_command.value(), delta_seconds);
     if (m_transition_duration <= 0.0F) {
       m_current = m_transition_target;
       commit_pose();
@@ -245,49 +266,72 @@ void WorldCameraSystem::update(const float delta_seconds) {
   }
 }
 
-WorldCameraPose WorldCameraSystem::resolve_command_pose(const WorldCameraCommand& command) const {
-  return WorldCameraPose{
-      .eye = resolve_attachment_point(
-          command, command.serialized_eye, command.eye_attachment_selector, command.runtime_eye),
-      .target = resolve_attachment_point(command,
-          command.serialized_target,
-          command.target_attachment_selector,
-          command.runtime_target),
+WorldCameraPose WorldCameraSystem::start_follow(const WorldCameraCommand& command) {
+  m_follow.reset(command.runtime_eye,
+      command.runtime_target,
+      WorldCameraFollowSettings{.target_offset = command.runtime_target,
+          .eye_offset = command.runtime_eye,
+          .target_position_frames = static_cast<std::int16_t>(command.tail_fields.at(0)),
+          .eye_position_frames = static_cast<std::int16_t>(command.tail_fields.at(1)),
+          .eye_angle_frames = static_cast<std::int16_t>(command.tail_fields.at(2))});
+
+  // Runtime 0x00414520: automatic mode 0, and record modes 12/20 whose eye is
+  // attached by selector 0, take the adventure follow setup (0x00413C00)
+  // unless the player is in fight states 11, 13 or 14 (0x00413CD0).
+  const bool follow_mode{
+      command.camera_type == 0U || command.camera_type == 12U || command.camera_type == 20U};
+  const std::optional<Character::BodyIdentity> eye_actor{
+      command.attachment_participants.participant_a_body_identity};
+  if (follow_mode && command.eye_attachment_selector == 0 && eye_actor.has_value() &&
+      m_attachment_pose_provider) {
+    const std::optional<WorldCameraAttachmentPose> actor{
+        m_attachment_pose_provider(eye_actor.value())};
+    if (actor.has_value() && actor->adventure_mode != 11 && actor->adventure_mode != 13 &&
+        actor->adventure_mode != 14) {
+      m_follow.enable_adventure(actor->translation.y, actor->body_bottom);
+    }
+  }
+  return advance_follow(command, 0.0F);
+}
+
+WorldCameraPose WorldCameraSystem::advance_follow(
+    const WorldCameraCommand& command, const float delta_seconds) {
+  m_follow.update(WorldCameraFollowInput{.target = resolve_endpoint_source(
+                                             command, command.target_attachment_selector),
+                      .eye = resolve_endpoint_source(command, command.eye_attachment_selector),
+                      .delta_units = std::max(delta_seconds, 0.0F) * k_scenario_frames_per_second},
+      m_segment_query_provider);
+  return WorldCameraPose{.eye = m_follow.eye(),
+      .target = m_follow.target(),
       .roll_degrees = static_cast<float>(command.roll_degrees),
       .horizontal_fov_degrees = static_cast<float>(command.horizontal_fov_degrees)};
 }
 
-Runtime::Vec3 WorldCameraSystem::resolve_attachment_point(const WorldCameraCommand& command,
-    const std::array<std::int32_t, 3>& serialized,
-    const std::int16_t selector,
-    const Runtime::Vec3& absolute_fallback) const {
+std::optional<WorldCameraEndpointSource> WorldCameraSystem::resolve_endpoint_source(
+    const WorldCameraCommand& command, const std::int16_t selector) const {
   if (selector == -1 || !m_attachment_pose_provider) {
-    return absolute_fallback;
+    return std::nullopt;
   }
   if (selector != 0 && selector != 6) {
     // Selectors 1..5 and 7..9 have distinct native resolvers whose transform
-    // semantics remain unrecovered.
-    return absolute_fallback;
+    // semantics remain unrecovered; the endpoint keeps its absolute value.
+    return std::nullopt;
   }
 
   const std::optional<Character::BodyIdentity> participant_a_identity{
       command.attachment_participants.participant_a_body_identity};
   if (!participant_a_identity.has_value()) {
-    return absolute_fallback;
+    return std::nullopt;
   }
   const std::optional<WorldCameraAttachmentPose> participant_a{
       m_attachment_pose_provider(participant_a_identity.value())};
   if (!participant_a.has_value()) {
-    return absolute_fallback;
+    return std::nullopt;
   }
 
-  const Runtime::Vec3 relative{Runtime::iam_camera_vector_to_runtime(serialized)};
   if (selector == 0) {
-    const Runtime::Vec3 rotated{
-        Runtime::transform_vector(relative, participant_a->principal_orientation)};
-    return Runtime::Vec3{.x = participant_a->translation.x - rotated.x,
-        .y = participant_a->translation.y - rotated.y,
-        .z = participant_a->translation.z - rotated.z};
+    return WorldCameraEndpointSource{.position = participant_a->translation,
+        .angles_degrees = participant_a->principal_orientation_degrees};
   }
 
   // Runtime selector 6 derives one shared orientation solely from the live
@@ -295,12 +339,12 @@ Runtime::Vec3 WorldCameraSystem::resolve_attachment_point(const WorldCameraComma
   const std::optional<Character::BodyIdentity> participant_b_identity{
       command.attachment_participants.participant_b_body_identity};
   if (!participant_b_identity.has_value()) {
-    return absolute_fallback;
+    return std::nullopt;
   }
   const std::optional<WorldCameraAttachmentPose> participant_b{
       m_attachment_pose_provider(participant_b_identity.value())};
   if (!participant_b.has_value()) {
-    return absolute_fallback;
+    return std::nullopt;
   }
 
   const Runtime::Vec3 delta{.x = participant_a->translation.x - participant_b->translation.x,
@@ -309,21 +353,17 @@ Runtime::Vec3 WorldCameraSystem::resolve_attachment_point(const WorldCameraComma
   const float length{std::sqrt((delta.x * delta.x) + (delta.y * delta.y) + (delta.z * delta.z))};
   constexpr float k_minimum_participant_separation_inches{0.0001F};
   if (!std::isfinite(length) || length <= k_minimum_participant_separation_inches) {
-    return absolute_fallback;
+    return std::nullopt;
   }
 
-  const Runtime::Vec3 normal{.x = delta.x / length, .y = delta.y / length, .z = delta.z / length};
   constexpr float k_radians_to_degrees{180.0F / std::numbers::pi_v<float>};
-  const float yaw_degrees{(std::atan2(normal.z, normal.x) * k_radians_to_degrees) + 90.0F};
-  const Runtime::Matrix3 orientation{
-      Runtime::euler_rotation_degrees(Runtime::Vec3{.x = 0.0F, .y = yaw_degrees, .z = 0.0F})};
-  const Runtime::Vec3 midpoint{
-      .x = (participant_a->translation.x + participant_b->translation.x) * 0.5F,
-      .y = (participant_a->translation.y + participant_b->translation.y) * 0.5F,
-      .z = (participant_a->translation.z + participant_b->translation.z) * 0.5F};
-  const Runtime::Vec3 rotated{Runtime::transform_vector(relative, orientation)};
-  return Runtime::Vec3{
-      .x = midpoint.x - rotated.x, .y = midpoint.y - rotated.y, .z = midpoint.z - rotated.z};
+  const float yaw_degrees{
+      (std::atan2(delta.z / length, delta.x / length) * k_radians_to_degrees) + 90.0F};
+  return WorldCameraEndpointSource{
+      .position = {.x = (participant_a->translation.x + participant_b->translation.x) * 0.5F,
+          .y = (participant_a->translation.y + participant_b->translation.y) * 0.5F,
+          .z = (participant_a->translation.z + participant_b->translation.z) * 0.5F},
+      .angles_degrees = {.x = 0.0F, .y = yaw_degrees, .z = 0.0F}};
 }
 
 WorldCameraPose WorldCameraSystem::interpolate(

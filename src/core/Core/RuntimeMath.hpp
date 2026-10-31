@@ -128,6 +128,11 @@ struct AreaZoneSpatialBounds {
 /// Degree-space convenience wrapper for Runtime's recovered Euler builder.
 [[nodiscard]] Matrix3 euler_rotation_degrees(const Vec3& degrees);
 
+/// Runtime camera Euler builder (0x00441EB0): `Rx(x) * Ry(y) * Rz(z)` from
+/// degrees. Camera attachment offsets apply it through `transform_vector`
+/// (0x00442D70). It equals `euler_rotation_degrees` whenever X or Y is zero.
+[[nodiscard]] Matrix3 camera_euler_rotation_degrees(const Vec3& degrees);
+
 /// Adds an authored XYZ Euler-degree triple to an existing Runtime orientation.
 /// This mirrors the actor base-angle + body-animation-offset composition used
 /// by Runtime while keeping those two pieces of state distinct in OpenNomad.

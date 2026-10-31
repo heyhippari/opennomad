@@ -284,11 +284,11 @@ TEST_SUITE("Core::WorldCameraSystem") {
     AttachmentMap attachments{
         {10,
             App::WorldCameraAttachmentPose{.translation = {.x = 100.0F, .y = 20.0F, .z = 300.0F},
-                .principal_orientation = App::Runtime::Matrix3::identity()}},
+                .principal_orientation_degrees = {}}},
         {20,
             App::WorldCameraAttachmentPose{
                 .translation = {.x = -500.0F, .y = -400.0F, .z = -300.0F},
-                .principal_orientation = App::Runtime::rotation_y(std::numbers::pi_v<float>)}}};
+                .principal_orientation_degrees = {.x = 0.0F, .y = 180.0F, .z = 0.0F}}}};
     set_attachment_provider(camera, attachments);
     const std::array<std::int32_t, 3> eye_serialized{256, 0, 0};
     const std::array<std::int32_t, 3> target_serialized{0, 256, 0};
@@ -300,12 +300,11 @@ TEST_SUITE("Core::WorldCameraSystem") {
           doctest::Approx(attachments.at(10).translation.x - initial_relative_eye.x));
 
     attachments.at(10).translation = {.x = 500.0F, .y = 40.0F, .z = 50.0F};
-    attachments.at(10).principal_orientation =
-        App::Runtime::rotation_y(std::numbers::pi_v<float> * 0.5F);
+    attachments.at(10).principal_orientation_degrees = {.x = 0.0F, .y = 90.0F, .z = 0.0F};
     camera.update(0.0F);
-    const App::Runtime::Vec3 expected_eye{
-        App::Runtime::transform_vector(App::Runtime::iam_camera_vector_to_runtime(eye_serialized),
-            attachments.at(10).principal_orientation)};
+    const App::Runtime::Vec3 expected_eye{App::Runtime::transform_vector(
+        App::Runtime::iam_camera_vector_to_runtime(eye_serialized),
+        App::Runtime::euler_rotation_degrees(attachments.at(10).principal_orientation_degrees))};
     CHECK(
         camera.pose().eye.x == doctest::Approx(attachments.at(10).translation.x - expected_eye.x));
     CHECK(
