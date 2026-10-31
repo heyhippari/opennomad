@@ -37,6 +37,10 @@ class WorldShaderSet {
   /// Opaque/cutout program evaluating lit-actor lights per pixel. nullptr when
   /// it failed to build; the failure is logged once and not retried.
   [[nodiscard]] const Shader* per_pixel_modern();
+  /// Opaque/cutout program interpolating baked colours with a cubic Bezier
+  /// triangle; meshes drawn with it need the VertexColorSlopes stream.
+  /// nullptr when it failed to build, as above.
+  [[nodiscard]] const Shader* cubic_color_modern();
 
  private:
   WorldShaderSet() = default;
@@ -46,6 +50,8 @@ class WorldShaderSet {
   std::unique_ptr<Shader> m_wireframe;
   std::unique_ptr<Shader> m_per_pixel_modern;
   bool m_per_pixel_modern_failed{false};
+  std::unique_ptr<Shader> m_cubic_color_modern;
+  bool m_cubic_color_modern_failed{false};
 };
 
 }  // namespace App

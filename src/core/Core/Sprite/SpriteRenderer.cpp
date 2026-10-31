@@ -51,18 +51,23 @@ void main() {
 )glsl"};
 
 /// Translucent (bucket 0x2000) sprites are never fogged by Runtime, so the
-/// legacy pass only has the far alpha fade.
+/// legacy pass only has the far alpha fade. Runtime's stage 0 (0x00460E39)
+/// modulates colour by the diffuse tint. Cutout buckets modulate texture and
+/// diffuse alpha and alpha-test `!= 0`; every other bucket selects the diffuse
+/// alpha alone, so texture alpha does not reach the blend.
 constexpr std::string_view K_LEGACY_SPRITE_FRAGMENT_BODY{R"glsl(
 in vec2 v_uv;
 in vec4 v_tint;
 uniform sampler2D u_texture0;
-uniform float u_cutout;      // 1 = discard fragments below the alpha threshold.
+uniform float u_cutout;      // 1 = Runtime alpha test (8-bit alpha != 0).
 uniform float u_grayscale;   // 1 = Rec.601 luminance conversion.
 uniform float u_premultiply_alpha;
 out vec4 fragment_color;
 void main() {
-  vec4 texel = texture(u_texture0, v_uv) * v_tint;
-  if (u_cutout > 0.5 && texel.a < 0.5) {
+  vec4 sampled = texture(u_texture0, v_uv);
+  vec4 texel = vec4(sampled.rgb * v_tint.rgb,
+                    u_cutout > 0.5 ? sampled.a * v_tint.a : v_tint.a);
+  if (u_cutout > 0.5 && texel.a * 255.0 < 0.5) {
     discard;
   }
   vec3 color = texel.rgb;
@@ -93,7 +98,8 @@ void main() {
   vec3 tint = vec3(srgb_to_linear(v_tint.r), srgb_to_linear(v_tint.g),
                    srgb_to_linear(v_tint.b));
   vec4 texel = vec4(sampled.rgb * tint, sampled.a * v_tint.a);
-  if (u_cutout > 0.5 && texel.a < 0.5) {
+  // Runtime alpha test: ALPHAREF 0, NOTEQUAL on the 8-bit modulated alpha.
+  if (u_cutout > 0.5 && texel.a * 255.0 < 0.5) {
     discard;
   }
   vec3 color = texel.rgb;

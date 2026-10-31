@@ -27,4 +27,20 @@ static_assert(offsetof(Vertex, normal) == 3U * sizeof(float));
 static_assert(offsetof(Vertex, uv) == 6U * sizeof(float));
 static_assert(offsetof(Vertex, color) == 8U * sizeof(float));
 
+/// Optional second vertex stream of the cubic vertex colour enhancement: per
+/// RGB channel, the corner's colour slope toward the next and the previous
+/// corner of its triangle, as a ratio of the colour difference along that
+/// edge (see CubicVertexColor.hpp). Locations 4 and 5.
+struct VertexColorSlopes {
+  std::array<float, 3> next{};
+  std::array<float, 3> previous{};
+
+  static constexpr unsigned int k_next_location{4};
+  static constexpr unsigned int k_previous_location{5};
+};
+
+static_assert(sizeof(VertexColorSlopes) == 6U * sizeof(float));
+static_assert(offsetof(VertexColorSlopes, next) == 0);
+static_assert(offsetof(VertexColorSlopes, previous) == 3U * sizeof(float));
+
 }  // namespace App

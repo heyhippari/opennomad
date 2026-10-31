@@ -1363,6 +1363,16 @@ Blocks group: no
 
 A normal sound start does not hold the synchronized group open.
 
+Arguments are `sound table index, flags, started latch, object`. An object of
+`-1` plays nonspatially. Any other value indexes the script's binding table A
+(`script+0x3C`, `0x0044B850`), and the resulting name is looked up in the
+current scene's 3DO object tree (`0x00436C40`, strcmp against object `+0x10`).
+The emitter position is that object's translation (`+0x24..+0x2C`). The object
+is not an SCX sprite index: `anekbah.SCX` script `Eoliennes` plays at object 9
+(binding A has 10 entries, the SCX has 3 sprites), which names the
+`Anekbah.3DO` decor object `Eeole01`. `PlaySyncSound`, `StopSound` and their
+reinitializers resolve their object argument the same way.
+
 ### `0x05000015` — `PlaySyncSound`
 
 ```text

@@ -400,6 +400,9 @@ ScenarioRuntime::~ScenarioRuntime() {
   // SFX teardown calls back into this runtime to destroy its owned handles;
   // do it while the SpritePool and the complete Host object are still alive.
   m_sfx_runtime.reset();
+  if (m_audio != nullptr) {
+    m_audio->clear_emitter_resolver(this);
+  }
 }
 
 std::expected<void, std::string> ScenarioRuntime::initialize(const Omikron::ScxData& scx,
@@ -415,7 +418,7 @@ std::expected<void, std::string> ScenarioRuntime::initialize(const Omikron::ScxD
   m_scx = scx;
   m_scx_bytes.assign(scx_bytes.begin(), scx_bytes.end());
   m_scenario_name = std::string{scenario_name};
-  m_audio = audio;
+  set_audio_system(audio);
   m_sfx_runtime.reset();
   m_sfx_data.reset();
   m_cin_sfx_bindings.clear();
@@ -522,7 +525,7 @@ std::expected<void, std::string> ScenarioRuntime::initialize(const Omikron::ScxD
 void ScenarioRuntime::initialize_world_only(
     const std::string_view world_name, Audio::AudioSystem* const audio) {
   m_scenario_name = std::string{world_name};
-  m_audio = audio;
+  set_audio_system(audio);
   m_script_runtime.reset();
   m_sfx_runtime.reset();
   m_sfx_data.reset();
@@ -1651,6 +1654,8 @@ void ScenarioRuntime::bind_decor_model(const Omikron::Model3DOData* const decor_
   m_camera_editing_camera.reset();
   m_structured_camera_source = StructuredCameraSource::k_none;
   m_decor_pose_revision = 0;
+  // Audio owner tokens name decor objects by index; a rebind invalidates them.
+  ++m_decor_binding_generation;
   if (m_sfx_runtime != nullptr) {
     m_sfx_runtime->bind_static_emitters();
   }
@@ -1877,25 +1882,24 @@ ScenarioRuntime::move_object_on_path(const Script::MoveObjectOnPathRequest& requ
 }
 
 void ScenarioRuntime::set_audio_system(Audio::AudioSystem* const audio) {
+  if (m_audio != nullptr && m_audio != audio) {
+    m_audio->clear_emitter_resolver(this);
+  }
   m_audio = audio;
   if (m_audio == nullptr) {
     return;
   }
-  // The emitter resolver maps an owner token back to the sprite position it
-  // wraps. It is re-resolved by the audio system once per real frame; the
-  // sprite generation makes a destroyed/recreated object detectably invalid.
-  m_audio->set_emitter_resolver([this](const Audio::AudioOwnerToken& owner) {
-    if (owner.is_null() || owner.scenario != this) {
+  // The emitter resolver maps an owner token back to the decor object it
+  // names. It is re-resolved by the audio system once per real frame; the
+  // decor binding generation makes a rebound decor detectably invalid.
+  m_audio->set_emitter_resolver(this, [this](const Audio::AudioOwnerToken& owner) {
+    auto position{resolve_owner_position(owner)};
+    if (!position) {
       return std::optional<Audio::Vec3>{std::nullopt};
     }
-    const Sprite::SpriteInstance* sprite{m_sprite_pool.find(
-        Sprite::SpriteHandle{.index = owner.object_index, .generation = owner.generation})};
-    if (sprite == nullptr) {
-      return std::optional<Audio::Vec3>{std::nullopt};
-    }
-    return std::optional<Audio::Vec3>{Audio::Vec3{Runtime::inches_to_metres(sprite->position.at(0)),
-        Runtime::inches_to_metres(sprite->position.at(1)),
-        Runtime::inches_to_metres(sprite->position.at(2))}};
+    return std::optional<Audio::Vec3>{Audio::Vec3{Runtime::inches_to_metres(position->at(0)),
+        Runtime::inches_to_metres(position->at(1)),
+        Runtime::inches_to_metres(position->at(2))}};
   });
 }
 
@@ -1972,21 +1976,23 @@ std::expected<Audio::SoundDescriptor, std::string> ScenarioRuntime::resolve_soun
 }
 
 std::expected<Audio::AudioOwnerToken, std::string> ScenarioRuntime::resolve_audio_owner(
-    const std::int32_t object_index) {
-  if (object_index == -1) {
-    return Audio::AudioOwnerToken{};  // Null owner (nonspatial playback).
-  }
-  if (object_index < 0) {
+    const std::string_view object_binding) {
+  // Runtime's sound commands look the binding-table-A name up in the current
+  // scene's 3DO object tree (0x00436C40), not in the SCX sprite table.
+  if (m_decor_model == nullptr) {
     return std::expected<Audio::AudioOwnerToken, std::string>{
-        std::unexpect, fmt::format("negative object index {}", object_index)};
+        std::unexpect, "mutable world decor has not been bound"};
   }
-  const std::uint32_t source_index{static_cast<std::uint32_t>(object_index)};
-  auto sprite{ensure_sprite(source_index)};
-  if (!sprite) {
-    return std::expected<Audio::AudioOwnerToken, std::string>{std::unexpect, sprite.error()};
+  const auto selected{
+      std::ranges::find(m_decor_model->meshes, object_binding, &Omikron::MeshDescriptor::name)};
+  if (selected == m_decor_model->meshes.end()) {
+    return std::expected<Audio::AudioOwnerToken, std::string>{
+        std::unexpect, fmt::format("decor binding A object '{}' does not exist", object_binding)};
   }
-  return Audio::AudioOwnerToken{
-      .scenario = this, .object_index = sprite->index, .generation = sprite->generation};
+  return Audio::AudioOwnerToken{.scenario = this,
+      .object_index =
+          static_cast<std::uint32_t>(std::distance(m_decor_model->meshes.begin(), selected)),
+      .generation = m_decor_binding_generation};
 }
 
 std::expected<Audio::Vec3, std::string> ScenarioRuntime::resolve_owner_position(
@@ -1994,13 +2000,15 @@ std::expected<Audio::Vec3, std::string> ScenarioRuntime::resolve_owner_position(
   if (owner.is_null() || owner.scenario != this) {
     return std::expected<Audio::Vec3, std::string>{std::unexpect, "invalid audio owner"};
   }
-  const Sprite::SpriteInstance* sprite{m_sprite_pool.find(
-      Sprite::SpriteHandle{.index = owner.object_index, .generation = owner.generation})};
-  if (sprite == nullptr) {
+  if (owner.generation != m_decor_binding_generation ||
+      owner.object_index >= m_decor_runtime_objects.size()) {
     return std::expected<Audio::Vec3, std::string>{
         std::unexpect, fmt::format("owner {} no longer exists", owner.describe())};
   }
-  return sprite->position;
+  // Runtime reads the object's translation (+0x24..+0x2C) for the emitter.
+  const Runtime::Vec3& translation{
+      m_decor_runtime_objects.at(owner.object_index).world_translation};
+  return Audio::Vec3{translation.x, translation.y, translation.z};
 }
 
 std::expected<Audio::VoiceHandle, std::string> ScenarioRuntime::play_sound(

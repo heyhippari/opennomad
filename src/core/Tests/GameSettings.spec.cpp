@@ -237,7 +237,9 @@ TEST_SUITE("Settings::GameSettings") {
     CHECK(k_options_enhancements_rows.at(3).literal_label == "Radial Fog");
     CHECK(k_options_enhancements_rows.at(4).literal_label == "Character Lighting");
     CHECK(k_options_enhancements_rows.at(4).default_choice == 0U);
-    CHECK(k_options_enhancements_rows.at(5).literal_label == "Back");
+    CHECK(k_options_enhancements_rows.at(5).literal_label == "Decor Lighting");
+    CHECK(k_options_enhancements_rows.at(5).default_choice == 0U);
+    CHECK(k_options_enhancements_rows.at(6).literal_label == "Back");
   }
 
   TEST_CASE("state graph derives semantic transition directions") {

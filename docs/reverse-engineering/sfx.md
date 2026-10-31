@@ -100,14 +100,17 @@ copied to `SpriteInstance::render_mode`; modes are the existing retail-compatibl
 
 **Confirmed — Runtime**, except where explicitly marked unsupported:
 
-- `0x0002`: selects a special `SpriteInstance+0x24` path. GRID does not use it.
-  Without it, particles set the confirmed `diffuse_alpha` field to exactly
-  `0.5`. The behavior selected by the flag itself remains unsupported.
+- `0x0002`: the burst (`0x0046E001`) sets `diffuse_alpha` to 0 and a per-tick
+  alpha step of `1/lifetime` (1.0 for zero lifetime), capped at 0.99. Without it,
+  `diffuse_alpha` is exactly `0.5` and the step is 0. Particle service subtracts
+  the step every tick and clamps `diffuse_alpha` to `[0, 0.99]`, so a `0x0002`
+  particle stays at alpha 0, which only additive and darken modes can show.
 - `0x0004`: grow, with scale velocity `+initialScale/lifetime`.
 - `0x0010`: random initial billboard rotation in `[0, 2pi]`.
 - `0x0040`: independently add `2*random01` to each direction component.
-- `0x0080`: native spawn-count randomization path; preserved, unused by GRID,
-  and unsupported.
+- `0x0080`: the burst computes `count + trunc(random01 * 0.1) * count`
+  (`0x0046DDA9`). The truncated term is always 0, so the flag never changes the
+  spawn count; OpenNomad needs no code for it.
 - `0x0100`: add up to ten percent of base lifetime.
 - `flags & 0x0600 == 0`: negative authored vertical acceleration.
 - `flags & 0x0600 == 0x0200`: positive authored vertical acceleration.
@@ -252,8 +255,9 @@ direction with an orthonormal basis. Zero speed yields zero velocity. RNG uses
 the Runtime normalization family `integer[0,32767] / 32767`; production seeding
 is scenario-local and tests inject deterministic values.
 
-At the beginning of particle service, expired particles destroy their
-`SpriteHandle`. Otherwise position, rotation, both scales, and 0..255 color are
+At the beginning of particle service, a particle whose elapsed time exceeds its
+lifetime (`elapsed > lifetime`, `0x0046E1FB`) destroys its `SpriteHandle`. The
+tick with `elapsed == lifetime` still renders and selects the final frame. Otherwise position, rotation, both scales, and 0..255 color are
 advanced; tint is normalized; vertical acceleration updates velocity; frame is
 `trunc((frameCount-1)*elapsed/lifetime)`; then elapsed advances. Teardown destroys
 all remaining SFX-owned handles and clears requests and mutable nodes.

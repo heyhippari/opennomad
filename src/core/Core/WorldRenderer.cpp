@@ -26,11 +26,13 @@
 #include <vector>
 
 #include "Core/Camera.hpp"
+#include "Core/CubicVertexColor.hpp"
 #include "Core/Debug/Instrumentor.hpp"
 #include "Core/DecorCulling.hpp"
 #include "Core/GameDataLoader.hpp"
 #include "Core/Log.hpp"
 #include "Core/LogCategory.hpp"
+#include "Core/Mesh.hpp"
 #include "Core/Object/ObjectPlacementRuntime.hpp"
 #include "Core/Omikron/Model3DO.hpp"
 #include "Core/Omikron/Texture3DT.hpp"
@@ -602,6 +604,8 @@ bool WorldRenderer::patch_decor_model(const ScenarioRuntime& runtime) {
     }
     m_decor_layout = std::move(layout).value();
     m_decor_layout_model = &model;
+    m_decor_color_slopes_ready = false;
+    m_decor_color_slopes_failed = false;
   }
 
   std::vector<std::pair<std::size_t, std::vector<Vertex>>> updates;
@@ -708,6 +712,8 @@ void WorldRenderer::sync_decor_model(const ScenarioRuntime& runtime) {
     }
     m_meshes.emplace_back(presentation_vertices, group.indices);
   }
+  m_decor_color_slopes_ready = false;
+  m_decor_color_slopes_failed = false;
   index_decor_groups(*runtime.decor_model(), groups.value(), runtime.decor_runtime_objects());
   rebuild_opaque_draw_order();
   m_decor_pose_bounds = geometry->bounds;
@@ -800,7 +806,7 @@ void WorldRenderer::draw_group(const std::size_t index,
     const bool legacy_effect) {
   // begin_world_pass() has already written the decor transforms, baked
   // lighting and frame fog on this shader.
-  const Shader& shader{legacy_effect ? m_shaders->legacy() : m_shaders->modern()};
+  const Shader& shader{legacy_effect ? m_shaders->legacy() : *m_decor_shader};
   bind_world_shader(shader);
   apply_group_uniforms(shader,
       m_group_flags.at(index),
@@ -832,6 +838,42 @@ void WorldRenderer::rebuild_opaque_draw_order() {
       m_opaque_draw_order, [this](const std::size_t lhs, const std::size_t rhs) {
         return m_group_material_ids.at(lhs) < m_group_material_ids.at(rhs);
       });
+}
+
+bool WorldRenderer::ensure_decor_color_slopes() {
+  if (m_decor_color_slopes_ready) {
+    return true;
+  }
+  if (m_decor_color_slopes_failed || m_decor_layout_model == nullptr) {
+    return false;
+  }
+  APP_PROFILE_FUNCTION();
+
+  // Slope ratios are pose-invariant, so pose patches never rebuild them.
+  const std::vector<std::vector<VertexColorSlopes>> slopes{
+      CubicColor::build_corner_slopes(*m_decor_layout_model, m_decor_layout)};
+  for (std::size_t group_index{0}; group_index < m_decor_layout.groups.size(); ++group_index) {
+    const Omikron::MaterialGroup& group{m_decor_layout.groups.at(group_index)};
+    const auto found{
+        m_decor_group_index.find(std::tuple{group.mesh_index, group.material_id, group.flags})};
+    if (found == m_decor_group_index.end() ||
+        !m_meshes.at(found->second).set_color_slopes(slopes.at(group_index))) {
+      m_decor_color_slopes_failed = true;
+      break;
+    }
+  }
+  if (!m_decor_color_slopes_failed && !std::ranges::all_of(m_meshes, [](const Mesh& mesh) {
+        return mesh.has_color_slopes();
+      })) {
+    m_decor_color_slopes_failed = true;
+  }
+  if (m_decor_color_slopes_failed) {
+    App::Log::warn(LogCategory::Renderer,
+        "World decor layout does not match its meshes; keeping linear decor colours");
+    return false;
+  }
+  m_decor_color_slopes_ready = true;
+  return true;
 }
 
 bool WorldRenderer::update_character_meshes(
@@ -1300,6 +1342,11 @@ void WorldRenderer::render(const Camera& camera,
     sync_character_models(*runtime);
     sync_object_models(*runtime);
   }
+  // After the decor sync, which may rebuild the meshes the slopes live on.
+  const Shader* const cubic_shader{
+      m_cubic_decor_colors ? m_shaders->cubic_color_modern() : nullptr};
+  m_decor_shader =
+      cubic_shader != nullptr && ensure_decor_color_slopes() ? cubic_shader : &m_shaders->modern();
 
   const auto instance_matrices = [&](const glm::mat4& model, const bool lit) {
     InstanceMatrices matrices{.model_view = view * model};
@@ -1354,7 +1401,12 @@ void WorldRenderer::render(const Camera& camera,
   // Opaque and cutout geometry first.
   glDisable(GL_BLEND);
   glDepthMask(GL_TRUE);
+  // Objects (and characters by default) draw with the original program, so it
+  // always receives the frame state; enhanced variants receive their own.
   begin_world_pass(m_shaders->modern(), mvp, view, false);
+  if (m_decor_shader != &m_shaders->modern()) {
+    begin_world_pass(*m_decor_shader, mvp, view, false);
+  }
   for (const std::size_t index : m_opaque_draw_order) {
     if (index < m_group_visible.size() && m_group_visible.at(index) != 0U) {
       draw_group(index, uv_phase_u, uv_phase_v, false);

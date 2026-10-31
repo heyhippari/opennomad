@@ -22,6 +22,8 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <system_error>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -417,6 +419,18 @@ std::expected<void, std::string> AudioSystem::play_voice_over(std::string relati
   if (!available()) {
     return std::expected<void, std::string>{std::unexpect, "audio subsystem unavailable"};
   }
+  // Runtime (0x0041B200) stops the current clip before opening the next one, and a failed open
+  // (0x0042C870) only marks the stream finished. Retail IAM OBJECT data names clips the shipped
+  // VOICEOFF directory lacks (ZVOG*), so a missing file is silence, not an error.
+  std::error_code exists_error;
+  if (!std::filesystem::exists(
+          Resources::resolve_case_insensitive(Resources::game_data_path(relative_path)),
+          exists_error)) {
+    m_voice_over.stop();
+    App::Log::debug(
+        LogCategory::Audio, "OBJECTS voice-over '{}' not shipped; skipped", relative_path);
+    return {};
+  }
   auto file{read_game_file(relative_path)};
   if (!file) {
     return std::expected<void, std::string>{std::unexpect, file.error()};
@@ -518,8 +532,26 @@ void AudioSystem::set_listener(const AudioListenerState& listener) {
   m_listener = listener;
 }
 
-void AudioSystem::set_emitter_resolver(EmitterResolver resolver) {
-  m_emitter_resolver = std::move(resolver);
+void AudioSystem::set_emitter_resolver(const void* const scenario, EmitterResolver resolver) {
+  m_emitter_resolvers.insert_or_assign(scenario, std::move(resolver));
+}
+
+void AudioSystem::clear_emitter_resolver(const void* const scenario) {
+  m_emitter_resolvers.erase(scenario);
+  if (!available()) {
+    return;
+  }
+  for (std::size_t index{0}; index < m_pool.size(); ++index) {
+    SoundVoice& voice{m_pool.at(index)};
+    if (voice.state == VoiceState::k_free || voice.owner.scenario != scenario) {
+      continue;
+    }
+    MIX_Track* track{m_tracks.at(index)};
+    if (track != nullptr) {
+      MIX_StopTrack(track, 0);
+    }
+    voice.state = VoiceState::k_stopping;
+  }
 }
 
 void AudioSystem::stopped_callback(void* userdata, MIX_Track* /*track*/) {
@@ -625,10 +657,11 @@ void AudioSystem::update(const float real_delta_seconds) {
 
     // Owner-attached voices resolve their object transform once per frame.
     if (!voice.owner.is_null()) {
-      if (!m_emitter_resolver) {
+      const auto resolver{m_emitter_resolvers.find(voice.owner.scenario)};
+      if (resolver == m_emitter_resolvers.end() || !resolver->second) {
         // No resolver: keep the static emitter captured at queue time.
       } else {
-        const std::optional<Vec3> position{m_emitter_resolver(voice.owner)};
+        const std::optional<Vec3> position{resolver->second(voice.owner)};
         if (!position.has_value()) {
           append_event(AudioEventSeverity::k_warn,
               fmt::format("OwnerInvalidated {}:{} (owner {})",

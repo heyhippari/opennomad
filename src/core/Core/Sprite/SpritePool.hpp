@@ -66,6 +66,7 @@ class SpritePool {
 
   /// Direct assignment like Runtime's SetSpriteRenderMode (always succeeds).
   void set_render_mode(SpriteHandle handle, SpriteRenderMode mode);
+  /// Runtime SetSpriteType (0x0048EF50): writes the raw +0x14 render mode.
   void set_type(SpriteHandle handle, std::uint16_t type);
   void set_position(SpriteHandle handle, std::array<float, 3> position);
   void set_scale(SpriteHandle handle, float scale_x, float scale_y);

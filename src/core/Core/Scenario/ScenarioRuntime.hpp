@@ -210,7 +210,7 @@ class ScenarioRuntime final : public Script::ScriptWorld, private Sfx::Host {
   [[nodiscard]] std::expected<Audio::SoundDescriptor, std::string> resolve_sound(
       std::uint32_t sound_table_index) override;
   [[nodiscard]] std::expected<Audio::AudioOwnerToken, std::string> resolve_audio_owner(
-      std::int32_t object_index) override;
+      std::string_view object_binding) override;
   [[nodiscard]] std::expected<Audio::Vec3, std::string> resolve_owner_position(
       const Audio::AudioOwnerToken& owner) override;
   [[nodiscard]] std::expected<Audio::VoiceHandle, std::string> play_sound(
@@ -373,6 +373,8 @@ class ScenarioRuntime final : public Script::ScriptWorld, private Sfx::Host {
   std::optional<Omikron::CameraRecord> m_camera_editing_camera;
 
   std::uint64_t m_decor_pose_revision{0};
+  /// Incremented by bind_decor_model(); stamps decor audio owner tokens.
+  std::uint32_t m_decor_binding_generation{0};
   bool m_initialized{false};
 };
 

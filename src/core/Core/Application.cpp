@@ -263,6 +263,10 @@ std::expected<Application, std::string> Application::create(const std::string& t
       {Settings::SettingChoice{.label = "Original", .raw_value = 0},
           Settings::SettingChoice{.label = "Per-Pixel", .raw_value = 1}},
       0U);
+  game_settings->ensure_choice("enhancements.decor_lighting",
+      {Settings::SettingChoice{.label = "Original", .raw_value = 0},
+          Settings::SettingChoice{.label = "Cubic", .raw_value = 1}},
+      0U);
   game_settings->ensure_choice("enhancements.menu_transition_style",
       {Settings::SettingChoice{.label = "Modern", .raw_value = 0},
           Settings::SettingChoice{.label = "Classic", .raw_value = 1},

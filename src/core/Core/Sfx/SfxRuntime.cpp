@@ -32,6 +32,8 @@ namespace App::Sfx {
 namespace {
 
 constexpr float K_DEGREES_TO_RADIANS{std::numbers::pi_v<float> / 180.0F};
+/// Runtime caps particle diffuse alpha and its per-tick step at 0.99 (0x004BC9B4).
+constexpr float K_MAXIMUM_PARTICLE_ALPHA{0.99F};
 
 App::Runtime::Vec3 add(const App::Runtime::Vec3& left, const App::Runtime::Vec3& right) {
   return App::Runtime::Vec3{.x = left.x + right.x, .y = left.y + right.y, .z = left.z + right.z};
@@ -488,9 +490,12 @@ void Runtime::enqueue_request(const Omikron::SfxDefinition& definition,
     const App::Runtime::Vec3 position,
     EmissionProvenance provenance) {
   if (m_requests.size() >= k_request_capacity) {
+    // Runtime's 100-slot table (0x0054D3B8, enqueue 0x0046E3A0) drops the request silently.
     if (!m_request_capacity_warned) {
       m_request_capacity_warned = true;
-      App::Log::warn(LogCategory::Scenario, "SFX request capacity {} reached", k_request_capacity);
+      App::Log::debug(LogCategory::Scenario,
+          "SFX request capacity {} reached; dropping requests",
+          k_request_capacity);
     }
     return;
   }
@@ -785,13 +790,20 @@ void Runtime::create_particle(
   sprite->scale_x = definition.initial_scale;
   sprite->scale_y = definition.initial_scale;
   sprite->render_mode = static_cast<Sprite::SpriteRenderMode>(definition.sprite_render_mode);
-  sprite->type = definition.sprite_render_mode;
   const App::Runtime::Vec3 start_color{unpack_rgb(definition.start_color_rgb)};
   const App::Runtime::Vec3 end_color{unpack_rgb(definition.end_color_rgb)};
   sprite->tint = normalized_rgb(start_color);
   sprite->rotation =
       (definition.flags & 0x0010U) != 0U ? random01() * 360.0F * K_DEGREES_TO_RADIANS : 0.0F;
-  sprite->diffuse_alpha = (definition.flags & 0x0002U) == 0U ? 0.5F : sprite->diffuse_alpha;
+  // Burst 0x0046E001: flag 0x0002 starts at alpha 0 with a per-tick step of 1/lifetime (capped);
+  // otherwise alpha is 0.5 and constant. Service subtracts the step and clamps to [0, 0.99].
+  float diffuse_alpha_delta{0.0F};
+  if ((definition.flags & 0x0002U) != 0U) {
+    sprite->diffuse_alpha = 0.0F;
+    diffuse_alpha_delta = std::min(1.0F / lifetime, K_MAXIMUM_PARTICLE_ALPHA);
+  } else {
+    sprite->diffuse_alpha = 0.5F;
+  }
 
   float scale_velocity{0.0F};
   if ((definition.flags & 0x0004U) != 0U) {
@@ -847,7 +859,7 @@ void Runtime::create_particle(
       .elapsed = 0.0F,
       .velocity = velocity,
       .acceleration_y = acceleration_y,
-      .diffuse_alpha_delta = 0.0F,
+      .diffuse_alpha_delta = diffuse_alpha_delta,
       .color = start_color,
       .color_delta = App::Runtime::Vec3{.x = (end_color.x - start_color.x) / lifetime,
           .y = (end_color.y - start_color.y) / lifetime,
@@ -860,7 +872,9 @@ void Runtime::create_particle(
 void Runtime::service_particles() {
   for (std::size_t index{0}; index < m_particles.size();) {
     Particle& particle{m_particles.at(index)};
-    if (particle.elapsed >= particle.lifetime) {
+    // Runtime (0x0046E1FB) keeps a particle while elapsed <= lifetime, so the
+    // final animation frame is shown for one tick.
+    if (particle.elapsed > particle.lifetime) {
       m_host.destroy_sfx_sprite(particle.sprite);
       m_particles.erase(m_particles.begin() + static_cast<std::ptrdiff_t>(index));
       continue;
@@ -878,6 +892,8 @@ void Runtime::service_particles() {
     sprite->scale_y += particle.scale_velocity;
     particle.color = add(particle.color, particle.color_delta);
     sprite->tint = normalized_rgb(particle.color);
+    sprite->diffuse_alpha = std::clamp(
+        sprite->diffuse_alpha - particle.diffuse_alpha_delta, 0.0F, K_MAXIMUM_PARTICLE_ALPHA);
     particle.velocity.y += particle.acceleration_y;
     if (particle.frame_count > 0U) {
       const float frame_value{

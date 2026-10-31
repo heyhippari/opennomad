@@ -166,7 +166,7 @@ void SpritePool::set_render_mode(const SpriteHandle handle, const SpriteRenderMo
 
 void SpritePool::set_type(const SpriteHandle handle, const std::uint16_t type) {
   if (SpriteInstance* instance{find(handle)}; instance != nullptr) {
-    instance->type = type;
+    instance->render_mode = static_cast<SpriteRenderMode>(type);
   }
 }
 

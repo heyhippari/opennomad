@@ -1447,6 +1447,7 @@ void WorldScene::render() {
   // matches, skip one world frame and rebuild on the next update.
   bool world_renderable{false};
   const bool per_pixel_lighting{per_pixel_character_lighting()};
+  const bool cubic_decor_colors{cubic_decor_lighting()};
   for (const AttachedWorldRenderer& attached_renderer : m_attached_world_renderers) {
     const WorldSceneContext* const attached_context{
         m_scenarios == nullptr ? nullptr
@@ -1458,6 +1459,7 @@ void WorldScene::render() {
       continue;
     }
     attached_renderer.renderer->set_per_pixel_lighting(per_pixel_lighting);
+    attached_renderer.renderer->set_cubic_decor_colors(cubic_decor_colors);
     attached_renderer.renderer->render(m_camera.camera(),
         attached_context->runtime.get(),
         static_cast<float>(m_uv_phases.u_phase()),
@@ -1576,6 +1578,11 @@ std::int32_t WorldScene::clip_distance_metres() const {
 bool WorldScene::per_pixel_character_lighting() const {
   return m_game_settings != nullptr &&
          m_game_settings->choice_raw_value("enhancements.character_lighting").value_or(0) != 0;
+}
+
+bool WorldScene::cubic_decor_lighting() const {
+  return m_game_settings != nullptr &&
+         m_game_settings->choice_raw_value("enhancements.decor_lighting").value_or(0) != 0;
 }
 
 Fog::ShaderFog WorldScene::context_fog(const WorldSceneContext& context) const {

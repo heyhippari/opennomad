@@ -4,7 +4,10 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <expected>
+
+#include "Core/Sprite/SpriteRenderMode.hpp"
 
 // NOLINTBEGIN(misc-use-anonymous-namespace, cppcoreguidelines-avoid-do-while, cert-err33-c,
 // misc-include-cleaner, cppcoreguidelines-pro-bounds-constant-array-index,
@@ -12,6 +15,8 @@
 
 namespace {
 
+using App::Sprite::bucket_bits;
+using App::Sprite::render_state;
 using App::Sprite::SpriteHandle;
 using App::Sprite::SpriteInstance;
 using App::Sprite::SpritePool;
@@ -204,6 +209,20 @@ TEST_SUITE("Core::Sprite::SpritePool") {
     pool.set_render_mode(handle, SpriteRenderMode::k_darken_cutout);
     CHECK_EQ(pool.find(handle)->render_mode, SpriteRenderMode::k_darken_cutout);
     pool.set_render_mode(SpriteHandle{}, SpriteRenderMode::k_alpha);  // Stale: no-op.
+  }
+
+  TEST_CASE("set_type writes the +0x14 render mode, preserving out-of-table values") {
+    SpritePool pool;
+    const SpriteHandle handle{spawn(pool)};
+    // Retail SetSpriteType(4) turns a scripted effect sprite additive.
+    pool.set_type(handle, 4U);
+    CHECK_EQ(pool.find(handle)->render_mode, SpriteRenderMode::k_additive);
+    CHECK(render_state(pool.find(handle)->render_mode).blend_enabled);
+    // Runtime's mode switch sends values above 8 to its default branch.
+    pool.set_type(handle, 12U);
+    CHECK_EQ(static_cast<std::uint16_t>(pool.find(handle)->render_mode), 12U);
+    CHECK_EQ(bucket_bits(pool.find(handle)->render_mode), 0U);
+    CHECK_FALSE(render_state(pool.find(handle)->render_mode).blend_enabled);
   }
 
   TEST_CASE("reset_to_defaults restores the Runtime values") {

@@ -169,7 +169,8 @@ constexpr std::array<OpcodeInfo, 17> K_OPCODE_TABLE{
         .semantic_param_count = K_SET_SPRITE_TYPE_PARAMS.size(),
         .owns_sprite = false,
         .support = OpcodeSupport::k_supported,
-        .notes = "Writes the low 16 bits of argument 1 to the runtime sprite's type field."},
+        .notes = "Writes the low 16 bits of argument 1 to the runtime sprite's +0x14 field, "
+                 "which is its render mode."},
     OpcodeInfo{.opcode = K_DISPLAY_3D_SPRITE_ON_PATH,
         .name = "Display3DSpriteOnPath",
         .expected_argument_count = 7,
@@ -1851,7 +1852,7 @@ HandlerResult ScriptRuntime::handle_play_sound(
     request.owner = Audio::AudioOwnerToken{};
     request.emitter = std::nullopt;
   } else {
-    auto owner{m_world->resolve_audio_owner(object_index)};
+    auto owner{resolve_sound_owner(instance, object_index)};
     if (!owner) {
       App::Log::warn(LogCategory::Script,
           "PlaySound: object index {} unavailable: {}",
@@ -1951,7 +1952,7 @@ HandlerResult ScriptRuntime::handle_play_sync_sound(
     request.owner = Audio::AudioOwnerToken{};
     request.emitter = std::nullopt;
   } else {
-    auto owner{m_world->resolve_audio_owner(object_index)};
+    auto owner{resolve_sound_owner(instance, object_index)};
     if (!owner) {
       App::Log::warn(LogCategory::Script,
           "PlaySyncSound: object index {} unavailable: {}",
@@ -1997,7 +1998,7 @@ HandlerResult ScriptRuntime::handle_stop_sound(
         sound.error());
     return audio_completion(command);
   }
-  auto owner{m_world->resolve_audio_owner(object_index)};
+  auto owner{resolve_sound_owner(instance, object_index)};
   if (!owner) {
     App::Log::debug(LogCategory::Script,
         "StopSound: object index {} unavailable: {}",
@@ -2008,6 +2009,26 @@ HandlerResult ScriptRuntime::handle_stop_sound(
 
   m_world->stop_sound(sound->resource, owner.value());
   return audio_completion(command);
+}
+
+std::expected<Audio::AudioOwnerToken, std::string> ScriptRuntime::resolve_sound_owner(
+    const ScriptInstance& instance, const std::int32_t object_index) {
+  if (object_index == -1) {
+    return Audio::AudioOwnerToken{};  // Null owner (nonspatial playback).
+  }
+  // Runtime's sound commands (0x004A12D0 and siblings) name their emitter
+  // through the script's binding table A (+0x3C), like the object-animation
+  // commands; the index is not an SCX sprite index.
+  const Omikron::ScxScript& source{m_scx->scripts.at(instance.source_script_index)};
+  if (object_index < 0 ||
+      std::cmp_greater_equal(object_index, source.binding_table_a.entries.size())) {
+    return std::expected<Audio::AudioOwnerToken, std::string>{std::unexpect,
+        fmt::format("binding table A index {} out of range ({} entries)",
+            object_index,
+            source.binding_table_a.entries.size())};
+  }
+  return m_world->resolve_audio_owner(
+      source.binding_table_a.entries.at(static_cast<std::size_t>(object_index)).name);
 }
 
 void ScriptRuntime::reset_audio_commands(ScriptInstance& instance, const bool include_sync_sounds) {
@@ -2035,7 +2056,7 @@ void ScriptRuntime::reset_audio_commands(ScriptInstance& instance, const bool in
     if (!sound || !sound->resource.valid()) {
       return;
     }
-    auto owner{m_world->resolve_audio_owner(object_index)};
+    auto owner{resolve_sound_owner(instance, object_index)};
     if (!owner) {
       return;
     }

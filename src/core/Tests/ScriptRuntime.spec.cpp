@@ -68,6 +68,7 @@ class FakeWorld final : public App::Script::ScriptWorld {
       .resource = App::Audio::SoundResourceId{7}, .name = "fx", .h_id = 0, .loaded = true};
   std::vector<App::Audio::SoundPlayRequest> play_requests;
   std::vector<std::pair<App::Audio::SoundResourceId, App::Audio::AudioOwnerToken>> stop_requests;
+  std::vector<std::string> audio_owner_bindings;
   std::vector<App::Script::BodyAnimationRequest> select_body_animation_requests;
   std::vector<App::Script::RelativeBodyAnimationRequest> body_animation_requests;
   std::vector<App::Character::BodyIdentity> body_animation_resets;
@@ -127,15 +128,13 @@ class FakeWorld final : public App::Script::ScriptWorld {
     return sound_descriptor;
   }
   std::expected<App::Audio::AudioOwnerToken, std::string> resolve_audio_owner(
-      const std::int32_t object_index) override {
+      const std::string_view object_binding) override {
+    audio_owner_bindings.emplace_back(object_binding);
     if (fail_owner) {
       return std::expected<App::Audio::AudioOwnerToken, std::string>{std::unexpect, "no object"};
     }
-    if (object_index == -1) {
-      return App::Audio::AudioOwnerToken{};
-    }
     return App::Audio::AudioOwnerToken{.scenario = this,
-        .object_index = static_cast<std::uint32_t>(object_index),
+        .object_index = static_cast<std::uint32_t>(audio_owner_bindings.size() - 1U),
         .generation = 1};
   }
   std::expected<App::Audio::Vec3, std::string> resolve_owner_position(
@@ -266,6 +265,16 @@ App::Omikron::ScxScript single_root_script(const App::Omikron::ScxScriptCommand&
   script.linked_command_count = 0;
   script.repeat_limit = 1;
   script.root_commands.push_back(root);
+  return script;
+}
+
+/// Builds a sound script whose binding table A names an emitter at index 5,
+/// behind entries that must not be selected.
+App::Omikron::ScxScript sound_script_with_emitter(const App::Omikron::ScxScriptCommand& root) {
+  App::Omikron::ScxScript script{single_root_script(root)};
+  for (const char* const name : {"Decoy0", "Decoy1", "Decoy2", "Decoy3", "Decoy4", "Speaker"}) {
+    script.binding_table_a.entries.push_back(App::Omikron::ScxBindingEntry{.name = name});
+  }
   return script;
 }
 
@@ -1474,7 +1483,7 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
 
   TEST_CASE("Attached PlaySound uses the recovered 78/1170 distance defaults") {
     RuntimeFixture fixture{
-        {single_root_script(command(K_PLAY_SOUND, 0, 4))}, make_values(4, {9, 0, 0, 5})};
+        {sound_script_with_emitter(command(K_PLAY_SOUND, 0, 4))}, make_values(4, {9, 0, 0, 5})};
     REQUIRE(fixture.runtime->create_instance(0).has_value());
 
     fixture.runtime->step_tick(1.0F);
@@ -1483,10 +1492,25 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
     const App::Audio::SoundPlayRequest& request{fixture.world.play_requests.at(0)};
     REQUIRE(request.emitter.has_value());
     CHECK_FALSE(request.owner.is_null());
-    CHECK_EQ(request.owner.object_index, 5U);
+    // Runtime resolves the object argument through binding table A by name.
+    REQUIRE_EQ(fixture.world.audio_owner_bindings.size(), 1U);
+    CHECK_EQ(fixture.world.audio_owner_bindings.at(0), "Speaker");
     CHECK_EQ(request.emitter->minimum_distance, doctest::Approx(78.0F));
     CHECK_EQ(request.emitter->maximum_distance, doctest::Approx(1170.0F));
     CHECK_EQ(request.emitter->position.at(0), doctest::Approx(1.0F));
+  }
+
+  TEST_CASE("PlaySound object index outside binding table A plays nothing and latches") {
+    RuntimeFixture fixture{
+        {single_root_script(command(K_PLAY_SOUND, 0, 4))}, make_values(4, {9, 0, 0, 9})};
+    REQUIRE(fixture.runtime->create_instance(0).has_value());
+
+    fixture.runtime->step_tick(1.0F);
+
+    CHECK(fixture.world.audio_owner_bindings.empty());
+    CHECK(fixture.world.play_requests.empty());
+    CHECK_EQ(fixture.runtime->instances().at(0).value_pool.at(2).raw, 1U);
+    CHECK_EQ(fixture.runtime->run_state(), App::Script::ScriptRunState::k_completed);
   }
 
   TEST_CASE("PlaySound queue failure still latches and exhausts") {
@@ -1555,8 +1579,8 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
   }
 
   TEST_CASE("Attached PlaySyncSound uses the recovered 0/30 distance defaults") {
-    RuntimeFixture fixture{
-        {single_root_script(command(K_PLAY_SYNC_SOUND, 0, 5))}, make_values(5, {9, 0, 0, 0, 5})};
+    RuntimeFixture fixture{{sound_script_with_emitter(command(K_PLAY_SYNC_SOUND, 0, 5))},
+        make_values(5, {9, 0, 0, 0, 5})};
     REQUIRE(fixture.runtime->create_instance(0).has_value());
 
     fixture.runtime->step_tick(1.0F);
@@ -1583,7 +1607,7 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
 
   TEST_CASE("StopSound with an object stops the matching (soundId, owner) voice") {
     RuntimeFixture fixture{
-        {single_root_script(command(K_STOP_SOUND, 0, 2))}, make_values(2, {9, 5})};
+        {sound_script_with_emitter(command(K_STOP_SOUND, 0, 2))}, make_values(2, {9, 5})};
     REQUIRE(fixture.runtime->create_instance(0).has_value());
 
     fixture.runtime->step_tick(1.0F);
@@ -1591,7 +1615,8 @@ TEST_SUITE("Core::Script::ScriptRuntime") {
     REQUIRE_EQ(fixture.world.stop_requests.size(), 1U);
     CHECK_EQ(fixture.world.stop_requests.at(0).first.index, 7U);
     CHECK_FALSE(fixture.world.stop_requests.at(0).second.is_null());
-    CHECK_EQ(fixture.world.stop_requests.at(0).second.object_index, 5U);
+    REQUIRE_EQ(fixture.world.audio_owner_bindings.size(), 1U);
+    CHECK_EQ(fixture.world.audio_owner_bindings.at(0), "Speaker");
   }
 
   TEST_CASE("A repeating script pass stops its started PlaySound voice before replaying") {

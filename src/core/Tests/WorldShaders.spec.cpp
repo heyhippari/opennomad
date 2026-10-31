@@ -12,6 +12,7 @@ namespace {
 
 constexpr std::string_view K_VERSION{"#version 410 core\n"};
 constexpr std::string_view K_PER_PIXEL_DEFINE{"#define PER_PIXEL_LIGHTING\n"};
+constexpr std::string_view K_CUBIC_COLOR_DEFINE{"#define CUBIC_VERTEX_COLOR\n"};
 
 /// The define must follow `#version` directly, which GLSL requires to come first.
 bool defines_after_version(const std::string& source, const std::string_view define) {
@@ -52,6 +53,43 @@ TEST_SUITE("Core::WorldShaders") {
     }
     CHECK(
         App::K_MODERN_WORLD_FRAGMENT_BODY.find("per_pixel_actor_color") != std::string_view::npos);
+  }
+
+  TEST_CASE("Cubic vertex colour is a define on both stages") {
+    const App::WorldShaderOptions cubic{.cubic_vertex_color = true};
+    const std::string vertex{App::world_vertex_shader(cubic)};
+    const std::string fragment{App::modern_world_fragment_shader(cubic)};
+    CHECK(defines_after_version(vertex, K_CUBIC_COLOR_DEFINE));
+    CHECK(defines_after_version(fragment, K_CUBIC_COLOR_DEFINE));
+
+    std::string stripped{fragment};
+    stripped.erase(stripped.find(K_CUBIC_COLOR_DEFINE), K_CUBIC_COLOR_DEFINE.size());
+    CHECK(stripped == App::fogged_fragment_shader(App::K_MODERN_WORLD_FRAGMENT_BODY));
+  }
+
+  TEST_CASE("The cubic geometry stage links the vertex and fragment interfaces") {
+    // The vertex stage renames its outputs, and the geometry stage forwards
+    // them under the names the fragment and fog stages read.
+    for (const std::string_view symbol : {"vertex_uv",
+             "vertex_color",
+             "vertex_view_position",
+             "vertex_color_slope_next",
+             "vertex_color_slope_previous"}) {
+      CHECK(App::K_WORLD_VERTEX_SHADER.find(symbol) != std::string_view::npos);
+      CHECK(App::K_WORLD_CUBIC_COLOR_GEOMETRY_SHADER.find(symbol) != std::string_view::npos);
+    }
+    for (const std::string_view symbol : {"out vec2 v_uv;",
+             "out vec4 v_color;",
+             "out vec3 v_view_position;",
+             "out vec3 v_barycentric;",
+             "flat out vec3 v_color_controls[10];"}) {
+      CHECK(App::K_WORLD_CUBIC_COLOR_GEOMETRY_SHADER.find(symbol) != std::string_view::npos);
+    }
+    for (const std::string_view symbol :
+        {"in vec3 v_barycentric;", "flat in vec3 v_color_controls[10];"}) {
+      CHECK(App::K_MODERN_WORLD_FRAGMENT_BODY.find(symbol) != std::string_view::npos);
+    }
+    CHECK(App::K_WORLD_CUBIC_COLOR_GEOMETRY_SHADER.starts_with("\n#version 410 core\n"));
   }
 }
 

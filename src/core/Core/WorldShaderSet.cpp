@@ -103,4 +103,22 @@ const Shader* WorldShaderSet::per_pixel_modern() {
   return m_per_pixel_modern.get();
 }
 
+const Shader* WorldShaderSet::cubic_color_modern() {
+  if (m_cubic_color_modern == nullptr && !m_cubic_color_modern_failed) {
+    const WorldShaderOptions options{.cubic_vertex_color = true};
+    auto shader{Shader::create(world_vertex_shader(options),
+        K_WORLD_CUBIC_COLOR_GEOMETRY_SHADER,
+        modern_world_fragment_shader(options))};
+    if (shader) {
+      m_cubic_color_modern = std::make_unique<Shader>(std::move(shader).value());
+    } else {
+      m_cubic_color_modern_failed = true;
+      App::Log::warn(LogCategory::Renderer,
+          "Cubic decor colour interpolation unavailable, using linear colours: {}",
+          shader.error());
+    }
+  }
+  return m_cubic_color_modern.get();
+}
+
 }  // namespace App

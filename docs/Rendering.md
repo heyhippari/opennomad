@@ -78,6 +78,18 @@ default Original) draws opaque and cutout character groups with the `PER_PIXEL_L
 keeps only the ambient floor and the fragment stage evaluates the same lights, scales and saturating integer terms
 with the interpolated normal restored to its authored length. Blended character groups keep vertex lighting.
 
+The **Decor Lighting** enhancement (`enhancements.decor_lighting`, default Original) replaces the linear (Gouraud)
+interpolation of baked decor colours, whose creases and Mach bands show the triangulation, with a cubic Bezier
+triangle. `CubicColor::build_corner_slopes` fits a least-squares colour gradient at every source 3DO vertex from the
+triangles sharing it, and stores it per corner as two edge slope ratios (derivative along the edge over the colour
+difference across it), limited to [0, 3] so every edge is a monotone cubic (Fritsch-Carlson). The ratios live in a
+second vertex stream (`VertexColorSlopes`, locations 4 and 5) that is built on first use and that pose patches
+leave unchanged. The `CUBIC_VERTEX_COLOR` program adds a geometry stage that turns the corners' clamped Runtime colours and
+the ratios into ten Bezier controls; the fragment stage evaluates them. Corners keep the Runtime colour exactly,
+triangles sharing an edge agree along it, ratio 1 reproduces Gouraud, and the centre control is limited so the patch
+never leaves its corners' range. Only opaque and cutout decor groups use it; blended decor, placed objects,
+characters and the sky keep linear colours.
+
 Decor transparency is sorted back-to-front by material-group centre. Missing or invalid decor textures fall back to a
 white texture and produce a diagnostic instead of invalid OpenGL access.
 

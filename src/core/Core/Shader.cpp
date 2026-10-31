@@ -55,20 +55,51 @@ std::expected<Shader, std::string> Shader::create(
     return std::expected<Shader, std::string>{std::unexpect, "Fragment shader failed to compile"};
   }
 
+  return link(std::array<GLuint, 2>{vs, fs});
+}
+
+std::expected<Shader, std::string> Shader::create(const std::string_view vertex_source,
+    const std::string_view geometry_source,
+    const std::string_view fragment_source) {
+  APP_PROFILE_FUNCTION();
+
+  const GLuint vs{compile_shader(GL_VERTEX_SHADER, vertex_source)};
+  if (vs == 0) {
+    return std::expected<Shader, std::string>{std::unexpect, "Vertex shader failed to compile"};
+  }
+
+  const GLuint gs{compile_shader(GL_GEOMETRY_SHADER, geometry_source)};
+  if (gs == 0) {
+    glDeleteShader(vs);
+    return std::expected<Shader, std::string>{std::unexpect, "Geometry shader failed to compile"};
+  }
+
+  const GLuint fs{compile_shader(GL_FRAGMENT_SHADER, fragment_source)};
+  if (fs == 0) {
+    glDeleteShader(vs);
+    glDeleteShader(gs);
+    return std::expected<Shader, std::string>{std::unexpect, "Fragment shader failed to compile"};
+  }
+
+  return link(std::array<GLuint, 3>{vs, gs, fs});
+}
+
+std::expected<Shader, std::string> Shader::link(const std::span<const GLuint> stages) {
   // glCreateProgram cannot run before the shaders are compiled, so it cannot
   // live in a member-initializer list.
   const GLuint program{glCreateProgram()};
-  glAttachShader(program, vs);
-  glAttachShader(program, fs);
+  for (const GLuint stage : stages) {
+    glAttachShader(program, stage);
+  }
   glLinkProgram(program);
 
   GLint link_status{0};
   glGetProgramiv(program, GL_LINK_STATUS, &link_status);
 
-  glDetachShader(program, vs);
-  glDetachShader(program, fs);
-  glDeleteShader(vs);
-  glDeleteShader(fs);
+  for (const GLuint stage : stages) {
+    glDetachShader(program, stage);
+    glDeleteShader(stage);
+  }
 
   if (link_status == 0) {
     GLint info_length{0};
@@ -105,10 +136,13 @@ GLuint Shader::compile_shader(const GLenum type, const std::string_view source) 
     glGetShaderiv(id, GL_INFO_LOG_LENGTH, &info_length);
     std::string info_log(static_cast<std::size_t>(info_length), '\0');
     glGetShaderInfoLog(id, info_length, nullptr, info_log.data());
-    App::Log::error(LogCategory::Renderer,
-        "Shader compile error ({}): {}",
-        (type == GL_VERTEX_SHADER ? "vertex" : "fragment"),
-        info_log);
+    std::string_view stage{"fragment"};
+    if (type == GL_VERTEX_SHADER) {
+      stage = "vertex";
+    } else if (type == GL_GEOMETRY_SHADER) {
+      stage = "geometry";
+    }
+    App::Log::error(LogCategory::Renderer, "Shader compile error ({}): {}", stage, info_log);
     glDeleteShader(id);
     return 0;
   }

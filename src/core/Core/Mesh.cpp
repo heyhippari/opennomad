@@ -75,6 +75,41 @@ bool Mesh::update_vertices(const std::span<const Vertex> vertices) const {
   return true;
 }
 
+bool Mesh::set_color_slopes(const std::span<const VertexColorSlopes> slopes) {
+  if (slopes.size() != m_vertex_count) {
+    return false;
+  }
+  if (m_color_slope_buffer.has_value()) {
+    m_color_slope_buffer->update(0U, std::as_bytes(slopes));
+    VertexBuffer::unbind();
+    return true;
+  }
+  m_vertex_array.bind();
+  m_color_slope_buffer.emplace(std::as_bytes(slopes));
+  m_color_slope_buffer->bind();
+  const GLsizei stride{static_cast<GLsizei>(sizeof(VertexColorSlopes))};
+  glEnableVertexAttribArray(VertexColorSlopes::k_next_location);
+  // NOLINTBEGIN(cppcoreguidelines-pro-type-reinterpret-cast, performance-no-int-to-ptr)
+  // Required by the GL API.
+  glVertexAttribPointer(VertexColorSlopes::k_next_location,
+      3,
+      GL_FLOAT,
+      GL_FALSE,
+      stride,
+      reinterpret_cast<const void*>(offsetof(VertexColorSlopes, next)));
+  glEnableVertexAttribArray(VertexColorSlopes::k_previous_location);
+  glVertexAttribPointer(VertexColorSlopes::k_previous_location,
+      3,
+      GL_FLOAT,
+      GL_FALSE,
+      stride,
+      reinterpret_cast<const void*>(offsetof(VertexColorSlopes, previous)));
+  // NOLINTEND(cppcoreguidelines-pro-type-reinterpret-cast, performance-no-int-to-ptr)
+  VertexArray::unbind();
+  VertexBuffer::unbind();
+  return true;
+}
+
 void Mesh::draw() const {
   m_vertex_array.bind();
   glDrawElements(

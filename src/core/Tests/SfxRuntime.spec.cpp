@@ -573,7 +573,6 @@ TEST_SUITE("Core::Sfx::Runtime") {
     REQUIRE(sprite != nullptr);
     CHECK(sprite->resource_index == 90U);
     CHECK(sprite->render_mode == App::Sprite::SpriteRenderMode::k_darken);
-    CHECK(sprite->type == 6U);
     CHECK(sprite->diffuse_alpha == doctest::Approx(0.5F));
     CHECK(sprite->scale_x == doctest::Approx(2.5F));
     CHECK(sprite->scale_y == doctest::Approx(2.5F));
@@ -586,8 +585,39 @@ TEST_SUITE("Core::Sfx::Runtime") {
     runtime->step();
     runtime->step();
     CHECK(host.pool.live_count() == 4U);
+    // Runtime keeps a particle while elapsed <= lifetime: elapsed 4 of 4 shows
+    // the last of five frames, and the particle is destroyed one tick later.
+    runtime->step();
+    CHECK(host.destroyed_count == 0U);
+    REQUIRE(host.first_sprite() != nullptr);
+    CHECK(host.first_sprite()->frame_index == 4U);
     runtime->step();
     CHECK(host.destroyed_count >= 1U);
+  }
+
+  TEST_CASE("particle diffuse alpha follows Runtime's 0x0002 step and 0.99 clamp") {
+    FakeHost host;
+    auto data{basic_data()};
+    App::Omikron::SfxDefinition& definition{data.definitions.front()};
+    definition.flags = 0x0002U;
+    definition.lifetime = 4.0F;
+    auto runtime{create_runtime(data, host)};
+    runtime->step();
+    App::Sprite::SpriteInstance* sprite{host.last_sprite()};
+    REQUIRE(sprite != nullptr);
+    // Starts at zero and steps by -1/lifetime per tick, clamped to [0, 0.99].
+    CHECK(sprite->diffuse_alpha == doctest::Approx(0.0F));
+    runtime->step();
+    CHECK(host.first_sprite()->diffuse_alpha == doctest::Approx(0.0F));
+
+    FakeHost plain_host;
+    auto plain_data{basic_data()};
+    plain_data.definitions.front().flags = 0U;
+    auto plain{create_runtime(plain_data, plain_host)};
+    plain->step();
+    plain->step();
+    REQUIRE(plain_host.first_sprite() != nullptr);
+    CHECK(plain_host.first_sprite()->diffuse_alpha == doctest::Approx(0.5F));
   }
 
   TEST_CASE(

@@ -72,6 +72,10 @@ add_executable(WorldLightingTest WorldLighting.spec.cpp $<TARGET_OBJECTS:TestRun
 add_test(NAME WorldLightingTest COMMAND WorldLightingTest)
 target_link_libraries(WorldLightingTest PRIVATE doctest::doctest Core)
 
+add_executable(CubicVertexColorTest CubicVertexColor.spec.cpp $<TARGET_OBJECTS:TestRunner>)
+add_test(NAME CubicVertexColorTest COMMAND CubicVertexColorTest)
+target_link_libraries(CubicVertexColorTest PRIVATE doctest::doctest Core)
+
 add_executable(WorldShadersTest WorldShaders.spec.cpp $<TARGET_OBJECTS:TestRunner>)
 add_test(NAME WorldShadersTest COMMAND WorldShadersTest)
 target_link_libraries(WorldShadersTest PRIVATE doctest::doctest Core)

@@ -50,6 +50,7 @@ Most implementation lives under `src/core/Core/`:
 | `WorldScene.*`, `WorldRenderer.*`, `WorldCamera.*` | Stable presentation of all attached resident worlds, with current-world camera/debug state, effects, interfaces, and GPU resources. |
 | `SkyRenderer.*` | The session-global AREA sky 3DO, loaded from `MESHES/MISC` and drawn behind the world. |
 | `WorldFog.*`, `WorldShaders.hpp` | Runtime fog/view distance, day-cycle colour, the shared per-pixel fog shader stage and the world shader variant builder. |
+| `CubicVertexColor.*` | Per-corner colour slope ratios for the Decor Lighting (cubic baked colour) enhancement. |
 | `WorldShaderSet.*` | World programs shared by all attached renderers, including lazily built enhancement variants. |
 | `WorldLighting.*` | Runtime context ambient, day-cycle light, baked-colour clamp and explicit decor lights for characters. |
 | `ModelViewerScene.*` | Development-only free-flight renderer for inspecting standalone and embedded model resources. |

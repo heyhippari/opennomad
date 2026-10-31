@@ -64,6 +64,7 @@ add_library(${NAME} STATIC
   Core/WorldCamera.hpp Core/WorldCamera.cpp
   Core/WorldRenderer.hpp Core/WorldRenderer.cpp
   Core/WorldShaders.hpp
+  Core/CubicVertexColor.hpp Core/CubicVertexColor.cpp
   Core/SkyRenderer.hpp Core/SkyRenderer.cpp
   Core/WorldFog.hpp Core/WorldFog.cpp
   Core/WorldLighting.hpp Core/WorldLighting.cpp

@@ -351,10 +351,9 @@ class ScriptWorld {
   [[nodiscard]] virtual std::expected<Audio::SoundDescriptor, std::string> resolve_sound(
       std::uint32_t sound_table_index) = 0;
 
-  /// Resolves a scenario object index to a stable audio owner token, or the
-  /// null owner for -1.
+  /// Resolves a binding-table-A object name to a stable audio owner token.
   [[nodiscard]] virtual std::expected<Audio::AudioOwnerToken, std::string> resolve_audio_owner(
-      std::int32_t object_index) = 0;
+      std::string_view object_binding) = 0;
 
   /// Current world position of an object owner (emitter updates).
   [[nodiscard]] virtual std::expected<Audio::Vec3, std::string> resolve_owner_position(
@@ -586,6 +585,10 @@ class ScriptRuntime {
   HandlerResult handle_play_sound(ScriptInstance& instance, RuntimeScriptCommand& command);
   HandlerResult handle_play_sync_sound(ScriptInstance& instance, RuntimeScriptCommand& command);
   HandlerResult handle_stop_sound(ScriptInstance& instance, RuntimeScriptCommand& command);
+  /// Resolves a sound command's object argument: -1 is the null (nonspatial)
+  /// owner, anything else indexes the script's binding table A.
+  [[nodiscard]] std::expected<Audio::AudioOwnerToken, std::string> resolve_sound_owner(
+      const ScriptInstance& instance, std::int32_t object_index);
   HandlerResult handle_select_body_animation(
       ScriptInstance& instance, RuntimeScriptCommand& command, float script_delta_frames);
   HandlerResult handle_select_relative_body_animation(

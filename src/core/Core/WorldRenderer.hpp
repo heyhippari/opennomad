@@ -112,6 +112,12 @@ class WorldRenderer {
   void set_per_pixel_lighting(bool enabled) {
     m_per_pixel_lighting = enabled;
   }
+  /// Opaque/cutout decor interpolates its baked colours with a cubic Bezier
+  /// triangle (OpenNomad enhancement). The slope stream is built on first
+  /// use; falls back to Runtime's linear colours if either part fails.
+  void set_cubic_decor_colors(bool enabled) {
+    m_cubic_decor_colors = enabled;
+  }
 
  private:
   WorldRenderer() = default;
@@ -153,6 +159,9 @@ class WorldRenderer {
       bool legacy_effect);
   /// Rebuilds the material-sorted order of the opaque/cutout decor groups.
   void rebuild_opaque_draw_order();
+  /// Attaches the VertexColorSlopes stream to every decor mesh once. False
+  /// when it cannot (logged once until the decor meshes are rebuilt).
+  [[nodiscard]] bool ensure_decor_color_slopes();
   /// Runtime baked-colour clamp for decor, placed objects and unlit nodes.
   void apply_baked_lighting(const Shader& shader) const;
   /// Runtime lit-instance path for one character node group.
@@ -206,6 +215,8 @@ class WorldRenderer {
   WorldShaderSet* m_shaders{nullptr};
   /// Opaque/cutout program for lit characters in the frame being rendered.
   const Shader* m_character_shader{nullptr};
+  /// Opaque/cutout program for decor in the frame being rendered.
+  const Shader* m_decor_shader{nullptr};
   std::deque<Mesh> m_meshes;
   std::vector<std::int32_t> m_group_material_ids;
   std::vector<std::uint32_t> m_group_flags;
@@ -233,6 +244,10 @@ class WorldRenderer {
   bool m_sprite_grayscale{false};
   bool m_geometry_wireframe{false};
   bool m_per_pixel_lighting{false};
+  bool m_cubic_decor_colors{false};
+  /// Every decor mesh carries the slope stream of the current layout.
+  bool m_decor_color_slopes_ready{false};
+  bool m_decor_color_slopes_failed{false};
   std::unordered_map<std::size_t, std::unique_ptr<CharacterGpuModel>> m_character_models;
   std::vector<std::string> m_failed_character_models;
   /// Placement instance id to its GPU model. Placements of the same model

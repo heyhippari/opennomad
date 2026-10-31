@@ -92,7 +92,9 @@ class AudioSystem {
   [[nodiscard]] bool dialog_voice_playing() const;
 
   /// Loads and plays one nonspatial IAM/OBJECT ADP voice-over.  The caller
-  /// supplies the game-data-relative VOICEOFF path recovered by 0x5C.
+  /// supplies the game-data-relative VOICEOFF path recovered by 0x5C. A clip
+  /// missing from the game data stops the current clip and succeeds silently,
+  /// as Runtime does.
   [[nodiscard]] std::expected<void, std::string> play_voice_over(std::string relative_path);
 
   /// Nonspatial debug audition through the normal 16-voice pool.
@@ -105,7 +107,12 @@ class AudioSystem {
   // --- Listener / emitters ---
 
   void set_listener(const AudioListenerState& listener);
-  void set_emitter_resolver(EmitterResolver resolver);
+  /// Registers the owner-position resolver for one scenario identity
+  /// (`AudioOwnerToken::scenario`). Every resident scenario keeps its own, so
+  /// one world registering never invalidates another world's attached voices.
+  void set_emitter_resolver(const void* scenario, EmitterResolver resolver);
+  /// Removes a scenario's resolver and stops every voice it owns.
+  void clear_emitter_resolver(const void* scenario);
 
   // --- Frame update ---
 
@@ -219,7 +226,7 @@ class AudioSystem {
   DialogVoicePlayer m_dialog_voice;
   VoiceOverPlayer m_voice_over;
   AudioListenerState m_listener{};
-  EmitterResolver m_emitter_resolver;
+  std::unordered_map<const void*, EmitterResolver> m_emitter_resolvers;
   StopEventQueue m_stop_events;
 
   float m_master_gain{1.0F};

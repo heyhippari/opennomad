@@ -38,11 +38,11 @@ struct SpriteInstance {
   std::size_t object_index{0};
   /// Gameplay-owned Runtime-native XYZ position in inches.
   std::array<float, 3> position{0.0F, 0.0F, 0.0F};
+  /// Runtime +0x14: the single 16-bit field that SetSpriteType (0x0048EF50)
+  /// writes and the sprite walk (0x00496F12) reads as the render mode. Values
+  /// above 8 are preserved and render like mode 0, as in Runtime.
   SpriteRenderMode render_mode{SpriteRenderMode::k_default};
   std::uint16_t frame_index{k_invalid_frame};
-  /// Runtime +0x14: sprite type, written by the SetSpriteType native opcode.
-  /// Preserved as a 16-bit value even though the default is zero.
-  std::uint16_t type{0};
   float scale_x{1.0F};  ///< Runtime default 1.0.
   float scale_y{1.0F};  ///< Runtime default 1.0.
   /// Radians, around the billboard centre (Runtime +0x20).

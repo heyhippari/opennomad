@@ -44,6 +44,10 @@ class Shader {
   /// which stage failed (the compiler/linker info log is logged separately).
   static std::expected<Shader, std::string> create(
       std::string_view vertex_source, std::string_view fragment_source);
+  /// As above, with a geometry stage between the vertex and fragment stages.
+  static std::expected<Shader, std::string> create(std::string_view vertex_source,
+      std::string_view geometry_source,
+      std::string_view fragment_source);
 
   Shader(Shader&& other) noexcept;
   Shader& operator=(Shader&& other) noexcept;
@@ -92,6 +96,8 @@ class Shader {
   explicit Shader(GLuint program_id);
 
   static GLuint compile_shader(GLenum type, std::string_view source);
+  /// Links already compiled stages, then deletes them.
+  static std::expected<Shader, std::string> link(std::span<const GLuint> stages);
 
   /// Cached location plus the last scalar/vector value written through this
   /// object. Uniform values are program state, so a repeated write of the same

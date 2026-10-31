@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -31,6 +32,15 @@ class Mesh {
   /// false without touching GL state when the vertex count differs.
   [[nodiscard]] bool update_vertices(std::span<const Vertex> vertices) const;
 
+  /// Attaches or overwrites the VertexColorSlopes stream (locations 4 and 5),
+  /// held in a second buffer so pose updates never touch it. Returns false
+  /// without touching GL state when the count differs from the vertices.
+  [[nodiscard]] bool set_color_slopes(std::span<const VertexColorSlopes> slopes);
+
+  [[nodiscard]] bool has_color_slopes() const {
+    return m_color_slope_buffer.has_value();
+  }
+
   [[nodiscard]] std::size_t vertex_count() const {
     return m_vertex_count;
   }
@@ -39,6 +49,7 @@ class Mesh {
   VertexArray m_vertex_array;
   VertexBuffer m_vertex_buffer;
   IndexBuffer m_index_buffer;
+  std::optional<VertexBuffer> m_color_slope_buffer;
   std::size_t m_vertex_count{0};
 };
 

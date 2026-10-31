@@ -333,16 +333,17 @@ Setter:
 
 directly writes the value.
 
-Working semantic name:
+**Confirmed — Runtime.** This field is the sprite render mode. The sprite walk
+reads it at `0x00496F12` and switches on values `0..8` to OR the bucket bits of
+section 40 into the face key; larger values take the switch default and add no
+bits. The SFX burst writes the definition's render-mode byte here
+(`0x0046DF91`), and the structured `SetSpriteType` command (`0x004A25C1`) uses
+the same setter. Retail SCX scripts call `SetSpriteType` 58 times: 51 with mode 4
+(for example `anekbah.SCX` `effects1_explo1`, `effects2_smoke1` and
+`effects2_glow`) and 7 with mode 0.
 
-```text
-sprite type
-```
-
-is supported by the recovered native setter family.
-
-Its complete behavioral effect across renderer/game logic remains to be
-inventoried.
+OpenNomad stores it once, as `SpriteInstance::render_mode`; `SetSpriteType`
+writes the raw 16-bit value there.
 
 ---
 
@@ -447,9 +448,9 @@ diffuse_alpha
 ```
 
 It is copied to all six generated billboard vertex tint alphas. Texture alpha
-and diffuse alpha therefore multiply in the sprite fragment shader. Additive
-modes retain their confirmed `ONE, ONE` RGB blend factors; diffuse alpha does
-not replace those factors.
+and diffuse alpha multiply only in cutout buckets; every other bucket uses the
+diffuse alpha alone (section 42). Additive modes retain their confirmed
+`ONE, ONE` RGB blend factors; diffuse alpha does not replace those factors.
 
 OpenNomad's modern reconstruction draws modes 0, 1 and 8 directly into the
 scene-linear HDR target using the texture's sRGB sampling representation.
@@ -1034,11 +1035,17 @@ Bucket flag:
 
 selects the cutout/colour-key path.
 
-Modern OpenNomad implements this as alpha testing/discard in the sprite shader.
+**Confirmed — Runtime (Direct3D path, `0x00460E39`).** With alpha-test support
+(`0x0053ADE4`), a cutout bucket sets stage-0 `ALPHAOP = MODULATE(TEXTURE,
+DIFFUSE)`, `ALPHATESTENABLE`, `ALPHAREF = 0` and `ALPHAFUNC = NOTEQUAL`: a
+fragment survives whenever its 8-bit modulated alpha is non-zero. Without that
+support the bucket uses `COLORKEYENABLE` instead. Textures are bilinear
+(`MAG/MINFILTER = LINEAR`, `0x00463B45`), so filtered black-key edges keep
+fractional, non-zero alpha and pass.
 
-The original used old renderer/palette/colour-key semantics.
-
-Visible transparency behavior is the fidelity target, not the exact API.
+OpenNomad discards when `textureAlpha * diffuseAlpha * 255 < 0.5`. An earlier
+`< 0.5` threshold removed almost every edge texel of SFX particles, whose
+diffuse alpha is 0.5.
 
 ---
 
@@ -1063,6 +1070,18 @@ depth test:
 ```
 
 Translucent sprites are also excluded from the normal scene fog path.
+
+**Confirmed — Runtime.** Every bucket modulates colour as `TEXTURE * DIFFUSE`
+(stage-0 `COLOROP`). Outside cutout buckets, stage-0 `ALPHAOP` is `SELECTARG2`
+(the diffuse alpha), so texture alpha never reaches the blend: an alpha-mode
+sprite blends its whole quad at the `+0x24` diffuse alpha. Vertex diffuse RGB is
+the raw `+0x30` tint (`0x00496BB5`), not scaled by alpha.
+
+Opaque buckets (`0x2000` clear) also alpha-blend with `SRCALPHA/INVSRCALPHA`
+when the key has `0x0800` or `0x1000` and not `0x0080`. The sprite walk sets
+`0x1000` when the sprite's view depth is at or beyond context `+0x14C` (95 % of
+the fog end) and `0x0080` when it is in front of `+0x148` (fog start).
+OpenNomad does not yet blend opaque sprites in that far band.
 
 ---
 
@@ -1432,13 +1451,9 @@ The current direct offset reconstruction instead accounts cleanly for:
 +38/+3C links
 ```
 
-Therefore:
-
-> render-mode behavior is recovered, but its exact storage path should remain
-> separately documented until the setter/consumer establishes the live offset
-> or external association conclusively.
-
-Do not force it into the 0x40 layout by displacing confirmed members.
+**Resolved — Runtime.** The render mode *is* `+0x14`: the sprite walk reads it as
+the mode (`0x00496F12`), and both the SFX burst and `SetSpriteType` write it
+through `0x0048EF50`. No separate render-mode member exists; see section 12.
 
 ---
 
@@ -1649,8 +1664,15 @@ Other flags:
 
 ```text
 0040 second UV/multitexture
+0080 nearer than fog start (sprite walk): no fog, no far blend
 0800 doubled fog range
+1000 beyond the far alpha-fade start (sprite walk): opaque buckets blend
 ```
+
+The sprite key is the frame material's `+0x40` word ORed with these bits. For
+loaded materials that word is the runtime texture page (`0x004A7253`,
+`0x004A73CA`), whose low six bits select the Direct3D texture
+(`0x00460CB7`); it carries no state flags.
 
 ---
 

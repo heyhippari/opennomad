@@ -1395,6 +1395,44 @@ TEST_SUITE("Core::Scenario::ScenarioRuntime") {
     CHECK_EQ(after->front().vertices.front().position.at(0), doctest::Approx(-478.393341F));
   }
 
+  TEST_CASE("Sound owners resolve binding A names in the decor and track its pose") {
+    BodyResourcesFixture resources{make_body_resources()};
+    App::ScenarioRuntime runtime;
+    REQUIRE(runtime.initialize(resources.scx, resources.bytes, "decor-sound", nullptr, false)
+            .has_value());
+    CHECK_FALSE(runtime.resolve_audio_owner("Movable").has_value());
+
+    App::Omikron::Model3DOData decor{make_movable_decor()};
+    runtime.bind_decor_model(&decor);
+    CHECK_FALSE(runtime.resolve_audio_owner("Missing").has_value());
+    const auto owner{runtime.resolve_audio_owner("Movable")};
+    REQUIRE(owner.has_value());
+    CHECK_FALSE(owner->is_null());
+    CHECK_EQ(owner->object_index, 0U);
+
+    const auto moved{runtime.move_object_on_path(
+        App::Script::MoveObjectOnPathRequest{.object_binding = "Movable",
+            .path_descriptor_index = 0U,
+            .subpath_index = 0U,
+            .interpolation_mode = 1U,
+            .direction = 0U,
+            .transform_rebase_mode = 0U,
+            .duration_frames = 2.0F,
+            .previous_parameter = 0.0F,
+            .current_parameter = 1.0F})};
+    REQUIRE(moved.has_value());
+    const App::Runtime::Vec3 translation{runtime.decor_runtime_objects().front().world_translation};
+    const auto position{runtime.resolve_owner_position(owner.value())};
+    REQUIRE(position.has_value());
+    CHECK_EQ(position->at(0), doctest::Approx(translation.x));
+    CHECK_EQ(position->at(1), doctest::Approx(translation.y));
+    CHECK_EQ(position->at(2), doctest::Approx(translation.z));
+
+    // A rebound decor invalidates tokens from the previous binding.
+    runtime.bind_decor_model(&decor);
+    CHECK_FALSE(runtime.resolve_owner_position(owner.value()).has_value());
+  }
+
   TEST_CASE("MoveObjectOnPath converts a sampled world pose below a rotated parent") {
     BodyResourcesFixture resources{make_body_resources()};
     append_world_pose_path(resources);

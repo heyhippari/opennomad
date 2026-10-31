@@ -113,6 +113,7 @@ view distance. Additive and darken buckets use `ONE/ONE` and `ZERO/INV_SRCCOLOR`
 | baked clamp | world vertex shader `u_lighting_mode = 1`, reference `Lighting::clamp_baked` |
 | lit instance | world vertex shader `u_lighting_mode = 2`, lights chosen per character node by `Lighting::select_node_lights` and uploaded by `WorldRenderer::apply_actor_lighting`, reference `Lighting::accumulate` |
 | (OpenNomad enhancement) | `PER_PIXEL_LIGHTING` variant: the same terms evaluated in the fragment stage with the interpolated normal |
+| (OpenNomad enhancement) | `CUBIC_VERTEX_COLOR` variant: clamped baked decor colours interpolated by a monotone cubic Bezier triangle (`CubicColor::build_corner_slopes`) |
 | light preparation and broadphase | `Lighting::prepare`, `touches`, `node_scale` |
 | far alpha fade | `runtime_far_fade()` in the blended world and sprite shaders |
 

@@ -450,7 +450,11 @@ inline constexpr std::array<OptionsChoiceDefinition, 2> k_options_character_ligh
     {.runtime_string_index = -1, .raw_value = 0, .literal_label = "Original"},
     {.runtime_string_index = -1, .raw_value = 1, .literal_label = "Per-Pixel"},
 }};
-inline constexpr std::array<OptionsRowDefinition, 6> k_options_enhancements_rows{{
+inline constexpr std::array<OptionsChoiceDefinition, 2> k_options_decor_lighting_choices{{
+    {.runtime_string_index = -1, .raw_value = 0, .literal_label = "Original"},
+    {.runtime_string_index = -1, .raw_value = 1, .literal_label = "Cubic"},
+}};
+inline constexpr std::array<OptionsRowDefinition, 7> k_options_enhancements_rows{{
     {.stable_id = "enhancements.title",
         .runtime_option_index = -1,
         .runtime_label_string_index = -1,
@@ -494,6 +498,16 @@ inline constexpr std::array<OptionsRowDefinition, 6> k_options_enhancements_rows
         .choices = std::span<const OptionsChoiceDefinition>{k_options_character_lighting_choices},
         .default_choice = 0,
         .literal_label = "Character Lighting",
+        .accent = false},
+    // Original interpolates baked decor colours linearly like Runtime; Cubic
+    // interpolates the same vertex colours with a smooth monotone patch.
+    {.stable_id = "enhancements.decor_lighting",
+        .runtime_option_index = -1,
+        .runtime_label_string_index = -1,
+        .kind = OptionsRowKind::k_enum,
+        .choices = std::span<const OptionsChoiceDefinition>{k_options_decor_lighting_choices},
+        .default_choice = 0,
+        .literal_label = "Decor Lighting",
         .accent = false},
     {.stable_id = "enhancements.back",
         .runtime_option_index = 72,
@@ -727,8 +741,8 @@ static_assert(runtime_options_row_y(
                   4, k_options_game_rows.size(), OptionsInvocationMode::k_start_menu) == 380);
 
 static_assert(runtime_options_row_step(k_options_controls_rows.size()) == 65);
-// Six Enhancements rows share the root page's 52-unit step.
-static_assert(runtime_options_row_step(k_options_enhancements_rows.size()) == 52);
+// Seven Enhancements rows use the Audio page's 43-unit step.
+static_assert(runtime_options_row_step(k_options_enhancements_rows.size()) == 43);
 static_assert(runtime_options_row_step(k_options_keyboard_categories_rows.size()) == 52);
 
 // Binding pages contain title + binding rows + Restore defaults + Back.
